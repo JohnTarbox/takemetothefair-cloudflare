@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { venues, events } from "@/lib/db/schema";
+import { eq, count } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+
+export const runtime = "edge";
 
 export async function GET() {
   const session = await auth();
@@ -10,13 +14,29 @@ export async function GET() {
   }
 
   try {
-    const venues = await prisma.venue.findMany({
-      include: {
-        _count: { select: { events: true } },
-      },
-      orderBy: { name: "asc" },
-    });
-    return NextResponse.json(venues);
+    const db = getCloudflareDb();
+
+    const venueList = await db
+      .select()
+      .from(venues)
+      .orderBy(venues.name);
+
+    // Get event counts for each venue
+    const venuesWithCounts = await Promise.all(
+      venueList.map(async (venue) => {
+        const eventCount = await db
+          .select({ count: count() })
+          .from(events)
+          .where(eq(events.venueId, venue.id));
+
+        return {
+          ...venue,
+          _count: { events: eventCount[0]?.count || 0 },
+        };
+      })
+    );
+
+    return NextResponse.json(venuesWithCounts);
   } catch (error) {
     console.error("Failed to fetch venues:", error);
     return NextResponse.json({ error: "Failed to fetch venues" }, { status: 500 });
@@ -49,28 +69,36 @@ export async function POST(request: NextRequest) {
       status,
     } = body;
 
-    const venue = await prisma.venue.create({
-      data: {
-        name,
-        slug: createSlug(name),
-        address,
-        city,
-        state,
-        zip,
-        latitude,
-        longitude,
-        capacity,
-        amenities: amenities || [],
-        contactEmail,
-        contactPhone,
-        website,
-        description,
-        imageUrl,
-        status: status || "ACTIVE",
-      },
+    const db = getCloudflareDb();
+    const venueId = crypto.randomUUID();
+
+    await db.insert(venues).values({
+      id: venueId,
+      name,
+      slug: createSlug(name),
+      address,
+      city,
+      state,
+      zip,
+      latitude,
+      longitude,
+      capacity,
+      amenities: JSON.stringify(amenities || []),
+      contactEmail,
+      contactPhone,
+      website,
+      description,
+      imageUrl,
+      status: status || "ACTIVE",
     });
 
-    return NextResponse.json(venue, { status: 201 });
+    const newVenue = await db
+      .select()
+      .from(venues)
+      .where(eq(venues.id, venueId))
+      .limit(1);
+
+    return NextResponse.json(newVenue[0], { status: 201 });
   } catch (error) {
     console.error("Failed to create venue:", error);
     return NextResponse.json({ error: "Failed to create venue" }, { status: 500 });

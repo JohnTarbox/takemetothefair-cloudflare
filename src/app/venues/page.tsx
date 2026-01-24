@@ -2,30 +2,56 @@ import Link from "next/link";
 import { MapPin, Users, Calendar } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { venues, events } from "@/lib/db/schema";
+import { eq, and, gte, count } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+
+export const runtime = "edge";
 
 async function getVenues() {
   try {
-    const venues = await prisma.venue.findMany({
-      where: { status: "ACTIVE" },
-      include: {
-        _count: {
-          select: {
-            events: { where: { status: "APPROVED", endDate: { gte: new Date() } } },
+    const db = getCloudflareDb();
+
+    // Get all active venues
+    const venueList = await db
+      .select()
+      .from(venues)
+      .where(eq(venues.status, "ACTIVE"))
+      .orderBy(venues.name);
+
+    // Get event counts for each venue
+    const venuesWithCounts = await Promise.all(
+      venueList.map(async (venue) => {
+        const eventCount = await db
+          .select({ count: count() })
+          .from(events)
+          .where(
+            and(
+              eq(events.venueId, venue.id),
+              eq(events.status, "APPROVED"),
+              gte(events.endDate, new Date())
+            )
+          );
+
+        return {
+          ...venue,
+          _count: {
+            events: eventCount[0]?.count || 0,
           },
-        },
-      },
-      orderBy: { name: "asc" },
-    });
-    return venues;
-  } catch {
+        };
+      })
+    );
+
+    return venuesWithCounts;
+  } catch (e) {
+    console.error("Error fetching venues:", e);
     return [];
   }
 }
 
 export default async function VenuesPage() {
-  const venues = await getVenues();
+  const venueList = await getVenues();
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -36,13 +62,13 @@ export default async function VenuesPage() {
         </p>
       </div>
 
-      {venues.length === 0 ? (
+      {venueList.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-gray-500">No venues available at this time.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {venues.map((venue) => {
+          {venueList.map((venue) => {
             const amenities = parseJsonArray(venue.amenities);
             return (
               <Link key={venue.id} href={`/venues/${venue.slug}`}>

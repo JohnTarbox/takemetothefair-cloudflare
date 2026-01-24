@@ -1,34 +1,41 @@
 import { Calendar, MapPin, Store, Users, Megaphone, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { events, venues, vendors, promoters, users } from "@/lib/db/schema";
+import { eq, count } from "drizzle-orm";
+
+export const runtime = "edge";
 
 async function getStats() {
   try {
+    const db = getCloudflareDb();
+
     const [
-      totalEvents,
-      pendingEvents,
-      totalVenues,
-      totalVendors,
-      totalPromoters,
-      totalUsers,
+      totalEventsResult,
+      pendingEventsResult,
+      totalVenuesResult,
+      totalVendorsResult,
+      totalPromotersResult,
+      totalUsersResult,
     ] = await Promise.all([
-      prisma.event.count(),
-      prisma.event.count({ where: { status: "PENDING" } }),
-      prisma.venue.count(),
-      prisma.vendor.count(),
-      prisma.promoter.count(),
-      prisma.user.count(),
+      db.select({ count: count() }).from(events),
+      db.select({ count: count() }).from(events).where(eq(events.status, "PENDING")),
+      db.select({ count: count() }).from(venues),
+      db.select({ count: count() }).from(vendors),
+      db.select({ count: count() }).from(promoters),
+      db.select({ count: count() }).from(users),
     ]);
 
     return {
-      totalEvents,
-      pendingEvents,
-      totalVenues,
-      totalVendors,
-      totalPromoters,
-      totalUsers,
+      totalEvents: totalEventsResult[0]?.count || 0,
+      pendingEvents: pendingEventsResult[0]?.count || 0,
+      totalVenues: totalVenuesResult[0]?.count || 0,
+      totalVendors: totalVendorsResult[0]?.count || 0,
+      totalPromoters: totalPromotersResult[0]?.count || 0,
+      totalUsers: totalUsersResult[0]?.count || 0,
     };
-  } catch {
+  } catch (e) {
+    console.error("Error fetching stats:", e);
     return {
       totalEvents: 0,
       pendingEvents: 0,
@@ -42,16 +49,24 @@ async function getStats() {
 
 async function getRecentSubmissions() {
   try {
-    return await prisma.event.findMany({
-      where: { status: "PENDING" },
-      include: {
-        promoter: true,
-        venue: true,
-      },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-    });
-  } catch {
+    const db = getCloudflareDb();
+
+    const results = await db
+      .select()
+      .from(events)
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(eq(events.status, "PENDING"))
+      .orderBy(events.createdAt)
+      .limit(5);
+
+    return results.map((r) => ({
+      ...r.events,
+      promoter: r.promoters!,
+      venue: r.venues!,
+    }));
+  } catch (e) {
+    console.error("Error fetching submissions:", e);
     return [];
   }
 }

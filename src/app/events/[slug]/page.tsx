@@ -13,9 +13,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange, formatPrice } from "@/lib/utils";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { events, venues, promoters, eventVendors, vendors, users } from "@/lib/db/schema";
+import { eq, and, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
+
+export const runtime = "edge";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -23,29 +27,55 @@ interface Props {
 
 async function getEvent(slug: string) {
   try {
-    const event = await prisma.event.findUnique({
-      where: { slug, status: "APPROVED" },
-      include: {
-        venue: true,
-        promoter: {
-          include: { user: { select: { name: true, email: true } } },
-        },
-        eventVendors: {
-          where: { status: "APPROVED" },
-          include: { vendor: true },
-        },
+    const db = getCloudflareDb();
+
+    // Get event with venue and promoter
+    const eventResults = await db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .where(and(eq(events.slug, slug), eq(events.status, "APPROVED")))
+      .limit(1);
+
+    if (eventResults.length === 0) return null;
+
+    const eventData = eventResults[0];
+
+    // Get promoter's user
+    const promoterUser = await db
+      .select({ name: users.name, email: users.email })
+      .from(users)
+      .where(eq(users.id, eventData.promoters!.userId))
+      .limit(1);
+
+    // Get event vendors
+    const eventVendorResults = await db
+      .select()
+      .from(eventVendors)
+      .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+      .where(and(eq(eventVendors.eventId, eventData.events.id), eq(eventVendors.status, "APPROVED")));
+
+    // Increment view count
+    await db
+      .update(events)
+      .set({ viewCount: sql`${events.viewCount} + 1` })
+      .where(eq(events.id, eventData.events.id));
+
+    return {
+      ...eventData.events,
+      venue: eventData.venues!,
+      promoter: {
+        ...eventData.promoters!,
+        user: promoterUser[0] || { name: null, email: null },
       },
-    });
-
-    if (event) {
-      await prisma.event.update({
-        where: { id: event.id },
-        data: { viewCount: { increment: 1 } },
-      });
-    }
-
-    return event;
-  } catch {
+      eventVendors: eventVendorResults.map((ev) => ({
+        ...ev.event_vendors,
+        vendor: ev.vendors!,
+      })),
+    };
+  } catch (e) {
+    console.error("Error fetching event:", e);
     return null;
   }
 }

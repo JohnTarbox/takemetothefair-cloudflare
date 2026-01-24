@@ -4,9 +4,13 @@ import { MapPin, Phone, Mail, Globe, Users, Calendar } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { venues, events, promoters } from "@/lib/db/schema";
+import { eq, and, gte } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
+
+export const runtime = "edge";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -14,18 +18,47 @@ interface Props {
 
 async function getVenue(slug: string) {
   try {
-    return await prisma.venue.findUnique({
-      where: { slug, status: "ACTIVE" },
-      include: {
-        events: {
-          where: { status: "APPROVED", endDate: { gte: new Date() } },
-          include: { venue: true, promoter: true },
-          orderBy: { startDate: "asc" },
-          take: 6,
-        },
-      },
-    });
-  } catch {
+    const db = getCloudflareDb();
+
+    // Get venue
+    const venueResults = await db
+      .select()
+      .from(venues)
+      .where(and(eq(venues.slug, slug), eq(venues.status, "ACTIVE")))
+      .limit(1);
+
+    if (venueResults.length === 0) return null;
+
+    const venue = venueResults[0];
+
+    // Get upcoming events for this venue
+    const eventResults = await db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .where(
+        and(
+          eq(events.venueId, venue.id),
+          eq(events.status, "APPROVED"),
+          gte(events.endDate, new Date())
+        )
+      )
+      .orderBy(events.startDate)
+      .limit(6);
+
+    const venueEvents = eventResults.map((r) => ({
+      ...r.events,
+      venue: r.venues!,
+      promoter: r.promoters!,
+    }));
+
+    return {
+      ...venue,
+      events: venueEvents,
+    };
+  } catch (e) {
+    console.error("Error fetching venue:", e);
     return null;
   }
 }

@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { users, promoters, vendors } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
-import { UserRole } from "@prisma/client";
+import { eq } from "drizzle-orm";
+
+export const runtime = "edge";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -30,11 +33,15 @@ export async function POST(request: NextRequest) {
     const { email, password, name, role, companyName, businessName } =
       validation.data;
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const db = getCloudflareDb();
 
-    if (existingUser) {
+    const existingUser = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (existingUser.length > 0) {
       return NextResponse.json(
         { error: "An account with this email already exists" },
         { status: 400 }
@@ -42,33 +49,31 @@ export async function POST(request: NextRequest) {
     }
 
     const passwordHash = await hashPassword(password);
+    const userId = crypto.randomUUID();
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        name,
-        role: role as UserRole,
-      },
+    await db.insert(users).values({
+      id: userId,
+      email,
+      passwordHash,
+      name,
+      role,
     });
 
     if (role === "PROMOTER" && companyName) {
-      await prisma.promoter.create({
-        data: {
-          userId: user.id,
-          companyName,
-          slug: createSlug(companyName),
-        },
+      await db.insert(promoters).values({
+        id: crypto.randomUUID(),
+        userId,
+        companyName,
+        slug: createSlug(companyName),
       });
     }
 
     if (role === "VENDOR" && businessName) {
-      await prisma.vendor.create({
-        data: {
-          userId: user.id,
-          businessName,
-          slug: createSlug(businessName),
-        },
+      await db.insert(vendors).values({
+        id: crypto.randomUUID(),
+        userId,
+        businessName,
+        slug: createSlug(businessName),
       });
     }
 
@@ -76,10 +81,10 @@ export async function POST(request: NextRequest) {
       {
         message: "Account created successfully",
         user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
+          id: userId,
+          email,
+          name,
+          role,
         },
       },
       { status: 201 }

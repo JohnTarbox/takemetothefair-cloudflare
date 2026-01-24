@@ -4,7 +4,11 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateRange, formatPrice } from "@/lib/utils";
 import { parseJsonArray } from "@/types";
-import type { Event, Venue, Promoter } from "@prisma/client";
+import type { events, venues, promoters } from "@/lib/db/schema";
+
+type Event = typeof events.$inferSelect;
+type Venue = typeof venues.$inferSelect;
+type Promoter = typeof promoters.$inferSelect;
 
 interface EventCardProps {
   event: Event & {

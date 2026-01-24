@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { users } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+export const runtime = "edge";
 
 export async function PATCH(request: NextRequest) {
   const session = await auth();
@@ -12,16 +16,19 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const { name } = body;
 
-    const user = await prisma.user.update({
-      where: { id: session.user.id },
-      data: { name },
-    });
+    const db = getCloudflareDb();
+    await db
+      .update(users)
+      .set({ name, updatedAt: new Date() })
+      .where(eq(users.id, session.user.id));
 
-    return NextResponse.json({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-    });
+    const updatedUser = await db
+      .select({ id: users.id, email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+
+    return NextResponse.json(updatedUser[0]);
   } catch (error) {
     console.error("Failed to update profile:", error);
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });

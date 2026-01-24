@@ -2,51 +2,78 @@ import Link from "next/link";
 import { Store, CheckCircle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { vendors, users, eventVendors } from "@/lib/db/schema";
+import { eq, count, isNotNull } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+
+export const runtime = "edge";
 
 interface SearchParams {
   type?: string;
 }
 
 async function getVendors(searchParams: SearchParams) {
-  const where: Record<string, unknown> = {};
-
-  if (searchParams.type) {
-    where.vendorType = searchParams.type;
-  }
-
   try {
-    const vendors = await prisma.vendor.findMany({
-      where,
-      include: {
-        user: { select: { name: true } },
-        _count: {
-          select: {
-            eventVendors: { where: { status: "APPROVED" } },
+    const db = getCloudflareDb();
+
+    // Get all vendors (optionally filtered by type)
+    let vendorQuery = db
+      .select()
+      .from(vendors)
+      .leftJoin(users, eq(vendors.userId, users.id))
+      .orderBy(vendors.businessName);
+
+    if (searchParams.type) {
+      vendorQuery = db
+        .select()
+        .from(vendors)
+        .leftJoin(users, eq(vendors.userId, users.id))
+        .where(eq(vendors.vendorType, searchParams.type))
+        .orderBy(vendors.businessName);
+    }
+
+    const vendorResults = await vendorQuery;
+
+    // Get event counts for each vendor
+    const vendorsWithCounts = await Promise.all(
+      vendorResults.map(async (v) => {
+        const eventCount = await db
+          .select({ count: count() })
+          .from(eventVendors)
+          .where(eq(eventVendors.vendorId, v.vendors.id));
+
+        return {
+          ...v.vendors,
+          user: v.users ? { name: v.users.name } : { name: null },
+          _count: {
+            eventVendors: eventCount[0]?.count || 0,
           },
-        },
-      },
-      orderBy: { businessName: "asc" },
-    });
-    return vendors;
-  } catch {
+        };
+      })
+    );
+
+    return vendorsWithCounts;
+  } catch (e) {
+    console.error("Error fetching vendors:", e);
     return [];
   }
 }
 
 async function getVendorTypes() {
   try {
-    const vendors = await prisma.vendor.findMany({
-      where: { vendorType: { not: null } },
-      select: { vendorType: true },
-      distinct: ["vendorType"],
-    });
-    return vendors
+    const db = getCloudflareDb();
+    const results = await db
+      .selectDistinct({ vendorType: vendors.vendorType })
+      .from(vendors)
+      .where(isNotNull(vendors.vendorType));
+
+    return results
       .map((v) => v.vendorType)
       .filter((t): t is string => t !== null)
       .sort();
-  } catch {
+  } catch (e) {
+    console.error("Error fetching vendor types:", e);
     return [];
   }
 }
@@ -57,7 +84,7 @@ export default async function VendorsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const [vendors, vendorTypes] = await Promise.all([
+  const [vendorList, vendorTypes] = await Promise.all([
     getVendors(params),
     getVendorTypes(),
   ]);
@@ -104,13 +131,13 @@ export default async function VendorsPage({
         </aside>
 
         <main className="lg:col-span-3">
-          {vendors.length === 0 ? (
+          {vendorList.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-500">No vendors found.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {vendors.map((vendor) => {
+              {vendorList.map((vendor) => {
                 const products = parseJsonArray(vendor.products);
                 return (
                   <Link key={vendor.id} href={`/vendors/${vendor.slug}`}>

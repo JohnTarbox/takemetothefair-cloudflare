@@ -4,15 +4,23 @@ import { Calendar, Heart, Settings, User } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { userFavorites } from "@/lib/db/schema";
+import { eq, count } from "drizzle-orm";
+
+export const runtime = "edge";
 
 async function getUserStats(userId: string) {
   try {
-    const favoritesCount = await prisma.userFavorite.count({
-      where: { userId },
-    });
-    return { favoritesCount };
-  } catch {
+    const db = getCloudflareDb();
+    const result = await db
+      .select({ count: count() })
+      .from(userFavorites)
+      .where(eq(userFavorites.userId, userId));
+
+    return { favoritesCount: result[0]?.count || 0 };
+  } catch (e) {
+    console.error("Error fetching user stats:", e);
     return { favoritesCount: 0 };
   }
 }

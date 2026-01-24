@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { events } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+
+export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -15,12 +19,20 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { id } = await params;
 
   try {
-    const event = await prisma.event.update({
-      where: { id },
-      data: { status: "REJECTED" },
-    });
+    const db = getCloudflareDb();
 
-    return NextResponse.json(event);
+    await db
+      .update(events)
+      .set({ status: "REJECTED", updatedAt: new Date() })
+      .where(eq(events.id, id));
+
+    const updatedEvent = await db
+      .select()
+      .from(events)
+      .where(eq(events.id, id))
+      .limit(1);
+
+    return NextResponse.json(updatedEvent[0]);
   } catch (error) {
     console.error("Failed to reject event:", error);
     return NextResponse.json({ error: "Failed to reject event" }, { status: 500 });

@@ -1,7 +1,11 @@
 import { Suspense } from "react";
 import { Search, Filter } from "lucide-react";
 import { EventList } from "@/components/events/event-list";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { events, venues, promoters } from "@/lib/db/schema";
+import { eq, and, gte, like, or, sql, count } from "drizzle-orm";
+
+export const runtime = "edge";
 
 interface SearchParams {
   query?: string;
@@ -14,61 +18,117 @@ interface SearchParams {
 async function getEvents(searchParams: SearchParams) {
   const page = parseInt(searchParams.page || "1");
   const limit = 12;
-  const skip = (page - 1) * limit;
-
-  const where: Record<string, unknown> = {
-    status: "APPROVED",
-    endDate: { gte: new Date() },
-  };
-
-  if (searchParams.query) {
-    where.OR = [
-      { name: { contains: searchParams.query, mode: "insensitive" } },
-      { description: { contains: searchParams.query, mode: "insensitive" } },
-    ];
-  }
-
-  if (searchParams.category) {
-    where.categories = { has: searchParams.category };
-  }
-
-  if (searchParams.state) {
-    where.venue = { state: searchParams.state };
-  }
-
-  if (searchParams.featured === "true") {
-    where.featured = true;
-  }
+  const offset = (page - 1) * limit;
 
   try {
-    const [events, total] = await Promise.all([
-      prisma.event.findMany({
-        where,
-        include: {
-          venue: true,
-          promoter: true,
-        },
-        orderBy: { startDate: "asc" },
-        skip,
-        take: limit,
-      }),
-      prisma.event.count({ where }),
-    ]);
+    const db = getCloudflareDb();
 
-    return { events, total, page, limit };
-  } catch {
+    // Build conditions
+    const conditions = [
+      eq(events.status, "APPROVED"),
+      gte(events.endDate, new Date()),
+    ];
+
+    if (searchParams.query) {
+      conditions.push(
+        or(
+          like(events.name, `%${searchParams.query}%`),
+          like(events.description, `%${searchParams.query}%`)
+        )!
+      );
+    }
+
+    if (searchParams.category) {
+      conditions.push(like(events.categories, `%${searchParams.category}%`));
+    }
+
+    if (searchParams.featured === "true") {
+      conditions.push(eq(events.featured, true));
+    }
+
+    // Get events with joins
+    let query = db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .where(and(...conditions))
+      .orderBy(events.startDate)
+      .limit(limit)
+      .offset(offset);
+
+    // Filter by state if provided (after join)
+    if (searchParams.state) {
+      query = db
+        .select()
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
+        .where(and(...conditions, eq(venues.state, searchParams.state)))
+        .orderBy(events.startDate)
+        .limit(limit)
+        .offset(offset);
+    }
+
+    const results = await query;
+
+    // Count total
+    const countConditions = [...conditions];
+    if (searchParams.state) {
+      const countResult = await db
+        .select({ count: count() })
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .where(and(...countConditions, eq(venues.state, searchParams.state)));
+
+      return {
+        events: results.map((r) => ({
+          ...r.events,
+          venue: r.venues!,
+          promoter: r.promoters!,
+        })),
+        total: countResult[0]?.count || 0,
+        page,
+        limit,
+      };
+    }
+
+    const countResult = await db
+      .select({ count: count() })
+      .from(events)
+      .where(and(...countConditions));
+
+    return {
+      events: results.map((r) => ({
+        ...r.events,
+        venue: r.venues!,
+        promoter: r.promoters!,
+      })),
+      total: countResult[0]?.count || 0,
+      page,
+      limit,
+    };
+  } catch (e) {
+    console.error("Error fetching events:", e);
     return { events: [], total: 0, page: 1, limit };
   }
 }
 
 async function getCategories() {
   try {
-    const events = await prisma.event.findMany({
-      where: { status: "APPROVED" },
-      select: { categories: true },
-    });
+    const db = getCloudflareDb();
+    const results = await db
+      .select({ categories: events.categories })
+      .from(events)
+      .where(eq(events.status, "APPROVED"));
+
     const categories = new Set<string>();
-    events.forEach((e) => e.categories.forEach((c) => categories.add(c)));
+    results.forEach((e) => {
+      try {
+        const cats = JSON.parse(e.categories || "[]");
+        cats.forEach((c: string) => categories.add(c));
+      } catch {}
+    });
     return Array.from(categories).sort();
   } catch {
     return [];
@@ -77,12 +137,13 @@ async function getCategories() {
 
 async function getStates() {
   try {
-    const venues = await prisma.venue.findMany({
-      where: { status: "ACTIVE" },
-      select: { state: true },
-      distinct: ["state"],
-    });
-    return venues.map((v) => v.state).sort();
+    const db = getCloudflareDb();
+    const results = await db
+      .selectDistinct({ state: venues.state })
+      .from(venues)
+      .where(eq(venues.status, "ACTIVE"));
+
+    return results.map((v) => v.state).sort();
   } catch {
     return [];
   }
@@ -179,7 +240,7 @@ export default async function EventsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const [{ events, total, page, limit }, categories, states] =
+  const [{ events: eventsList, total, page, limit }, categories, states] =
     await Promise.all([getEvents(params), getCategories(), getStates()]);
 
   const totalPages = Math.ceil(total / limit);
@@ -207,12 +268,12 @@ export default async function EventsPage({
         <main className="lg:col-span-3">
           <div className="mb-4 flex items-center justify-between">
             <p className="text-sm text-gray-600">
-              Showing {events.length} of {total} events
+              Showing {eventsList.length} of {total} events
             </p>
           </div>
 
           <EventList
-            events={events}
+            events={eventsList}
             emptyMessage="No events match your filters. Try adjusting your search."
           />
 

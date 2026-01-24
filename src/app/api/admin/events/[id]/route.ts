@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+
+export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -16,18 +20,38 @@ export async function GET(request: NextRequest, { params }: Params) {
   const { id } = await params;
 
   try {
-    const event = await prisma.event.findUnique({
-      where: { id },
-      include: {
-        venue: true,
-        promoter: true,
-        eventVendors: { include: { vendor: true } },
-      },
-    });
+    const db = getCloudflareDb();
 
-    if (!event) {
+    const eventResults = await db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .where(eq(events.id, id))
+      .limit(1);
+
+    if (eventResults.length === 0) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
+
+    const eventData = eventResults[0];
+
+    // Get event vendors
+    const eventVendorResults = await db
+      .select()
+      .from(eventVendors)
+      .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+      .where(eq(eventVendors.eventId, id));
+
+    const event = {
+      ...eventData.events,
+      venue: eventData.venues,
+      promoter: eventData.promoters,
+      eventVendors: eventVendorResults.map((ev) => ({
+        ...ev.event_vendors,
+        vendor: ev.vendors,
+      })),
+    };
 
     return NextResponse.json(event);
   } catch (error) {
@@ -62,7 +86,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       status,
     } = body;
 
-    const updateData: Record<string, unknown> = {};
+    const db = getCloudflareDb();
+
+    const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (name) {
       updateData.name = name;
       updateData.slug = createSlug(name);
@@ -71,8 +97,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (venueId) updateData.venueId = venueId;
     if (startDate) updateData.startDate = new Date(startDate);
     if (endDate) updateData.endDate = new Date(endDate);
-    if (categories) updateData.categories = categories;
-    if (tags) updateData.tags = tags;
+    if (categories) updateData.categories = JSON.stringify(categories);
+    if (tags) updateData.tags = JSON.stringify(tags);
     if (ticketUrl !== undefined) updateData.ticketUrl = ticketUrl;
     if (ticketPriceMin !== undefined) updateData.ticketPriceMin = ticketPriceMin;
     if (ticketPriceMax !== undefined) updateData.ticketPriceMax = ticketPriceMax;
@@ -80,12 +106,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (featured !== undefined) updateData.featured = featured;
     if (status) updateData.status = status;
 
-    const event = await prisma.event.update({
-      where: { id },
-      data: updateData,
-    });
+    await db.update(events).set(updateData).where(eq(events.id, id));
 
-    return NextResponse.json(event);
+    const updatedEvent = await db
+      .select()
+      .from(events)
+      .where(eq(events.id, id))
+      .limit(1);
+
+    return NextResponse.json(updatedEvent[0]);
   } catch (error) {
     console.error("Failed to update event:", error);
     return NextResponse.json({ error: "Failed to update event" }, { status: 500 });
@@ -101,7 +130,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   const { id } = await params;
 
   try {
-    await prisma.event.delete({ where: { id } });
+    const db = getCloudflareDb();
+    await db.delete(events).where(eq(events.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Failed to delete event:", error);

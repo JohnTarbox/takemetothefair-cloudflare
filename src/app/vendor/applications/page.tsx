@@ -5,7 +5,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateRange } from "@/lib/utils";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
+
+export const runtime = "edge";
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger"> = {
   PENDING: "warning",
@@ -15,21 +19,39 @@ const statusColors: Record<string, "default" | "success" | "warning" | "danger">
 
 async function getApplications(userId: string) {
   try {
-    const vendor = await prisma.vendor.findUnique({
-      where: { userId },
-      include: {
-        eventVendors: {
-          include: {
-            event: {
-              include: { venue: true },
-            },
-          },
-          orderBy: { createdAt: "desc" },
+    const db = getCloudflareDb();
+
+    // Get the vendor for this user
+    const vendorResults = await db
+      .select()
+      .from(vendors)
+      .where(eq(vendors.userId, userId))
+      .limit(1);
+
+    if (vendorResults.length === 0) return [];
+
+    const vendor = vendorResults[0];
+
+    // Get event applications with events and venues
+    const applicationResults = await db
+      .select()
+      .from(eventVendors)
+      .leftJoin(events, eq(eventVendors.eventId, events.id))
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(eq(eventVendors.vendorId, vendor.id))
+      .orderBy(desc(eventVendors.createdAt));
+
+    return applicationResults
+      .filter((a) => a.events !== null)
+      .map((a) => ({
+        ...a.event_vendors,
+        event: {
+          ...a.events!,
+          venue: a.venues!,
         },
-      },
-    });
-    return vendor?.eventVendors || [];
-  } catch {
+      }));
+  } catch (e) {
+    console.error("Error fetching applications:", e);
     return [];
   }
 }

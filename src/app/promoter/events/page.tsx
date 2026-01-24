@@ -6,7 +6,11 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 import { auth } from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
+import { eq, count, desc } from "drizzle-orm";
+
+export const runtime = "edge";
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",
@@ -18,20 +22,46 @@ const statusColors: Record<string, "default" | "success" | "warning" | "danger" 
 
 async function getPromoterEvents(userId: string) {
   try {
-    const promoter = await prisma.promoter.findUnique({
-      where: { userId },
-      include: {
-        events: {
-          include: {
-            venue: { select: { name: true } },
-            _count: { select: { eventVendors: true } },
-          },
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    });
-    return promoter?.events || [];
-  } catch {
+    const db = getCloudflareDb();
+
+    // Get the promoter for this user
+    const promoterResults = await db
+      .select()
+      .from(promoters)
+      .where(eq(promoters.userId, userId))
+      .limit(1);
+
+    if (promoterResults.length === 0) return [];
+
+    const promoter = promoterResults[0];
+
+    // Get events for this promoter with venue
+    const eventResults = await db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(eq(events.promoterId, promoter.id))
+      .orderBy(desc(events.createdAt));
+
+    // Get vendor counts for each event
+    const eventsWithCounts = await Promise.all(
+      eventResults.map(async (e) => {
+        const vendorCount = await db
+          .select({ count: count() })
+          .from(eventVendors)
+          .where(eq(eventVendors.eventId, e.events.id));
+
+        return {
+          ...e.events,
+          venue: { name: e.venues?.name || "Unknown" },
+          _count: { eventVendors: vendorCount[0]?.count || 0 },
+        };
+      })
+    );
+
+    return eventsWithCounts;
+  } catch (e) {
+    console.error("Error fetching promoter events:", e);
     return [];
   }
 }
@@ -43,7 +73,7 @@ export default async function PromoterEventsPage() {
     redirect("/login");
   }
 
-  const events = await getPromoterEvents(session.user.id);
+  const eventsList = await getPromoterEvents(session.user.id);
 
   return (
     <div>
@@ -62,7 +92,7 @@ export default async function PromoterEventsPage() {
         </Link>
       </div>
 
-      {events.length === 0 ? (
+      {eventsList.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -81,11 +111,11 @@ export default async function PromoterEventsPage() {
       ) : (
         <Card>
           <CardHeader>
-            <p className="text-sm text-gray-600">{events.length} events</p>
+            <p className="text-sm text-gray-600">{eventsList.length} events</p>
           </CardHeader>
           <CardContent>
             <div className="divide-y divide-gray-100">
-              {events.map((event) => (
+              {eventsList.map((event) => (
                 <div
                   key={event.id}
                   className="py-4 flex items-center justify-between"

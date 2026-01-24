@@ -13,16 +13,19 @@ A community calendar website for fairs and events, built for deployment on Cloud
 
 ## Migration Status
 
-This is a work-in-progress migration from the original Prisma/SQLite version. The following has been completed:
+Migration from the original Prisma/SQLite version is **COMPLETE**. All pages and API routes have been migrated to use Drizzle ORM with Cloudflare D1.
 
 - [x] Drizzle schema and configuration
 - [x] Cloudflare D1 setup (wrangler.toml)
 - [x] Edge-compatible auth (SHA-256 password hashing)
 - [x] Database helper utilities
-- [x] Homepage migrated to Drizzle
 - [x] Seed script for local development
-
-**TODO**: The remaining pages and API routes still reference Prisma and need to be migrated to use Drizzle queries. Follow the pattern in `src/app/page.tsx` for migration.
+- [x] All public pages (events, venues, vendors)
+- [x] Dashboard pages (user, favorites)
+- [x] Admin pages and API routes
+- [x] Promoter portal and API routes
+- [x] Vendor portal and API routes
+- [x] All authentication API routes
 
 ## Getting Started
 

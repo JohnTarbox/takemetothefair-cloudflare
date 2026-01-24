@@ -4,9 +4,13 @@ import { Store, Globe, CheckCircle, Calendar, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange } from "@/lib/utils";
-import prisma from "@/lib/prisma";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
+
+export const runtime = "edge";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -14,22 +18,51 @@ interface Props {
 
 async function getVendor(slug: string) {
   try {
-    return await prisma.vendor.findUnique({
-      where: { slug },
-      include: {
-        user: { select: { name: true, email: true } },
-        eventVendors: {
-          where: { status: "APPROVED" },
-          include: {
-            event: {
-              include: { venue: true },
-            },
-          },
-          orderBy: { event: { startDate: "asc" } },
+    const db = getCloudflareDb();
+
+    // Get vendor with user
+    const vendorResults = await db
+      .select()
+      .from(vendors)
+      .leftJoin(users, eq(vendors.userId, users.id))
+      .where(eq(vendors.slug, slug))
+      .limit(1);
+
+    if (vendorResults.length === 0) return null;
+
+    const vendor = vendorResults[0];
+
+    // Get event vendors with events and venues
+    const eventVendorResults = await db
+      .select()
+      .from(eventVendors)
+      .leftJoin(events, eq(eventVendors.eventId, events.id))
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(
+        and(
+          eq(eventVendors.vendorId, vendor.vendors.id),
+          eq(eventVendors.status, "APPROVED")
+        )
+      );
+
+    const vendorEvents = eventVendorResults
+      .filter((ev) => ev.events !== null)
+      .map((ev) => ({
+        ...ev.event_vendors,
+        event: {
+          ...ev.events!,
+          venue: ev.venues!,
         },
-      },
-    });
-  } catch {
+      }))
+      .sort((a, b) => new Date(a.event.startDate).getTime() - new Date(b.event.startDate).getTime());
+
+    return {
+      ...vendor.vendors,
+      user: vendor.users ? { name: vendor.users.name, email: vendor.users.email } : { name: null, email: null },
+      eventVendors: vendorEvents,
+    };
+  } catch (e) {
+    console.error("Error fetching vendor:", e);
     return null;
   }
 }
