@@ -3,7 +3,13 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/lib/db/schema";
 import { hashPassword } from "../src/lib/auth";
 
-const dbPath = ".wrangler/state/v3/d1/miniflare-D1DatabaseObject/local.sqlite";
+// Find the correct D1 database file
+import { readdirSync } from "fs";
+const d1Dir = ".wrangler/state/v3/d1/miniflare-D1DatabaseObject";
+const dbFiles = readdirSync(d1Dir).filter(f => f.endsWith('.sqlite') && f !== 'local.sqlite');
+const dbPath = dbFiles.length > 0
+  ? `${d1Dir}/${dbFiles[0]}`
+  : `${d1Dir}/local.sqlite`;
 
 async function main() {
   console.log("Seeding database...");
