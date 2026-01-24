@@ -1,0 +1,9 @@
+name = "takemetothefair"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "takemetothefair-db"
+database_id = "local"
+migrations_dir = "drizzle"
