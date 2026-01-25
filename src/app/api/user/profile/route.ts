@@ -4,7 +4,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-export const runtime = "edge";
 
 export async function PATCH(request: NextRequest) {
   const session = await auth();

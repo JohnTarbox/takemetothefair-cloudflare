@@ -19,7 +19,6 @@ import { eq, and, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 
-export const runtime = "edge";
 
 interface Props {
   params: Promise<{ slug: string }>;

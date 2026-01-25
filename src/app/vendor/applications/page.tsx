@@ -9,7 +9,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 
-export const runtime = "edge";
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger"> = {
   PENDING: "warning",

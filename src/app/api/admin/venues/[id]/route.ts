@@ -5,7 +5,6 @@ import { venues, events } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

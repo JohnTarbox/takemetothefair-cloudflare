@@ -5,7 +5,6 @@ import { promoters, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
-export const runtime = "edge";
 
 export async function GET() {
   const session = await auth();

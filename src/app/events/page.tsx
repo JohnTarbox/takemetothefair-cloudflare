@@ -5,7 +5,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and, gte, like, or, sql, count } from "drizzle-orm";
 
-export const runtime = "edge";
 
 interface SearchParams {
   query?: string;

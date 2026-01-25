@@ -6,7 +6,6 @@ import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 
-export const runtime = "edge";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),

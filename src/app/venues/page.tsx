@@ -7,7 +7,6 @@ import { venues, events } from "@/lib/db/schema";
 import { eq, and, gte, count } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 
-export const runtime = "edge";
 
 async function getVenues() {
   try {
