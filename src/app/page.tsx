@@ -6,8 +6,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 
-export const runtime = "edge";
-
 async function getFeaturedEvents() {
   try {
     const db = getCloudflareDb();
