@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 
+export const runtime = "edge";
+
 interface Event {
   id: string;
   name: string;
@@ -39,7 +41,7 @@ export default function AdminEventsPage() {
   const fetchEvents = async () => {
     try {
       const res = await fetch("/api/admin/events");
-      const data = await res.json();
+      const data = await res.json() as Event[];
       setEvents(data);
     } catch (error) {
       console.error("Failed to fetch events:", error);

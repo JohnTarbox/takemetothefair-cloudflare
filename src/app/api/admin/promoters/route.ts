@@ -5,6 +5,8 @@ import { promoters, events, users } from "@/lib/db/schema";
 import { eq, count } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
+export const runtime = "edge";
+
 export async function GET() {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
@@ -48,7 +50,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
     const { userId, companyName, description, website, logoUrl } = body;
 
     const db = getCloudflareDb();

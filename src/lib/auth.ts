@@ -1,12 +1,11 @@
 import NextAuth from "next-auth";
+import type { JWT } from "next-auth/jwt";
+import type { Session, User } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { drizzle } from "drizzle-orm/d1";
-import { drizzle as drizzleBetterSqlite } from "drizzle-orm/better-sqlite3";
-import Database from "better-sqlite3";
+import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq } from "drizzle-orm";
-import { readdirSync } from "fs";
 
 type UserRole = "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
 
@@ -48,19 +47,6 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return newHash === hash;
 }
 
-// Get local SQLite database for development
-function getLocalDb() {
-  const d1Dir = ".wrangler/state/v3/d1/miniflare-D1DatabaseObject";
-  try {
-    const dbFiles = readdirSync(d1Dir).filter(f => f.endsWith('.sqlite') && f !== 'local.sqlite');
-    const dbPath = dbFiles.length > 0 ? `${d1Dir}/${dbFiles[0]}` : `${d1Dir}/local.sqlite`;
-    const sqlite = new Database(dbPath);
-    return drizzleBetterSqlite(sqlite, { schema });
-  } catch {
-    return null;
-  }
-}
-
 // Create NextAuth config
 const authConfig = {
   session: { strategy: "jwt" as const },
@@ -80,37 +66,37 @@ const authConfig = {
           return null;
         }
 
-        // Try to get database - local for dev, D1 for production
-        const db = getLocalDb();
-        if (!db) {
-          console.error("Database not available");
+        try {
+          const db = getCloudflareDb();
+
+          const user = await db.query.users.findFirst({
+            where: eq(schema.users.email, credentials.email as string),
+          });
+
+          if (!user || !user.passwordHash) {
+            return null;
+          }
+
+          const isValid = await verifyPassword(
+            credentials.password as string,
+            user.passwordHash
+          );
+
+          if (!isValid) {
+            return null;
+          }
+
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            image: user.image,
+            role: user.role as UserRole,
+          };
+        } catch (error) {
+          console.error("Auth error:", error);
           return null;
         }
-
-        const user = await db.query.users.findFirst({
-          where: eq(schema.users.email, credentials.email as string),
-        });
-
-        if (!user || !user.passwordHash) {
-          return null;
-        }
-
-        const isValid = await verifyPassword(
-          credentials.password as string,
-          user.passwordHash
-        );
-
-        if (!isValid) {
-          return null;
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-          role: user.role as UserRole,
-        };
       },
     }),
     Google({
@@ -119,14 +105,14 @@ const authConfig = {
     }),
   ],
   callbacks: {
-    async jwt({ token, user }: { token: any; user: any }) {
+    async jwt({ token, user }: { token: JWT; user?: User }) {
       if (user && user.id) {
         token.id = user.id;
         token.role = user.role;
       }
       return token;
     },
-    async session({ session, token }: { session: any; token: any }) {
+    async session({ session, token }: { session: Session; token: JWT }) {
       if (session.user && token.id) {
         session.user.id = token.id as string;
         session.user.role = token.role as UserRole;

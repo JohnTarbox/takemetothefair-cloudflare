@@ -5,6 +5,8 @@ import { vendors, eventVendors, events, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
+export const runtime = "edge";
+
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -62,7 +64,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
 
   try {
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
     const { businessName, description, vendorType, website, logoUrl, verified } = body;
 
     const db = getCloudflareDb();

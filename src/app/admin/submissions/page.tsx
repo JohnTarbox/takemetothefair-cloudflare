@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
 
+export const runtime = "edge";
+
 interface Event {
   id: string;
   name: string;
@@ -31,7 +33,7 @@ export default function AdminSubmissionsPage() {
   const fetchSubmissions = async () => {
     try {
       const res = await fetch("/api/admin/events?status=PENDING");
-      const data = await res.json();
+      const data = await res.json() as Event[];
       setSubmissions(data);
     } catch (error) {
       console.error("Failed to fetch submissions:", error);

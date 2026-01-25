@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+export const runtime = "edge";
+
 interface Vendor {
   id: string;
   businessName: string;
@@ -28,7 +30,7 @@ export default function AdminVendorsPage() {
   const fetchVendors = async () => {
     try {
       const res = await fetch("/api/admin/vendors");
-      const data = await res.json();
+      const data = await res.json() as Vendor[];
       setVendors(data);
     } catch (error) {
       console.error("Failed to fetch vendors:", error);

@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+export const runtime = "edge";
+
 interface Venue {
   id: string;
   name: string;
@@ -58,7 +60,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     try {
       const res = await fetch(`/api/admin/events/${id}`);
       if (!res.ok) throw new Error("Event not found");
-      const data = await res.json();
+      const data = await res.json() as Event;
       setEvent(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load event");
@@ -70,7 +72,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const fetchVenues = async () => {
     try {
       const res = await fetch("/api/venues");
-      const data = await res.json();
+      const data = await res.json() as Venue[];
       setVenues(data);
     } catch (err) {
       console.error("Failed to fetch venues:", err);
@@ -80,7 +82,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const fetchPromoters = async () => {
     try {
       const res = await fetch("/api/admin/promoters");
-      const data = await res.json();
+      const data = await res.json() as Promoter[];
       setPromoters(data);
     } catch (err) {
       console.error("Failed to fetch promoters:", err);
@@ -115,7 +117,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       });
 
       if (!res.ok) {
-        const result = await res.json();
+        const result = await res.json() as { error?: string };
         throw new Error(result.error || "Failed to update event");
       }
 

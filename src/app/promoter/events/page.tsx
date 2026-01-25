@@ -10,6 +10,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
 import { eq, count, desc } from "drizzle-orm";
 
+export const runtime = "edge";
+
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",

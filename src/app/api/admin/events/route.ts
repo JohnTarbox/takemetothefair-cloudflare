@@ -5,6 +5,8 @@ import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
+export const runtime = "edge";
+
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -18,24 +20,15 @@ export async function GET(request: NextRequest) {
   try {
     const db = getCloudflareDb();
 
-    let query = db
+    const baseQuery = db
       .select()
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .orderBy(desc(events.createdAt));
+      .leftJoin(promoters, eq(events.promoterId, promoters.id));
 
-    if (status) {
-      query = db
-        .select()
-        .from(events)
-        .leftJoin(venues, eq(events.venueId, venues.id))
-        .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(eq(events.status, status))
-        .orderBy(desc(events.createdAt));
-    }
-
-    const results = await query;
+    const results = status
+      ? await baseQuery.where(eq(events.status, status as "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED")).orderBy(desc(events.createdAt))
+      : await baseQuery.orderBy(desc(events.createdAt));
 
     const eventsList = results.map((r) => ({
       ...r.events,
@@ -57,7 +50,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
     const {
       name,
       description,
@@ -80,21 +73,21 @@ export async function POST(request: NextRequest) {
 
     await db.insert(events).values({
       id: eventId,
-      name,
-      slug: createSlug(name),
-      description,
-      venueId,
-      promoterId,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      name: name as string,
+      slug: createSlug(name as string),
+      description: description as string | undefined,
+      venueId: venueId as string,
+      promoterId: promoterId as string,
+      startDate: new Date(startDate as string),
+      endDate: new Date(endDate as string),
       categories: JSON.stringify(categories || []),
       tags: JSON.stringify(tags || []),
-      ticketUrl,
-      ticketPriceMin,
-      ticketPriceMax,
-      imageUrl,
-      featured: featured || false,
-      status: status || "APPROVED",
+      ticketUrl: ticketUrl as string | undefined,
+      ticketPriceMin: ticketPriceMin as number | undefined,
+      ticketPriceMax: ticketPriceMax as number | undefined,
+      imageUrl: imageUrl as string | undefined,
+      featured: (featured as boolean) || false,
+      status: (status as "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED") || "APPROVED",
     });
 
     const newEvent = await db

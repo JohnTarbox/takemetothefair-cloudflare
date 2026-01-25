@@ -4,6 +4,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
+export const runtime = "edge";
+
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -17,7 +19,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
 
   try {
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
     const { role, name } = body;
 
     const db = getCloudflareDb();

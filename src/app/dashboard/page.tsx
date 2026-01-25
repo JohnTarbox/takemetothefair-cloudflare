@@ -8,6 +8,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites } from "@/lib/db/schema";
 import { eq, count } from "drizzle-orm";
 
+export const runtime = "edge";
+
 
 async function getUserStats(userId: string) {
   try {

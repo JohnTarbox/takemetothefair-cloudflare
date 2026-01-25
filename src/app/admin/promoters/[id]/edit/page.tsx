@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+export const runtime = "edge";
+
 interface Promoter {
   id: string;
   companyName: string;
@@ -36,7 +38,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
     try {
       const res = await fetch(`/api/admin/promoters/${id}`);
       if (!res.ok) throw new Error("Promoter not found");
-      const data = await res.json();
+      const data = await res.json() as Promoter;
       setPromoter(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load promoter");
@@ -67,7 +69,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
       });
 
       if (!res.ok) {
-        const result = await res.json();
+        const result = await res.json() as { error?: string };
         throw new Error(result.error || "Failed to update promoter");
       }
 

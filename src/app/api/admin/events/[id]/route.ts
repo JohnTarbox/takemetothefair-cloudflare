@@ -5,6 +5,8 @@ import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schem
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
+export const runtime = "edge";
+
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -68,7 +70,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const { id } = await params;
 
   try {
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
     const {
       name,
       description,
@@ -90,12 +92,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (name) {
       updateData.name = name;
-      updateData.slug = createSlug(name);
+      updateData.slug = createSlug(name as string);
     }
     if (description !== undefined) updateData.description = description;
     if (venueId) updateData.venueId = venueId;
-    if (startDate) updateData.startDate = new Date(startDate);
-    if (endDate) updateData.endDate = new Date(endDate);
+    if (startDate) updateData.startDate = new Date(startDate as string);
+    if (endDate) updateData.endDate = new Date(endDate as string);
     if (categories) updateData.categories = JSON.stringify(categories);
     if (tags) updateData.tags = JSON.stringify(tags);
     if (ticketUrl !== undefined) updateData.ticketUrl = ticketUrl;

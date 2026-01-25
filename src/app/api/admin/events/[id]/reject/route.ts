@@ -4,6 +4,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
+export const runtime = "edge";
+
 
 interface Params {
   params: Promise<{ id: string }>;

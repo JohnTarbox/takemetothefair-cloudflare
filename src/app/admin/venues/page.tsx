@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+export const runtime = "edge";
+
 interface Venue {
   id: string;
   name: string;
@@ -29,7 +31,7 @@ export default function AdminVenuesPage() {
   const fetchVenues = async () => {
     try {
       const res = await fetch("/api/admin/venues");
-      const data = await res.json();
+      const data = await res.json() as Venue[];
       setVenues(data);
     } catch (error) {
       console.error("Failed to fetch venues:", error);

@@ -6,6 +6,8 @@ import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 
+export const runtime = "edge";
+
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -18,7 +20,7 @@ const registerSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = await request.json() as Record<string, unknown>;
     const validation = registerSchema.safeParse(body);
 
     if (!validation.success) {

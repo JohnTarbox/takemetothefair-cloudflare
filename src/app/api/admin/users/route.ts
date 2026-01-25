@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, promoters, vendors } from "@/lib/db/schema";
-import { eq, notInArray } from "drizzle-orm";
+import { notInArray } from "drizzle-orm";
+
+export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const session = await auth();

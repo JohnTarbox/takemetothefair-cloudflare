@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+export const runtime = "edge";
+
 interface Venue {
   id: string;
   name: string;
@@ -44,7 +46,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
     try {
       const res = await fetch(`/api/admin/venues/${id}`);
       if (!res.ok) throw new Error("Venue not found");
-      const data = await res.json();
+      const data = await res.json() as Venue;
       setVenue(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load venue");
@@ -84,7 +86,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       });
 
       if (!res.ok) {
-        const result = await res.json();
+        const result = await res.json() as { error?: string };
         throw new Error(result.error || "Failed to update venue");
       }
 

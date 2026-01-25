@@ -7,6 +7,8 @@ import { vendors, users, eventVendors } from "@/lib/db/schema";
 import { eq, count, isNotNull } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 
+export const runtime = "edge";
+
 
 interface SearchParams {
   type?: string;

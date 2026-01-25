@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+export const runtime = "edge";
+
 interface VendorProfile {
   id: string;
   businessName: string;

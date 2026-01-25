@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
+export const runtime = "edge";
+
 export default function SettingsPage() {
   const { data: session, update } = useSession();
   const [loading, setLoading] = useState(false);

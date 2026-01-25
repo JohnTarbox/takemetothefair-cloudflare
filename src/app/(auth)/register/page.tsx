@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
+export const runtime = "edge";
+
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -69,7 +71,7 @@ function RegisterForm() {
         }),
       });
 
-      const data = await response.json();
+      const data = await response.json() as { error?: string };
 
       if (!response.ok) {
         setError(data.error || "Registration failed");

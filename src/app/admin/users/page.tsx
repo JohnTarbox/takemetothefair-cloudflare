@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+
+export const runtime = "edge";
 
 interface User {
   id: string;
@@ -32,7 +33,7 @@ export default function AdminUsersPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users");
-      const data = await res.json();
+      const data = await res.json() as User[];
       setUsers(data);
     } catch (error) {
       console.error("Failed to fetch users:", error);

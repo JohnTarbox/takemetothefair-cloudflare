@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
+export const runtime = "edge";
+
 export default function NewVenuePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -46,7 +48,7 @@ export default function NewVenuePage() {
       });
 
       if (!res.ok) {
-        const result = await res.json();
+        const result = await res.json() as { error?: string };
         throw new Error(result.error || "Failed to create venue");
       }
 

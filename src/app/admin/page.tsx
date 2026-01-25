@@ -4,6 +4,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users } from "@/lib/db/schema";
 import { eq, count } from "drizzle-orm";
 
+export const runtime = "edge";
+
 
 async function getStats() {
   try {

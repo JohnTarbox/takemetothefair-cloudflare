@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+export const runtime = "edge";
+
 interface Promoter {
   id: string;
   companyName: string;
@@ -27,7 +29,7 @@ export default function AdminPromotersPage() {
   const fetchPromoters = async () => {
     try {
       const res = await fetch("/api/admin/promoters");
-      const data = await res.json();
+      const data = await res.json() as Promoter[];
       setPromoters(data);
     } catch (error) {
       console.error("Failed to fetch promoters:", error);
