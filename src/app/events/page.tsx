@@ -13,6 +13,7 @@ interface SearchParams {
   category?: string;
   state?: string;
   featured?: string;
+  commercialVendors?: string;
   page?: string;
 }
 
@@ -45,6 +46,10 @@ async function getEvents(searchParams: SearchParams) {
 
     if (searchParams.featured === "true") {
       conditions.push(eq(events.featured, true));
+    }
+
+    if (searchParams.commercialVendors === "true") {
+      conditions.push(eq(events.commercialVendorsAllowed, true));
     }
 
     // Get events with joins
@@ -222,6 +227,17 @@ function EventsFilter({
           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm text-gray-700">Featured only</span>
+      </label>
+
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          name="commercialVendors"
+          value="true"
+          defaultChecked={searchParams.commercialVendors === "true"}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm text-gray-700">Commercial vendors allowed</span>
       </label>
 
       <button
