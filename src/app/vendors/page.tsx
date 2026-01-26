@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { Store, CheckCircle } from "lucide-react";
+import { Store, CheckCircle, Calendar, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, users, eventVendors } from "@/lib/db/schema";
-import { eq, count, isNotNull } from "drizzle-orm";
+import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
+import { eq, and, gte, isNotNull } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+import { formatDateRange } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -36,25 +37,47 @@ async function getVendors(searchParams: SearchParams) {
 
     const vendorResults = await vendorQuery;
 
-    // Get event counts for each vendor
-    const vendorsWithCounts = await Promise.all(
+    // Get events for each vendor
+    const vendorsWithEvents = await Promise.all(
       vendorResults.map(async (v) => {
-        const eventCount = await db
-          .select({ count: count() })
+        // Get approved upcoming events for this vendor
+        const vendorEvents = await db
+          .select()
           .from(eventVendors)
-          .where(eq(eventVendors.vendorId, v.vendors.id));
+          .leftJoin(events, eq(eventVendors.eventId, events.id))
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(
+            and(
+              eq(eventVendors.vendorId, v.vendors.id),
+              eq(eventVendors.status, "APPROVED"),
+              eq(events.status, "APPROVED"),
+              gte(events.endDate, new Date())
+            )
+          );
 
         return {
           ...v.vendors,
           user: v.users ? { name: v.users.name } : { name: null },
-          _count: {
-            eventVendors: eventCount[0]?.count || 0,
-          },
+          events: vendorEvents
+            .filter((e) => e.events !== null)
+            .map((e) => ({
+              id: e.events!.id,
+              name: e.events!.name,
+              slug: e.events!.slug,
+              startDate: e.events!.startDate,
+              endDate: e.events!.endDate,
+              imageUrl: e.events!.imageUrl,
+              venue: e.venues ? {
+                name: e.venues.name,
+                city: e.venues.city,
+                state: e.venues.state,
+              } : null,
+            })),
         };
       })
     );
 
-    return vendorsWithCounts;
+    return vendorsWithEvents;
   } catch (e) {
     console.error("Error fetching vendors:", e);
     return [];
@@ -137,13 +160,13 @@ export default async function VendorsPage({
               <p className="text-gray-500">No vendors found.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-8">
               {vendorList.map((vendor) => {
                 const products = parseJsonArray(vendor.products);
                 return (
-                  <Link key={vendor.id} href={`/vendors/${vendor.slug}`}>
-                    <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
-                      <div className="p-6 flex gap-4">
+                  <Card key={vendor.id} className="overflow-hidden">
+                    <div className="p-6">
+                      <Link href={`/vendors/${vendor.slug}`} className="flex gap-4 hover:opacity-80 transition-opacity">
                         <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
                           {vendor.logoUrl ? (
                             <img
@@ -162,6 +185,9 @@ export default async function VendorsPage({
                             </h3>
                             {vendor.verified && (
                               <CheckCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                            )}
+                            {vendor.commercial && (
+                              <Badge variant="default">Commercial</Badge>
                             )}
                           </div>
                           {vendor.vendorType && (
@@ -183,13 +209,57 @@ export default async function VendorsPage({
                               ))}
                             </div>
                           )}
-                          <p className="text-xs text-gray-500 mt-2">
-                            {vendor._count.eventVendors} events
-                          </p>
                         </div>
-                      </div>
-                    </Card>
-                  </Link>
+                      </Link>
+
+                      {/* Events Grid */}
+                      {vendor.events.length > 0 && (
+                        <div className="mt-6 pt-6 border-t border-gray-100">
+                          <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center gap-2">
+                            <Calendar className="w-4 h-4" />
+                            Upcoming Events ({vendor.events.length})
+                          </h4>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {vendor.events.map((event) => (
+                              <Link
+                                key={event.id}
+                                href={`/events/${event.slug}`}
+                                className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                              >
+                                {event.imageUrl && (
+                                  <div className="aspect-video rounded-md overflow-hidden mb-2">
+                                    <img
+                                      src={event.imageUrl}
+                                      alt={event.name}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  </div>
+                                )}
+                                <p className="font-medium text-gray-900 text-sm truncate">
+                                  {event.name}
+                                </p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  {formatDateRange(event.startDate, event.endDate)}
+                                </p>
+                                {event.venue && (
+                                  <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
+                                    <MapPin className="w-3 h-3" />
+                                    {event.venue.city}, {event.venue.state}
+                                  </p>
+                                )}
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {vendor.events.length === 0 && (
+                        <p className="mt-4 text-xs text-gray-500">
+                          No upcoming events scheduled
+                        </p>
+                      )}
+                    </div>
+                  </Card>
                 );
               })}
             </div>
