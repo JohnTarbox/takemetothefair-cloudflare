@@ -296,8 +296,8 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
                   }
                 }
               }
-              // Extract website URL from JSON-LD if available
-              if (item.url && !details.website) {
+              // Extract website URL from JSON-LD if available (skip mainefairs.net URLs)
+              if (item.url && !details.website && !item.url.includes('mainefairs.net')) {
                 details.website = item.url;
               }
               break;

@@ -306,7 +306,7 @@ export async function PATCH(request: Request) {
         const details = await scrapeEventDetails(event.sourceUrl);
 
         // Update if we got new details
-        if (details.description || details.startDate || details.endDate || details.imageUrl) {
+        if (details.description || details.startDate || details.endDate || details.imageUrl || details.website) {
           const updates: Record<string, unknown> = {
             lastSyncedAt: new Date(),
             updatedAt: new Date(),
@@ -323,6 +323,9 @@ export async function PATCH(request: Request) {
           }
           if (details.imageUrl && details.imageUrl !== event.imageUrl) {
             updates.imageUrl = details.imageUrl;
+          }
+          if (details.website && details.website !== event.ticketUrl) {
+            updates.ticketUrl = details.website;
           }
 
           if (Object.keys(updates).length > 2) { // More than just timestamps
