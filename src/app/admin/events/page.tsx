@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -143,12 +143,17 @@ export default function AdminEventsPage() {
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/events/${event.slug}`}>
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" title="View">
                             <Eye className="w-4 h-4" />
                           </Button>
                         </Link>
+                        <Link href={`/admin/events/${event.id}/vendors`}>
+                          <Button variant="ghost" size="sm" title="Manage Vendors">
+                            <Store className="w-4 h-4" />
+                          </Button>
+                        </Link>
                         <Link href={`/admin/events/${event.id}/edit`}>
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" title="Edit">
                             <Pencil className="w-4 h-4" />
                           </Button>
                         </Link>
