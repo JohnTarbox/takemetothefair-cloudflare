@@ -8,12 +8,14 @@ import {
   Users,
   ClipboardList,
   Megaphone,
+  Download,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 
 const adminNav = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { name: "Events", href: "/admin/events", icon: Calendar },
+  { name: "Import Events", href: "/admin/import", icon: Download },
   { name: "Venues", href: "/admin/venues", icon: MapPin },
   { name: "Vendors", href: "/admin/vendors", icon: Store },
   { name: "Promoters", href: "/admin/promoters", icon: Megaphone },

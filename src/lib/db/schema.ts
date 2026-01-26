@@ -74,6 +74,12 @@ export const events = sqliteTable("events", {
   commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(true),
   status: text("status", { enum: ["DRAFT", "PENDING", "APPROVED", "REJECTED", "CANCELLED"] }).default("DRAFT").notNull(),
   viewCount: integer("view_count").default(0),
+  // External source tracking for synced events
+  sourceName: text("source_name"), // e.g., "mainefairs.net"
+  sourceUrl: text("source_url"), // URL of the event on the source site
+  sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
+  syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(true),
+  lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
