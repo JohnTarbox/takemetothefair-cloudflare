@@ -6,6 +6,12 @@ import { Plus, Pencil, Trash2, Eye, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 
 export const runtime = "edge";
 
@@ -21,6 +27,10 @@ interface Promoter {
 export default function AdminPromotersPage() {
   const [promoters, setPromoters] = useState<Promoter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: "companyName",
+    direction: "asc",
+  });
 
   useEffect(() => {
     fetchPromoters();
@@ -50,6 +60,17 @@ export default function AdminPromotersPage() {
       console.error("Failed to delete promoter:", error);
     }
   };
+
+  const handleSort = (column: string) => {
+    setSortConfig(getNextSortDirection(sortConfig, column));
+  };
+
+  const sortedPromoters = sortData(promoters, sortConfig, {
+    companyName: (p) => p.companyName,
+    user: (p) => p.user?.email || "",
+    events: (p) => p._count.events,
+    verified: (p) => p.verified,
+  });
 
   if (loading) {
     return (
@@ -81,25 +102,37 @@ export default function AdminPromotersPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Company
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    User
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Events
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Status
-                  </th>
+                  <SortableHeader
+                    column="companyName"
+                    label="Company"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="user"
+                    label="User"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="events"
+                    label="Events"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="verified"
+                    label="Status"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {promoters.map((promoter) => (
+                {sortedPromoters.map((promoter) => (
                   <tr key={promoter.id} className="border-b border-gray-100">
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{promoter.companyName}</p>

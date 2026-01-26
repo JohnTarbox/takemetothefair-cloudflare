@@ -4,6 +4,12 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 
 export const runtime = "edge";
 
@@ -25,6 +31,10 @@ const roleColors: Record<string, "default" | "success" | "warning" | "danger" | 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: "email",
+    direction: "asc",
+  });
 
   useEffect(() => {
     fetchUsers();
@@ -58,6 +68,17 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleSort = (column: string) => {
+    setSortConfig(getNextSortDirection(sortConfig, column));
+  };
+
+  const sortedUsers = sortData(users, sortConfig, {
+    email: (u) => u.email,
+    name: (u) => u.name || "",
+    role: (u) => u.role,
+    createdAt: (u) => new Date(u.createdAt).getTime(),
+  });
+
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
@@ -82,25 +103,37 @@ export default function AdminUsersPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Email
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Name
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Role
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Joined
-                  </th>
+                  <SortableHeader
+                    column="email"
+                    label="Email"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="name"
+                    label="Name"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="role"
+                    label="Role"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="createdAt"
+                    label="Joined"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
+                {sortedUsers.map((user) => (
                   <tr key={user.id} className="border-b border-gray-100">
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{user.email}</p>

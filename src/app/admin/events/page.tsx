@@ -7,6 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 
 export const runtime = "edge";
 
@@ -33,6 +39,10 @@ const statusColors: Record<string, "default" | "success" | "warning" | "danger" 
 export default function AdminEventsPage() {
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: "startDate",
+    direction: "asc",
+  });
 
   useEffect(() => {
     fetchEvents();
@@ -62,6 +72,18 @@ export default function AdminEventsPage() {
       console.error("Failed to delete event:", error);
     }
   };
+
+  const handleSort = (column: string) => {
+    setSortConfig(getNextSortDirection(sortConfig, column));
+  };
+
+  const sortedEvents = sortData(events, sortConfig, {
+    name: (e) => e.name,
+    venue: (e) => e.venue.name,
+    promoter: (e) => e.promoter.companyName,
+    startDate: (e) => new Date(e.startDate).getTime(),
+    status: (e) => e.status,
+  });
 
   if (loading) {
     return (
@@ -93,28 +115,43 @@ export default function AdminEventsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Event
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Venue
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Promoter
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Date
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Status
-                  </th>
+                  <SortableHeader
+                    column="name"
+                    label="Event"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="venue"
+                    label="Venue"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="promoter"
+                    label="Promoter"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="startDate"
+                    label="Date"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="status"
+                    label="Status"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {events.map((event) => (
+                {sortedEvents.map((event) => (
                   <tr key={event.id} className="border-b border-gray-100">
                     <td className="py-3 px-4">
                       <div>

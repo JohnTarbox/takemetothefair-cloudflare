@@ -6,6 +6,12 @@ import { Plus, Pencil, Trash2, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 
 export const runtime = "edge";
 
@@ -23,6 +29,10 @@ interface Venue {
 export default function AdminVenuesPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: "name",
+    direction: "asc",
+  });
 
   useEffect(() => {
     fetchVenues();
@@ -52,6 +62,18 @@ export default function AdminVenuesPage() {
       console.error("Failed to delete venue:", error);
     }
   };
+
+  const handleSort = (column: string) => {
+    setSortConfig(getNextSortDirection(sortConfig, column));
+  };
+
+  const sortedVenues = sortData(venues, sortConfig, {
+    name: (v) => v.name,
+    location: (v) => `${v.city}, ${v.state}`,
+    capacity: (v) => v.capacity || 0,
+    events: (v) => v._count.events,
+    status: (v) => v.status,
+  });
 
   if (loading) {
     return (
@@ -83,28 +105,43 @@ export default function AdminVenuesPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Venue
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Location
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Capacity
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Events
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Status
-                  </th>
+                  <SortableHeader
+                    column="name"
+                    label="Venue"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="location"
+                    label="Location"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="capacity"
+                    label="Capacity"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="events"
+                    label="Events"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="status"
+                    label="Status"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {venues.map((venue) => (
+                {sortedVenues.map((venue) => (
                   <tr key={venue.id} className="border-b border-gray-100">
                     <td className="py-3 px-4 font-medium text-gray-900">
                       {venue.name}

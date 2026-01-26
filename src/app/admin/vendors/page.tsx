@@ -6,6 +6,12 @@ import { Plus, Pencil, Trash2, Eye, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 
 export const runtime = "edge";
 
@@ -23,6 +29,10 @@ interface Vendor {
 export default function AdminVendorsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: "businessName",
+    direction: "asc",
+  });
 
   useEffect(() => {
     fetchVendors();
@@ -52,6 +62,19 @@ export default function AdminVendorsPage() {
       console.error("Failed to delete vendor:", error);
     }
   };
+
+  const handleSort = (column: string) => {
+    setSortConfig(getNextSortDirection(sortConfig, column));
+  };
+
+  const sortedVendors = sortData(vendors, sortConfig, {
+    businessName: (v) => v.businessName,
+    vendorType: (v) => v.vendorType || "",
+    user: (v) => v.user?.email || "",
+    events: (v) => v._count.events,
+    verified: (v) => v.verified,
+    commercial: (v) => v.commercial,
+  });
 
   if (loading) {
     return (
@@ -83,31 +106,49 @@ export default function AdminVendorsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Business
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Type
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    User
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Events
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Status
-                  </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
-                    Type
-                  </th>
+                  <SortableHeader
+                    column="businessName"
+                    label="Business"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="vendorType"
+                    label="Type"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="user"
+                    label="User"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="events"
+                    label="Events"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="verified"
+                    label="Status"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
+                  <SortableHeader
+                    column="commercial"
+                    label="Commercial"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {vendors.map((vendor) => (
+                {sortedVendors.map((vendor) => (
                   <tr key={vendor.id} className="border-b border-gray-100">
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{vendor.businessName}</p>
