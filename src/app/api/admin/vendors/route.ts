@@ -51,21 +51,21 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json() as Record<string, unknown>;
-    const { userId, businessName, description, vendorType, website, logoUrl } = body;
+    const { userId, businessName, description, vendorType, website, logoUrl, verified } = body;
 
     const db = getCloudflareDb();
     const vendorId = crypto.randomUUID();
 
     await db.insert(vendors).values({
       id: vendorId,
-      userId,
-      businessName,
-      slug: createSlug(businessName),
-      description,
-      vendorType,
-      website,
-      logoUrl,
-      verified: false,
+      userId: userId as string,
+      businessName: businessName as string,
+      slug: createSlug(businessName as string),
+      description: description as string | undefined,
+      vendorType: vendorType as string | undefined,
+      website: website as string | undefined,
+      logoUrl: logoUrl as string | undefined,
+      verified: verified as boolean | undefined,
     });
 
     // Update user role to VENDOR
