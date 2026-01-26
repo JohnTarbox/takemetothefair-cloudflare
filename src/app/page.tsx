@@ -7,6 +7,7 @@ import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 async function getFeaturedEvents() {
   try {

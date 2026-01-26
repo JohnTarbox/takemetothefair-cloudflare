@@ -12,6 +12,7 @@ import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 
 interface Props {

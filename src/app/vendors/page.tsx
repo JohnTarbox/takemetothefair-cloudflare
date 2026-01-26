@@ -9,6 +9,7 @@ import { parseJsonArray } from "@/types";
 import { formatDateRange } from "@/lib/utils";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 
 interface SearchParams {

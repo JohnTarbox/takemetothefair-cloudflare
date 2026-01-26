@@ -8,6 +8,7 @@ import { eq, and, gte, count } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 
 async function getVenues() {

@@ -11,6 +11,7 @@ import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 
 interface Props {

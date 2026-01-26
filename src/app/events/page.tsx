@@ -6,6 +6,7 @@ import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schem
 import { eq, and, gte, like, or, count } from "drizzle-orm";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic"; // Disable caching for fresh data
 
 
 interface SearchParams {

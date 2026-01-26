@@ -24,6 +24,7 @@ import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic"; // Disable caching for fresh data
 
 
 interface Props {
