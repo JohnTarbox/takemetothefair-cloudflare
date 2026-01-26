@@ -227,59 +227,108 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
     const html = await response.text();
     const details: Partial<ScrapedEvent> = {};
 
-    // Try to extract description
-    const descMatch = html.match(/<div[^>]*class="[^"]*tribe-events-single-event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
-    if (descMatch) {
-      // Strip HTML tags and clean up
-      details.description = descMatch[1]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 2000);
-    }
+    // First, try to extract dates from JSON-LD structured data (most reliable)
+    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+    if (jsonLdMatch) {
+      for (const match of jsonLdMatch) {
+        try {
+          const jsonContent = match.replace(/<script[^>]*>|<\/script>/gi, '').trim();
+          const data = JSON.parse(jsonContent);
 
-    // Try to extract venue/location
-    const venueMatch = html.match(/<span[^>]*class="[^"]*tribe-venue[^"]*"[^>]*>([^<]+)<\/span>/i);
-    if (venueMatch) {
-      details.location = venueMatch[1].trim();
-    }
+          // Handle both single object and array of objects
+          const items = Array.isArray(data) ? data : [data];
 
-    // Try to extract address
-    const addressMatch = html.match(/<address[^>]*class="[^"]*tribe-events-address[^"]*"[^>]*>([\s\S]*?)<\/address>/i);
-    if (addressMatch) {
-      const addressText = addressMatch[1].replace(/<[^>]+>/g, ', ').replace(/,\s*,/g, ',').trim();
-      details.address = addressText;
-
-      // Try to extract city
-      const cityMatch = addressMatch[1].match(/<span[^>]*class="[^"]*tribe-locality[^"]*"[^>]*>([^<]+)<\/span>/i);
-      if (cityMatch) {
-        details.city = cityMatch[1].trim();
+          for (const item of items) {
+            if (item['@type'] === 'Event' || item.startDate) {
+              if (item.startDate) {
+                const start = new Date(item.startDate);
+                if (!isNaN(start.getTime())) {
+                  details.startDate = start;
+                }
+              }
+              if (item.endDate) {
+                const end = new Date(item.endDate);
+                if (!isNaN(end.getTime())) {
+                  details.endDate = end;
+                }
+              }
+              if (item.description && !details.description) {
+                details.description = String(item.description).slice(0, 2000);
+              }
+              if (item.image && !details.imageUrl) {
+                details.imageUrl = typeof item.image === 'string' ? item.image : item.image?.url;
+              }
+              if (item.location) {
+                if (typeof item.location === 'object') {
+                  details.location = item.location.name;
+                  if (item.location.address) {
+                    const addr = item.location.address;
+                    details.city = addr.addressLocality;
+                    details.address = [addr.streetAddress, addr.addressLocality, addr.addressRegion, addr.postalCode]
+                      .filter(Boolean)
+                      .join(', ');
+                  }
+                }
+              }
+              break;
+            }
+          }
+        } catch {
+          // JSON parse failed, continue to next match
+        }
       }
     }
 
-    // Try to get a better image
-    const ogImageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"[^>]*>/i);
-    if (ogImageMatch) {
-      details.imageUrl = ogImageMatch[1];
+    // Fallback: Try to extract description from HTML if not found in JSON-LD
+    if (!details.description) {
+      const descMatch = html.match(/<div[^>]*class="[^"]*tribe-events-single-event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      if (descMatch) {
+        details.description = descMatch[1]
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 2000);
+      }
     }
 
-    // Extract dates more accurately from the detail page
-    const dateMatch = html.match(/(\w+\s+\d+,?\s*\d*)\s*[-–@]\s*(\w+\s+\d+,?\s*\d*)/i);
-    if (dateMatch) {
-      const year = new Date().getFullYear();
-      const startStr = dateMatch[1].includes(',') ? dateMatch[1] : `${dateMatch[1]}, ${year}`;
-      const endStr = dateMatch[2].includes(',') ? dateMatch[2] : `${dateMatch[2]}, ${year}`;
-
-      const start = new Date(startStr);
-      const end = new Date(endStr);
-
-      if (!isNaN(start.getTime())) {
-        start.setHours(9, 0, 0, 0);
-        details.startDate = start;
+    // Fallback: Try to extract venue/location from HTML
+    if (!details.location) {
+      const venueMatch = html.match(/<span[^>]*class="[^"]*tribe-venue[^"]*"[^>]*>([^<]+)<\/span>/i);
+      if (venueMatch) {
+        details.location = venueMatch[1].trim();
       }
-      if (!isNaN(end.getTime())) {
-        end.setHours(21, 0, 0, 0);
-        details.endDate = end;
+    }
+
+    // Fallback: Try to get image from og:image
+    if (!details.imageUrl) {
+      const ogImageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"[^>]*>/i);
+      if (ogImageMatch) {
+        details.imageUrl = ogImageMatch[1];
+      }
+    }
+
+    // Fallback: Extract dates from visible text if JSON-LD didn't work
+    if (!details.startDate || !details.endDate) {
+      const dateMatch = html.match(/(\w+\s+\d+,?\s*\d*)\s*[-–]\s*(\w+\s+\d+,?\s*\d*)/i);
+      if (dateMatch) {
+        const year = new Date().getFullYear();
+        const startStr = dateMatch[1].includes(',') ? dateMatch[1] : `${dateMatch[1]}, ${year}`;
+        const endStr = dateMatch[2].includes(',') ? dateMatch[2] : `${dateMatch[2]}, ${year}`;
+
+        if (!details.startDate) {
+          const start = new Date(startStr);
+          if (!isNaN(start.getTime())) {
+            start.setHours(9, 0, 0, 0);
+            details.startDate = start;
+          }
+        }
+        if (!details.endDate) {
+          const end = new Date(endStr);
+          if (!isNaN(end.getTime())) {
+            end.setHours(21, 0, 0, 0);
+            details.endDate = end;
+          }
+        }
       }
     }
 
