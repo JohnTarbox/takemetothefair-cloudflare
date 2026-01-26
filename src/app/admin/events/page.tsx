@@ -24,8 +24,8 @@ interface Event {
   startDate: string;
   endDate: string;
   featured: boolean;
-  venue: { name: string };
-  promoter: { companyName: string };
+  venue: { name: string } | null;
+  promoter: { companyName: string } | null;
 }
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
@@ -78,9 +78,9 @@ export default function AdminEventsPage() {
   };
 
   const sortedEvents = sortData(events, sortConfig, {
-    name: (e) => e.name,
-    venue: (e) => e.venue.name,
-    promoter: (e) => e.promoter.companyName,
+    name: (e) => e.name.toLowerCase(),
+    venue: (e) => e.venue?.name?.toLowerCase() || "",
+    promoter: (e) => e.promoter?.companyName?.toLowerCase() || "",
     startDate: (e) => new Date(e.startDate).getTime(),
     status: (e) => e.status,
   });
@@ -164,10 +164,10 @@ export default function AdminEventsPage() {
                       </div>
                     </td>
                     <td className="py-3 px-4 text-gray-600">
-                      {event.venue.name}
+                      {event.venue?.name || "-"}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
-                      {event.promoter.companyName}
+                      {event.promoter?.companyName || "-"}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
                       {formatDate(event.startDate)}
