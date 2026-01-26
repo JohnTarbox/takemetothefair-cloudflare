@@ -46,3 +46,95 @@ export function truncate(text: string, length: number): string {
   if (text.length <= length) return text;
   return text.slice(0, length).trim() + "...";
 }
+
+// Calendar link generation utilities
+interface CalendarEventParams {
+  title: string;
+  description?: string;
+  location?: string;
+  startDate: Date | string;
+  endDate: Date | string;
+  url?: string;
+}
+
+function formatDateForGoogle(date: Date): string {
+  return date.toISOString().replace(/-|:|\.\d{3}/g, "");
+}
+
+function formatDateForICS(date: Date): string {
+  return date.toISOString().replace(/-|:|\.\d{3}/g, "").slice(0, -1);
+}
+
+export function generateGoogleCalendarUrl(params: CalendarEventParams): string {
+  const { title, description, location, startDate, endDate, url } = params;
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  const eventDescription = url
+    ? `${description || ""}\n\nMore info: ${url}`.trim()
+    : description || "";
+
+  const searchParams = new URLSearchParams({
+    action: "TEMPLATE",
+    text: title,
+    dates: `${formatDateForGoogle(start)}/${formatDateForGoogle(end)}`,
+    details: eventDescription,
+    location: location || "",
+  });
+
+  return `https://www.google.com/calendar/render?${searchParams.toString()}`;
+}
+
+export function generateOutlookCalendarUrl(params: CalendarEventParams): string {
+  const { title, description, location, startDate, endDate, url } = params;
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  const eventDescription = url
+    ? `${description || ""}\n\nMore info: ${url}`.trim()
+    : description || "";
+
+  const searchParams = new URLSearchParams({
+    path: "/calendar/action/compose",
+    rru: "addevent",
+    subject: title,
+    startdt: start.toISOString(),
+    enddt: end.toISOString(),
+    body: eventDescription,
+    location: location || "",
+  });
+
+  return `https://outlook.live.com/calendar/0/deeplink/compose?${searchParams.toString()}`;
+}
+
+export function generateICSContent(params: CalendarEventParams): string {
+  const { title, description, location, startDate, endDate, url } = params;
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+
+  const eventDescription = url
+    ? `${description || ""}\\n\\nMore info: ${url}`.trim()
+    : description || "";
+
+  const icsContent = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Meet Me at the Fair//EN",
+    "BEGIN:VEVENT",
+    `DTSTART:${formatDateForICS(start)}Z`,
+    `DTEND:${formatDateForICS(end)}Z`,
+    `SUMMARY:${title}`,
+    `DESCRIPTION:${eventDescription.replace(/\n/g, "\\n")}`,
+    `LOCATION:${location || ""}`,
+    `URL:${url || ""}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  return icsContent;
+}
+
+export function generateICSDataUrl(params: CalendarEventParams): string {
+  const icsContent = generateICSContent(params);
+  return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsContent)}`;
+}

@@ -21,6 +21,7 @@ import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
+import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
 
@@ -249,10 +250,21 @@ export default async function EventDetailPage({ params }: Props) {
             <CardContent className="p-6 space-y-4">
               <div className="flex items-start gap-3">
                 <Calendar className="w-5 h-5 text-blue-600 mt-0.5" />
-                <div>
-                  <p className="font-medium text-gray-900">
-                    {formatDateRange(event.startDate, event.endDate)}
-                  </p>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium text-gray-900">
+                      {formatDateRange(event.startDate, event.endDate)}
+                    </p>
+                    <AddToCalendar
+                      title={event.name}
+                      description={event.description || undefined}
+                      location={`${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`}
+                      startDate={event.startDate}
+                      endDate={event.endDate}
+                      url={`https://meetmeatthefair.com/events/${event.slug}`}
+                      variant="icon"
+                    />
+                  </div>
                   <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                     <Clock className="w-4 h-4" />
                     {new Date(event.startDate).toLocaleTimeString("en-US", {

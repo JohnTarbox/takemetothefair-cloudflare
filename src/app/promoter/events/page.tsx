@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
 import { eq, count, desc } from "drizzle-orm";
+import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
 
@@ -133,7 +134,18 @@ export default async function PromoterEventsPage() {
                     </div>
                     <div className="mt-1 flex items-center gap-4 text-sm text-gray-500">
                       <span>{event.venue.name}</span>
-                      <span>{formatDate(event.startDate)}</span>
+                      <span className="flex items-center gap-1">
+                        {formatDate(event.startDate)}
+                        <AddToCalendar
+                          title={event.name}
+                          description={event.description || undefined}
+                          location={event.venue.name}
+                          startDate={event.startDate}
+                          endDate={event.endDate}
+                          url={`https://meetmeatthefair.com/events/${event.slug}`}
+                          variant="icon"
+                        />
+                      </span>
                       <span>{event._count.eventVendors} vendors</span>
                       <span>{event.viewCount} views</span>
                     </div>

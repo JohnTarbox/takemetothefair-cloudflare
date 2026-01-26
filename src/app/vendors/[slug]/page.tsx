@@ -9,6 +9,7 @@ import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
+import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
 
@@ -161,27 +162,36 @@ export default async function VendorDetailPage({ params }: Props) {
               </h2>
               <div className="space-y-3">
                 {upcomingEvents.map(({ event }) => (
-                  <Link key={event.id} href={`/events/${event.slug}`}>
-                    <Card className="hover:shadow-md transition-shadow">
-                      <CardContent className="p-4 flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-lg bg-blue-50 flex flex-col items-center justify-center text-blue-600">
-                          <Calendar className="w-6 h-6" />
-                        </div>
-                        <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">
+                  <Card key={event.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-4 flex items-center gap-4">
+                      <Link href={`/events/${event.slug}`} className="w-16 h-16 rounded-lg bg-blue-50 flex flex-col items-center justify-center text-blue-600">
+                        <Calendar className="w-6 h-6" />
+                      </Link>
+                      <div className="flex-1">
+                        <Link href={`/events/${event.slug}`}>
+                          <h3 className="font-medium text-gray-900 hover:text-blue-600">
                             {event.name}
                           </h3>
-                          <p className="text-sm text-gray-600">
-                            {formatDateRange(event.startDate, event.endDate)}
-                          </p>
-                          <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                            <MapPin className="w-3 h-3" />
-                            {event.venue.name}, {event.venue.city}
-                          </p>
+                        </Link>
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <span>{formatDateRange(event.startDate, event.endDate)}</span>
+                          <AddToCalendar
+                            title={event.name}
+                            description={event.description || undefined}
+                            location={`${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}`}
+                            startDate={event.startDate}
+                            endDate={event.endDate}
+                            url={`https://meetmeatthefair.com/events/${event.slug}`}
+                            variant="icon"
+                          />
                         </div>
-                      </CardContent>
-                    </Card>
-                  </Link>
+                        <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                          <MapPin className="w-3 h-3" />
+                          {event.venue.name}, {event.venue.city}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
                 ))}
               </div>
             </div>

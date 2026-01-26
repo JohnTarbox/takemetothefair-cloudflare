@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
 
@@ -115,6 +116,15 @@ export default async function VendorApplicationsPage() {
                       <div className="flex items-center gap-2">
                         <Calendar className="w-4 h-4" />
                         {formatDateRange(app.event.startDate, app.event.endDate)}
+                        <AddToCalendar
+                          title={app.event.name}
+                          description={app.event.description || undefined}
+                          location={`${app.event.venue.name}, ${app.event.venue.address || ""}, ${app.event.venue.city}, ${app.event.venue.state} ${app.event.venue.zip || ""}`}
+                          startDate={app.event.startDate}
+                          endDate={app.event.endDate}
+                          url={`https://meetmeatthefair.com/events/${app.event.slug}`}
+                          variant="icon"
+                        />
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin className="w-4 h-4" />

@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { Calendar, MapPin, Tag, Store } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -5,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDateRange, formatPrice } from "@/lib/utils";
 import { parseJsonArray } from "@/types";
 import type { events, venues, promoters } from "@/lib/db/schema";
+import { AddToCalendar } from "./AddToCalendar";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -56,9 +59,20 @@ export function EventCard({ event }: EventCardProps) {
             {event.name}
           </h3>
           <div className="mt-2 space-y-1 text-sm text-gray-600">
-            <div className="flex items-center">
-              <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-              <span>{formatDateRange(event.startDate, event.endDate)}</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
+                <span>{formatDateRange(event.startDate, event.endDate)}</span>
+              </div>
+              <AddToCalendar
+                title={event.name}
+                description={event.description || undefined}
+                location={`${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`}
+                startDate={event.startDate}
+                endDate={event.endDate}
+                url={`https://meetmeatthefair.com/events/${event.slug}`}
+                variant="icon"
+              />
             </div>
             <div className="flex items-center">
               <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
