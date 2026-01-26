@@ -339,25 +339,33 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
 
     // Extract website from HTML - look for "Website:" label followed by a link
     if (!details.website) {
-      // Pattern 1: "Website:" followed by an anchor tag
-      const websiteMatch = html.match(/Website:?\s*<\/?\w+[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
-      if (websiteMatch) {
-        details.website = websiteMatch[1];
+      // Pattern 1: tribe-events-event-url structure (mainefairs.net specific)
+      // <span class="tribe-events-event-url-label...">Website:</span>
+      // <span class="tribe-events-event-url..."> <a href="...">
+      const tribeUrlMatch = html.match(/tribe-events-event-url-label[^>]*>Website:?<\/span>\s*<span[^>]*class="[^"]*tribe-events-event-url[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"/i);
+      if (tribeUrlMatch) {
+        details.website = tribeUrlMatch[1];
       } else {
-        // Pattern 2: Link with class containing "website" or "url"
-        const websiteLinkMatch = html.match(/<a[^>]*class="[^"]*(?:website|event-url)[^"]*"[^>]*href="([^"]+)"[^>]*>/i);
-        if (websiteLinkMatch) {
-          details.website = websiteLinkMatch[1];
+        // Pattern 2: "Website:" followed by closing tag then anchor tag
+        const websiteMatch = html.match(/Website:?\s*<\/?\w+[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+        if (websiteMatch) {
+          details.website = websiteMatch[1];
         } else {
-          // Pattern 3: dt/dd pattern for Website
-          const dtDdMatch = html.match(/<dt[^>]*>Website:?<\/dt>\s*<dd[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
-          if (dtDdMatch) {
-            details.website = dtDdMatch[1];
+          // Pattern 3: Link with class containing "website" or "url"
+          const websiteLinkMatch = html.match(/<a[^>]*class="[^"]*(?:website|event-url)[^"]*"[^>]*href="([^"]+)"[^>]*>/i);
+          if (websiteLinkMatch) {
+            details.website = websiteLinkMatch[1];
           } else {
-            // Pattern 4: Simple "Website:" text followed by link on same line
-            const simpleMatch = html.match(/Website:?\s*<a[^>]*href="([^"]+)"[^>]*>/i);
-            if (simpleMatch) {
-              details.website = simpleMatch[1];
+            // Pattern 4: dt/dd pattern for Website
+            const dtDdMatch = html.match(/<dt[^>]*>Website:?<\/dt>\s*<dd[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+            if (dtDdMatch) {
+              details.website = dtDdMatch[1];
+            } else {
+              // Pattern 5: Simple "Website:" text followed by link on same line
+              const simpleMatch = html.match(/Website:?\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+              if (simpleMatch) {
+                details.website = simpleMatch[1];
+              }
             }
           }
         }
