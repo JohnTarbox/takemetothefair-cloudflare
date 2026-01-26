@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json() as Record<string, unknown>;
-    const { userId, businessName, description, vendorType, website, logoUrl, verified } = body;
+    const { userId, businessName, description, vendorType, website, logoUrl, verified, commercial } = body;
 
     const db = getCloudflareDb();
     const vendorId = crypto.randomUUID();
@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
       website: website as string | undefined,
       logoUrl: logoUrl as string | undefined,
       verified: verified as boolean | undefined,
+      commercial: commercial as boolean | undefined,
     });
 
     // Update user role to VENDOR

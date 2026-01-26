@@ -15,6 +15,7 @@ interface Vendor {
   slug: string;
   vendorType: string | null;
   verified: boolean;
+  commercial: boolean;
   user: { email: string; name: string | null } | null;
   _count: { events: number };
 }
@@ -97,6 +98,9 @@ export default function AdminVendorsPage() {
                   <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
                     Status
                   </th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
+                    Type
+                  </th>
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
@@ -125,6 +129,13 @@ export default function AdminVendorsPage() {
                         </Badge>
                       ) : (
                         <Badge variant="default">Unverified</Badge>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {vendor.commercial ? (
+                        <Badge variant="default">Commercial</Badge>
+                      ) : (
+                        <Badge variant="outline">Non-Commercial</Badge>
                       )}
                     </td>
                     <td className="py-3 px-4">

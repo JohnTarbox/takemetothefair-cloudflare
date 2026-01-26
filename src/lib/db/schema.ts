@@ -90,6 +90,7 @@ export const vendors = sqliteTable("vendors", {
   socialLinks: text("social_links"),
   logoUrl: text("logo_url"),
   verified: integer("verified", { mode: "boolean" }).default(false),
+  commercial: integer("commercial", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });

@@ -21,6 +21,7 @@ interface Vendor {
   vendorType: string | null;
   website: string | null;
   verified: boolean;
+  commercial: boolean;
 }
 
 export default function EditVendorPage() {
@@ -34,6 +35,7 @@ export default function EditVendorPage() {
     vendorType: "",
     website: "",
     verified: false,
+    commercial: false,
   });
 
   useEffect(() => {
@@ -53,6 +55,7 @@ export default function EditVendorPage() {
           vendorType: data.vendorType || "",
           website: data.website || "",
           verified: data.verified,
+          commercial: data.commercial,
         });
       }
     } catch (error) {
@@ -165,17 +168,31 @@ export default function EditVendorPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="verified"
-                checked={formData.verified}
-                onChange={(e) =>
-                  setFormData({ ...formData, verified: e.target.checked })
-                }
-                className="rounded border-gray-300"
-              />
-              <Label htmlFor="verified">Verified Vendor</Label>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="verified"
+                  checked={formData.verified}
+                  onChange={(e) =>
+                    setFormData({ ...formData, verified: e.target.checked })
+                  }
+                  className="rounded border-gray-300"
+                />
+                <Label htmlFor="verified">Verified Vendor</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="commercial"
+                  checked={formData.commercial}
+                  onChange={(e) =>
+                    setFormData({ ...formData, commercial: e.target.checked })
+                  }
+                  className="rounded border-gray-300"
+                />
+                <Label htmlFor="commercial">Commercial Vendor</Label>
+              </div>
             </div>
 
             <div className="flex gap-4">
