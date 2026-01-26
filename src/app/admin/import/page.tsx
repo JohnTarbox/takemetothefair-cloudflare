@@ -152,7 +152,8 @@ export default function ImportEventsPage() {
         throw new Error(data.error || "Failed to import events");
       }
 
-      setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped. ${data.errors?.length || 0} errors.`);
+      const venuesMsg = data.venuesCreated ? ` ${data.venuesCreated} venues created.` : "";
+      setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped.${venuesMsg} ${data.errors?.length || 0} errors.`);
 
       // Refresh the preview
       await handlePreview();

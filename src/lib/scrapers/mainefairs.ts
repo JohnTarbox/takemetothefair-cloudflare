@@ -1,6 +1,14 @@
 // Scraper for mainefairs.net
 // Extracts fair/event data from their calendar page
 
+export interface ScrapedVenue {
+  name: string;
+  streetAddress?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}
+
 export interface ScrapedEvent {
   sourceId: string;
   sourceName: string;
@@ -15,6 +23,7 @@ export interface ScrapedEvent {
   address?: string;
   imageUrl?: string;
   ticketUrl?: string;
+  venue?: ScrapedVenue;
 }
 
 export interface ScrapeResult {
@@ -264,9 +273,25 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
                   if (item.location.address) {
                     const addr = item.location.address;
                     details.city = addr.addressLocality;
+                    details.state = addr.addressRegion;
                     details.address = [addr.streetAddress, addr.addressLocality, addr.addressRegion, addr.postalCode]
                       .filter(Boolean)
                       .join(', ');
+
+                    // Build venue object with full details
+                    details.venue = {
+                      name: item.location.name || details.location || '',
+                      streetAddress: addr.streetAddress,
+                      city: addr.addressLocality,
+                      state: addr.addressRegion,
+                      zip: addr.postalCode,
+                    };
+                  } else if (item.location.name) {
+                    // Location without detailed address
+                    details.venue = {
+                      name: item.location.name,
+                      state: 'ME', // Default to Maine for mainefairs.net
+                    };
                   }
                 }
               }

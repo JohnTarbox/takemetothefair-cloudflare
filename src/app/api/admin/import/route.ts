@@ -3,8 +3,46 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent } from "@/lib/scrapers/mainefairs";
+import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
 import { createSlug } from "@/lib/utils";
+
+// Helper function to find or create a venue
+async function findOrCreateVenue(
+  db: ReturnType<typeof getCloudflareDb>,
+  scrapedVenue: ScrapedVenue,
+  defaultVenueId: string
+): Promise<string> {
+  if (!scrapedVenue.name) {
+    return defaultVenueId;
+  }
+
+  // Try to find existing venue by name (case-insensitive search via slug)
+  const venueSlug = createSlug(scrapedVenue.name);
+  const existingVenue = await db
+    .select()
+    .from(venues)
+    .where(eq(venues.slug, venueSlug))
+    .limit(1);
+
+  if (existingVenue.length > 0) {
+    return existingVenue[0].id;
+  }
+
+  // Create new venue
+  const newVenueId = crypto.randomUUID();
+  await db.insert(venues).values({
+    id: newVenueId,
+    name: scrapedVenue.name,
+    slug: venueSlug,
+    address: scrapedVenue.streetAddress || "",
+    city: scrapedVenue.city || "",
+    state: scrapedVenue.state || "ME",
+    zip: scrapedVenue.zip || "",
+    status: "ACTIVE",
+  });
+
+  return newVenueId;
+}
 
 export const runtime = "edge";
 
@@ -109,6 +147,7 @@ export async function POST(request: Request) {
       imported: 0,
       updated: 0,
       skipped: 0,
+      venuesCreated: 0,
       errors: [] as string[],
     };
 
@@ -133,10 +172,30 @@ export async function POST(request: Request) {
           eventData = { ...eventData, ...details };
         }
 
+        // Determine venue ID - use scraped venue if available, otherwise default
+        let eventVenueId = venueId;
+        if (eventData.venue && eventData.venue.name) {
+          // Check if this is a new venue we need to create
+          const venueSlug = createSlug(eventData.venue.name);
+          const existingVenueCheck = await db
+            .select()
+            .from(venues)
+            .where(eq(venues.slug, venueSlug))
+            .limit(1);
+
+          if (existingVenueCheck.length === 0) {
+            // This will be a new venue
+            eventVenueId = await findOrCreateVenue(db, eventData.venue, venueId);
+            results.venuesCreated++;
+          } else {
+            eventVenueId = existingVenueCheck[0].id;
+          }
+        }
+
         if (existing.length > 0) {
           // Event already exists
           if (updateExisting) {
-            // Update the existing event
+            // Update the existing event (including venue if scraped)
             await db.update(events).set({
               name: eventData.name,
               description: eventData.description || existing[0].description,
@@ -144,6 +203,7 @@ export async function POST(request: Request) {
               endDate: new Date(eventData.endDate),
               ticketUrl: eventData.ticketUrl || eventData.sourceUrl,
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
+              venueId: eventVenueId,
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             }).where(eq(events.id, existing[0].id));
@@ -176,7 +236,7 @@ export async function POST(request: Request) {
           slug,
           description: eventData.description || `${eventData.name} - imported from ${eventData.sourceName}`,
           promoterId,
-          venueId,
+          venueId: eventVenueId,
           startDate: new Date(eventData.startDate),
           endDate: new Date(eventData.endDate),
           categories: JSON.stringify(["Fair", "Festival"]),
