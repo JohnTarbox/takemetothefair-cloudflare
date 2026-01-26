@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
       ticketPriceMax,
       imageUrl,
       featured,
+      commercialVendorsAllowed,
       status,
     } = body;
 
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
       ticketPriceMax: ticketPriceMax as number | undefined,
       imageUrl: imageUrl as string | undefined,
       featured: (featured as boolean) || false,
+      commercialVendorsAllowed: commercialVendorsAllowed !== false,
       status: (status as "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED") || "APPROVED",
     });
 

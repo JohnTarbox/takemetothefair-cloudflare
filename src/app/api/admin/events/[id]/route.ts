@@ -84,6 +84,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       ticketPriceMax,
       imageUrl,
       featured,
+      commercialVendorsAllowed,
       status,
     } = body;
 
@@ -105,6 +106,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (ticketPriceMax !== undefined) updateData.ticketPriceMax = ticketPriceMax;
     if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
     if (featured !== undefined) updateData.featured = featured;
+    if (commercialVendorsAllowed !== undefined) updateData.commercialVendorsAllowed = commercialVendorsAllowed;
     if (status) updateData.status = status;
 
     await db.update(events).set(updateData).where(eq(events.id, id));

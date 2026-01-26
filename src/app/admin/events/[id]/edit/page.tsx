@@ -37,6 +37,7 @@ interface Event {
   ticketPriceMax: number | null;
   imageUrl: string | null;
   featured: boolean;
+  commercialVendorsAllowed: boolean;
   status: string;
 }
 
@@ -106,6 +107,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       ticketPriceMax: formData.get("ticketPriceMax") ? parseFloat(formData.get("ticketPriceMax") as string) : null,
       imageUrl: formData.get("imageUrl") || null,
       featured: formData.get("featured") === "on",
+      commercialVendorsAllowed: formData.get("commercialVendorsAllowed") === "on",
       status: formData.get("status"),
     };
 
@@ -315,17 +317,31 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                 </select>
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  id="featured"
-                  name="featured"
-                  type="checkbox"
-                  defaultChecked={event.featured}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                <Label htmlFor="featured" className="font-normal">
-                  Featured Event
-                </Label>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="featured"
+                    name="featured"
+                    type="checkbox"
+                    defaultChecked={event.featured}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="featured" className="font-normal">
+                    Featured Event
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="commercialVendorsAllowed"
+                    name="commercialVendorsAllowed"
+                    type="checkbox"
+                    defaultChecked={event.commercialVendorsAllowed}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="commercialVendorsAllowed" className="font-normal">
+                    Commercial Vendors Allowed
+                  </Label>
+                </div>
               </div>
             </div>
 

@@ -71,6 +71,7 @@ export const events = sqliteTable("events", {
   ticketPriceMax: real("ticket_price_max"),
   imageUrl: text("image_url"),
   featured: integer("featured", { mode: "boolean" }).default(false),
+  commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(true),
   status: text("status", { enum: ["DRAFT", "PENDING", "APPROVED", "REJECTED", "CANCELLED"] }).default("DRAFT").notNull(),
   viewCount: integer("view_count").default(0),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),

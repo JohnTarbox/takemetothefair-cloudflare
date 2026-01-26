@@ -8,6 +8,7 @@ import {
   Clock,
   User,
   Store,
+  AlertCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,12 +19,51 @@ import { events, venues, promoters, eventVendors, vendors, users } from "@/lib/d
 import { eq, and, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
+import { auth } from "@/lib/auth";
+import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 
 export const runtime = "edge";
 
 
 interface Props {
   params: Promise<{ slug: string }>;
+}
+
+async function getUserVendorInfo(userId: string | undefined, eventId: string) {
+  if (!userId) return null;
+
+  try {
+    const db = getCloudflareDb();
+
+    // Get the vendor for this user
+    const vendorResults = await db
+      .select()
+      .from(vendors)
+      .where(eq(vendors.userId, userId))
+      .limit(1);
+
+    if (vendorResults.length === 0) return null;
+
+    const vendor = vendorResults[0];
+
+    // Check if vendor has already applied to this event
+    const existingApplication = await db
+      .select()
+      .from(eventVendors)
+      .where(and(
+        eq(eventVendors.eventId, eventId),
+        eq(eventVendors.vendorId, vendor.id)
+      ))
+      .limit(1);
+
+    return {
+      vendor,
+      existingApplication: existingApplication.length > 0 ? existingApplication[0] : null,
+    };
+  } catch (e) {
+    console.error("Error fetching vendor info:", e);
+    return null;
+  }
 }
 
 async function getEvent(slug: string) {
@@ -102,6 +142,9 @@ export default async function EventDetailPage({ params }: Props) {
   if (!event) {
     notFound();
   }
+
+  const session = await auth();
+  const vendorInfo = await getUserVendorInfo(session?.user?.id, event.id);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -260,6 +303,61 @@ export default async function EventDetailPage({ params }: Props) {
               )}
             </CardContent>
           </Card>
+
+          {/* Vendor Application Section */}
+          {vendorInfo && (
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <Store className="w-5 h-5" />
+                  Vendor Participation
+                </h3>
+              </CardHeader>
+              <CardContent>
+                {vendorInfo.existingApplication ? (
+                  <div className="text-center">
+                    <Badge variant={
+                      vendorInfo.existingApplication.status === "APPROVED" ? "success" :
+                      vendorInfo.existingApplication.status === "REJECTED" ? "danger" :
+                      "warning"
+                    }>
+                      Application {vendorInfo.existingApplication.status}
+                    </Badge>
+                    <p className="text-sm text-gray-500 mt-2">
+                      {vendorInfo.existingApplication.status === "PENDING" && "Your application is being reviewed."}
+                      {vendorInfo.existingApplication.status === "APPROVED" && "You're confirmed to participate!"}
+                      {vendorInfo.existingApplication.status === "REJECTED" && "Your application was not accepted."}
+                    </p>
+                  </div>
+                ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (
+                  <div className="text-center">
+                    <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                    <p className="text-sm text-gray-600">
+                      This event does not allow commercial vendors.
+                    </p>
+                  </div>
+                ) : (
+                  <VendorApplyButton eventId={event.id} eventName={event.name} />
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {!session && (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <Store className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-sm text-gray-600 mb-3">
+                  Are you a vendor?
+                </p>
+                <Link href="/login">
+                  <Button variant="outline" className="w-full">
+                    Login to Apply
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
