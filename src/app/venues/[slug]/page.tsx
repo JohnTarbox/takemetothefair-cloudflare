@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { MapPin, Phone, Mail, Globe, Users, Calendar } from "lucide-react";
+import { MapPin, Phone, Mail, Globe, Users, Calendar, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
@@ -167,6 +167,15 @@ export default async function VenueDetailPage({ params }: Props) {
                   <p className="text-gray-600">
                     {venue.city}, {venue.state} {venue.zip}
                   </p>
+                  <a
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue.address}, ${venue.city}, ${venue.state} ${venue.zip}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 mt-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    View on Google Maps
+                  </a>
                 </div>
               </div>
               {venue.capacity && (
