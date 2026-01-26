@@ -338,7 +338,7 @@ export default async function EventDetailPage({ params }: Props) {
                 >
                   <Button className="w-full" size="lg">
                     <ExternalLink className="w-4 h-4 mr-2" />
-                    Get Tickets
+                    Event Website
                   </Button>
                 </a>
               )}
