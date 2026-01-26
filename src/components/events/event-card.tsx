@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Calendar, MapPin, Tag } from "lucide-react";
+import { Calendar, MapPin, Tag, Store } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateRange, formatPrice } from "@/lib/utils";
@@ -10,19 +10,29 @@ type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 
+type VendorSummary = {
+  id: string;
+  businessName: string;
+  slug: string;
+  logoUrl: string | null;
+  vendorType: string | null;
+};
+
 interface EventCardProps {
   event: Event & {
     venue: Venue;
     promoter: Promoter;
+    vendors?: VendorSummary[];
   };
 }
 
 export function EventCard({ event }: EventCardProps) {
   const categories = parseJsonArray(event.categories);
+  const vendors = event.vendors || [];
 
   return (
-    <Link href={`/events/${event.slug}`}>
-      <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
+    <Card className="h-full hover:shadow-md transition-shadow">
+      <Link href={`/events/${event.slug}`} className="block">
         <div className="aspect-video relative bg-gray-100">
           {event.imageUrl ? (
             <img
@@ -75,7 +85,47 @@ export function EventCard({ event }: EventCardProps) {
             </div>
           )}
         </div>
-      </Card>
-    </Link>
+      </Link>
+
+      {/* Vendors Grid */}
+      {vendors.length > 0 && (
+        <div className="px-4 pb-4 pt-2 border-t border-gray-100">
+          <p className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1">
+            <Store className="w-3 h-3" />
+            Vendors ({vendors.length})
+          </p>
+          <div className="grid grid-cols-4 gap-1">
+            {vendors.slice(0, 8).map((vendor) => (
+              <Link
+                key={vendor.id}
+                href={`/vendors/${vendor.slug}`}
+                className="block group"
+                title={vendor.businessName}
+              >
+                <div className="aspect-square rounded bg-gray-100 flex items-center justify-center overflow-hidden group-hover:ring-2 ring-blue-500 transition-all">
+                  {vendor.logoUrl ? (
+                    <img
+                      src={vendor.logoUrl}
+                      alt={vendor.businessName}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <Store className="w-4 h-4 text-gray-400" />
+                  )}
+                </div>
+              </Link>
+            ))}
+            {vendors.length > 8 && (
+              <Link
+                href={`/events/${event.slug}`}
+                className="aspect-square rounded bg-gray-100 flex items-center justify-center text-xs text-gray-500 hover:bg-gray-200 transition-colors"
+              >
+                +{vendors.length - 8}
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

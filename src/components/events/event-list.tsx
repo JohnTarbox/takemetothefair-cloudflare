@@ -1,14 +1,23 @@
 import { EventCard } from "./event-card";
-import type { events, venues, promoters } from "@/lib/db/schema";
+import type { events, venues, promoters, vendors } from "@/lib/db/schema";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
 type Promoter = typeof promoters.$inferSelect;
 
+type VendorSummary = {
+  id: string;
+  businessName: string;
+  slug: string;
+  logoUrl: string | null;
+  vendorType: string | null;
+};
+
 interface EventListProps {
   events: (Event & {
     venue: Venue;
     promoter: Promoter;
+    vendors?: VendorSummary[];
   })[];
   emptyMessage?: string;
 }

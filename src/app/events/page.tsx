@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { Search, Filter } from "lucide-react";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters } from "@/lib/db/schema";
+import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and, gte, like, or, count } from "drizzle-orm";
 
 export const runtime = "edge";
@@ -78,6 +78,37 @@ async function getEvents(searchParams: SearchParams) {
 
     const results = await query;
 
+    // Fetch vendors for each event
+    const eventsWithVendors = await Promise.all(
+      results.map(async (r) => {
+        const eventVendorResults = await db
+          .select()
+          .from(eventVendors)
+          .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+          .where(
+            and(
+              eq(eventVendors.eventId, r.events.id),
+              eq(eventVendors.status, "APPROVED")
+            )
+          );
+
+        return {
+          ...r.events,
+          venue: r.venues!,
+          promoter: r.promoters!,
+          vendors: eventVendorResults
+            .filter((ev) => ev.vendors !== null)
+            .map((ev) => ({
+              id: ev.vendors!.id,
+              businessName: ev.vendors!.businessName,
+              slug: ev.vendors!.slug,
+              logoUrl: ev.vendors!.logoUrl,
+              vendorType: ev.vendors!.vendorType,
+            })),
+        };
+      })
+    );
+
     // Count total
     const countConditions = [...conditions];
     if (searchParams.state) {
@@ -88,11 +119,7 @@ async function getEvents(searchParams: SearchParams) {
         .where(and(...countConditions, eq(venues.state, searchParams.state)));
 
       return {
-        events: results.map((r) => ({
-          ...r.events,
-          venue: r.venues!,
-          promoter: r.promoters!,
-        })),
+        events: eventsWithVendors,
         total: countResult[0]?.count || 0,
         page,
         limit,
@@ -105,11 +132,7 @@ async function getEvents(searchParams: SearchParams) {
       .where(and(...countConditions));
 
     return {
-      events: results.map((r) => ({
-        ...r.events,
-        venue: r.venues!,
-        promoter: r.promoters!,
-      })),
+      events: eventsWithVendors,
       total: countResult[0]?.count || 0,
       page,
       limit,
