@@ -14,6 +14,7 @@ interface SearchParams {
   state?: string;
   featured?: string;
   commercialVendors?: string;
+  includePast?: string;
   page?: string;
 }
 
@@ -28,8 +29,12 @@ async function getEvents(searchParams: SearchParams) {
     // Build conditions
     const conditions = [
       eq(events.status, "APPROVED"),
-      gte(events.endDate, new Date()),
     ];
+
+    // Only filter to future events unless includePast is true
+    if (searchParams.includePast !== "true") {
+      conditions.push(gte(events.endDate, new Date()));
+    }
 
     if (searchParams.query) {
       conditions.push(
@@ -261,6 +266,17 @@ function EventsFilter({
           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm text-gray-700">Commercial vendors allowed</span>
+      </label>
+
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          name="includePast"
+          value="true"
+          defaultChecked={searchParams.includePast === "true"}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm text-gray-700">Include past events</span>
       </label>
 
       <button
