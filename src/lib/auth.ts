@@ -1,8 +1,7 @@
 import NextAuth from "next-auth";
 import type { JWT } from "next-auth/jwt";
-import type { Session, User } from "next-auth";
+import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import Google from "next-auth/providers/google";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq } from "drizzle-orm";
@@ -25,7 +24,7 @@ declare module "next-auth" {
   }
 }
 
-declare module "@auth/core/jwt" {
+declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     role: UserRole;
@@ -48,8 +47,8 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 // Create NextAuth config
-const authConfig = {
-  session: { strategy: "jwt" as const },
+const authConfig: NextAuthConfig = {
+  session: { strategy: "jwt" },
   pages: {
     signIn: "/login",
     error: "/login",
@@ -99,10 +98,6 @@ const authConfig = {
         }
       },
     }),
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID || "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-    }),
   ],
   callbacks: {
     async jwt({ token, user }: { token: JWT; user?: User }) {
@@ -120,6 +115,7 @@ const authConfig = {
       return session;
     },
   },
+  trustHost: true,
 };
 
 const { handlers, auth, signIn, signOut } = NextAuth(authConfig);

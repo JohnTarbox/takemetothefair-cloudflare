@@ -23,7 +23,7 @@
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.38.3",
     "lucide-react": "^0.563.0",
-    "next": "^15.1.11",
+    "next": "^15.1.0",
     "next-auth": "^5.0.0-beta.30",
     "react": "^18",
     "react-dom": "^18",
@@ -33,13 +33,11 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/next-on-pages": "^1.13.7",
+    "@cloudflare/next-on-pages": "^1.13.16",
     "@cloudflare/workers-types": "^4.20241230.0",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "better-sqlite3": "^11.7.0",
     "drizzle-kit": "^0.30.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
