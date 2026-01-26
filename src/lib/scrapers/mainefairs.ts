@@ -23,6 +23,7 @@ export interface ScrapedEvent {
   address?: string;
   imageUrl?: string;
   ticketUrl?: string;
+  website?: string;
   venue?: ScrapedVenue;
 }
 
@@ -295,6 +296,10 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
                   }
                 }
               }
+              // Extract website URL from JSON-LD if available
+              if (item.url && !details.website) {
+                details.website = item.url;
+              }
               break;
             }
           }
@@ -329,6 +334,33 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
       const ogImageMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]+)"[^>]*>/i);
       if (ogImageMatch) {
         details.imageUrl = ogImageMatch[1];
+      }
+    }
+
+    // Extract website from HTML - look for "Website:" label followed by a link
+    if (!details.website) {
+      // Pattern 1: "Website:" followed by an anchor tag
+      const websiteMatch = html.match(/Website:?\s*<\/?\w+[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+      if (websiteMatch) {
+        details.website = websiteMatch[1];
+      } else {
+        // Pattern 2: Link with class containing "website" or "url"
+        const websiteLinkMatch = html.match(/<a[^>]*class="[^"]*(?:website|event-url)[^"]*"[^>]*href="([^"]+)"[^>]*>/i);
+        if (websiteLinkMatch) {
+          details.website = websiteLinkMatch[1];
+        } else {
+          // Pattern 3: dt/dd pattern for Website
+          const dtDdMatch = html.match(/<dt[^>]*>Website:?<\/dt>\s*<dd[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+          if (dtDdMatch) {
+            details.website = dtDdMatch[1];
+          } else {
+            // Pattern 4: Simple "Website:" text followed by link on same line
+            const simpleMatch = html.match(/Website:?\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+            if (simpleMatch) {
+              details.website = simpleMatch[1];
+            }
+          }
+        }
       }
     }
 

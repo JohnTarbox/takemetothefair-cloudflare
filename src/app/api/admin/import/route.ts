@@ -196,12 +196,13 @@ export async function POST(request: Request) {
           // Event already exists
           if (updateExisting) {
             // Update the existing event (including venue if scraped)
+            // Use website for ticketUrl (Event Website button), fall back to sourceUrl
             await db.update(events).set({
               name: eventData.name,
               description: eventData.description || existing[0].description,
               startDate: new Date(eventData.startDate),
               endDate: new Date(eventData.endDate),
-              ticketUrl: eventData.ticketUrl || eventData.sourceUrl,
+              ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
               lastSyncedAt: new Date(),
@@ -231,6 +232,7 @@ export async function POST(request: Request) {
         }
 
         // Insert the event
+        // Use website for ticketUrl (Event Website button), fall back to sourceUrl
         await db.insert(events).values({
           name: eventData.name,
           slug,
@@ -241,7 +243,7 @@ export async function POST(request: Request) {
           endDate: new Date(eventData.endDate),
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
-          ticketUrl: eventData.ticketUrl || eventData.sourceUrl,
+          ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,
           imageUrl: eventData.imageUrl,
           status: "APPROVED",
           sourceName: eventData.sourceName,
