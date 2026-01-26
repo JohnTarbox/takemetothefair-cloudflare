@@ -203,14 +203,24 @@ export default async function EventDetailPage({ params }: Props) {
           {event.eventVendors.length > 0 && (
             <Card>
               <CardHeader>
-                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                  <Store className="w-5 h-5" />
-                  Participating Vendors
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                    <Store className="w-5 h-5" />
+                    Participating Vendors ({event.eventVendors.length})
+                  </h2>
+                  {event.eventVendors.length > 8 && (
+                    <Link
+                      href={`/events/${event.slug}/vendors`}
+                      className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      View all vendors
+                    </Link>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {event.eventVendors.map(({ vendor }) => (
+                  {event.eventVendors.slice(0, 8).map(({ vendor }) => (
                     <Link
                       key={vendor.id}
                       href={`/vendors/${vendor.slug}`}
@@ -240,6 +250,16 @@ export default async function EventDetailPage({ params }: Props) {
                     </Link>
                   ))}
                 </div>
+                {event.eventVendors.length > 8 && (
+                  <div className="mt-4 text-center">
+                    <Link
+                      href={`/events/${event.slug}/vendors`}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      View all {event.eventVendors.length} vendors
+                    </Link>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

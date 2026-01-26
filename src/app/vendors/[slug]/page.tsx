@@ -157,11 +157,21 @@ export default async function VendorDetailPage({ params }: Props) {
 
           {upcomingEvents.length > 0 && (
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Upcoming Events
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Upcoming Events ({upcomingEvents.length})
+                </h2>
+                {vendor.eventVendors.length > 6 && (
+                  <Link
+                    href={`/vendors/${vendor.slug}/events`}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    View all events
+                  </Link>
+                )}
+              </div>
               <div className="space-y-3">
-                {upcomingEvents.map(({ event }) => (
+                {upcomingEvents.slice(0, 6).map(({ event }) => (
                   <Card key={event.id} className="hover:shadow-md transition-shadow">
                     <CardContent className="p-4 flex items-center gap-4">
                       <Link href={`/events/${event.slug}`} className="w-16 h-16 rounded-lg bg-blue-50 flex flex-col items-center justify-center text-blue-600">
@@ -194,14 +204,34 @@ export default async function VendorDetailPage({ params }: Props) {
                   </Card>
                 ))}
               </div>
+              {upcomingEvents.length > 6 && (
+                <div className="mt-4 text-center">
+                  <Link
+                    href={`/vendors/${vendor.slug}/events`}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
+                    View all {vendor.eventVendors.length} events
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 
           {pastEvents.length > 0 && (
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Past Events
-              </h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Past Events ({pastEvents.length})
+                </h2>
+                {pastEvents.length > 5 && (
+                  <Link
+                    href={`/vendors/${vendor.slug}/events?filter=past`}
+                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    View all past events
+                  </Link>
+                )}
+              </div>
               <div className="space-y-3">
                 {pastEvents.slice(0, 5).map(({ event }) => (
                   <Link key={event.id} href={`/events/${event.slug}`}>
@@ -223,6 +253,16 @@ export default async function VendorDetailPage({ params }: Props) {
                   </Link>
                 ))}
               </div>
+              {pastEvents.length > 5 && (
+                <div className="mt-4 text-center">
+                  <Link
+                    href={`/vendors/${vendor.slug}/events`}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                  >
+                    View all {pastEvents.length} past events
+                  </Link>
+                </div>
+              )}
             </div>
           )}
         </main>
