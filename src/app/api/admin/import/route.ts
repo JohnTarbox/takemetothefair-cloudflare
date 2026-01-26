@@ -73,11 +73,12 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { events: eventsToImport, venueId, promoterId, fetchDetails = false } = body as {
+    const { events: eventsToImport, venueId, promoterId, fetchDetails = false, updateExisting = false } = body as {
       events: ScrapedEvent[];
       venueId: string;
       promoterId: string;
       fetchDetails?: boolean;
+      updateExisting?: boolean;
     };
 
     if (!eventsToImport || eventsToImport.length === 0) {
@@ -106,6 +107,7 @@ export async function POST(request: Request) {
 
     const results = {
       imported: 0,
+      updated: 0,
       skipped: 0,
       errors: [] as string[],
     };
@@ -124,11 +126,6 @@ export async function POST(request: Request) {
           )
           .limit(1);
 
-        if (existing.length > 0) {
-          results.skipped++;
-          continue;
-        }
-
         // Optionally fetch additional details
         let eventData = { ...event };
         if (fetchDetails && event.sourceUrl) {
@@ -136,7 +133,28 @@ export async function POST(request: Request) {
           eventData = { ...eventData, ...details };
         }
 
-        // Generate unique slug
+        if (existing.length > 0) {
+          // Event already exists
+          if (updateExisting) {
+            // Update the existing event
+            await db.update(events).set({
+              name: eventData.name,
+              description: eventData.description || existing[0].description,
+              startDate: new Date(eventData.startDate),
+              endDate: new Date(eventData.endDate),
+              ticketUrl: eventData.ticketUrl || eventData.sourceUrl,
+              imageUrl: eventData.imageUrl || existing[0].imageUrl,
+              lastSyncedAt: new Date(),
+              updatedAt: new Date(),
+            }).where(eq(events.id, existing[0].id));
+            results.updated++;
+          } else {
+            results.skipped++;
+          }
+          continue;
+        }
+
+        // Generate unique slug for new event
         let slug = createSlug(eventData.name);
         let slugSuffix = 0;
         while (true) {

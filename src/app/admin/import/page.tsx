@@ -58,6 +58,7 @@ export default function ImportEventsPage() {
   const [selectedVenueId, setSelectedVenueId] = useState("");
   const [selectedPromoterId, setSelectedPromoterId] = useState("");
   const [fetchDetails, setFetchDetails] = useState(true);
+  const [updateExisting, setUpdateExisting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [stats, setStats] = useState({ total: 0, newCount: 0, existingCount: 0 });
@@ -141,6 +142,7 @@ export default function ImportEventsPage() {
           venueId: selectedVenueId,
           promoterId: selectedPromoterId,
           fetchDetails,
+          updateExisting,
         }),
       });
 
@@ -150,7 +152,7 @@ export default function ImportEventsPage() {
         throw new Error(data.error || "Failed to import events");
       }
 
-      setSuccess(`Imported ${data.imported} events. ${data.skipped} skipped. ${data.errors?.length || 0} errors.`);
+      setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped. ${data.errors?.length || 0} errors.`);
 
       // Refresh the preview
       await handlePreview();
@@ -198,6 +200,11 @@ export default function ImportEventsPage() {
   const selectAllNew = () => {
     const newEventIds = new Set(events.filter((e) => !e.exists).map((e) => e.sourceId));
     setSelectedEvents(newEventIds);
+  };
+
+  const selectAll = () => {
+    const allEventIds = new Set(events.map((e) => e.sourceId));
+    setSelectedEvents(allEventIds);
   };
 
   const deselectAll = () => {
@@ -333,7 +340,7 @@ export default function ImportEventsPage() {
                   </p>
                 </div>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 space-y-2">
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -343,6 +350,17 @@ export default function ImportEventsPage() {
                   />
                   <span className="text-sm text-gray-700">
                     Fetch detailed information from event pages (slower but more complete)
+                  </span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={updateExisting}
+                    onChange={(e) => setUpdateExisting(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Update existing events (allows re-importing already imported events)
                   </span>
                 </label>
               </div>
@@ -360,9 +378,15 @@ export default function ImportEventsPage() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={selectAllNew}>
-                    Select All New ({stats.newCount})
-                  </Button>
+                  {updateExisting ? (
+                    <Button variant="outline" size="sm" onClick={selectAll}>
+                      Select All ({stats.total})
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={selectAllNew}>
+                      Select All New ({stats.newCount})
+                    </Button>
+                  )}
                   <Button variant="outline" size="sm" onClick={deselectAll}>
                     Clear Selection
                   </Button>
@@ -386,7 +410,7 @@ export default function ImportEventsPage() {
                       type="checkbox"
                       checked={selectedEvents.has(event.sourceId)}
                       onChange={() => toggleEventSelection(event.sourceId)}
-                      disabled={event.exists}
+                      disabled={event.exists && !updateExisting}
                       className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                     <div className="flex-1 min-w-0">
