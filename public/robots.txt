@@ -1,0 +1,13 @@
+# robots.txt for Meet Me at the Fair
+User-agent: *
+Allow: /
+
+# Disallow admin and private areas
+Disallow: /admin/
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /promoter/
+Disallow: /vendor/
+
+# Sitemap
+Sitemap: https://meetmeatthefair.com/sitemap.xml

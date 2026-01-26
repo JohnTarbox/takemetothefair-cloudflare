@@ -143,26 +143,27 @@ export default function AdminEventsPage() {
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/events/${event.slug}`}>
-                          <Button variant="ghost" size="sm" title="View">
-                            <Eye className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`View ${event.name}`}>
+                            <Eye className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Link href={`/admin/events/${event.id}/vendors`}>
-                          <Button variant="ghost" size="sm" title="Manage Vendors">
-                            <Store className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`Manage vendors for ${event.name}`}>
+                            <Store className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Link href={`/admin/events/${event.id}/edit`}>
-                          <Button variant="ghost" size="sm" title="Edit">
-                            <Pencil className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`Edit ${event.name}`}>
+                            <Pencil className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDelete(event.id)}
+                          aria-label={`Delete ${event.name}`}
                         >
-                          <Trash2 className="w-4 h-4 text-red-500" />
+                          <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
                         </Button>
                       </div>
                     </td>

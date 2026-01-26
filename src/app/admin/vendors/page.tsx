@@ -141,21 +141,22 @@ export default function AdminVendorsPage() {
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/vendors/${vendor.slug}`}>
-                          <Button variant="ghost" size="sm">
-                            <Eye className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`View ${vendor.businessName}`}>
+                            <Eye className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Link href={`/admin/vendors/${vendor.id}/edit`}>
-                          <Button variant="ghost" size="sm">
-                            <Pencil className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`Edit ${vendor.businessName}`}>
+                            <Pencil className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDelete(vendor.id)}
+                          aria-label={`Delete ${vendor.businessName}`}
                         >
-                          <Trash2 className="w-4 h-4 text-red-500" />
+                          <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
                         </Button>
                       </div>
                     </td>

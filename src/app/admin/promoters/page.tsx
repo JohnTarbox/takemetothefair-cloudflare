@@ -123,21 +123,22 @@ export default function AdminPromotersPage() {
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/promoters/${promoter.slug}`}>
-                          <Button variant="ghost" size="sm">
-                            <Eye className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`View ${promoter.companyName}`}>
+                            <Eye className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Link href={`/admin/promoters/${promoter.id}/edit`}>
-                          <Button variant="ghost" size="sm">
-                            <Pencil className="w-4 h-4" />
+                          <Button variant="ghost" size="sm" aria-label={`Edit ${promoter.companyName}`}>
+                            <Pencil className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDelete(promoter.id)}
+                          aria-label={`Delete ${promoter.companyName}`}
                         >
-                          <Trash2 className="w-4 h-4 text-red-500" />
+                          <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
                         </Button>
                       </div>
                     </td>
