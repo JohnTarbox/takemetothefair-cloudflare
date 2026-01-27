@@ -47,6 +47,12 @@ interface Promoter {
   companyName: string;
 }
 
+interface ImportedEvent {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export default function ImportEventsPage() {
   const [source, setSource] = useState("mainefairs.net");
   const [loading, setLoading] = useState(false);
@@ -63,6 +69,8 @@ export default function ImportEventsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [stats, setStats] = useState({ total: 0, newCount: 0, existingCount: 0 });
+  const [importedEvents, setImportedEvents] = useState<ImportedEvent[]>([]);
+  const [updatedEvents, setUpdatedEvents] = useState<ImportedEvent[]>([]);
 
   useEffect(() => {
     fetchVenuesAndPromoters();
@@ -131,6 +139,8 @@ export default function ImportEventsPage() {
     setImporting(true);
     setError("");
     setSuccess("");
+    setImportedEvents([]);
+    setUpdatedEvents([]);
 
     try {
       const eventsToImport = events.filter((e) => selectedEvents.has(e.sourceId));
@@ -155,6 +165,10 @@ export default function ImportEventsPage() {
 
       const venuesMsg = data.venuesCreated ? ` ${data.venuesCreated} venues created.` : "";
       setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped.${venuesMsg} ${data.errors?.length || 0} errors.`);
+
+      // Save the lists of imported and updated events
+      setImportedEvents(data.importedEvents || []);
+      setUpdatedEvents(data.updatedEvents || []);
 
       // Refresh the preview
       await handlePreview();
@@ -269,6 +283,63 @@ export default function ImportEventsPage() {
           <CheckCircle className="w-4 h-4" />
           {success}
         </div>
+      )}
+
+      {/* Imported/Updated Events Lists */}
+      {(importedEvents.length > 0 || updatedEvents.length > 0) && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Import Results</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {importedEvents.length > 0 && (
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    Imported Events ({importedEvents.length})
+                  </h3>
+                  <ul className="space-y-2 max-h-64 overflow-y-auto">
+                    {importedEvents.map((event) => (
+                      <li key={event.id} className="flex items-center justify-between p-2 bg-green-50 rounded-md">
+                        <span className="text-sm text-gray-900">{event.name}</span>
+                        <Link
+                          href={`/events/${event.slug}`}
+                          target="_blank"
+                          className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1"
+                        >
+                          View <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {updatedEvents.length > 0 && (
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-blue-600" />
+                    Updated Events ({updatedEvents.length})
+                  </h3>
+                  <ul className="space-y-2 max-h-64 overflow-y-auto">
+                    {updatedEvents.map((event) => (
+                      <li key={event.id} className="flex items-center justify-between p-2 bg-blue-50 rounded-md">
+                        <span className="text-sm text-gray-900">{event.name}</span>
+                        <Link
+                          href={`/events/${event.slug}`}
+                          target="_blank"
+                          className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1"
+                        >
+                          View <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Source Selection */}

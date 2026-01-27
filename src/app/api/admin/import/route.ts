@@ -157,6 +157,8 @@ export async function POST(request: Request) {
       skipped: 0,
       venuesCreated: 0,
       errors: [] as string[],
+      importedEvents: [] as { id: string; name: string; slug: string }[],
+      updatedEvents: [] as { id: string; name: string; slug: string }[],
     };
 
     for (const event of eventsToImport) {
@@ -234,6 +236,11 @@ export async function POST(request: Request) {
             }
             await db.update(events).set(updateData).where(eq(events.id, existing[0].id));
             results.updated++;
+            results.updatedEvents.push({
+              id: existing[0].id,
+              name: eventData.name,
+              slug: existing[0].slug,
+            });
           } else {
             results.skipped++;
           }
@@ -258,7 +265,9 @@ export async function POST(request: Request) {
 
         // Insert the event
         // Use website for ticketUrl (Event Website button), fall back to sourceUrl
+        const newEventId = crypto.randomUUID();
         await db.insert(events).values({
+          id: newEventId,
           name: eventData.name,
           slug,
           description: eventData.description || `${eventData.name} - imported from ${eventData.sourceName}`,
@@ -280,6 +289,11 @@ export async function POST(request: Request) {
         });
 
         results.imported++;
+        results.importedEvents.push({
+          id: newEventId,
+          name: eventData.name,
+          slug,
+        });
       } catch (error) {
         results.errors.push(`Failed to import ${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
       }
