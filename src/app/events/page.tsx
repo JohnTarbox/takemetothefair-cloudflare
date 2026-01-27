@@ -1,8 +1,8 @@
 import { Suspense } from "react";
-import { Search, Filter, Store } from "lucide-react";
+import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
+import { events, venues, promoters, eventVendors, vendors, userFavorites } from "@/lib/db/schema";
 import { eq, and, gte, or, count, inArray, sql, like } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
@@ -18,7 +18,22 @@ interface SearchParams {
   commercialVendors?: string;
   includePast?: string;
   myEvents?: string;
+  favorites?: string;
   page?: string;
+}
+
+// Get favorite IDs for a user
+async function getUserFavoriteIds(userId: string, type: "EVENT" | "VENUE" | "VENDOR"): Promise<string[]> {
+  try {
+    const db = getCloudflareDb();
+    const favorites = await db
+      .select({ favoritableId: userFavorites.favoritableId })
+      .from(userFavorites)
+      .where(and(eq(userFavorites.userId, userId), eq(userFavorites.favoritableType, type)));
+    return favorites.map((f) => f.favoritableId);
+  } catch {
+    return [];
+  }
 }
 
 // Get the vendor ID for a user
@@ -50,7 +65,7 @@ async function getVendorEventIds(vendorId: string): Promise<string[]> {
   }
 }
 
-async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) {
+async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], favoriteIds?: string[]) {
   const page = parseInt(searchParams.page || "1");
   const limit = 12;
   const offset = (page - 1) * limit;
@@ -124,6 +139,14 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) 
       conditions.push(inArray(events.id, vendorEventIds));
     } else if (searchParams.myEvents === "true" && (!vendorEventIds || vendorEventIds.length === 0)) {
       // Vendor has no events, return empty
+      return { events: [], total: 0, page, limit };
+    }
+
+    // Filter by favorites if favorites is true
+    if (searchParams.favorites === "true" && favoriteIds && favoriteIds.length > 0) {
+      conditions.push(inArray(events.id, favoriteIds));
+    } else if (searchParams.favorites === "true" && (!favoriteIds || favoriteIds.length === 0)) {
+      // User has no favorites, return empty
       return { events: [], total: 0, page, limit };
     }
 
@@ -282,11 +305,13 @@ function EventsFilter({
   states,
   searchParams,
   isVendor = false,
+  isLoggedIn = false,
 }: {
   categories: string[];
   states: string[];
   searchParams: SearchParams;
   isVendor?: boolean;
+  isLoggedIn?: boolean;
 }) {
   return (
     <form className="bg-white p-4 rounded-lg border border-gray-200 space-y-4">
@@ -397,6 +422,20 @@ function EventsFilter({
         <span className="text-sm text-gray-700">Include past events</span>
       </label>
 
+      {isLoggedIn && (
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            name="favorites"
+            value="true"
+            defaultChecked={searchParams.favorites === "true"}
+            className="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+          />
+          <Heart className="w-4 h-4 text-pink-500" />
+          <span className="text-sm text-gray-700">My Favorites</span>
+        </label>
+      )}
+
       <div className="flex gap-2">
         <button
           type="submit"
@@ -426,6 +465,7 @@ export default async function EventsPage({
   // Get session to check if user is a vendor
   const session = await auth();
   const isVendor = session?.user?.role === "VENDOR";
+  const isLoggedIn = !!session?.user?.id;
 
   // Get vendor event IDs if the user is a vendor and wants to filter
   let vendorEventIds: string[] | undefined;
@@ -436,8 +476,14 @@ export default async function EventsPage({
     }
   }
 
+  // Get favorite IDs if user wants to filter by favorites
+  let favoriteIds: string[] | undefined;
+  if (isLoggedIn && params.favorites === "true") {
+    favoriteIds = await getUserFavoriteIds(session.user.id, "EVENT");
+  }
+
   const [{ events: eventsList, total, page, limit }, categories, states] =
-    await Promise.all([getEvents(params, vendorEventIds), getCategories(), getStates()]);
+    await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates()]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -458,6 +504,7 @@ export default async function EventsPage({
               states={states}
               searchParams={params}
               isVendor={isVendor}
+              isLoggedIn={isLoggedIn}
             />
           </Suspense>
         </aside>

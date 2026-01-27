@@ -1,12 +1,13 @@
 import Link from "next/link";
 import Image from "next/image";
-import { MapPin, Users, Calendar, Search, X } from "lucide-react";
+import { MapPin, Users, Calendar, Search, X, Heart } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { venues, events } from "@/lib/db/schema";
-import { eq, and, like, sql, isNotNull } from "drizzle-orm";
+import { venues, events, userFavorites } from "@/lib/db/schema";
+import { eq, and, like, sql, isNotNull, inArray } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+import { auth } from "@/lib/auth";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
@@ -15,9 +16,23 @@ export const revalidate = 3600; // Cache for 1 hour
 interface SearchParams {
   state?: string;
   q?: string;
+  favorites?: string;
 }
 
-async function getVenues(searchParams: SearchParams) {
+async function getUserFavoriteIds(userId: string): Promise<string[]> {
+  try {
+    const db = getCloudflareDb();
+    const favorites = await db
+      .select({ favoritableId: userFavorites.favoritableId })
+      .from(userFavorites)
+      .where(and(eq(userFavorites.userId, userId), eq(userFavorites.favoritableType, "VENUE")));
+    return favorites.map((f) => f.favoritableId);
+  } catch {
+    return [];
+  }
+}
+
+async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
   try {
     const db = getCloudflareDb();
 
@@ -32,6 +47,12 @@ async function getVenues(searchParams: SearchParams) {
       conditions.push(
         sql`(${venues.name} LIKE ${'%' + searchParams.q + '%'} OR ${venues.city} LIKE ${'%' + searchParams.q + '%'})`
       );
+    }
+
+    if (searchParams.favorites === "true" && favoriteIds && favoriteIds.length > 0) {
+      conditions.push(inArray(venues.id, favoriteIds));
+    } else if (searchParams.favorites === "true" && (!favoriteIds || favoriteIds.length === 0)) {
+      return [];
     }
 
     // Single query: Get venues with event counts using subquery
@@ -94,12 +115,21 @@ export default async function VenuesPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
+  const session = await auth();
+  const isLoggedIn = !!session?.user?.id;
+
+  let favoriteIds: string[] | undefined;
+  if (isLoggedIn && params.favorites === "true") {
+    favoriteIds = await getUserFavoriteIds(session.user.id);
+  }
+
   const [venueList, states] = await Promise.all([
-    getVenues(params),
+    getVenues(params, favoriteIds),
     getStates(),
   ]);
 
-  const hasFilters = params.state || params.q;
+  const hasFilters = params.state || params.q || params.favorites;
+  const showingFavorites = params.favorites === "true";
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -163,6 +193,30 @@ export default async function VenuesPage({
               </div>
             </div>
 
+            {/* Favorites Filter */}
+            {isLoggedIn && (
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
+                {showingFavorites ? (
+                  <Link
+                    href={`/venues${params.state ? `?state=${encodeURIComponent(params.state)}` : ""}${params.q ? `${params.state ? "&" : "?"}q=${encodeURIComponent(params.q)}` : ""}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
+                  >
+                    <Heart className="w-4 h-4 fill-current" />
+                    Showing Favorites
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/venues?favorites=true${params.state ? `&state=${encodeURIComponent(params.state)}` : ""}${params.q ? `&q=${encodeURIComponent(params.q)}` : ""}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    <Heart className="w-4 h-4" />
+                    My Favorites
+                  </Link>
+                )}
+              </div>
+            )}
+
             {/* Clear Filters */}
             {hasFilters && (
               <Link
@@ -180,9 +234,11 @@ export default async function VenuesPage({
           {venueList.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-500">
-                {hasFilters
-                  ? "No venues found matching your criteria."
-                  : "No venues available at this time."}
+                {showingFavorites
+                  ? "You haven't favorited any venues yet."
+                  : hasFilters
+                    ? "No venues found matching your criteria."
+                    : "No venues available at this time."}
               </p>
               {hasFilters && (
                 <Link

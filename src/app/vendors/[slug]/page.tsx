@@ -1,14 +1,16 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Store, Globe, CheckCircle, Calendar, MapPin } from "lucide-react";
+import { Store, Globe, CheckCircle, Calendar, MapPin, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 
@@ -122,6 +124,9 @@ export default async function VendorDetailPage({ params }: Props) {
   if (!vendor) {
     notFound();
   }
+
+  const session = await auth();
+  const isAdmin = session?.user?.role === "ADMIN";
 
   const upcomingEvents = vendor.eventVendors.filter(
     (ev) => new Date(ev.event.endDate) >= new Date()
@@ -302,6 +307,19 @@ export default async function VendorDetailPage({ params }: Props) {
         </main>
 
         <aside className="space-y-6">
+          {isAdmin && (
+            <Card>
+              <CardContent className="p-6">
+                <Link href={`/admin/vendors/${vendor.id}/edit`}>
+                  <Button variant="outline" className="w-full">
+                    <Pencil className="w-4 h-4 mr-2" />
+                    Edit Vendor
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader>
               <h3 className="font-semibold text-gray-900">Contact & Links</h3>

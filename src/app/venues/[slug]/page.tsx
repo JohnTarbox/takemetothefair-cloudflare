@@ -1,14 +1,16 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { MapPin, Phone, Mail, Globe, Users, Calendar, ExternalLink } from "lucide-react";
+import { MapPin, Phone, Mail, Globe, Users, Calendar, ExternalLink, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 
 export const runtime = "edge";
@@ -118,6 +120,9 @@ export default async function VenueDetailPage({ params }: Props) {
     notFound();
   }
 
+  const session = await auth();
+  const isAdmin = session?.user?.role === "ADMIN";
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -220,6 +225,14 @@ export default async function VenueDetailPage({ params }: Props) {
                     Capacity: {venue.capacity.toLocaleString()}
                   </p>
                 </div>
+              )}
+              {isAdmin && (
+                <Link href={`/admin/venues/${venue.id}/edit`}>
+                  <Button variant="outline" className="w-full mt-3">
+                    <Pencil className="w-4 h-4 mr-2" />
+                    Edit Venue
+                  </Button>
+                </Link>
               )}
             </CardContent>
           </Card>
