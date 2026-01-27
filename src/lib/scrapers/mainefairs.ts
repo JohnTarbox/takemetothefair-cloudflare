@@ -41,6 +41,8 @@ export interface ScrapedEvent {
   ticketUrl?: string;
   website?: string;
   venue?: ScrapedVenue;
+  commercialVendorsAllowed?: boolean;
+  vendorTypes?: string[]; // e.g., ["Art", "Craft", "Food", "Commercial"]
 }
 
 export interface ScrapeResult {

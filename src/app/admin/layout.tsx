@@ -10,6 +10,7 @@ import {
   Megaphone,
   Download,
   GitMerge,
+  Link2,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 
@@ -17,6 +18,7 @@ const adminNav = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
   { name: "Events", href: "/admin/events", icon: Calendar },
   { name: "Import Events", href: "/admin/import", icon: Download },
+  { name: "Import from URL", href: "/admin/import-url", icon: Link2 },
   { name: "Venues", href: "/admin/venues", icon: MapPin },
   { name: "Vendors", href: "/admin/vendors", icon: Store },
   { name: "Promoters", href: "/admin/promoters", icon: Megaphone },

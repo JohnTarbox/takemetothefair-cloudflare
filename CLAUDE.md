@@ -96,6 +96,33 @@ if (session?.user?.role === "ADMIN") { ... }
 ### Event Scrapers
 Located in `src/lib/scrapers/`. Import events from external fair websites (mainefairs.net, etc.). Used via admin import page (`/admin/import`).
 
+### URL Import Feature (CRITICAL)
+
+**This is one of the most important features on the website.** Located at `/admin/import-url`, it allows importing events from arbitrary URLs using AI-powered extraction.
+
+**Priority**: Must be capable, flexible, and resilient. When making changes:
+- Test with diverse URL sources (event pages, venue sites, social media)
+- Handle edge cases gracefully (missing data, unusual date formats, no structured data)
+- Always provide manual fallback options for users
+- Maintain robust error handling with helpful user messages
+
+**Architecture** (`src/lib/url-import/`):
+- `types.ts` - TypeScript interfaces for extracted data
+- `html-parser.ts` - Extracts text content and metadata (title, og:image, JSON-LD)
+- `ai-extractor.ts` - Cloudflare Workers AI (Llama 3.1 8B) extraction with fallbacks
+
+**API Routes** (`src/app/api/admin/import-url/`):
+- `fetch/route.ts` - GET: Fetches URL, extracts text and metadata
+- `extract/route.ts` - POST: AI extraction from content
+- `route.ts` - POST: Saves event with venue creation
+
+**Key Design Decisions**:
+1. Uses Workers AI (no external API keys needed)
+2. Hybrid approach: AI suggests, user verifies/corrects
+3. Manual paste fallback if fetch fails
+4. JSON-LD structured data used when available for higher accuracy
+5. Date parsing handles multiple formats (ISO, "February 01, 2026", "1/15/25", etc.)
+
 ## Test Accounts (after seeding)
 - Admin: admin@takemetothefair.com / admin123
 - Promoter: promoter@example.com / promoter123

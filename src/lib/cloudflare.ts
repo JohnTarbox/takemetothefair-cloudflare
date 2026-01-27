@@ -11,3 +11,8 @@ export function getCloudflareEnv() {
   const { env } = getRequestContext();
   return env;
 }
+
+export function getCloudflareAi() {
+  const { env } = getRequestContext();
+  return env.AI;
+}

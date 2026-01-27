@@ -40,6 +40,8 @@ interface PreviewEvent {
     state?: string;
     zip?: string;
   };
+  commercialVendorsAllowed?: boolean;
+  vendorTypes?: string[];
 }
 
 interface Venue {
@@ -409,6 +411,15 @@ export default function ImportEventsPage() {
                   <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
                   <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
                   <option value="newenglandcraftfairs.com">New England Craft Fairs (newenglandcraftfairs.com)</option>
+                  <optgroup label="FairsAndFestivals.net (by state)">
+                    <option value="fairsandfestivals.net-ME">Maine (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-MA">Massachusetts (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-NH">New Hampshire (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-VT">Vermont (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-CT">Connecticut (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-RI">Rhode Island (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-NY">New York (fairsandfestivals.net)</option>
+                  </optgroup>
                 </select>
               </div>
               <Button onClick={handlePreview} disabled={loading}>
@@ -581,6 +592,21 @@ export default function ImportEventsPage() {
                           </span>
                         )}
                       </div>
+                      {/* Vendor Types and Commercial Status */}
+                      {(event.vendorTypes?.length || event.commercialVendorsAllowed !== undefined) && (
+                        <div className="flex items-center gap-2 mt-1 text-sm">
+                          {event.commercialVendorsAllowed !== undefined && (
+                            <Badge variant={event.commercialVendorsAllowed ? "success" : "secondary"}>
+                              {event.commercialVendorsAllowed ? "Commercial OK" : "No Commercial"}
+                            </Badge>
+                          )}
+                          {event.vendorTypes && event.vendorTypes.length > 0 && (
+                            <span className="text-gray-500">
+                              Vendors: {event.vendorTypes.join(", ")}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       {event.sourceUrl && (
                         <a
                           href={event.sourceUrl}
@@ -636,7 +662,7 @@ export default function ImportEventsPage() {
               You can then select which events to import into your calendar.
             </p>
             <p className="text-sm text-gray-400 mt-4">
-              Currently supported: mainefairs.net, mainemade.com, mainepublic.org, mafa.org, vtnhfairs.org (VT &amp; NH)
+              Currently supported: mainefairs.net, mainemade.com, mainepublic.org, mafa.org, vtnhfairs.org (VT &amp; NH), fairsandfestivals.net (all states)
             </p>
           </CardContent>
         </Card>
