@@ -43,10 +43,14 @@ export async function GET(request: NextRequest) {
     let duplicates;
     let totalEntities = 0;
 
+    // Limit entities to prevent timeout on Cloudflare Workers (30s CPU limit)
+    // O(n²) comparisons with Levenshtein can be very slow
+    const MAX_ENTITIES = 500;
+
     switch (type) {
       case "venues": {
-        // Batch query: Get all venues
-        const venueList = await db.select().from(venues).orderBy(venues.name);
+        // Batch query: Get all venues (limited to prevent timeout)
+        const venueList = await db.select().from(venues).orderBy(venues.name).limit(MAX_ENTITIES);
         totalEntities = venueList.length;
 
         // Batch query: Get event counts for ALL venues in one query
@@ -76,7 +80,7 @@ export async function GET(request: NextRequest) {
       }
 
       case "events": {
-        // Batch query: Get all events with venue and promoter JOINs
+        // Batch query: Get all events with venue and promoter JOINs (limited to prevent timeout)
         const eventResults = await db
           .select({
             event: events,
@@ -86,7 +90,8 @@ export async function GET(request: NextRequest) {
           .from(events)
           .leftJoin(venues, eq(events.venueId, venues.id))
           .leftJoin(promoters, eq(events.promoterId, promoters.id))
-          .orderBy(events.name);
+          .orderBy(events.name)
+          .limit(MAX_ENTITIES);
 
         totalEntities = eventResults.length;
 
@@ -119,8 +124,8 @@ export async function GET(request: NextRequest) {
       }
 
       case "vendors": {
-        // Batch query: Get all vendors
-        const vendorList = await db.select().from(vendors).orderBy(vendors.businessName);
+        // Batch query: Get all vendors (limited to prevent timeout)
+        const vendorList = await db.select().from(vendors).orderBy(vendors.businessName).limit(MAX_ENTITIES);
         totalEntities = vendorList.length;
 
         // Batch query: Get event vendor counts for ALL vendors in one query
@@ -150,8 +155,8 @@ export async function GET(request: NextRequest) {
       }
 
       case "promoters": {
-        // Batch query: Get all promoters
-        const promoterList = await db.select().from(promoters).orderBy(promoters.companyName);
+        // Batch query: Get all promoters (limited to prevent timeout)
+        const promoterList = await db.select().from(promoters).orderBy(promoters.companyName).limit(MAX_ENTITIES);
         totalEntities = promoterList.length;
 
         // Batch query: Get event counts for ALL promoters in one query
