@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Calendar,
   MapPin,
@@ -22,9 +23,12 @@ import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
+import { EventSchema } from "@/components/seo/EventSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { ShareButtons } from "@/components/ShareButtons";
 
 export const runtime = "edge";
-export const dynamic = "force-dynamic"; // Disable caching for fresh data
+export const revalidate = 300; // Cache for 5 minutes
 
 
 interface Props {
@@ -131,9 +135,39 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Event Not Found" };
   }
 
+  const title = `${event.name} | Meet Me at the Fair`;
+  const description = event.description?.slice(0, 160) || `${event.name}${event.venue ? ` at ${event.venue.name}` : ""}`;
+  const url = `https://meetmeatthefair.com/events/${event.slug}`;
+
   return {
-    title: `${event.name} | Meet Me at the Fair`,
-    description: event.description?.slice(0, 160) || `${event.name}${event.venue ? ` at ${event.venue.name}` : ""}`,
+    title,
+    description,
+    alternates: {
+      canonical: url,
+    },
+    openGraph: {
+      title: event.name,
+      description,
+      url,
+      siteName: "Meet Me at the Fair",
+      type: "website",
+      ...(event.imageUrl && {
+        images: [
+          {
+            url: event.imageUrl,
+            width: 1200,
+            height: 630,
+            alt: event.name,
+          },
+        ],
+      }),
+    },
+    twitter: {
+      card: event.imageUrl ? "summary_large_image" : "summary",
+      title: event.name,
+      description,
+      ...(event.imageUrl && { images: [event.imageUrl] }),
+    },
   };
 }
 
@@ -150,14 +184,46 @@ export default async function EventDetailPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <EventSchema
+        name={event.name}
+        description={event.description || undefined}
+        startDate={event.startDate}
+        endDate={event.endDate}
+        imageUrl={event.imageUrl}
+        url={`https://meetmeatthefair.com/events/${event.slug}`}
+        venue={event.venue ? {
+          name: event.venue.name,
+          address: event.venue.address,
+          city: event.venue.city,
+          state: event.venue.state,
+          zip: event.venue.zip,
+        } : null}
+        organizer={event.promoter ? {
+          name: event.promoter.companyName,
+          url: event.promoter.website,
+        } : null}
+        ticketPriceMin={event.ticketPriceMin}
+        ticketPriceMax={event.ticketPriceMax}
+        ticketUrl={event.ticketUrl}
+      />
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Events", url: "https://meetmeatthefair.com/events" },
+          { name: event.name, url: `https://meetmeatthefair.com/events/${event.slug}` },
+        ]}
+      />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
           {event.imageUrl && (
-            <div className="aspect-video rounded-xl overflow-hidden bg-gray-100">
-              <img
+            <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
+              <Image
                 src={event.imageUrl}
                 alt={event.name}
-                className="w-full h-full object-cover"
+                fill
+                priority
+                sizes="(max-width: 1024px) 100vw, 66vw"
+                className="object-cover"
               />
             </div>
           )}
@@ -174,9 +240,16 @@ export default async function EventDetailPage({ params }: Props) {
                       <Badge key={cat}>{cat}</Badge>
                     ))}
                   </div>
-                  <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-                    {event.name}
-                  </h1>
+                  <div className="flex items-start justify-between gap-4">
+                    <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
+                      {event.name}
+                    </h1>
+                    <ShareButtons
+                      url={`https://meetmeatthefair.com/events/${event.slug}`}
+                      title={event.name}
+                      description={event.description || undefined}
+                    />
+                  </div>
                 </div>
 
                 <div className="prose prose-gray max-w-none">
@@ -227,12 +300,14 @@ export default async function EventDetailPage({ params }: Props) {
                       href={`/vendors/${vendor.slug}`}
                       className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
                     >
-                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
                         {vendor.logoUrl ? (
-                          <img
+                          <Image
                             src={vendor.logoUrl}
                             alt={vendor.businessName}
-                            className="w-10 h-10 rounded-full object-cover"
+                            fill
+                            sizes="40px"
+                            className="object-cover"
                           />
                         ) : (
                           <Store className="w-5 h-5 text-gray-400" />
@@ -416,12 +491,14 @@ export default async function EventDetailPage({ params }: Props) {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
+                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
                   {event.promoter.logoUrl ? (
-                    <img
+                    <Image
                       src={event.promoter.logoUrl}
                       alt={event.promoter.companyName}
-                      className="w-12 h-12 rounded-full object-cover"
+                      fill
+                      sizes="48px"
+                      className="object-cover"
                     />
                   ) : (
                     <User className="w-6 h-6 text-gray-400" />

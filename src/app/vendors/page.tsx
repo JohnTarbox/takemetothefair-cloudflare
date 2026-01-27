@@ -1,15 +1,16 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Store, CheckCircle, Calendar, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
-import { eq, and, gte, isNotNull } from "drizzle-orm";
+import { eq, and, gte, isNotNull, inArray } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import { formatDateRange } from "@/lib/utils";
 
 export const runtime = "edge";
-export const dynamic = "force-dynamic";
+export const revalidate = 3600; // Cache for 1 hour
 
 
 interface SearchParams {
@@ -20,7 +21,7 @@ async function getVendors(searchParams: SearchParams) {
   try {
     const db = getCloudflareDb();
 
-    // Get all vendors (optionally filtered by type)
+    // Query 1: Get all vendors (optionally filtered by type)
     let vendorQuery = db
       .select()
       .from(vendors)
@@ -38,47 +39,63 @@ async function getVendors(searchParams: SearchParams) {
 
     const vendorResults = await vendorQuery;
 
-    // Get events for each vendor
-    const vendorsWithEvents = await Promise.all(
-      vendorResults.map(async (v) => {
-        // Get approved upcoming events for this vendor
-        const vendorEvents = await db
-          .select()
-          .from(eventVendors)
-          .leftJoin(events, eq(eventVendors.eventId, events.id))
-          .leftJoin(venues, eq(events.venueId, venues.id))
-          .where(
-            and(
-              eq(eventVendors.vendorId, v.vendors.id),
-              eq(eventVendors.status, "APPROVED"),
-              eq(events.status, "APPROVED"),
-              gte(events.endDate, new Date())
-            )
-          );
+    if (vendorResults.length === 0) {
+      return [];
+    }
 
-        return {
-          ...v.vendors,
-          user: v.users ? { name: v.users.name } : { name: null },
-          events: vendorEvents
-            .filter((e) => e.events !== null)
-            .map((e) => ({
-              id: e.events!.id,
-              name: e.events!.name,
-              slug: e.events!.slug,
-              startDate: e.events!.startDate,
-              endDate: e.events!.endDate,
-              imageUrl: e.events!.imageUrl,
-              venue: e.venues ? {
-                name: e.venues.name,
-                city: e.venues.city,
-                state: e.venues.state,
-              } : null,
-            })),
-        };
+    // Query 2: Get all upcoming events for all vendors in a single query
+    const vendorIds = vendorResults.map(v => v.vendors.id);
+    const allVendorEvents = await db
+      .select({
+        vendorId: eventVendors.vendorId,
+        eventId: events.id,
+        eventName: events.name,
+        eventSlug: events.slug,
+        startDate: events.startDate,
+        endDate: events.endDate,
+        imageUrl: events.imageUrl,
+        venueName: venues.name,
+        venueCity: venues.city,
+        venueState: venues.state,
       })
-    );
+      .from(eventVendors)
+      .innerJoin(events, eq(eventVendors.eventId, events.id))
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(
+        and(
+          inArray(eventVendors.vendorId, vendorIds),
+          eq(eventVendors.status, "APPROVED"),
+          eq(events.status, "APPROVED"),
+          gte(events.endDate, new Date())
+        )
+      );
 
-    return vendorsWithEvents;
+    // Group events by vendor ID in memory
+    const eventsByVendor = new Map<string, typeof allVendorEvents>();
+    for (const event of allVendorEvents) {
+      const existing = eventsByVendor.get(event.vendorId) || [];
+      existing.push(event);
+      eventsByVendor.set(event.vendorId, existing);
+    }
+
+    // Combine vendors with their events
+    return vendorResults.map(v => ({
+      ...v.vendors,
+      user: v.users ? { name: v.users.name } : { name: null },
+      events: (eventsByVendor.get(v.vendors.id) || []).map(e => ({
+        id: e.eventId,
+        name: e.eventName,
+        slug: e.eventSlug,
+        startDate: e.startDate,
+        endDate: e.endDate,
+        imageUrl: e.imageUrl,
+        venue: e.venueName ? {
+          name: e.venueName,
+          city: e.venueCity,
+          state: e.venueState,
+        } : null,
+      })),
+    }));
   } catch (e) {
     console.error("Error fetching vendors:", e);
     return [];
@@ -168,12 +185,14 @@ export default async function VendorsPage({
                   <Card key={vendor.id} className="overflow-hidden">
                     <div className="p-6">
                       <Link href={`/vendors/${vendor.slug}`} className="flex gap-4 hover:opacity-80 transition-opacity">
-                        <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                        <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
                           {vendor.logoUrl ? (
-                            <img
+                            <Image
                               src={vendor.logoUrl}
                               alt={vendor.businessName}
-                              className="w-16 h-16 rounded-lg object-cover"
+                              fill
+                              sizes="64px"
+                              className="object-cover"
                             />
                           ) : (
                             <Store className="w-8 h-8 text-gray-400" />
@@ -228,11 +247,13 @@ export default async function VendorsPage({
                                 className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
                               >
                                 {event.imageUrl && (
-                                  <div className="aspect-video rounded-md overflow-hidden mb-2">
-                                    <img
+                                  <div className="aspect-video rounded-md overflow-hidden mb-2 relative">
+                                    <Image
                                       src={event.imageUrl}
                                       alt={event.name}
-                                      className="w-full h-full object-cover"
+                                      fill
+                                      sizes="(max-width: 640px) 100vw, 200px"
+                                      className="object-cover"
                                     />
                                   </div>
                                 )}

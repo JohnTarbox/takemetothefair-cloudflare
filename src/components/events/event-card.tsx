@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Calendar, MapPin, Tag, Store } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +9,7 @@ import { formatDateRange, formatPrice } from "@/lib/utils";
 import { parseJsonArray } from "@/types";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
+import { FavoriteButton } from "@/components/FavoriteButton";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -38,10 +40,12 @@ export function EventCard({ event }: EventCardProps) {
       <Link href={`/events/${event.slug}`} className="block">
         <div className="aspect-video relative bg-gray-100">
           {event.imageUrl ? (
-            <img
+            <Image
               src={event.imageUrl}
               alt={event.name}
-              className="w-full h-full object-cover"
+              fill
+              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+              className="object-cover"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -53,6 +57,12 @@ export function EventCard({ event }: EventCardProps) {
               Featured
             </Badge>
           )}
+          <FavoriteButton
+            type="EVENT"
+            id={event.id}
+            className="absolute top-3 right-3"
+            size="sm"
+          />
         </div>
         <div className="p-4">
           <h3 className="font-semibold text-lg text-gray-900 line-clamp-2">
@@ -118,12 +128,14 @@ export function EventCard({ event }: EventCardProps) {
                 className="block group"
                 title={vendor.businessName}
               >
-                <div className="aspect-square rounded bg-gray-100 flex items-center justify-center overflow-hidden group-hover:ring-2 ring-blue-500 transition-all">
+                <div className="aspect-square rounded bg-gray-100 flex items-center justify-center overflow-hidden group-hover:ring-2 ring-blue-500 transition-all relative">
                   {vendor.logoUrl ? (
-                    <img
+                    <Image
                       src={vendor.logoUrl}
                       alt={vendor.businessName}
-                      className="w-full h-full object-cover"
+                      fill
+                      sizes="48px"
+                      className="object-cover"
                     />
                   ) : (
                     <Store className="w-4 h-4 text-gray-400" />

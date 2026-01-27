@@ -3,11 +3,11 @@ import { Search, Filter, Store } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, gte, or, count, inArray, sql } from "drizzle-orm";
+import { eq, and, gte, or, count, inArray, sql, like } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
 export const runtime = "edge";
-export const dynamic = "force-dynamic"; // Disable caching for fresh data
+export const revalidate = 60; // Cache for 1 minute
 
 
 interface SearchParams {
@@ -153,36 +153,60 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) 
 
     const results = await query;
 
-    // Fetch vendors for each event
-    const eventsWithVendors = await Promise.all(
-      results.map(async (r) => {
-        const eventVendorResults = await db
-          .select()
-          .from(eventVendors)
-          .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-          .where(
-            and(
-              eq(eventVendors.eventId, r.events.id),
-              eq(eventVendors.status, "APPROVED")
-            )
-          );
+    // Get all event IDs from results
+    const eventIds = results.map(r => r.events.id);
 
-        return {
-          ...r.events,
-          venue: r.venues,
-          promoter: r.promoters,
-          vendors: eventVendorResults
-            .filter((ev) => ev.vendors !== null)
-            .map((ev) => ({
-              id: ev.vendors!.id,
-              businessName: ev.vendors!.businessName,
-              slug: ev.vendors!.slug,
-              logoUrl: ev.vendors!.logoUrl,
-              vendorType: ev.vendors!.vendorType,
-            })),
-        };
-      })
-    );
+    // Single query: Fetch all vendors for all events at once
+    let allEventVendors: {
+      eventId: string;
+      vendorId: string;
+      businessName: string;
+      slug: string;
+      logoUrl: string | null;
+      vendorType: string | null;
+    }[] = [];
+
+    if (eventIds.length > 0) {
+      allEventVendors = await db
+        .select({
+          eventId: eventVendors.eventId,
+          vendorId: vendors.id,
+          businessName: vendors.businessName,
+          slug: vendors.slug,
+          logoUrl: vendors.logoUrl,
+          vendorType: vendors.vendorType,
+        })
+        .from(eventVendors)
+        .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+        .where(
+          and(
+            inArray(eventVendors.eventId, eventIds),
+            eq(eventVendors.status, "APPROVED")
+          )
+        );
+    }
+
+    // Group vendors by event ID in memory
+    const vendorsByEvent = new Map<string, typeof allEventVendors>();
+    for (const ev of allEventVendors) {
+      const existing = vendorsByEvent.get(ev.eventId) || [];
+      existing.push(ev);
+      vendorsByEvent.set(ev.eventId, existing);
+    }
+
+    // Combine events with their vendors
+    const eventsWithVendors = results.map(r => ({
+      ...r.events,
+      venue: r.venues,
+      promoter: r.promoters,
+      vendors: (vendorsByEvent.get(r.events.id) || []).map(ev => ({
+        id: ev.vendorId,
+        businessName: ev.businessName,
+        slug: ev.slug,
+        logoUrl: ev.logoUrl,
+        vendorType: ev.vendorType,
+      })),
+    }));
 
     // Count total
     const countConditions = [...conditions];

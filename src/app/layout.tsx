@@ -9,6 +9,20 @@ export const metadata: Metadata = {
   title: "Meet Me at the Fair - Discover Local Fairs & Events",
   description:
     "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
+  metadataBase: new URL("https://meetmeatthefair.com"),
+  openGraph: {
+    title: "Meet Me at the Fair",
+    description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
+    url: "https://meetmeatthefair.com",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary",
+    title: "Meet Me at the Fair",
+    description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
+  },
 };
 
 export default function RootLayout({

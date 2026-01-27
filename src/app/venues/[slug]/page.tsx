@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { MapPin, Phone, Mail, Globe, Users, Calendar, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -11,7 +12,7 @@ import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 
 export const runtime = "edge";
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // Cache for 5 minutes
 
 
 interface Props {
@@ -73,9 +74,39 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Venue Not Found" };
   }
 
+  const title = `${venue.name} | Meet Me at the Fair`;
+  const description = venue.description?.slice(0, 160) || `${venue.name} in ${venue.city}, ${venue.state}`;
+  const url = `https://meetmeatthefair.com/venues/${venue.slug}`;
+
   return {
-    title: `${venue.name} | Meet Me at the Fair`,
-    description: venue.description?.slice(0, 160) || `${venue.name} in ${venue.city}, ${venue.state}`,
+    title,
+    description,
+    alternates: {
+      canonical: url,
+    },
+    openGraph: {
+      title: venue.name,
+      description,
+      url,
+      siteName: "Meet Me at the Fair",
+      type: "website",
+      ...(venue.imageUrl && {
+        images: [
+          {
+            url: venue.imageUrl,
+            width: 1200,
+            height: 630,
+            alt: venue.name,
+          },
+        ],
+      }),
+    },
+    twitter: {
+      card: venue.imageUrl ? "summary_large_image" : "summary",
+      title: venue.name,
+      description,
+      ...(venue.imageUrl && { images: [venue.imageUrl] }),
+    },
   };
 }
 
@@ -92,11 +123,14 @@ export default async function VenueDetailPage({ params }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
           {venue.imageUrl && (
-            <div className="aspect-video rounded-xl overflow-hidden bg-gray-100">
-              <img
+            <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
+              <Image
                 src={venue.imageUrl}
                 alt={venue.name}
-                className="w-full h-full object-cover"
+                fill
+                priority
+                sizes="(max-width: 1024px) 100vw, 66vw"
+                className="object-cover"
               />
             </div>
           )}

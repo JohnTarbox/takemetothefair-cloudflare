@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { Store, Globe, CheckCircle, Calendar, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -12,7 +13,7 @@ import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 
 export const runtime = "edge";
-export const dynamic = "force-dynamic";
+export const revalidate = 300; // Cache for 5 minutes
 
 
 interface Props {
@@ -78,9 +79,39 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Vendor Not Found" };
   }
 
+  const title = `${vendor.businessName} | Meet Me at the Fair`;
+  const description = vendor.description?.slice(0, 160) || `${vendor.businessName} - ${vendor.vendorType}`;
+  const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
+
   return {
-    title: `${vendor.businessName} | Meet Me at the Fair`,
-    description: vendor.description?.slice(0, 160) || `${vendor.businessName} - ${vendor.vendorType}`,
+    title,
+    description,
+    alternates: {
+      canonical: url,
+    },
+    openGraph: {
+      title: vendor.businessName,
+      description,
+      url,
+      siteName: "Meet Me at the Fair",
+      type: "website",
+      ...(vendor.logoUrl && {
+        images: [
+          {
+            url: vendor.logoUrl,
+            width: 400,
+            height: 400,
+            alt: vendor.businessName,
+          },
+        ],
+      }),
+    },
+    twitter: {
+      card: vendor.logoUrl ? "summary" : "summary",
+      title: vendor.businessName,
+      description,
+      ...(vendor.logoUrl && { images: [vendor.logoUrl] }),
+    },
   };
 }
 
@@ -104,12 +135,14 @@ export default async function VendorDetailPage({ params }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
           <div className="flex items-start gap-6">
-            <div className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
+            <div className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
               {vendor.logoUrl ? (
-                <img
+                <Image
                   src={vendor.logoUrl}
                   alt={vendor.businessName}
-                  className="w-24 h-24 rounded-xl object-cover"
+                  fill
+                  sizes="96px"
+                  className="object-cover rounded-xl"
                 />
               ) : (
                 <Store className="w-12 h-12 text-gray-400" />

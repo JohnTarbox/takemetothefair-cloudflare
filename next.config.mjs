@@ -8,6 +8,17 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  images: {
+    // Cloudflare Pages doesn't support Next.js image optimization by default
+    // Use unoptimized for external URLs, but still get lazy loading benefits
+    unoptimized: true,
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**",
+      },
+    ],
+  },
 };
 
 // Enable Cloudflare bindings in development
