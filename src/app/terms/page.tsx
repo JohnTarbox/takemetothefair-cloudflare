@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+export const runtime = "edge";
+
 export const metadata: Metadata = {
   title: "Terms of Service | Meet Me at the Fair",
   description: "Terms of service for Meet Me at the Fair - rules and guidelines for using our platform.",

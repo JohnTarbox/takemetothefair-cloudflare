@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { venues, events, vendors, promoters } from "@/lib/db/schema";
-import { sql, eq } from "drizzle-orm";
+import { venues, events, vendors, promoters, eventVendors } from "@/lib/db/schema";
+import { sql, eq, count, inArray } from "drizzle-orm";
 import {
   findDuplicatePairs,
   getVenueComparisonString,
@@ -45,22 +45,27 @@ export async function GET(request: NextRequest) {
 
     switch (type) {
       case "venues": {
+        // Batch query: Get all venues
         const venueList = await db.select().from(venues).orderBy(venues.name);
         totalEntities = venueList.length;
 
-        // Get event counts for each venue
-        const venuesWithCounts = await Promise.all(
-          venueList.map(async (venue) => {
-            const [eventCount] = await db
-              .select({ count: sql<number>`count(*)` })
-              .from(events)
-              .where(eq(events.venueId, venue.id));
-            return {
-              ...venue,
-              _count: { events: eventCount?.count || 0 },
-            };
+        // Batch query: Get event counts for ALL venues in one query
+        const eventCounts = await db
+          .select({
+            venueId: events.venueId,
+            count: count(),
           })
-        );
+          .from(events)
+          .groupBy(events.venueId);
+
+        // Create lookup map
+        const countMap = new Map(eventCounts.map((ec) => [ec.venueId, ec.count]));
+
+        // Map in memory (no additional queries)
+        const venuesWithCounts = venueList.map((venue) => ({
+          ...venue,
+          _count: { events: countMap.get(venue.id) || 0 },
+        }));
 
         duplicates = findDuplicatePairs(
           venuesWithCounts,
@@ -71,32 +76,39 @@ export async function GET(request: NextRequest) {
       }
 
       case "events": {
-        const eventList = await db.select().from(events).orderBy(events.name);
-        totalEntities = eventList.length;
-
-        // Get venue and promoter info for each event
-        const eventsWithDetails = await Promise.all(
-          eventList.map(async (event) => {
-            const [venue] = await db
-              .select({ name: venues.name })
-              .from(venues)
-              .where(eq(venues.id, event.venueId));
-            const [promoter] = await db
-              .select({ companyName: promoters.companyName })
-              .from(promoters)
-              .where(eq(promoters.id, event.promoterId));
-            const [eventVendorCount] = await db
-              .select({ count: sql<number>`count(*)` })
-              .from(events)
-              .where(eq(events.id, event.id));
-            return {
-              ...event,
-              venue,
-              promoter,
-              _count: { eventVendors: eventVendorCount?.count || 0 },
-            };
+        // Batch query: Get all events with venue and promoter JOINs
+        const eventResults = await db
+          .select({
+            event: events,
+            venueName: venues.name,
+            promoterName: promoters.companyName,
           })
-        );
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .leftJoin(promoters, eq(events.promoterId, promoters.id))
+          .orderBy(events.name);
+
+        totalEntities = eventResults.length;
+
+        // Batch query: Get vendor counts for ALL events in one query
+        const vendorCounts = await db
+          .select({
+            eventId: eventVendors.eventId,
+            count: count(),
+          })
+          .from(eventVendors)
+          .groupBy(eventVendors.eventId);
+
+        // Create lookup map
+        const vendorCountMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
+
+        // Map in memory (no additional queries)
+        const eventsWithDetails = eventResults.map((result) => ({
+          ...result.event,
+          venue: result.venueName ? { name: result.venueName } : null,
+          promoter: result.promoterName ? { companyName: result.promoterName } : null,
+          _count: { eventVendors: vendorCountMap.get(result.event.id) || 0 },
+        }));
 
         duplicates = findDuplicatePairs(
           eventsWithDetails,
@@ -107,22 +119,27 @@ export async function GET(request: NextRequest) {
       }
 
       case "vendors": {
+        // Batch query: Get all vendors
         const vendorList = await db.select().from(vendors).orderBy(vendors.businessName);
         totalEntities = vendorList.length;
 
-        // Get event vendor counts
-        const vendorsWithCounts = await Promise.all(
-          vendorList.map(async (vendor) => {
-            const [eventVendorCount] = await db
-              .select({ count: sql<number>`count(*)` })
-              .from(events)
-              .where(eq(events.id, vendor.id));
-            return {
-              ...vendor,
-              _count: { eventVendors: eventVendorCount?.count || 0 },
-            };
+        // Batch query: Get event vendor counts for ALL vendors in one query
+        const vendorEventCounts = await db
+          .select({
+            vendorId: eventVendors.vendorId,
+            count: count(),
           })
-        );
+          .from(eventVendors)
+          .groupBy(eventVendors.vendorId);
+
+        // Create lookup map
+        const countMap = new Map(vendorEventCounts.map((vc) => [vc.vendorId, vc.count]));
+
+        // Map in memory (no additional queries)
+        const vendorsWithCounts = vendorList.map((vendor) => ({
+          ...vendor,
+          _count: { eventVendors: countMap.get(vendor.id) || 0 },
+        }));
 
         duplicates = findDuplicatePairs(
           vendorsWithCounts,
@@ -133,22 +150,27 @@ export async function GET(request: NextRequest) {
       }
 
       case "promoters": {
+        // Batch query: Get all promoters
         const promoterList = await db.select().from(promoters).orderBy(promoters.companyName);
         totalEntities = promoterList.length;
 
-        // Get event counts
-        const promotersWithCounts = await Promise.all(
-          promoterList.map(async (promoter) => {
-            const [eventCount] = await db
-              .select({ count: sql<number>`count(*)` })
-              .from(events)
-              .where(eq(events.promoterId, promoter.id));
-            return {
-              ...promoter,
-              _count: { events: eventCount?.count || 0 },
-            };
+        // Batch query: Get event counts for ALL promoters in one query
+        const eventCounts = await db
+          .select({
+            promoterId: events.promoterId,
+            count: count(),
           })
-        );
+          .from(events)
+          .groupBy(events.promoterId);
+
+        // Create lookup map
+        const countMap = new Map(eventCounts.map((ec) => [ec.promoterId, ec.count]));
+
+        // Map in memory (no additional queries)
+        const promotersWithCounts = promoterList.map((promoter) => ({
+          ...promoter,
+          _count: { events: countMap.get(promoter.id) || 0 },
+        }));
 
         duplicates = findDuplicatePairs(
           promotersWithCounts,

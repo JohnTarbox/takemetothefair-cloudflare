@@ -2,6 +2,8 @@ import { Calendar, Users, MapPin, Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 
+export const runtime = "edge";
+
 export const metadata: Metadata = {
   title: "About Us | Meet Me at the Fair",
   description: "Learn about Meet Me at the Fair - your community calendar for fairs, festivals, and local events.",
