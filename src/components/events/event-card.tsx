@@ -60,7 +60,7 @@ export function EventCard({ event }: EventCardProps) {
           <FavoriteButton
             type="EVENT"
             id={event.id}
-            className="absolute top-3 right-3"
+            className="absolute top-3 right-3 z-10"
             size="sm"
           />
         </div>
