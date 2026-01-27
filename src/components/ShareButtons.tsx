@@ -64,10 +64,15 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
   return (
     <div className="relative" ref={menuRef}>
       <Button
+        type="button"
         variant="outline"
         size="sm"
         className="gap-2"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
       >
         <Share2 className="w-4 h-4" />
         Share
