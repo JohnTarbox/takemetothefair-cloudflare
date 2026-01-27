@@ -223,13 +223,21 @@ export async function scrapeMainePublic(): Promise<ScrapeResult> {
 // Fetch additional details from an event's detail page
 export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<Partial<ScrapedEvent>> {
   try {
+    // Add timeout using AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
     const response = await fetch(eventUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
       },
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
+      console.log(`[MainePublic Scraper] Response not OK: ${response.status} for ${eventUrl}`);
       return {};
     }
 
@@ -415,6 +423,7 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
           if (startTime) {
             details.startDate = new Date(year, monthNum, day, startTime.hours, startTime.minutes);
             details.datesConfirmed = true;
+            console.log(`[MainePublic Scraper] Found date: ${details.startDate.toISOString()} for ${eventUrl}`);
           }
           if (endTime) {
             details.endDate = new Date(year, monthNum, day, endTime.hours, endTime.minutes);
@@ -422,6 +431,10 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
         }
       }
     }
+
+    // Log final results
+    console.log(`[MainePublic Scraper] Extracted from ${eventUrl}: startDate=${details.startDate}, venue=${details.venue?.name}`);
+
 
     // Additional fallback: "Day, DD Mon YYYY" without time
     if (!details.startDate) {

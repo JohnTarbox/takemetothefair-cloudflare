@@ -59,6 +59,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const source = searchParams.get("source") || "mainefairs.net";
+  const fetchDetails = searchParams.get("fetchDetails") === "true";
 
   try {
     let result;
@@ -83,6 +84,35 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
+    // Optionally fetch details for each event
+    let eventsWithDetails = result.events;
+    if (fetchDetails) {
+      eventsWithDetails = await Promise.all(
+        result.events.map(async (event) => {
+          if (!event.sourceUrl) return event;
+
+          try {
+            let details: Partial<ScrapedEvent> = {};
+            if (source === "mainefairs.net") {
+              details = await scrapeEventDetails(event.sourceUrl);
+            } else if (source === "mafa.org") {
+              details = await scrapeMafaEventDetails(event.sourceUrl);
+            } else if (source === "vtnhfairs.org" || source === "vtnhfairs.org-vt" || source === "vtnhfairs.org-nh") {
+              details = await scrapeVtNhEventDetails(event.sourceUrl);
+            } else if (source === "mainepublic.org") {
+              details = await scrapeMainePublicEventDetails(event.sourceUrl);
+            } else if (source === "mainemade.com") {
+              details = await scrapeMaineMadeEventDetails(event.sourceUrl);
+            }
+            return { ...event, ...details };
+          } catch (error) {
+            console.error(`Error fetching details for ${event.name}:`, error);
+            return event;
+          }
+        })
+      );
+    }
+
     const db = getCloudflareDb();
 
     // Check which events already exist
@@ -94,7 +124,7 @@ export async function GET(request: Request) {
     const existingSourceIds = new Set(existingEvents.map(e => e.sourceId));
 
     // Mark events as new or existing
-    const eventsWithStatus = result.events.map(event => ({
+    const eventsWithStatus = eventsWithDetails.map(event => ({
       ...event,
       exists: existingSourceIds.has(event.sourceId),
       existingId: existingEvents.find(e => e.sourceId === event.sourceId)?.id,
@@ -189,16 +219,26 @@ export async function POST(request: Request) {
         if (fetchDetails && event.sourceUrl) {
           // Use the appropriate scraper based on source
           let details: Partial<ScrapedEvent> = {};
-          if (event.sourceName === "mainefairs.net") {
-            details = await scrapeEventDetails(event.sourceUrl);
-          } else if (event.sourceName === "mafa.org") {
-            details = await scrapeMafaEventDetails(event.sourceUrl);
-          } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
-            details = await scrapeVtNhEventDetails(event.sourceUrl);
-          } else if (event.sourceName === "mainepublic.org") {
-            details = await scrapeMainePublicEventDetails(event.sourceUrl);
-          } else if (event.sourceName === "mainemade.com") {
-            details = await scrapeMaineMadeEventDetails(event.sourceUrl);
+          try {
+            if (event.sourceName === "mainefairs.net") {
+              details = await scrapeEventDetails(event.sourceUrl);
+            } else if (event.sourceName === "mafa.org") {
+              details = await scrapeMafaEventDetails(event.sourceUrl);
+            } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
+              details = await scrapeVtNhEventDetails(event.sourceUrl);
+            } else if (event.sourceName === "mainepublic.org") {
+              details = await scrapeMainePublicEventDetails(event.sourceUrl);
+            } else if (event.sourceName === "mainemade.com") {
+              details = await scrapeMaineMadeEventDetails(event.sourceUrl);
+            }
+            // Log if scraper didn't find dates
+            if (!details.startDate && event.sourceName === "mainepublic.org") {
+              console.log(`[Import Debug] No dates found for ${event.name} from ${event.sourceUrl}`);
+              console.log(`[Import Debug] Details returned:`, JSON.stringify(details));
+            }
+          } catch (scrapeError) {
+            console.error(`[Import Debug] Scraper error for ${event.name}:`, scrapeError);
+            results.errors.push(`Scraper error for ${event.name}: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}`);
           }
           eventData = { ...eventData, ...details };
         }

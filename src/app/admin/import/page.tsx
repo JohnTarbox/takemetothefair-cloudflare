@@ -25,14 +25,21 @@ interface PreviewEvent {
   sourceName: string;
   sourceUrl: string;
   name: string;
-  startDate?: string | null;
-  endDate?: string | null;
+  startDate?: string | Date | null;
+  endDate?: string | Date | null;
   datesConfirmed?: boolean;
   description?: string;
   location?: string;
   imageUrl?: string;
   exists: boolean;
   existingId?: string;
+  venue?: {
+    name: string;
+    streetAddress?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  };
 }
 
 interface Venue {
@@ -65,6 +72,7 @@ export default function ImportEventsPage() {
   const [selectedVenueId, setSelectedVenueId] = useState("");
   const [selectedPromoterId, setSelectedPromoterId] = useState("");
   const [fetchDetails, setFetchDetails] = useState(true);
+  const [fetchDetailsOnPreview, setFetchDetailsOnPreview] = useState(false);
   const [updateExisting, setUpdateExisting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -125,7 +133,11 @@ export default function ImportEventsPage() {
     setSelectedEvents(new Set());
 
     try {
-      const res = await fetch(`/api/admin/import?source=${encodeURIComponent(source)}`);
+      const params = new URLSearchParams({ source });
+      if (fetchDetailsOnPreview) {
+        params.set("fetchDetails", "true");
+      }
+      const res = await fetch(`/api/admin/import?${params.toString()}`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -253,10 +265,10 @@ export default function ImportEventsPage() {
     setSelectedEvents(new Set());
   };
 
-  const formatDate = (dateStr: string | null | undefined) => {
-    if (!dateStr) return "TBD";
+  const formatDate = (dateVal: string | Date | null | undefined) => {
+    if (!dateVal) return "TBD";
     try {
-      const date = new Date(dateStr);
+      const date = dateVal instanceof Date ? dateVal : new Date(dateVal);
       if (isNaN(date.getTime())) return "TBD";
       return date.toLocaleDateString("en-US", {
         month: "short",
@@ -380,26 +392,39 @@ export default function ImportEventsPage() {
           <CardTitle>Select Source</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="flex items-end gap-4">
-            <div className="flex-1">
-              <Label htmlFor="source">Event Source</Label>
-              <select
-                id="source"
-                value={source}
-                onChange={(e) => setSource(e.target.value)}
-                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
-              >
-                <option value="mainefairs.net">Maine Fairs (mainefairs.net)</option>
-                <option value="mainemade.com">Maine Made Events (mainemade.com)</option>
-                <option value="mainepublic.org">Maine Public Community Calendar (mainepublic.org)</option>
-                <option value="mafa.org">Massachusetts Fairs (mafa.org)</option>
-                <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
-                <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
-              </select>
+          <div className="space-y-4">
+            <div className="flex items-end gap-4">
+              <div className="flex-1">
+                <Label htmlFor="source">Event Source</Label>
+                <select
+                  id="source"
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
+                >
+                  <option value="mainefairs.net">Maine Fairs (mainefairs.net)</option>
+                  <option value="mainemade.com">Maine Made Events (mainemade.com)</option>
+                  <option value="mainepublic.org">Maine Public Community Calendar (mainepublic.org)</option>
+                  <option value="mafa.org">Massachusetts Fairs (mafa.org)</option>
+                  <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
+                  <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
+                </select>
+              </div>
+              <Button onClick={handlePreview} disabled={loading}>
+                {loading ? (fetchDetailsOnPreview ? "Fetching details..." : "Loading...") : "Preview Events"}
+              </Button>
             </div>
-            <Button onClick={handlePreview} disabled={loading}>
-              {loading ? "Loading..." : "Preview Events"}
-            </Button>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={fetchDetailsOnPreview}
+                onChange={(e) => setFetchDetailsOnPreview(e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              <span className="text-sm text-gray-700">
+                Fetch event details during preview (slower, but shows dates and venues)
+              </span>
+            </label>
           </div>
         </CardContent>
       </Card>
@@ -540,10 +565,18 @@ export default function ImportEventsPage() {
                           <Calendar className="w-4 h-4" />
                           {formatDate(event.startDate)} - {formatDate(event.endDate)}
                         </span>
-                        {event.location && (
+                        {(event.venue?.name || event.location) && (
                           <span className="flex items-center gap-1">
                             <MapPin className="w-4 h-4" />
-                            {event.location}
+                            {event.venue ? (
+                              <span>
+                                {event.venue.name}
+                                {event.venue.city && `, ${event.venue.city}`}
+                                {event.venue.state && `, ${event.venue.state}`}
+                              </span>
+                            ) : (
+                              event.location
+                            )}
                           </span>
                         )}
                       </div>
