@@ -76,6 +76,32 @@ export default function ImportEventsPage() {
     fetchVenuesAndPromoters();
   }, []);
 
+  const downloadImportResults = () => {
+    const rows: string[][] = [["Status", "Name", "URL"]];
+
+    importedEvents.forEach((event) => {
+      rows.push(["Imported", event.name, `https://meetmeatthefair.com/events/${event.slug}`]);
+    });
+
+    updatedEvents.forEach((event) => {
+      rows.push(["Updated", event.name, `https://meetmeatthefair.com/events/${event.slug}`]);
+    });
+
+    const csvContent = rows
+      .map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `import-results-${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const fetchVenuesAndPromoters = async () => {
     try {
       const [venuesRes, promotersRes] = await Promise.all([
@@ -289,7 +315,13 @@ export default function ImportEventsPage() {
       {(importedEvents.length > 0 || updatedEvents.length > 0) && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Import Results</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>Import Results</CardTitle>
+              <Button variant="outline" size="sm" onClick={downloadImportResults}>
+                <Download className="w-4 h-4 mr-2" />
+                Download CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
