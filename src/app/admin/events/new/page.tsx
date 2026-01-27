@@ -50,8 +50,9 @@ export default function NewEventPage() {
   const fetchPromoters = async () => {
     try {
       const res = await fetch("/api/admin/promoters");
-      const data = await res.json() as Promoter[];
-      setPromoters(data);
+      const data = await res.json() as { promoter: Promoter }[];
+      // Extract promoter from nested structure
+      setPromoters(data.map(item => item.promoter));
     } catch (err) {
       console.error("Failed to fetch promoters:", err);
     }
