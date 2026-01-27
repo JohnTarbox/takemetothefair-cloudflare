@@ -373,13 +373,21 @@ function EventsFilter({
         <span className="text-sm text-gray-700">Include past events</span>
       </label>
 
-      <button
-        type="submit"
-        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
-      >
-        <Filter className="w-4 h-4" />
-        Apply Filters
-      </button>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+        >
+          <Filter className="w-4 h-4" />
+          Apply Filters
+        </button>
+        <a
+          href="/events"
+          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Clear
+        </a>
+      </div>
     </form>
   );
 }
