@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
 import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scrapers/vtnhfairs";
+import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
@@ -62,6 +63,8 @@ export async function GET(request: Request) {
 
     if (source === "mainefairs.net") {
       result = await scrapeMaineFairs();
+    } else if (source === "mafa.org") {
+      result = await scrapeMafaFairs();
     } else if (source === "vtnhfairs.org" || source === "vtnhfairs.org-vt") {
       result = await scrapeVtFairs();
     } else if (source === "vtnhfairs.org-nh") {
@@ -177,6 +180,8 @@ export async function POST(request: Request) {
           let details: Partial<ScrapedEvent> = {};
           if (event.sourceName === "mainefairs.net") {
             details = await scrapeEventDetails(event.sourceUrl);
+          } else if (event.sourceName === "mafa.org") {
+            details = await scrapeMafaEventDetails(event.sourceUrl);
           } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
             details = await scrapeVtNhEventDetails(event.sourceUrl);
           }
@@ -318,6 +323,8 @@ export async function PATCH(request: Request) {
         let details: Partial<ScrapedEvent> = {};
         if (event.sourceName === "mainefairs.net") {
           details = await scrapeEventDetails(event.sourceUrl);
+        } else if (event.sourceName === "mafa.org") {
+          details = await scrapeMafaEventDetails(event.sourceUrl);
         } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
           details = await scrapeVtNhEventDetails(event.sourceUrl);
         } else {

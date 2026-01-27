@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { Search, Filter } from "lucide-react";
-import { EventList } from "@/components/events/event-list";
+import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and, gte, like, or, count } from "drizzle-orm";
@@ -329,7 +329,7 @@ export default async function EventsPage({
             </p>
           </div>
 
-          <EventList
+          <EventsView
             events={eventsList}
             emptyMessage="No events match your filters. Try adjusting your search."
           />
