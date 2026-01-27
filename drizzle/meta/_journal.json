@@ -29,6 +29,13 @@
       "when": 1769512000000,
       "tag": "0006_nullable_venue",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1769516000000,
+      "tag": "0007_venue_set_null_on_delete",
+      "breakpoints": true
     }
   ]
 }
