@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Always load these skills when working on this project:
 - `/cloudflare-d1` - D1 database patterns, migrations, error handling
+- `/drizzle-orm-d1` - Drizzle ORM with D1, schema definitions, queries
+- `/nextjs` - Next.js App Router, Server Components, caching
 
 ## Build & Development Commands
 
