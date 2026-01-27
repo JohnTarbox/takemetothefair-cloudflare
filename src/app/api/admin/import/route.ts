@@ -14,8 +14,8 @@ import { createSlug } from "@/lib/utils";
 async function findOrCreateVenue(
   db: ReturnType<typeof getCloudflareDb>,
   scrapedVenue: ScrapedVenue,
-  defaultVenueId: string
-): Promise<string> {
+  defaultVenueId: string | null
+): Promise<string | null> {
   if (!scrapedVenue.name) {
     return defaultVenueId;
   }
@@ -127,7 +127,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { events: eventsToImport, venueId, promoterId, fetchDetails = false, updateExisting = false } = body as {
       events: ScrapedEvent[];
-      venueId: string;
+      venueId?: string;
       promoterId: string;
       fetchDetails?: boolean;
       updateExisting?: boolean;
@@ -137,22 +137,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No events to import" }, { status: 400 });
     }
 
-    if (!venueId || !promoterId) {
+    if (!promoterId) {
       return NextResponse.json(
-        { error: "Venue and promoter are required" },
+        { error: "Promoter is required" },
         { status: 400 }
       );
     }
 
     const db = getCloudflareDb();
 
-    // Verify venue and promoter exist
-    const venue = await db.select().from(venues).where(eq(venues.id, venueId)).limit(1);
-    const promoter = await db.select().from(promoters).where(eq(promoters.id, promoterId)).limit(1);
-
-    if (venue.length === 0) {
-      return NextResponse.json({ error: "Venue not found" }, { status: 400 });
+    // Verify venue exists if provided
+    if (venueId) {
+      const venue = await db.select().from(venues).where(eq(venues.id, venueId)).limit(1);
+      if (venue.length === 0) {
+        return NextResponse.json({ error: "Venue not found" }, { status: 400 });
+      }
     }
+
+    // Verify promoter exists
+    const promoter = await db.select().from(promoters).where(eq(promoters.id, promoterId)).limit(1);
     if (promoter.length === 0) {
       return NextResponse.json({ error: "Promoter not found" }, { status: 400 });
     }
@@ -201,7 +204,7 @@ export async function POST(request: Request) {
         }
 
         // Determine venue ID - use scraped venue if available, otherwise default
-        let eventVenueId = venueId;
+        let eventVenueId: string | null = venueId || null;
         if (eventData.venue && eventData.venue.name) {
           // Check if this is a new venue we need to create
           const venueSlug = createSlug(eventData.venue.name);
@@ -213,11 +216,21 @@ export async function POST(request: Request) {
 
           if (existingVenueCheck.length === 0) {
             // This will be a new venue
-            eventVenueId = await findOrCreateVenue(db, eventData.venue, venueId);
-            results.venuesCreated++;
+            const newVenueId = await findOrCreateVenue(db, eventData.venue, venueId || null);
+            if (newVenueId) {
+              eventVenueId = newVenueId;
+              results.venuesCreated++;
+            }
           } else {
             eventVenueId = existingVenueCheck[0].id;
           }
+        }
+
+        // If we still don't have a venue and none was provided, skip this event
+        if (!eventVenueId) {
+          results.errors.push(`Skipped ${event.name}: No venue available (no default venue and no venue data scraped)`);
+          results.skipped++;
+          continue;
         }
 
         if (existing.length > 0) {

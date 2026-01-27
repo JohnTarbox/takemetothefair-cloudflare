@@ -157,8 +157,8 @@ export default function ImportEventsPage() {
       return;
     }
 
-    if (!selectedVenueId || !selectedPromoterId) {
-      setError("Please select a venue and promoter");
+    if (!selectedPromoterId) {
+      setError("Please select a promoter");
       return;
     }
 
@@ -415,14 +415,14 @@ export default function ImportEventsPage() {
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="venueId">Default Venue *</Label>
+                  <Label htmlFor="venueId">Default Venue (Optional)</Label>
                   <select
                     id="venueId"
                     value={selectedVenueId}
                     onChange={(e) => setSelectedVenueId(e.target.value)}
                     className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
                   >
-                    <option value="">Select a venue...</option>
+                    <option value="">No default venue</option>
                     {venues.map((venue) => (
                       <option key={venue.id} value={venue.id}>
                         {venue.name} ({venue.city}, {venue.state})
@@ -430,7 +430,7 @@ export default function ImportEventsPage() {
                     ))}
                   </select>
                   <p className="text-xs text-gray-500 mt-1">
-                    Events will use this venue. Create venues first if needed.
+                    Events will use this venue if set, or create venues from scraped location data.
                   </p>
                 </div>
                 <div>
@@ -578,7 +578,7 @@ export default function ImportEventsPage() {
                 </span>
                 <Button
                   onClick={handleImport}
-                  disabled={importing || selectedEvents.size === 0 || !selectedVenueId || !selectedPromoterId}
+                  disabled={importing || selectedEvents.size === 0 || !selectedPromoterId}
                 >
                   <Download className="w-4 h-4 mr-2" />
                   {importing
