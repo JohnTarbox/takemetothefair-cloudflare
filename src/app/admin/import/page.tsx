@@ -82,6 +82,7 @@ export default function ImportEventsPage() {
   const [importedEvents, setImportedEvents] = useState<ImportedEvent[]>([]);
   const [updatedEvents, setUpdatedEvents] = useState<ImportedEvent[]>([]);
   const [commercialFilter, setCommercialFilter] = useState<"all" | "yes" | "no">("all");
+  const [excludeFarmersMarkets, setExcludeFarmersMarkets] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
 
   useEffect(() => {
@@ -142,9 +143,20 @@ export default function ImportEventsPage() {
         params.set("fetchDetails", "true");
       }
       if (source === "fairsandfestivals.net-custom" && customUrl) {
-        params.set("customUrl", customUrl);
+        // The URL is set directly - URLSearchParams will handle encoding
+        params.set("customUrl", customUrl.trim());
       }
       const res = await fetch(`/api/admin/import?${params.toString()}`);
+
+      // Check content type before parsing JSON
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        // Server returned non-JSON response (likely an error page)
+        const text = await res.text();
+        console.error("Non-JSON response:", text.substring(0, 500));
+        throw new Error(`Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`);
+      }
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -248,8 +260,13 @@ export default function ImportEventsPage() {
     }
   };
 
-  // Filter events based on commercial filter
+  // Filter events based on commercial filter and farmers market exclusion
   const filteredEvents = events.filter((event) => {
+    // Exclude farmers markets if checkbox is checked
+    if (excludeFarmersMarkets && event.name.toLowerCase().includes("farmers market")) {
+      return false;
+    }
+    // Apply commercial filter
     if (commercialFilter === "all") return true;
     if (commercialFilter === "yes") return event.commercialVendorsAllowed === true;
     if (commercialFilter === "no") return event.commercialVendorsAllowed === false;
@@ -572,6 +589,15 @@ export default function ImportEventsPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={excludeFarmersMarkets}
+                      onChange={(e) => setExcludeFarmersMarkets(e.target.checked)}
+                      className="rounded border-gray-300"
+                    />
+                    Exclude Farmers Markets
+                  </label>
                   <select
                     value={commercialFilter}
                     onChange={(e) => setCommercialFilter(e.target.value as "all" | "yes" | "no")}

@@ -94,7 +94,19 @@ export async function scrapeFairsAndFestivalsUrl(url: string, defaultState: stri
   }
 
   try {
-    const response = await fetch(url, {
+    // Parse and re-encode the URL to handle special characters like | in query params
+    let fetchUrl: string;
+    try {
+      const parsedUrl = new URL(url);
+      // Re-build the URL with properly encoded search params
+      // The URL constructor doesn't encode special chars in existing query strings
+      fetchUrl = parsedUrl.toString();
+    } catch {
+      // If URL parsing fails, try using the original URL
+      fetchUrl = url;
+    }
+
+    const response = await fetch(fetchUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)',
       },
@@ -364,6 +376,59 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
     const addressMatch = html.match(/Address:?\s*([^<]+)/i);
     if (addressMatch) {
       details.address = decodeHtmlEntities(addressMatch[1].trim());
+    }
+
+    // Extract venue info from "Event Location" section
+    // Format: Event Location\nVenue Name\nStreet Address\nCity, State Zip
+    const locationSectionMatch = html.match(/<strong>Event Location<\/strong>\s*([\s\S]*?)(?:<a[^>]*>|<\/td>|<\/div>)/i);
+    if (locationSectionMatch) {
+      const locationText = locationSectionMatch[1]
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+
+      const lines = locationText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+
+      if (lines.length >= 1) {
+        // First line is venue name
+        const venueName = decodeHtmlEntities(lines[0]);
+
+        // Look for city, state pattern (e.g., "Burlington, VT 05403" or "Burlington, VT")
+        let venueCity = '';
+        let venueState = '';
+        let venueStreetAddress = '';
+        let venueZip = '';
+
+        for (let i = 1; i < lines.length; i++) {
+          const line = lines[i];
+          // Match "City, ST" or "City, ST 12345" pattern
+          const cityStateMatch = line.match(/^([^,]+),\s*([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/i);
+          if (cityStateMatch) {
+            venueCity = decodeHtmlEntities(cityStateMatch[1].trim());
+            venueState = cityStateMatch[2].toUpperCase();
+            if (cityStateMatch[3]) {
+              venueZip = cityStateMatch[3];
+            }
+          } else if (!venueStreetAddress && line.match(/^\d+\s+/)) {
+            // Line starting with a number is likely a street address
+            venueStreetAddress = decodeHtmlEntities(line);
+          }
+        }
+
+        // Build venue object if we have meaningful data
+        if (venueName && (venueCity || venueState)) {
+          details.venue = {
+            name: venueName,
+            streetAddress: venueStreetAddress || undefined,
+            city: venueCity || undefined,
+            state: venueState || undefined,
+            zip: venueZip || undefined,
+          };
+          // Also set top-level city/state for compatibility
+          if (venueCity) details.city = venueCity;
+          if (venueState) details.state = venueState;
+        }
+      }
     }
 
     return details;

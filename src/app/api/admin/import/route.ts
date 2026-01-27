@@ -13,6 +13,7 @@ import { scrapeFairsAndFestivals, scrapeFairsAndFestivalsUrl, scrapeEventDetails
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
+// Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
 async function findOrCreateVenue(
   db: ReturnType<typeof getCloudflareDb>,
   scrapedVenue: ScrapedVenue,
@@ -24,25 +25,53 @@ async function findOrCreateVenue(
 
   // Decode HTML entities in venue name to ensure consistent matching
   const decodedName = decodeHtmlEntities(scrapedVenue.name);
-
-  // Try to find existing venue by name (case-insensitive search via slug)
   const venueSlug = createSlug(decodedName);
-  const existingVenue = await db
+  const venueCity = (scrapedVenue.city || "").toLowerCase().trim();
+
+  // Try to find existing venue by name AND city
+  // This prevents matching "DoubleTree by Hilton" in Burlington with one in Portland
+  const existingVenues = await db
     .select()
     .from(venues)
-    .where(eq(venues.slug, venueSlug))
-    .limit(1);
+    .where(eq(venues.slug, venueSlug));
 
-  if (existingVenue.length > 0) {
-    return existingVenue[0].id;
+  // Look for a venue with matching city
+  if (existingVenues.length > 0 && venueCity) {
+    const matchingVenue = existingVenues.find(
+      (v) => v.city.toLowerCase().trim() === venueCity
+    );
+    if (matchingVenue) {
+      return matchingVenue.id;
+    }
+    // Name matches but city doesn't - create new venue with unique slug
+  } else if (existingVenues.length > 0 && !venueCity) {
+    // No city info from scraper - create new venue to avoid wrong match
+    // It's safer to create a potential duplicate than match the wrong venue
+    console.log(`[findOrCreateVenue] No city provided for "${decodedName}" - creating new venue to avoid wrong match`);
   }
 
   // Create new venue with decoded name
+  // If slug already exists (same name, different city), append city to make it unique
+  let finalSlug = venueSlug;
+  if (existingVenues.length > 0 && venueCity) {
+    finalSlug = `${venueSlug}-${createSlug(venueCity)}`;
+    // Check if this slug also exists
+    const slugCheck = await db
+      .select()
+      .from(venues)
+      .where(eq(venues.slug, finalSlug))
+      .limit(1);
+    if (slugCheck.length > 0) {
+      // Add a random suffix if even the city-appended slug exists
+      finalSlug = `${finalSlug}-${crypto.randomUUID().substring(0, 8)}`;
+    }
+  }
+
   const newVenueId = crypto.randomUUID();
   await db.insert(venues).values({
     id: newVenueId,
     name: decodedName,
-    slug: venueSlug,
+    slug: finalSlug,
     address: scrapedVenue.streetAddress || "",
     city: scrapedVenue.city || "",
     state: scrapedVenue.state || "ME",
@@ -87,7 +116,15 @@ export async function GET(request: Request) {
     } else if (source.startsWith("fairsandfestivals.net")) {
       // Support custom URL or state-specific sources like "fairsandfestivals.net-ME"
       if (source === "fairsandfestivals.net-custom" && customUrl) {
-        result = await scrapeFairsAndFestivalsUrl(customUrl);
+        try {
+          result = await scrapeFairsAndFestivalsUrl(customUrl);
+        } catch (scrapeError) {
+          console.error("[FairsAndFestivals Custom URL] Scrape error:", scrapeError);
+          return NextResponse.json(
+            { error: `Failed to scrape custom URL: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}` },
+            { status: 500 }
+          );
+        }
       } else {
         const stateMatch = source.match(/fairsandfestivals\.net-([A-Z]{2})/i);
         const stateCode = stateMatch ? stateMatch[1].toUpperCase() : "ME"; // Default to Maine
@@ -271,25 +308,52 @@ export async function POST(request: Request) {
         // Determine venue ID - use scraped venue if available, otherwise default (can be null)
         let eventVenueId: string | null = venueId || null;
         if (eventData.venue && eventData.venue.name) {
-          // Decode HTML entities for consistent venue matching
+          // Use findOrCreateVenue which matches on BOTH name AND city
+          const venueCity = (eventData.venue.city || "").toLowerCase().trim();
           const decodedVenueName = decodeHtmlEntities(eventData.venue.name);
-          // Check if this is a new venue we need to create
           const venueSlug = createSlug(decodedVenueName);
-          const existingVenueCheck = await db
+
+          console.log(`[Venue Match] Event: ${eventData.name}, Venue: ${decodedVenueName}, City from scraper: "${venueCity}"`);
+
+          // Check if venue exists with matching name AND city
+          const existingVenues = await db
             .select()
             .from(venues)
-            .where(eq(venues.slug, venueSlug))
-            .limit(1);
+            .where(eq(venues.slug, venueSlug));
 
-          if (existingVenueCheck.length === 0) {
-            // This will be a new venue
+          console.log(`[Venue Match] Found ${existingVenues.length} existing venue(s) with slug "${venueSlug}"`);
+          existingVenues.forEach((v, i) => {
+            console.log(`[Venue Match]   ${i + 1}. "${v.name}" in "${v.city}", ${v.state} (id: ${v.id})`);
+          });
+
+          let matchedVenue = null;
+          if (existingVenues.length > 0 && venueCity) {
+            // Look for venue with matching city
+            matchedVenue = existingVenues.find(
+              (v) => v.city.toLowerCase().trim() === venueCity
+            );
+            if (matchedVenue) {
+              console.log(`[Venue Match] Matched existing venue by name+city: ${matchedVenue.id}`);
+            } else {
+              console.log(`[Venue Match] No venue matched city "${venueCity}" - will create new`);
+            }
+          } else if (existingVenues.length > 0 && !venueCity) {
+            // No city from scraper - DON'T fall back to first match, create new venue instead
+            // This prevents matching "DoubleTree Portland" when we don't know the city
+            console.log(`[Venue Match] No city from scraper - will create new venue to avoid wrong match`);
+            matchedVenue = null;
+          }
+
+          if (matchedVenue) {
+            eventVenueId = matchedVenue.id;
+          } else {
+            // Create new venue (either no match at all, or same name but different city, or no city info)
             const newVenueId = await findOrCreateVenue(db, eventData.venue, venueId || null);
             if (newVenueId) {
               eventVenueId = newVenueId;
               results.venuesCreated++;
+              console.log(`[Venue Match] Created new venue: ${newVenueId}`);
             }
-          } else {
-            eventVenueId = existingVenueCheck[0].id;
           }
         }
         // eventVenueId can be null - event will be created without a venue

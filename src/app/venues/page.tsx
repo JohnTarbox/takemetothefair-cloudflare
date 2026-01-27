@@ -49,9 +49,9 @@ async function getVenues(searchParams: SearchParams) {
         imageUrl: venues.imageUrl,
         eventCount: sql<number>`(
           SELECT COUNT(*) FROM events
-          WHERE events.venue_id = ${venues.id}
+          WHERE events.venue_id = venues.id
           AND events.status = 'APPROVED'
-          AND events.end_date >= datetime('now')
+          AND events.end_date >= unixepoch('now')
         )`.as('event_count'),
       })
       .from(venues)
