@@ -196,8 +196,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(response);
   } catch (error) {
     console.error("Failed to find duplicates:", error);
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "Failed to find duplicates" },
+      { error: `Failed to find duplicates: ${message}` },
       { status: 500 }
     );
   }

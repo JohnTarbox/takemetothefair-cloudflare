@@ -66,6 +66,35 @@ function formatSimilarity(similarity: number): string {
   return `${Math.round(similarity * 100)}%`;
 }
 
+// Helper to format date
+function formatDate(dateVal: unknown): string {
+  if (!dateVal) return "TBD";
+  try {
+    const date = dateVal instanceof Date ? dateVal : new Date(dateVal as string);
+    if (isNaN(date.getTime())) return "TBD";
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "TBD";
+  }
+}
+
+// Helper to check if two dates are the same (comparing just the date, not time)
+function datesMatch(date1: unknown, date2: unknown): boolean {
+  if (!date1 || !date2) return false;
+  try {
+    const d1 = date1 instanceof Date ? date1 : new Date(date1 as string);
+    const d2 = date2 instanceof Date ? date2 : new Date(date2 as string);
+    if (isNaN(d1.getTime()) || isNaN(d2.getTime())) return false;
+    return d1.toDateString() === d2.toDateString();
+  } catch {
+    return false;
+  }
+}
+
 export default function AdminDuplicatesPage() {
   const [entityType, setEntityType] = useState<DuplicateEntityType>("venues");
   const [threshold, setThreshold] = useState(0.7);
@@ -73,6 +102,7 @@ export default function AdminDuplicatesPage() {
   const [totalEntities, setTotalEntities] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sameDatesOnly, setSameDatesOnly] = useState(false);
 
   // Review modal state
   const [selectedPair, setSelectedPair] = useState<DuplicatePair | null>(null);
@@ -90,15 +120,21 @@ export default function AdminDuplicatesPage() {
       const res = await fetch(
         `/api/admin/duplicates?type=${entityType}&threshold=${threshold}`
       );
-      if (!res.ok) {
-        throw new Error("Failed to fetch duplicates");
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned invalid response (status ${res.status})`);
       }
-      const data: FindDuplicatesResponse = await res.json();
-      setDuplicates(data.duplicates);
-      setTotalEntities(data.totalEntities);
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to fetch duplicates");
+      }
+      setDuplicates(data.duplicates || []);
+      setTotalEntities(data.totalEntities || 0);
     } catch (err) {
       console.error("Failed to fetch duplicates:", err);
-      setError("Failed to fetch duplicates. Please try again.");
+      const message = err instanceof Error ? err.message : "Failed to fetch duplicates";
+      setError(`${message}. Please try again.`);
     } finally {
       setLoading(false);
     }
@@ -186,8 +222,9 @@ export default function AdminDuplicatesPage() {
         }),
       });
 
+      const data = await res.json();
       if (!res.ok) {
-        throw new Error("Failed to merge");
+        throw new Error(data.error || "Failed to merge");
       }
 
       setMergeSuccess(true);
@@ -255,6 +292,19 @@ export default function AdminDuplicatesPage() {
               </select>
             </div>
 
+            {/* Same Dates Filter (events only) */}
+            {entityType === "events" && (
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={sameDatesOnly}
+                  onChange={(e) => setSameDatesOnly(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Same dates only
+              </label>
+            )}
+
             <Button
               variant="secondary"
               size="sm"
@@ -287,30 +337,66 @@ export default function AdminDuplicatesPage() {
             <p className="text-sm text-gray-600">
               {loading
                 ? "Searching..."
-                : `Found ${duplicates.length} potential duplicate pairs from ${totalEntities} ${entityType}`}
+                : (() => {
+                    // Filter duplicates if same dates filter is active
+                    const filteredDuplicates = entityType === "events" && sameDatesOnly
+                      ? duplicates.filter((pair) => {
+                          const e1 = pair.entity1 as Record<string, unknown>;
+                          const e2 = pair.entity2 as Record<string, unknown>;
+                          return datesMatch(e1.startDate, e2.startDate);
+                        })
+                      : duplicates;
+                    return sameDatesOnly && entityType === "events"
+                      ? `Showing ${filteredDuplicates.length} of ${duplicates.length} pairs with matching dates`
+                      : `Found ${duplicates.length} potential duplicate pairs from ${totalEntities} ${entityType}`;
+                  })()}
             </p>
           </div>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="animate-pulse space-y-4">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-24 bg-gray-100 rounded-lg"></div>
-              ))}
-            </div>
-          ) : duplicates.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <GitMerge className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>No duplicates found at {formatSimilarity(threshold)} threshold</p>
-              <p className="text-sm mt-2">
-                Try lowering the similarity threshold to find more matches
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {duplicates.map((pair) => {
-                const entity1 = pair.entity1 as Record<string, unknown>;
-                const entity2 = pair.entity2 as Record<string, unknown>;
+          {(() => {
+            // Filter duplicates if same dates filter is active
+            const filteredDuplicates = entityType === "events" && sameDatesOnly
+              ? duplicates.filter((pair) => {
+                  const e1 = pair.entity1 as Record<string, unknown>;
+                  const e2 = pair.entity2 as Record<string, unknown>;
+                  return datesMatch(e1.startDate, e2.startDate);
+                })
+              : duplicates;
+
+            if (loading) {
+              return (
+                <div className="animate-pulse space-y-4">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-24 bg-gray-100 rounded-lg"></div>
+                  ))}
+                </div>
+              );
+            }
+
+            if (filteredDuplicates.length === 0) {
+              return (
+                <div className="text-center py-12 text-gray-500">
+                  <GitMerge className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>
+                    {sameDatesOnly && entityType === "events" && duplicates.length > 0
+                      ? "No duplicates with matching dates found"
+                      : `No duplicates found at ${formatSimilarity(threshold)} threshold`}
+                  </p>
+                  <p className="text-sm mt-2">
+                    {sameDatesOnly && entityType === "events" && duplicates.length > 0
+                      ? "Try unchecking 'Same dates only' to see all matches"
+                      : "Try lowering the similarity threshold to find more matches"}
+                  </p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-4">
+                {filteredDuplicates.map((pair) => {
+                  const entity1 = pair.entity1 as Record<string, unknown>;
+                  const entity2 = pair.entity2 as Record<string, unknown>;
 
                 return (
                   <div
@@ -366,10 +452,11 @@ export default function AdminDuplicatesPage() {
                       </Button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
@@ -462,6 +549,9 @@ export default function AdminDuplicatesPage() {
                                 )}
                                 {entityType === "events" && (
                                   <>
+                                    <p className="text-gray-600">
+                                      {formatDate(e.startDate)} - {formatDate(e.endDate)}
+                                    </p>
                                     <p className="text-gray-600">
                                       Venue:{" "}
                                       {(e.venue as Record<string, string>)?.name || "N/A"}

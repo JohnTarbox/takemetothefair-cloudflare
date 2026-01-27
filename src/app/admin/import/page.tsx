@@ -81,6 +81,7 @@ export default function ImportEventsPage() {
   const [stats, setStats] = useState({ total: 0, newCount: 0, existingCount: 0 });
   const [importedEvents, setImportedEvents] = useState<ImportedEvent[]>([]);
   const [updatedEvents, setUpdatedEvents] = useState<ImportedEvent[]>([]);
+  const [commercialFilter, setCommercialFilter] = useState<"all" | "yes" | "no">("all");
 
   useEffect(() => {
     fetchVenuesAndPromoters();
@@ -243,6 +244,20 @@ export default function ImportEventsPage() {
     }
   };
 
+  // Filter events based on commercial filter
+  const filteredEvents = events.filter((event) => {
+    if (commercialFilter === "all") return true;
+    if (commercialFilter === "yes") return event.commercialVendorsAllowed === true;
+    if (commercialFilter === "no") return event.commercialVendorsAllowed === false;
+    return true;
+  });
+
+  const filteredStats = {
+    total: filteredEvents.length,
+    newCount: filteredEvents.filter((e) => !e.exists).length,
+    existingCount: filteredEvents.filter((e) => e.exists).length,
+  };
+
   const toggleEventSelection = (sourceId: string) => {
     const newSelected = new Set(selectedEvents);
     if (newSelected.has(sourceId)) {
@@ -254,12 +269,12 @@ export default function ImportEventsPage() {
   };
 
   const selectAllNew = () => {
-    const newEventIds = new Set(events.filter((e) => !e.exists).map((e) => e.sourceId));
+    const newEventIds = new Set(filteredEvents.filter((e) => !e.exists).map((e) => e.sourceId));
     setSelectedEvents(newEventIds);
   };
 
   const selectAll = () => {
-    const allEventIds = new Set(events.map((e) => e.sourceId));
+    const allEventIds = new Set(filteredEvents.map((e) => e.sourceId));
     setSelectedEvents(allEventIds);
   };
 
@@ -524,17 +539,30 @@ export default function ImportEventsPage() {
                 <div>
                   <CardTitle>Preview Events</CardTitle>
                   <p className="text-sm text-gray-500 mt-1">
-                    {stats.total} events found: {stats.newCount} new, {stats.existingCount} already imported
+                    {commercialFilter === "all" ? (
+                      <>{stats.total} events found: {stats.newCount} new, {stats.existingCount} already imported</>
+                    ) : (
+                      <>Showing {filteredStats.total} of {stats.total} events: {filteredStats.newCount} new, {filteredStats.existingCount} already imported</>
+                    )}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                  <select
+                    value={commercialFilter}
+                    onChange={(e) => setCommercialFilter(e.target.value as "all" | "yes" | "no")}
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  >
+                    <option value="all">All Events</option>
+                    <option value="yes">Commercial OK</option>
+                    <option value="no">No Commercial</option>
+                  </select>
                   {updateExisting ? (
                     <Button variant="outline" size="sm" onClick={selectAll}>
-                      Select All ({stats.total})
+                      Select All ({filteredStats.total})
                     </Button>
                   ) : (
                     <Button variant="outline" size="sm" onClick={selectAllNew}>
-                      Select All New ({stats.newCount})
+                      Select All New ({filteredStats.newCount})
                     </Button>
                   )}
                   <Button variant="outline" size="sm" onClick={deselectAll}>
@@ -545,7 +573,7 @@ export default function ImportEventsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3 max-h-[500px] overflow-y-auto">
-                {events.map((event) => (
+                {filteredEvents.map((event) => (
                   <label
                     key={event.sourceId}
                     className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${

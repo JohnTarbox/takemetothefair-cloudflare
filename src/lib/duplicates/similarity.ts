@@ -9,7 +9,8 @@
  * - Remove special characters
  * - Trim whitespace
  */
-export function normalizeString(str: string): string {
+export function normalizeString(str: string | null | undefined): string {
+  if (!str) return "";
   return str
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, "")
@@ -157,53 +158,58 @@ export function findDuplicatePairs<T extends { id: string }>(
  * Get comparison string for venue entity
  */
 export function getVenueComparisonString(venue: {
-  name: string;
-  address?: string;
-  city?: string;
-  state?: string;
+  name: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
 }): string {
   // Combine name with location for better matching
-  const parts = [venue.name];
+  const parts: string[] = [];
+  if (venue.name) parts.push(venue.name);
   if (venue.city) parts.push(venue.city);
   if (venue.state) parts.push(venue.state);
-  return parts.join(" ");
+  return parts.join(" ") || "unknown";
 }
 
 /**
  * Get comparison string for event entity
  */
 export function getEventComparisonString(event: {
-  name: string;
-  venue?: { name: string } | null;
-  startDate?: Date | string;
+  name: string | null;
+  venue?: { name: string | null } | null;
+  startDate?: Date | string | null;
 }): string {
-  const parts = [event.name];
+  const parts: string[] = [];
+  if (event.name) parts.push(event.name);
   if (event.venue?.name) parts.push(event.venue.name);
   // Include year to distinguish recurring events
   if (event.startDate) {
     const date = new Date(event.startDate);
-    parts.push(date.getFullYear().toString());
+    if (!isNaN(date.getTime())) {
+      parts.push(date.getFullYear().toString());
+    }
   }
-  return parts.join(" ");
+  return parts.join(" ") || "unknown";
 }
 
 /**
  * Get comparison string for vendor entity
  */
 export function getVendorComparisonString(vendor: {
-  businessName: string;
+  businessName: string | null;
   vendorType?: string | null;
 }): string {
-  const parts = [vendor.businessName];
+  const parts: string[] = [];
+  if (vendor.businessName) parts.push(vendor.businessName);
   if (vendor.vendorType) parts.push(vendor.vendorType);
-  return parts.join(" ");
+  return parts.join(" ") || "unknown";
 }
 
 /**
  * Get comparison string for promoter entity
  */
 export function getPromoterComparisonString(promoter: {
-  companyName: string;
+  companyName: string | null;
 }): string {
-  return promoter.companyName;
+  return promoter.companyName || "unknown";
 }
