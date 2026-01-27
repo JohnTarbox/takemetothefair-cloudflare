@@ -213,17 +213,26 @@ export async function POST(request: Request) {
           if (updateExisting) {
             // Update the existing event (including venue if scraped)
             // Use website for ticketUrl (Event Website button), fall back to sourceUrl
-            await db.update(events).set({
+            const updateData: Record<string, unknown> = {
               name: eventData.name,
               description: eventData.description || existing[0].description,
-              startDate: new Date(eventData.startDate),
-              endDate: new Date(eventData.endDate),
               ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
-            }).where(eq(events.id, existing[0].id));
+            };
+            // Only update dates if provided
+            if (eventData.startDate) {
+              updateData.startDate = new Date(eventData.startDate);
+            }
+            if (eventData.endDate) {
+              updateData.endDate = new Date(eventData.endDate);
+            }
+            if (eventData.datesConfirmed !== undefined) {
+              updateData.datesConfirmed = eventData.datesConfirmed;
+            }
+            await db.update(events).set(updateData).where(eq(events.id, existing[0].id));
             results.updated++;
           } else {
             results.skipped++;
@@ -255,8 +264,9 @@ export async function POST(request: Request) {
           description: eventData.description || `${eventData.name} - imported from ${eventData.sourceName}`,
           promoterId,
           venueId: eventVenueId,
-          startDate: new Date(eventData.startDate),
-          endDate: new Date(eventData.endDate),
+          startDate: eventData.startDate ? new Date(eventData.startDate) : null,
+          endDate: eventData.endDate ? new Date(eventData.endDate) : null,
+          datesConfirmed: eventData.datesConfirmed ?? (eventData.startDate ? true : false),
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
           ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,

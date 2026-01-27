@@ -4,18 +4,20 @@
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./mainefairs";
 
 // Parse date strings like "April 25-27th", "June 6 - 8", "July 29 - August 2"
-function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
+// Returns null for dates, with datesConfirmed=false for TBD/unknown dates
+function parseDateRange(dateText: string, year: number): { start: Date | null; end: Date | null; datesConfirmed: boolean } {
   // Clean up the text - remove "th", "nd", "st", "rd" suffixes and trim
   const cleaned = dateText.trim()
     .replace(/(\d+)(st|nd|rd|th)/gi, '$1')
     .replace(/&nbsp;/g, ' ')
     .trim();
 
-  // Skip "To be determined" or similar
+  // Check for "To be determined", TBD, or "No fair" - return with datesConfirmed=false
   if (cleaned.toLowerCase().includes('to be determined') ||
       cleaned.toLowerCase().includes('tbd') ||
-      cleaned.toLowerCase().includes('no fair')) {
-    return null;
+      cleaned.toLowerCase().includes('no fair') ||
+      cleaned === '') {
+    return { start: null, end: null, datesConfirmed: false };
   }
 
   // Try to match patterns like "July 29 - August 2" (cross-month)
@@ -33,7 +35,7 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
     end.setHours(21, 0, 0, 0);
 
     if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-      return { start, end };
+      return { start, end, datesConfirmed: true };
     }
   }
 
@@ -51,7 +53,7 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
     end.setHours(21, 0, 0, 0);
 
     if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-      return { start, end };
+      return { start, end, datesConfirmed: true };
     }
   }
 
@@ -66,11 +68,12 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
     endDate.setHours(21, 0, 0, 0);
 
     if (!isNaN(date.getTime())) {
-      return { start: date, end: endDate };
+      return { start: date, end: endDate, datesConfirmed: true };
     }
   }
 
-  return null;
+  // Could not parse dates - return as unconfirmed
+  return { start: null, end: null, datesConfirmed: false };
 }
 
 // Create a slug from fair name
@@ -224,14 +227,8 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
       }
 
       // Parse the date
-      const dates = parseDateRange(dateText, pageYear);
+      const { start, end, datesConfirmed } = parseDateRange(dateText, pageYear);
 
-      // Skip fairs with no valid dates (TBD, cancelled, etc.)
-      if (!dates) {
-        continue;
-      }
-
-      const { start, end } = dates;
       const sourceId = createSlugFromName(fair.text);
       const website = fairWebsite?.url;
 
@@ -246,8 +243,9 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
         sourceName: config.sourceName,
         sourceUrl: config.url,
         name: fair.text,
-        startDate: start,
-        endDate: end,
+        startDate: start || undefined,
+        endDate: end || undefined,
+        datesConfirmed,
         description: contactText ? `Contact: ${contactText.replace(/Contact:\s*/i, '').trim()}` : undefined,
         website,
         ticketUrl: website,

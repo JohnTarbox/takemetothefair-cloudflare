@@ -25,8 +25,9 @@ interface PreviewEvent {
   sourceName: string;
   sourceUrl: string;
   name: string;
-  startDate: string;
-  endDate: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  datesConfirmed?: boolean;
   description?: string;
   location?: string;
   imageUrl?: string;
@@ -212,15 +213,18 @@ export default function ImportEventsPage() {
     setSelectedEvents(new Set());
   };
 
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr: string | null | undefined) => {
+    if (!dateStr) return "TBD";
     try {
-      return new Date(dateStr).toLocaleDateString("en-US", {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return "TBD";
+      return date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
         year: "numeric",
       });
     } catch {
-      return dateStr;
+      return "TBD";
     }
   };
 

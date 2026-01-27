@@ -14,8 +14,9 @@ export interface ScrapedEvent {
   sourceName: string;
   sourceUrl: string;
   name: string;
-  startDate: Date;
-  endDate: Date;
+  startDate?: Date;
+  endDate?: Date;
+  datesConfirmed?: boolean;
   description?: string;
   location?: string;
   city?: string;

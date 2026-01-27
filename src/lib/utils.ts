@@ -24,9 +24,18 @@ export function formatDate(date: Date | string): string {
   });
 }
 
-export function formatDateRange(start: Date | string, end: Date | string): string {
+export function formatDateRange(start: Date | string | null | undefined, end: Date | string | null | undefined): string {
+  if (!start || !end) {
+    return "TBD";
+  }
+
   const startDate = new Date(start);
   const endDate = new Date(end);
+
+  // Check for invalid dates
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    return "TBD";
+  }
 
   if (startDate.toDateString() === endDate.toDateString()) {
     return formatDate(startDate);

@@ -60,8 +60,9 @@ export function EventsView({
     venue: (e) => e.venue?.name?.toLowerCase() || "",
     city: (e) => e.venue?.city?.toLowerCase() || "",
     state: (e) => e.venue?.state || "",
-    startDate: (e) => new Date(e.startDate).getTime(),
-    endDate: (e) => new Date(e.endDate).getTime(),
+    // Put null dates at the end by using Infinity for asc sort
+    startDate: (e) => e.startDate ? new Date(e.startDate).getTime() : Infinity,
+    endDate: (e) => e.endDate ? new Date(e.endDate).getTime() : Infinity,
   });
 
   if (events.length === 0) {

@@ -12,15 +12,8 @@
     {
       "idx": 1,
       "version": "6",
-      "when": 1769401200000,
-      "tag": "0001_add_vendor_commercial",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1769402400000,
-      "tag": "0002_add_event_commercial_vendors_allowed",
+      "when": 1769473713910,
+      "tag": "0004_nullable_dates",
       "breakpoints": true
     }
   ]
