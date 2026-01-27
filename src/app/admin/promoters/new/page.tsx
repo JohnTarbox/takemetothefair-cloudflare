@@ -45,7 +45,7 @@ export default function NewPromoterPage() {
 
     const formData = new FormData(e.currentTarget);
     const data = {
-      userId: formData.get("userId"),
+      userId: formData.get("userId") || null,
       companyName: formData.get("companyName"),
       description: formData.get("description") || null,
       website: formData.get("website") || null,
@@ -98,14 +98,13 @@ export default function NewPromoterPage() {
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div>
-                <Label htmlFor="userId">User Account *</Label>
+                <Label htmlFor="userId">User Account</Label>
                 <select
                   id="userId"
                   name="userId"
-                  required
                   className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="">Select a user</option>
+                  <option value="">No user account</option>
                   {users.map((user) => (
                     <option key={user.id} value={user.id}>
                       {user.email} {user.name ? `(${user.name})` : ""}
@@ -113,7 +112,7 @@ export default function NewPromoterPage() {
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  Only users without a promoter profile are shown
+                  Optional - link to a user account or leave blank
                 </p>
               </div>
 

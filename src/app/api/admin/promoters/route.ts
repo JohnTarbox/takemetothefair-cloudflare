@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     await db.insert(promoters).values({
       id: promoterId,
-      userId: data.userId,
+      userId: data.userId || null,
       companyName: data.companyName,
       slug: createSlug(data.companyName),
       description: data.description,
@@ -55,8 +55,10 @@ export async function POST(request: NextRequest) {
       verified: data.verified,
     });
 
-    // Update user role to PROMOTER
-    await db.update(users).set({ role: "PROMOTER" }).where(eq(users.id, data.userId));
+    // Update user role to PROMOTER only if a user is linked
+    if (data.userId) {
+      await db.update(users).set({ role: "PROMOTER" }).where(eq(users.id, data.userId));
+    }
 
     const [newPromoter] = await db
       .select()

@@ -35,7 +35,7 @@ export const venueUpdateSchema = venueCreateSchema.partial();
 
 // Promoter schemas
 export const promoterCreateSchema = z.object({
-  userId: z.string().uuid(),
+  userId: z.string().uuid().optional().nullable(),
   companyName: nameSchema,
   description: descriptionSchema,
   website: urlSchema,
