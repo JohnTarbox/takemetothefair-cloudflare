@@ -75,6 +75,23 @@ function extractSlugFromUrl(url: string): string {
  */
 export async function scrapeFairsAndFestivals(stateCode: string): Promise<ScrapeResult> {
   const url = `${BASE_URL}/states/${stateCode.toUpperCase()}`;
+  return scrapeFairsAndFestivalsUrl(url, stateCode);
+}
+
+/**
+ * Scrape events from any fairsandfestivals.net URL
+ * @param url Full URL to scrape (e.g., state page, city page, search results)
+ * @param defaultState Optional default state code for events without state info
+ */
+export async function scrapeFairsAndFestivalsUrl(url: string, defaultState: string = "US"): Promise<ScrapeResult> {
+  // Validate URL is from fairsandfestivals.net
+  if (!url.includes("fairsandfestivals.net")) {
+    return {
+      success: false,
+      events: [],
+      error: "URL must be from fairsandfestivals.net",
+    };
+  }
 
   try {
     const response = await fetch(url, {
@@ -92,7 +109,7 @@ export async function scrapeFairsAndFestivals(stateCode: string): Promise<Scrape
     }
 
     const html = await response.text();
-    return parseEventsFromHtml(html, stateCode, url);
+    return parseEventsFromHtml(html, defaultState, url);
   } catch (error) {
     return {
       success: false,
@@ -123,25 +140,64 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
       const name = decodeHtmlEntities(nameMatch[1].trim());
       if (!name) continue;
 
-      // Extract date components
-      const monthMatch = section.match(/<span\s+class="month">([^<]+)<\/span>/i);
-      const yearMatch = section.match(/<span\s+class="year">([^<]+)<\/span>/i);
+      // Extract date components - try multiple patterns
+      let eventDate: Date | null = null;
 
-      // Day is between month and year spans - look for digits
+      // Get year (common to multiple patterns)
+      const yearMatch = section.match(/<span\s+class="year">([^<]+)<\/span>/i);
+      const year = yearMatch ? yearMatch[1].trim() : String(new Date().getFullYear());
+
+      // Pattern 1: Search results format with hidden month number and visible month name
+      // <p class="date"><span class="month" style="display: none;">1</span><span>January</span> 31, <span class="year">2026</span></p>
       const dateBlockMatch = section.match(/<p\s+class="date">([\s\S]*?)<\/p>/i);
-      let day = "1";
       if (dateBlockMatch) {
-        const dayMatch = dateBlockMatch[1].match(/<\/span>\s*(\d{1,2})/i);
-        if (dayMatch) {
-          day = dayMatch[1];
+        const dateContent = dateBlockMatch[1];
+
+        // Look for pattern: hidden month number, then visible month name in plain span
+        // <span class="month"...>number</span><span>MonthName</span> DD,
+        const searchResultsMatch = dateContent.match(/<span[^>]*class="month"[^>]*>[^<]*<\/span>\s*<span>(\w+)<\/span>\s*(\d{1,2})/i);
+        if (searchResultsMatch) {
+          eventDate = parseEventDate(searchResultsMatch[1], searchResultsMatch[2], year);
+        }
+
+        // Pattern 2: State page format - month name directly in class="month" span
+        // <span class="month">February</span> 01 <span class="year">
+        if (!eventDate) {
+          const statePageMatch = dateContent.match(/<span\s+class="month">([A-Za-z]+)<\/span>\s*(\d{1,2})/i);
+          if (statePageMatch) {
+            eventDate = parseEventDate(statePageMatch[1], statePageMatch[2], year);
+          }
+        }
+
+        // Pattern 3: Extract day after any </span> if we have month name
+        if (!eventDate) {
+          const monthNameMatch = dateContent.match(/<span>([A-Za-z]+)<\/span>\s*(\d{1,2})/i);
+          if (monthNameMatch) {
+            eventDate = parseEventDate(monthNameMatch[1], monthNameMatch[2], year);
+          }
         }
       }
 
-      const month = monthMatch ? monthMatch[1].trim() : "";
-      const year = yearMatch ? yearMatch[1].trim() : String(new Date().getFullYear());
+      // Pattern 4: Look for any "Month Day, Year" pattern in the section (fallback)
+      if (!eventDate) {
+        const anyDateMatch = section.match(/(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b)\s+(\d{1,2}),?\s*(\d{4})/i);
+        if (anyDateMatch) {
+          eventDate = parseEventDate(anyDateMatch[1], anyDateMatch[2], anyDateMatch[3]);
+        }
+      }
 
-      // Parse the date
-      const eventDate = month ? parseEventDate(month, day, year) : null;
+      // Pattern 5: Look for Unix timestamp in data-text or timestamp span
+      if (!eventDate) {
+        const timestampMatch = section.match(/<span\s+class="timestamp"[^>]*>(\d{10,})<\/span>/i) ||
+                               section.match(/data-text="(\d{10,})"/);
+        if (timestampMatch) {
+          const timestamp = parseInt(timestampMatch[1], 10);
+          const date = new Date(timestamp * 1000);
+          if (!isNaN(date.getTime())) {
+            eventDate = date;
+          }
+        }
+      }
 
       // Extract location info
       const cityMatch = section.match(/<span\s+class="city">([^<]+)<\/span>/i);

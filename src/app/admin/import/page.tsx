@@ -82,6 +82,7 @@ export default function ImportEventsPage() {
   const [importedEvents, setImportedEvents] = useState<ImportedEvent[]>([]);
   const [updatedEvents, setUpdatedEvents] = useState<ImportedEvent[]>([]);
   const [commercialFilter, setCommercialFilter] = useState<"all" | "yes" | "no">("all");
+  const [customUrl, setCustomUrl] = useState("");
 
   useEffect(() => {
     fetchVenuesAndPromoters();
@@ -139,6 +140,9 @@ export default function ImportEventsPage() {
       const params = new URLSearchParams({ source });
       if (fetchDetailsOnPreview) {
         params.set("fetchDetails", "true");
+      }
+      if (source === "fairsandfestivals.net-custom" && customUrl) {
+        params.set("customUrl", customUrl);
       }
       const res = await fetch(`/api/admin/import?${params.toString()}`);
       const data = await res.json();
@@ -434,13 +438,34 @@ export default function ImportEventsPage() {
                     <option value="fairsandfestivals.net-CT">Connecticut (fairsandfestivals.net)</option>
                     <option value="fairsandfestivals.net-RI">Rhode Island (fairsandfestivals.net)</option>
                     <option value="fairsandfestivals.net-NY">New York (fairsandfestivals.net)</option>
+                    <option value="fairsandfestivals.net-custom">Custom URL (fairsandfestivals.net)</option>
                   </optgroup>
                 </select>
               </div>
-              <Button onClick={handlePreview} disabled={loading}>
+              <Button
+                onClick={handlePreview}
+                disabled={loading || (source === "fairsandfestivals.net-custom" && !customUrl)}
+              >
                 {loading ? (fetchDetailsOnPreview ? "Fetching details..." : "Loading...") : "Preview Events"}
               </Button>
             </div>
+            {/* Custom URL input for FairsAndFestivals.net */}
+            {source === "fairsandfestivals.net-custom" && (
+              <div className="mt-3">
+                <Label htmlFor="customUrl">FairsAndFestivals.net URL</Label>
+                <input
+                  id="customUrl"
+                  type="url"
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                  placeholder="https://www.fairsandfestivals.net/..."
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Enter any FairsAndFestivals.net page URL (e.g., state page, city page, or search results)
+                </p>
+              </div>
+            )}
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"

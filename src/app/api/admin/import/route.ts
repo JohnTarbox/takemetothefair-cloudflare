@@ -9,7 +9,7 @@ import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
 import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
 import { scrapeMaineMade, scrapeMaineMadeEventDetails } from "@/lib/scrapers/mainemade";
 import { scrapeNewEnglandCraftFairs, scrapeNewEnglandCraftFairsEventDetails } from "@/lib/scrapers/newenglandcraftfairs";
-import { scrapeFairsAndFestivals, scrapeEventDetails as scrapeFairsAndFestivalsEventDetails } from "@/lib/scrapers/fairsandfestivals";
+import { scrapeFairsAndFestivals, scrapeFairsAndFestivalsUrl, scrapeEventDetails as scrapeFairsAndFestivalsEventDetails } from "@/lib/scrapers/fairsandfestivals";
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
@@ -65,6 +65,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const source = searchParams.get("source") || "mainefairs.net";
   const fetchDetails = searchParams.get("fetchDetails") === "true";
+  const customUrl = searchParams.get("customUrl");
 
   try {
     let result;
@@ -84,10 +85,14 @@ export async function GET(request: Request) {
     } else if (source === "newenglandcraftfairs.com") {
       result = await scrapeNewEnglandCraftFairs();
     } else if (source.startsWith("fairsandfestivals.net")) {
-      // Support state-specific sources like "fairsandfestivals.net-ME"
-      const stateMatch = source.match(/fairsandfestivals\.net-([A-Z]{2})/i);
-      const stateCode = stateMatch ? stateMatch[1].toUpperCase() : "ME"; // Default to Maine
-      result = await scrapeFairsAndFestivals(stateCode);
+      // Support custom URL or state-specific sources like "fairsandfestivals.net-ME"
+      if (source === "fairsandfestivals.net-custom" && customUrl) {
+        result = await scrapeFairsAndFestivalsUrl(customUrl);
+      } else {
+        const stateMatch = source.match(/fairsandfestivals\.net-([A-Z]{2})/i);
+        const stateCode = stateMatch ? stateMatch[1].toUpperCase() : "ME"; // Default to Maine
+        result = await scrapeFairsAndFestivals(stateCode);
+      }
     } else {
       return NextResponse.json({ error: "Unknown source" }, { status: 400 });
     }
