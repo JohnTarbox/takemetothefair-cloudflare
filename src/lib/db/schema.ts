@@ -41,7 +41,7 @@ export const venues = sqliteTable("venues", {
 // Promoters table
 export const promoters = sqliteTable("promoters", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  userId: text("user_id").unique().references(() => users.id, { onDelete: "set null" }),
   companyName: text("company_name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
