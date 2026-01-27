@@ -26,6 +26,7 @@ import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
+import { FavoriteButton } from "@/components/FavoriteButton";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -244,11 +245,14 @@ export default async function EventDetailPage({ params }: Props) {
                     <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
                       {event.name}
                     </h1>
-                    <ShareButtons
-                      url={`https://meetmeatthefair.com/events/${event.slug}`}
-                      title={event.name}
-                      description={event.description || undefined}
-                    />
+                    <div className="flex items-center gap-2">
+                      <FavoriteButton type="EVENT" id={event.id} size="lg" />
+                      <ShareButtons
+                        url={`https://meetmeatthefair.com/events/${event.slug}`}
+                        title={event.name}
+                        description={event.description || undefined}
+                      />
+                    </div>
                   </div>
                 </div>
 
