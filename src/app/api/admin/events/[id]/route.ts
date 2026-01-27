@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 
@@ -81,10 +81,41 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const db = getCloudflareDb();
 
+    // Get current event to check if slug needs updating
+    const [currentEvent] = await db
+      .select({ slug: events.slug })
+      .from(events)
+      .where(eq(events.id, id))
+      .limit(1);
+
+    if (!currentEvent) {
+      return NextResponse.json({ error: "Event not found" }, { status: 404 });
+    }
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.name) {
       updateData.name = data.name;
-      updateData.slug = createSlug(data.name);
+      const newSlug = createSlug(data.name);
+
+      // Only update slug if it would change
+      if (newSlug !== currentEvent.slug) {
+        // Check if new slug already exists for another event
+        let slug = newSlug;
+        let slugSuffix = 0;
+        while (true) {
+          const existingSlug = await db
+            .select({ id: events.id })
+            .from(events)
+            .where(and(
+              eq(events.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+              ne(events.id, id)
+            ))
+            .limit(1);
+          if (existingSlug.length === 0) break;
+          slugSuffix++;
+        }
+        updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
+      }
     }
     if (data.description !== undefined) updateData.description = data.description;
     if (data.venueId !== undefined) updateData.venueId = data.venueId || null;
@@ -116,7 +147,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     return NextResponse.json(updatedEvent);
   } catch (error) {
     console.error("Failed to update event:", error);
-    return NextResponse.json({ error: "Failed to update event" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to update event";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

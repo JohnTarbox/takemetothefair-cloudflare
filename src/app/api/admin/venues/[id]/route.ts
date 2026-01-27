@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 
@@ -73,10 +73,41 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const db = getCloudflareDb();
 
+    // Get current venue to check if slug needs updating
+    const [currentVenue] = await db
+      .select({ slug: venues.slug })
+      .from(venues)
+      .where(eq(venues.id, id))
+      .limit(1);
+
+    if (!currentVenue) {
+      return NextResponse.json({ error: "Venue not found" }, { status: 404 });
+    }
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.name) {
       updateData.name = data.name;
-      updateData.slug = createSlug(data.name);
+      const newSlug = createSlug(data.name);
+
+      // Only update slug if it would change
+      if (newSlug !== currentVenue.slug) {
+        // Check if new slug already exists for another venue
+        let slug = newSlug;
+        let slugSuffix = 0;
+        while (true) {
+          const existingSlug = await db
+            .select({ id: venues.id })
+            .from(venues)
+            .where(and(
+              eq(venues.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+              ne(venues.id, id)
+            ))
+            .limit(1);
+          if (existingSlug.length === 0) break;
+          slugSuffix++;
+        }
+        updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
+      }
     }
     if (data.address) updateData.address = data.address;
     if (data.city) updateData.city = data.city;
@@ -104,7 +135,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     return NextResponse.json(updatedVenue);
   } catch (error) {
     console.error("Failed to update venue:", error);
-    return NextResponse.json({ error: "Failed to update venue" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to update venue";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

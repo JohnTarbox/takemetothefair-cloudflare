@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, users } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
 
@@ -75,10 +75,41 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const db = getCloudflareDb();
 
+    // Get current vendor to check if slug needs updating
+    const [currentVendor] = await db
+      .select({ slug: vendors.slug })
+      .from(vendors)
+      .where(eq(vendors.id, id))
+      .limit(1);
+
+    if (!currentVendor) {
+      return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
+    }
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.businessName) {
       updateData.businessName = data.businessName;
-      updateData.slug = createSlug(data.businessName);
+      const newSlug = createSlug(data.businessName);
+
+      // Only update slug if it would change
+      if (newSlug !== currentVendor.slug) {
+        // Check if new slug already exists for another vendor
+        let slug = newSlug;
+        let slugSuffix = 0;
+        while (true) {
+          const existingSlug = await db
+            .select({ id: vendors.id })
+            .from(vendors)
+            .where(and(
+              eq(vendors.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+              ne(vendors.id, id)
+            ))
+            .limit(1);
+          if (existingSlug.length === 0) break;
+          slugSuffix++;
+        }
+        updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
+      }
     }
     if (data.description !== undefined) updateData.description = data.description;
     if (data.vendorType !== undefined) updateData.vendorType = data.vendorType;
@@ -98,7 +129,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     return NextResponse.json(updatedVendor);
   } catch (error) {
     console.error("Failed to update vendor:", error);
-    return NextResponse.json({ error: "Failed to update vendor" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to update vendor";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
