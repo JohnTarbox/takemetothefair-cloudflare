@@ -7,6 +7,7 @@ import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent, type ScrapedVe
 import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scrapers/vtnhfairs";
 import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
 import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
+import { scrapeMaineMade, scrapeMaineMadeEventDetails } from "@/lib/scrapers/mainemade";
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
@@ -72,6 +73,8 @@ export async function GET(request: Request) {
       result = await scrapeNhFairs();
     } else if (source === "mainepublic.org") {
       result = await scrapeMainePublic();
+    } else if (source === "mainemade.com") {
+      result = await scrapeMaineMade();
     } else {
       return NextResponse.json({ error: "Unknown source" }, { status: 400 });
     }
@@ -191,6 +194,8 @@ export async function POST(request: Request) {
             details = await scrapeVtNhEventDetails(event.sourceUrl);
           } else if (event.sourceName === "mainepublic.org") {
             details = await scrapeMainePublicEventDetails(event.sourceUrl);
+          } else if (event.sourceName === "mainemade.com") {
+            details = await scrapeMaineMadeEventDetails(event.sourceUrl);
           }
           eventData = { ...eventData, ...details };
         }
@@ -358,6 +363,8 @@ export async function PATCH(request: Request) {
           details = await scrapeVtNhEventDetails(event.sourceUrl);
         } else if (event.sourceName === "mainepublic.org") {
           details = await scrapeMainePublicEventDetails(event.sourceUrl);
+        } else if (event.sourceName === "mainemade.com") {
+          details = await scrapeMaineMadeEventDetails(event.sourceUrl);
         } else {
           // Unknown source, skip
           results.unchanged++;
