@@ -1,5 +1,7 @@
 "use client";
 
+export const runtime = "edge";
+
 import { useEffect, useState, useCallback } from "react";
 import { AlertTriangle, ArrowRight, Check, GitMerge, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
