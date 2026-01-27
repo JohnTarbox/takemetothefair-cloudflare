@@ -8,6 +8,7 @@ import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scra
 import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
 import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
 import { scrapeMaineMade, scrapeMaineMadeEventDetails } from "@/lib/scrapers/mainemade";
+import { scrapeNewEnglandCraftFairs, scrapeNewEnglandCraftFairsEventDetails } from "@/lib/scrapers/newenglandcraftfairs";
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
@@ -79,6 +80,8 @@ export async function GET(request: Request) {
       result = await scrapeMainePublic();
     } else if (source === "mainemade.com") {
       result = await scrapeMaineMade();
+    } else if (source === "newenglandcraftfairs.com") {
+      result = await scrapeNewEnglandCraftFairs();
     } else {
       return NextResponse.json({ error: "Unknown source" }, { status: 400 });
     }
@@ -106,6 +109,8 @@ export async function GET(request: Request) {
               details = await scrapeMainePublicEventDetails(event.sourceUrl);
             } else if (source === "mainemade.com") {
               details = await scrapeMaineMadeEventDetails(event.sourceUrl);
+            } else if (source === "newenglandcraftfairs.com") {
+              details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
             }
             return { ...event, ...details };
           } catch (error) {
@@ -233,6 +238,8 @@ export async function POST(request: Request) {
               details = await scrapeMainePublicEventDetails(event.sourceUrl);
             } else if (event.sourceName === "mainemade.com") {
               details = await scrapeMaineMadeEventDetails(event.sourceUrl);
+            } else if (event.sourceName === "newenglandcraftfairs.com") {
+              details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
             }
             // Log if scraper didn't find dates
             if (!details.startDate && event.sourceName === "mainepublic.org") {
@@ -426,6 +433,8 @@ export async function PATCH(request: Request) {
           details = await scrapeMainePublicEventDetails(event.sourceUrl);
         } else if (event.sourceName === "mainemade.com") {
           details = await scrapeMaineMadeEventDetails(event.sourceUrl);
+        } else if (event.sourceName === "newenglandcraftfairs.com") {
+          details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
         } else {
           // Unknown source, skip
           results.unchanged++;

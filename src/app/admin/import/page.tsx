@@ -408,6 +408,7 @@ export default function ImportEventsPage() {
                   <option value="mafa.org">Massachusetts Fairs (mafa.org)</option>
                   <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
                   <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
+                  <option value="newenglandcraftfairs.com">New England Craft Fairs (newenglandcraftfairs.com)</option>
                 </select>
               </div>
               <Button onClick={handlePreview} disabled={loading}>
