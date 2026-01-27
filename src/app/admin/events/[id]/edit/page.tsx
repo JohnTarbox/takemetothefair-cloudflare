@@ -97,9 +97,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         return;
       }
       const data = await res.json();
-      // Handle both array and error response
+      // API returns flat promoter objects with id, companyName, etc.
       if (Array.isArray(data)) {
-        setPromoters(data.map((item: { promoter: Promoter }) => item.promoter));
+        setPromoters(data);
       }
     } catch (err) {
       console.error("Failed to fetch promoters:", err);
