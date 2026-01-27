@@ -3,7 +3,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
+import { scrapeMaineFairs, scrapeEventDetails, decodeHtmlEntities, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
 import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scrapers/vtnhfairs";
 import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
 import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
@@ -20,8 +20,11 @@ async function findOrCreateVenue(
     return defaultVenueId;
   }
 
+  // Decode HTML entities in venue name to ensure consistent matching
+  const decodedName = decodeHtmlEntities(scrapedVenue.name);
+
   // Try to find existing venue by name (case-insensitive search via slug)
-  const venueSlug = createSlug(scrapedVenue.name);
+  const venueSlug = createSlug(decodedName);
   const existingVenue = await db
     .select()
     .from(venues)
@@ -32,11 +35,11 @@ async function findOrCreateVenue(
     return existingVenue[0].id;
   }
 
-  // Create new venue
+  // Create new venue with decoded name
   const newVenueId = crypto.randomUUID();
   await db.insert(venues).values({
     id: newVenueId,
-    name: scrapedVenue.name,
+    name: decodedName,
     slug: venueSlug,
     address: scrapedVenue.streetAddress || "",
     city: scrapedVenue.city || "",
@@ -246,8 +249,10 @@ export async function POST(request: Request) {
         // Determine venue ID - use scraped venue if available, otherwise default (can be null)
         let eventVenueId: string | null = venueId || null;
         if (eventData.venue && eventData.venue.name) {
+          // Decode HTML entities for consistent venue matching
+          const decodedVenueName = decodeHtmlEntities(eventData.venue.name);
           // Check if this is a new venue we need to create
-          const venueSlug = createSlug(eventData.venue.name);
+          const venueSlug = createSlug(decodedVenueName);
           const existingVenueCheck = await db
             .select()
             .from(venues)
@@ -272,9 +277,12 @@ export async function POST(request: Request) {
           if (updateExisting) {
             // Update the existing event (including venue if scraped)
             // Use website for ticketUrl (Event Website button), fall back to sourceUrl
+            // Decode HTML entities in event name
+            const decodedEventName = decodeHtmlEntities(eventData.name);
+            const decodedDescription = eventData.description ? decodeHtmlEntities(eventData.description) : existing[0].description;
             const updateData: Record<string, unknown> = {
-              name: eventData.name,
-              description: eventData.description || existing[0].description,
+              name: decodedEventName,
+              description: decodedDescription,
               ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
@@ -295,7 +303,7 @@ export async function POST(request: Request) {
             results.updated++;
             results.updatedEvents.push({
               id: existing[0].id,
-              name: eventData.name,
+              name: decodedEventName,
               slug: existing[0].slug,
             });
           } else {
@@ -304,8 +312,11 @@ export async function POST(request: Request) {
           continue;
         }
 
+        // Decode HTML entities in event name for new events
+        const decodedNewEventName = decodeHtmlEntities(eventData.name);
+
         // Generate unique slug for new event
-        let slug = createSlug(eventData.name);
+        let slug = createSlug(decodedNewEventName);
         let slugSuffix = 0;
         while (true) {
           const existingSlug = await db
@@ -322,12 +333,15 @@ export async function POST(request: Request) {
 
         // Insert the event
         // Use website for ticketUrl (Event Website button), fall back to sourceUrl
+        const decodedNewDescription = eventData.description
+          ? decodeHtmlEntities(eventData.description)
+          : `${decodedNewEventName} - imported from ${eventData.sourceName}`;
         const newEventId = crypto.randomUUID();
         await db.insert(events).values({
           id: newEventId,
-          name: eventData.name,
+          name: decodedNewEventName,
           slug,
-          description: eventData.description || `${eventData.name} - imported from ${eventData.sourceName}`,
+          description: decodedNewDescription,
           promoterId,
           venueId: eventVenueId,
           startDate: eventData.startDate ? new Date(eventData.startDate) : null,
@@ -348,7 +362,7 @@ export async function POST(request: Request) {
         results.imported++;
         results.importedEvents.push({
           id: newEventId,
-          name: eventData.name,
+          name: decodedNewEventName,
           slug,
         });
       } catch (error) {
