@@ -60,7 +60,7 @@ export const events = sqliteTable("events", {
   slug: text("slug").notNull().unique(),
   description: text("description"),
   promoterId: text("promoter_id").notNull().references(() => promoters.id, { onDelete: "cascade" }),
-  venueId: text("venue_id").notNull().references(() => venues.id),
+  venueId: text("venue_id").references(() => venues.id),
   startDate: integer("start_date", { mode: "timestamp" }),
   endDate: integer("end_date", { mode: "timestamp" }),
   datesConfirmed: integer("dates_confirmed", { mode: "boolean" }).default(true),

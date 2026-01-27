@@ -203,7 +203,7 @@ export async function POST(request: Request) {
           eventData = { ...eventData, ...details };
         }
 
-        // Determine venue ID - use scraped venue if available, otherwise default
+        // Determine venue ID - use scraped venue if available, otherwise default (can be null)
         let eventVenueId: string | null = venueId || null;
         if (eventData.venue && eventData.venue.name) {
           // Check if this is a new venue we need to create
@@ -225,13 +225,7 @@ export async function POST(request: Request) {
             eventVenueId = existingVenueCheck[0].id;
           }
         }
-
-        // If we still don't have a venue and none was provided, skip this event
-        if (!eventVenueId) {
-          results.errors.push(`Skipped ${event.name}: No venue available (no default venue and no venue data scraped)`);
-          results.skipped++;
-          continue;
-        }
+        // eventVenueId can be null - event will be created without a venue
 
         if (existing.length > 0) {
           // Event already exists
