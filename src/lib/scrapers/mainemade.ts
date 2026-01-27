@@ -17,41 +17,55 @@ function extractSlugFromUrl(url: string): string {
 function parseEventsFromHtml(html: string): ScrapedEvent[] {
   const events: ScrapedEvent[] = [];
 
-  // Look for event links - pattern: <a href="https://www.mainemade.com/event/slug/">
-  const eventPattern = /<a[^>]*href="(https?:\/\/www\.mainemade\.com\/event\/([^"]+))"[^>]*>([\s\S]*?)<\/a>/gi;
+  // Split by event item divs - the site uses "all_events__container__item" class
+  const itemPattern = /<div[^>]*class="all_events__container__item"[^>]*>/gi;
+  const parts = html.split(itemPattern);
 
-  let match;
-  while ((match = eventPattern.exec(html)) !== null) {
-    const eventUrl = match[1];
-    const slug = match[2].replace(/\/$/, "");
-    const content = match[3];
+  // Process each part (skip first which is before first item)
+  for (let i = 1; i < parts.length; i++) {
+    const content = parts[i];
+
+    // Extract event URL from anchor tag with /event/ in href
+    const urlMatch = content.match(/<a[^>]*href="(https?:\/\/www\.mainemade\.com\/event\/([^"]+))"[^>]*>/i);
+    if (!urlMatch) continue;
+
+    const eventUrl = urlMatch[1];
+    const slug = urlMatch[2].replace(/\/$/, "");
 
     // Skip if we already have this event
     if (events.some((e) => e.sourceId === slug)) continue;
 
-    // Extract event name from h3 or strong tag within the link
-    const nameMatch = content.match(/<h[23][^>]*>([^<]+)<\/h[23]>/i) ||
-                      content.match(/<strong[^>]*>([^<]+)<\/strong>/i);
-    const eventName = nameMatch ? nameMatch[1].trim() : "";
+    // Extract event name from title div
+    const titleMatch = content.match(/<div[^>]*class="all_events__container__item__content__title"[^>]*>([^<]+)<\/div>/i);
+    const eventName = titleMatch ? titleMatch[1].trim() : "";
 
     if (!eventName || eventName.length < 3) continue;
 
-    // Try to extract date from the content
+    // Try to extract date from the date div or span with itemprop="startDate"
     let startDate: Date | undefined;
     let endDate: Date | undefined;
 
+    // First try itemprop="startDate" span
+    const startDateMatch = content.match(/<span[^>]*itemprop="startDate"[^>]*>([^<]+)<\/span>/i);
+    // Also look for endDate span
+    const endDateSpanMatch = content.match(/<span[^>]*itemprop="endDate"[^>]*>([^<]+)<\/span>/i);
+    // Also look for the full date div content for time info
+    const dateContainerMatch = content.match(/<div[^>]*class="all_events__container__item__content__date"[^>]*>([\s\S]*?)<\/div>/i);
+
+    const dateText = startDateMatch ? startDateMatch[1] : "";
+    const fullDateContent = dateContainerMatch ? dateContainerMatch[1].replace(/<[^>]+>/g, " ").trim() : "";
+
     // Pattern: "February 7 @ 2:00 PM - 7:00 PM" or "March 21 - March 22"
-    const dateMatch = content.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:\s*[-–@]\s*(.*?))?(?=<|$)/i);
+    const dateMatch = (dateText || fullDateContent).match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
     if (dateMatch) {
       const year = new Date().getFullYear();
       const month = dateMatch[1];
       const day = dateMatch[2];
-      const rest = dateMatch[3] || "";
 
       startDate = new Date(`${month} ${day}, ${year}`);
       if (!isNaN(startDate.getTime())) {
-        // Check for time
-        const timeMatch = rest.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        // Check for time in full content
+        const timeMatch = fullDateContent.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
         if (timeMatch) {
           let hours = parseInt(timeMatch[1]);
           const minutes = parseInt(timeMatch[2]);
@@ -62,32 +76,44 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
           startDate.setHours(9, 0, 0, 0);
         }
 
-        // Check for end date/time
-        const endTimeMatch = rest.match(/[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        const endDateMatch = rest.match(/[-–]\s*(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+        // Check for end date from itemprop span first
+        if (endDateSpanMatch) {
+          const endDateText = endDateSpanMatch[1];
+          const endDateParsed = endDateText.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+          if (endDateParsed) {
+            endDate = new Date(`${endDateParsed[1]} ${endDateParsed[2]}, ${year}`);
+            endDate.setHours(21, 0, 0, 0);
+          }
+        }
 
-        if (endDateMatch) {
-          endDate = new Date(`${endDateMatch[1]} ${endDateMatch[2]}, ${year}`);
-          endDate.setHours(21, 0, 0, 0);
-        } else if (endTimeMatch) {
-          endDate = new Date(startDate);
-          let endHours = parseInt(endTimeMatch[1]);
-          const endMinutes = parseInt(endTimeMatch[2]);
-          if (endTimeMatch[3].toUpperCase() === "PM" && endHours < 12) endHours += 12;
-          if (endTimeMatch[3].toUpperCase() === "AM" && endHours === 12) endHours = 0;
-          endDate.setHours(endHours, endMinutes, 0, 0);
-        } else {
-          endDate = new Date(startDate);
-          endDate.setHours(21, 0, 0, 0);
+        // If no end date from span, check for end time
+        if (!endDate) {
+          const endTimeMatch = fullDateContent.match(/[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+          if (endTimeMatch) {
+            endDate = new Date(startDate);
+            let endHours = parseInt(endTimeMatch[1]);
+            const endMinutes = parseInt(endTimeMatch[2]);
+            if (endTimeMatch[3].toUpperCase() === "PM" && endHours < 12) endHours += 12;
+            if (endTimeMatch[3].toUpperCase() === "AM" && endHours === 12) endHours = 0;
+            endDate.setHours(endHours, endMinutes, 0, 0);
+          } else {
+            endDate = new Date(startDate);
+            endDate.setHours(21, 0, 0, 0);
+          }
         }
       }
     }
 
-    // Extract image URL
+    // Extract image URL - prefer data-lazy-src for actual image, fallback to src if not a placeholder
     let imageUrl: string | undefined;
-    const imgMatch = content.match(/<img[^>]*src="([^"]+)"[^>]*>/i);
-    if (imgMatch && !imgMatch[1].includes("data:image")) {
-      imageUrl = imgMatch[1];
+    const lazyImgMatch = content.match(/<img[^>]*data-lazy-src="([^"]+)"[^>]*>/i);
+    if (lazyImgMatch) {
+      imageUrl = lazyImgMatch[1];
+    } else {
+      const imgMatch = content.match(/<img[^>]*src="([^"]+)"[^>]*>/i);
+      if (imgMatch && !imgMatch[1].includes("data:image")) {
+        imageUrl = imgMatch[1];
+      }
     }
 
     events.push({
