@@ -358,6 +358,67 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
       }
     }
 
+    // Fallback: Extract date/time from text patterns like "10:00 AM - 12:00 PM on Tue, 27 Jan 2026"
+    if (!details.startDate) {
+      // Pattern: "HH:MM AM/PM - HH:MM AM/PM on Day, DD Mon YYYY"
+      const dateTimePattern = /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:AM|PM))\s+on\s+\w+,\s*(\d{1,2})\s+(\w+)\s+(\d{4})/i;
+      const dtMatch = html.match(dateTimePattern);
+      if (dtMatch) {
+        const startTimeStr = dtMatch[1];
+        const endTimeStr = dtMatch[2];
+        const day = parseInt(dtMatch[3]);
+        const monthStr = dtMatch[4];
+        const year = parseInt(dtMatch[5]);
+
+        // Parse month
+        const months: Record<string, number> = {
+          jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+          jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+          january: 0, february: 1, march: 2, april: 3, june: 5,
+          july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+        };
+        const monthNum = months[monthStr.toLowerCase()];
+
+        if (monthNum !== undefined) {
+          const startTime = parseTime(startTimeStr);
+          const endTime = parseTime(endTimeStr);
+
+          if (startTime) {
+            details.startDate = new Date(year, monthNum, day, startTime.hours, startTime.minutes);
+            details.datesConfirmed = true;
+          }
+          if (endTime) {
+            details.endDate = new Date(year, monthNum, day, endTime.hours, endTime.minutes);
+          }
+        }
+      }
+    }
+
+    // Additional fallback: "Day, DD Mon YYYY" without time
+    if (!details.startDate) {
+      const dateOnlyPattern = /\b(\w+),\s*(\d{1,2})\s+(\w{3,})\s+(\d{4})\b/i;
+      const dateMatch = html.match(dateOnlyPattern);
+      if (dateMatch) {
+        const day = parseInt(dateMatch[2]);
+        const monthStr = dateMatch[3];
+        const year = parseInt(dateMatch[4]);
+
+        const months: Record<string, number> = {
+          jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+          jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+          january: 0, february: 1, march: 2, april: 3, june: 5,
+          july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+        };
+        const monthNum = months[monthStr.toLowerCase()];
+
+        if (monthNum !== undefined) {
+          details.startDate = new Date(year, monthNum, day, 9, 0);
+          details.endDate = new Date(year, monthNum, day, 17, 0);
+          details.datesConfirmed = true;
+        }
+      }
+    }
+
     return details;
   } catch {
     return {};
