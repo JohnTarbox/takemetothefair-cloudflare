@@ -390,6 +390,7 @@ export default function ImportEventsPage() {
                 className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
               >
                 <option value="mainefairs.net">Maine Fairs (mainefairs.net)</option>
+                <option value="mainepublic.org">Maine Public Community Calendar (mainepublic.org)</option>
                 <option value="mafa.org">Massachusetts Fairs (mafa.org)</option>
                 <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
                 <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
@@ -600,7 +601,7 @@ export default function ImportEventsPage() {
               You can then select which events to import into your calendar.
             </p>
             <p className="text-sm text-gray-400 mt-4">
-              Currently supported: mainefairs.net, mafa.org, vtnhfairs.org (VT &amp; NH)
+              Currently supported: mainefairs.net, mainepublic.org, mafa.org, vtnhfairs.org (VT &amp; NH)
             </p>
           </CardContent>
         </Card>

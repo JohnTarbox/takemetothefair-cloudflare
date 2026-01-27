@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
 import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scrapers/vtnhfairs";
 import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
+import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
@@ -69,6 +70,8 @@ export async function GET(request: Request) {
       result = await scrapeVtFairs();
     } else if (source === "vtnhfairs.org-nh") {
       result = await scrapeNhFairs();
+    } else if (source === "mainepublic.org") {
+      result = await scrapeMainePublic();
     } else {
       return NextResponse.json({ error: "Unknown source" }, { status: 400 });
     }
@@ -186,6 +189,8 @@ export async function POST(request: Request) {
             details = await scrapeMafaEventDetails(event.sourceUrl);
           } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
             details = await scrapeVtNhEventDetails(event.sourceUrl);
+          } else if (event.sourceName === "mainepublic.org") {
+            details = await scrapeMainePublicEventDetails(event.sourceUrl);
           }
           eventData = { ...eventData, ...details };
         }
@@ -351,6 +356,8 @@ export async function PATCH(request: Request) {
           details = await scrapeMafaEventDetails(event.sourceUrl);
         } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
           details = await scrapeVtNhEventDetails(event.sourceUrl);
+        } else if (event.sourceName === "mainepublic.org") {
+          details = await scrapeMainePublicEventDetails(event.sourceUrl);
         } else {
           // Unknown source, skip
           results.unchanged++;
