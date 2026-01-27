@@ -87,7 +87,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       updateData.slug = createSlug(data.name);
     }
     if (data.description !== undefined) updateData.description = data.description;
-    if (data.venueId) updateData.venueId = data.venueId;
+    if (data.venueId !== undefined) updateData.venueId = data.venueId || null;
     if (data.startDate !== undefined) {
       updateData.startDate = data.startDate ? new Date(data.startDate) : null;
     }

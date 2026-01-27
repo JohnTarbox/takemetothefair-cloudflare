@@ -67,7 +67,7 @@ export const eventCreateSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
   promoterId: z.string().uuid(),
-  venueId: z.string().uuid(),
+  venueId: z.string().uuid().optional().nullable(),
   startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   datesConfirmed: z.boolean().optional().default(true),

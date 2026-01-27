@@ -78,7 +78,7 @@ export default function CreateEventPage() {
         body: JSON.stringify({
           name: formData.name,
           description: formData.description,
-          venueId: formData.venueId,
+          venueId: formData.venueId || null,
           startDate: startDateTime.toISOString(),
           endDate: endDateTime.toISOString(),
           categories: formData.categories
@@ -158,16 +158,15 @@ export default function CreateEventPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Venue
+                Venue (optional)
               </label>
               <select
                 name="venueId"
                 value={formData.venueId}
                 onChange={handleChange}
-                required
                 className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
-                <option value="">Select a venue</option>
+                <option value="">No venue selected</option>
                 {venues.map((venue) => (
                   <option key={venue.id} value={venue.id}>
                     {venue.name} - {venue.city}, {venue.state}

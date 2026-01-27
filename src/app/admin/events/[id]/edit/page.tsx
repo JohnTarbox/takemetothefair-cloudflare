@@ -28,7 +28,7 @@ interface Event {
   id: string;
   name: string;
   description: string | null;
-  venueId: string;
+  venueId: string | null;
   promoterId: string;
   startDate: string | null;
   endDate: string | null;
@@ -102,7 +102,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     const data = {
       name: formData.get("name"),
       description: formData.get("description") || null,
-      venueId: formData.get("venueId"),
+      venueId: formData.get("venueId") || null,
       startDate: datesTBD ? null : formData.get("startDate"),
       endDate: datesTBD ? null : formData.get("endDate"),
       datesConfirmed: !datesTBD,
@@ -202,15 +202,14 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div>
-                <Label htmlFor="venueId">Venue *</Label>
+                <Label htmlFor="venueId">Venue</Label>
                 <select
                   id="venueId"
                   name="venueId"
-                  required
-                  defaultValue={event.venueId}
+                  defaultValue={event.venueId || ""}
                   className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="">Select a venue</option>
+                  <option value="">No venue selected</option>
                   {venues.map((venue) => (
                     <option key={venue.id} value={venue.id}>
                       {venue.name} - {venue.city}, {venue.state}

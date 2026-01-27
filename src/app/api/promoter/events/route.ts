@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
       name,
       slug,
       description,
-      venueId,
+      venueId: venueId || null,
       promoterId: promoter.id,
       startDate: new Date(startDate),
       endDate: new Date(endDate),

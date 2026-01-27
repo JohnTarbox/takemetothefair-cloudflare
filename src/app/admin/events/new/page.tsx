@@ -66,7 +66,7 @@ export default function NewEventPage() {
     const data = {
       name: formData.get("name"),
       description: formData.get("description") || null,
-      venueId: formData.get("venueId"),
+      venueId: formData.get("venueId") || null,
       promoterId: formData.get("promoterId"),
       startDate: datesTBD ? null : formData.get("startDate"),
       endDate: datesTBD ? null : formData.get("endDate"),
@@ -141,14 +141,13 @@ export default function NewEventPage() {
               </div>
 
               <div>
-                <Label htmlFor="venueId">Venue *</Label>
+                <Label htmlFor="venueId">Venue</Label>
                 <select
                   id="venueId"
                   name="venueId"
-                  required
                   className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="">Select a venue</option>
+                  <option value="">No venue selected</option>
                   {venues.map((venue) => (
                     <option key={venue.id} value={venue.id}>
                       {venue.name} - {venue.city}, {venue.state}
