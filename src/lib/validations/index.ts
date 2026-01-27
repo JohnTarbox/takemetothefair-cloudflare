@@ -66,8 +66,8 @@ export const vendorUpdateSchema = vendorCreateSchema.partial().omit({ userId: tr
 export const eventCreateSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
-  promoterId: z.string().uuid(),
-  venueId: z.string().uuid().optional().nullable(),
+  promoterId: z.string().min(1),
+  venueId: z.string().min(1).optional().nullable(),
   startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   datesConfirmed: z.boolean().optional().default(true),
