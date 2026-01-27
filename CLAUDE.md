@@ -1,45 +1,95 @@
-# Project: Meet Me at the Fair (Cloudflare)
+# CLAUDE.md
 
-## Build Target
-**This project deploys to Cloudflare Pages with D1 database.** Always use:
-- `export const runtime = "edge";` in all page and API route files
-- Drizzle ORM (not Prisma) for database operations
-- `getCloudflareDb()` from `@/lib/cloudflare` for database access
-- `npx @cloudflare/next-on-pages` to build
-- `npx wrangler pages deploy .vercel/output/static --project-name=takemetothefair` to deploy
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Tech Stack
-- Next.js 14 (App Router)
-- Cloudflare Pages + D1 (SQLite)
-- Drizzle ORM
-- NextAuth.js for authentication
-- Tailwind CSS
-- TypeScript
+## Build & Development Commands
 
-## Key Directories
-- `src/lib/db/schema.ts` - Drizzle schema definitions
-- `src/lib/cloudflare.ts` - Cloudflare D1 database helper
-- `src/app/api/` - API routes (all need `export const runtime = "edge"`)
-- `src/app/admin/` - Admin pages
+```bash
+# Development
+npm run dev                    # Start Next.js dev server
+
+# Build & Deploy
+npm run build                  # Next.js build (local testing)
+npx @cloudflare/next-on-pages  # Build for Cloudflare Pages
+npx wrangler pages deploy .vercel/output/static --project-name=takemetothefair --commit-dirty=true
+
+# Database
+npm run db:generate            # Generate Drizzle migrations
+npm run db:migrate             # Apply migrations locally
+npm run db:migrate:prod        # Apply migrations to production
+npm run db:seed                # Seed local database
+npm run db:studio              # Open Drizzle Studio
+```
+
+## Critical: Cloudflare Edge Runtime
+
+**Every page and API route MUST include:**
+```typescript
+export const runtime = "edge";
+```
+
+This project runs on Cloudflare Pages with D1 (SQLite at edge). Node.js APIs are not available.
 
 ## Database Access Pattern
+
 ```typescript
 import { getCloudflareDb } from "@/lib/cloudflare";
+import { events, venues } from "@/lib/db/schema";
+import { eq, and, gte } from "drizzle-orm";
 
 export const runtime = "edge";
 
-export async function GET() {
+async function getData() {
   const db = getCloudflareDb();
-  const results = await db.select().from(tableName);
-  // ...
+  const results = await db
+    .select()
+    .from(events)
+    .leftJoin(venues, eq(events.venueId, venues.id))
+    .where(and(eq(events.status, "APPROVED"), gte(events.endDate, new Date())));
+  return results;
 }
 ```
 
-## Deployment Commands
-```bash
-# Build for Cloudflare
-npx @cloudflare/next-on-pages
+## Architecture Overview
 
-# Deploy to Cloudflare Pages
-npx wrangler pages deploy .vercel/output/static --project-name=takemetothefair --commit-dirty=true
+### User Roles & Portals
+- **Public**: Browse events, venues, vendors (`/events`, `/venues`, `/vendors`)
+- **User**: Dashboard with favorites (`/dashboard`)
+- **Vendor**: Profile management, event applications (`/vendor/*`)
+- **Promoter**: Create/manage events (`/promoter/*`)
+- **Admin**: Full management (`/admin/*`)
+
+### Core Data Model
+- **Events**: Central entity with promoter (required), venue (optional), and many-to-many vendors
+- **Promoters**: Organizations that create events (linked to user account)
+- **Vendors**: Businesses that apply to participate in events (linked to user account)
+- **Venues**: Physical locations where events occur
+- **userFavorites**: Polymorphic favorites (EVENT, VENUE, VENDOR, PROMOTER)
+
+### Key Patterns
+
+**JSON Arrays in SQLite**: Categories, tags, amenities, products stored as JSON strings
+```typescript
+import { parseJsonArray } from "@/types";
+const categories = parseJsonArray(event.categories); // Returns string[]
 ```
+
+**Page Caching (ISR)**:
+```typescript
+export const revalidate = 300; // Cache for 5 minutes
+```
+
+**Authentication**:
+```typescript
+import { auth } from "@/lib/auth";
+const session = await auth();
+if (session?.user?.role === "ADMIN") { ... }
+```
+
+### Event Scrapers
+Located in `src/lib/scrapers/`. Import events from external fair websites (mainefairs.net, etc.). Used via admin import page (`/admin/import`).
+
+## Test Accounts (after seeding)
+- Admin: admin@takemetothefair.com / admin123
+- Promoter: promoter@example.com / promoter123
+- Vendor: vendor@example.com / vendor123
