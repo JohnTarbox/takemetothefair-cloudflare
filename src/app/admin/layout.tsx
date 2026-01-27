@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Megaphone,
   Download,
+  GitMerge,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 
@@ -21,6 +22,7 @@ const adminNav = [
   { name: "Promoters", href: "/admin/promoters", icon: Megaphone },
   { name: "Users", href: "/admin/users", icon: Users },
   { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
+  { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
 ];
 
 export default async function AdminLayout({
