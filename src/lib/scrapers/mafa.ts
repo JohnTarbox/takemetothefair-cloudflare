@@ -2,6 +2,7 @@
 // Extracts fair/event data from their fairs by date page
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./mainefairs";
+import { decodeHtmlEntities } from "./mainefairs";
 
 // Parse date strings like "July 15-19", "Aug 7-9", "Sept 4-7", "Oct 2-12"
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
@@ -75,18 +76,6 @@ function createSlugFromName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-}
-
-// Decode HTML entities
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .trim();
 }
 
 export async function scrapeMafaFairs(): Promise<ScrapeResult> {

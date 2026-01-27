@@ -1,7 +1,7 @@
 // Scraper for mainemade.com events
 // Extracts event data from their events page with pagination support
 
-import { ScrapedEvent, ScrapedVenue, ScrapeResult } from "./mainefairs";
+import { ScrapedEvent, ScrapedVenue, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
 
 const SOURCE_NAME = "mainemade.com";
 const BASE_URL = "https://www.mainemade.com/events/";
@@ -37,7 +37,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
 
     // Extract event name from title div
     const titleMatch = content.match(/<div[^>]*class="all_events__container__item__content__title"[^>]*>([^<]+)<\/div>/i);
-    const eventName = titleMatch ? titleMatch[1].trim() : "";
+    const eventName = titleMatch ? decodeHtmlEntities(titleMatch[1].trim()) : "";
 
     if (!eventName || eventName.length < 3) continue;
 

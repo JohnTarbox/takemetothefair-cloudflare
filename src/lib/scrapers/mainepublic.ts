@@ -1,7 +1,7 @@
 // Scraper for mainepublic.org community calendar
 // Extracts event data from their community calendar page
 
-import { ScrapedEvent, ScrapedVenue, ScrapeResult } from "./mainefairs";
+import { ScrapedEvent, ScrapedVenue, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
 
 const SOURCE_NAME = "mainepublic.org";
 const CALENDAR_URL = "https://www.mainepublic.org/community-calendar";
@@ -73,7 +73,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
 
     const eventUrl = linkMatch[1];
     const slug = linkMatch[2];
-    const eventName = linkMatch[3].trim();
+    const eventName = decodeHtmlEntities(linkMatch[3].trim());
 
     if (!eventName || eventName.length < 3) continue;
 
@@ -145,7 +145,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     while ((match = simplePattern.exec(html)) !== null) {
       const eventUrl = match[1];
       const slug = match[2];
-      const eventName = match[3].trim();
+      const eventName = decodeHtmlEntities(match[3].trim());
 
       if (!eventName || eventName.length < 3) continue;
       if (events.some((e) => e.sourceId === slug)) continue;

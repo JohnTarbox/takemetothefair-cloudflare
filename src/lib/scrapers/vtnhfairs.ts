@@ -2,6 +2,7 @@
 // Extracts fair/event data from the Vermont/NH Fairs Association pages
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./mainefairs";
+import { decodeHtmlEntities } from "./mainefairs";
 
 // Parse date strings like "April 25-27th", "June 6 - 8", "July 29 - August 2"
 // Returns null for dates, with datesConfirmed=false for TBD/unknown dates
@@ -82,17 +83,6 @@ function createSlugFromName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-}
-
-// Decode HTML entities
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ');
 }
 
 interface PageConfig {

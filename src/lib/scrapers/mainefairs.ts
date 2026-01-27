@@ -1,6 +1,21 @@
 // Scraper for mainefairs.net
 // Extracts fair/event data from their calendar page
 
+// Decode common HTML entities
+export function decodeHtmlEntities(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
 export interface ScrapedVenue {
   name: string;
   streetAddress?: string;
@@ -140,7 +155,7 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
       }
 
       const eventUrl = linkMatch ? linkMatch[1] : "";
-      const eventName = linkMatch ? linkMatch[2].trim() : "";
+      const eventName = linkMatch ? decodeHtmlEntities(linkMatch[2].trim()) : "";
 
       if (!eventName || !eventUrl) continue;
 
@@ -189,7 +204,7 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
       for (const match of allLinks) {
         const eventUrl = match[1];
         const slug = match[2].replace(/\/$/, '');
-        const eventName = match[3].trim();
+        const eventName = decodeHtmlEntities(match[3].trim());
 
         if (!eventName) continue;
 
