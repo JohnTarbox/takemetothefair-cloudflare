@@ -30,8 +30,9 @@ interface Event {
   description: string | null;
   venueId: string;
   promoterId: string;
-  startDate: string;
-  endDate: string;
+  startDate: string | null;
+  endDate: string | null;
+  datesConfirmed: boolean;
   ticketUrl: string | null;
   ticketPriceMin: number | null;
   ticketPriceMax: number | null;
@@ -50,6 +51,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [error, setError] = useState("");
   const [venues, setVenues] = useState<Venue[]>([]);
   const [promoters, setPromoters] = useState<Promoter[]>([]);
+  const [datesTBD, setDatesTBD] = useState(false);
 
   useEffect(() => {
     fetchEvent();
@@ -63,6 +65,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       if (!res.ok) throw new Error("Event not found");
       const data = await res.json() as Event;
       setEvent(data);
+      setDatesTBD(!data.startDate || !data.datesConfirmed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load event");
     } finally {
@@ -100,8 +103,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       name: formData.get("name"),
       description: formData.get("description") || null,
       venueId: formData.get("venueId"),
-      startDate: formData.get("startDate"),
-      endDate: formData.get("endDate"),
+      startDate: datesTBD ? null : formData.get("startDate"),
+      endDate: datesTBD ? null : formData.get("endDate"),
+      datesConfirmed: !datesTBD,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
       ticketPriceMax: formData.get("ticketPriceMax") ? parseFloat(formData.get("ticketPriceMax") as string) : null,
@@ -233,27 +237,43 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                 <p className="text-xs text-gray-500 mt-1">Promoter cannot be changed</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="startDate">Start Date *</Label>
-                  <Input
-                    id="startDate"
-                    name="startDate"
-                    type="datetime-local"
-                    required
-                    defaultValue={formatDateForInput(event.startDate)}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="datesTBD"
+                    type="checkbox"
+                    checked={datesTBD}
+                    onChange={(e) => setDatesTBD(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
                   />
+                  <Label htmlFor="datesTBD" className="font-normal">
+                    Dates to be determined (TBD)
+                  </Label>
                 </div>
-                <div>
-                  <Label htmlFor="endDate">End Date *</Label>
-                  <Input
-                    id="endDate"
-                    name="endDate"
-                    type="datetime-local"
-                    required
-                    defaultValue={formatDateForInput(event.endDate)}
-                  />
-                </div>
+                {!datesTBD && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="startDate">Start Date *</Label>
+                      <Input
+                        id="startDate"
+                        name="startDate"
+                        type="datetime-local"
+                        required={!datesTBD}
+                        defaultValue={event.startDate ? formatDateForInput(event.startDate) : ""}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="endDate">End Date *</Label>
+                      <Input
+                        id="endDate"
+                        name="endDate"
+                        type="datetime-local"
+                        required={!datesTBD}
+                        defaultValue={event.endDate ? formatDateForInput(event.endDate) : ""}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>

@@ -77,6 +77,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       venueId,
       startDate,
       endDate,
+      datesConfirmed,
       categories,
       tags,
       ticketUrl,
@@ -97,8 +98,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
     if (description !== undefined) updateData.description = description;
     if (venueId) updateData.venueId = venueId;
-    if (startDate) updateData.startDate = new Date(startDate as string);
-    if (endDate) updateData.endDate = new Date(endDate as string);
+    // Handle nullable dates - check if key exists in body, not just if truthy
+    if ("startDate" in body) {
+      updateData.startDate = startDate ? new Date(startDate as string) : null;
+    }
+    if ("endDate" in body) {
+      updateData.endDate = endDate ? new Date(endDate as string) : null;
+    }
+    if (datesConfirmed !== undefined) updateData.datesConfirmed = datesConfirmed;
     if (categories) updateData.categories = JSON.stringify(categories);
     if (tags) updateData.tags = JSON.stringify(tags);
     if (ticketUrl !== undefined) updateData.ticketUrl = ticketUrl;

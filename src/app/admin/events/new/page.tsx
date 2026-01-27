@@ -30,6 +30,7 @@ export default function NewEventPage() {
   const [error, setError] = useState("");
   const [venues, setVenues] = useState<Venue[]>([]);
   const [promoters, setPromoters] = useState<Promoter[]>([]);
+  const [datesTBD, setDatesTBD] = useState(false);
 
   useEffect(() => {
     fetchVenues();
@@ -67,8 +68,9 @@ export default function NewEventPage() {
       description: formData.get("description") || null,
       venueId: formData.get("venueId"),
       promoterId: formData.get("promoterId"),
-      startDate: formData.get("startDate"),
-      endDate: formData.get("endDate"),
+      startDate: datesTBD ? null : formData.get("startDate"),
+      endDate: datesTBD ? null : formData.get("endDate"),
+      datesConfirmed: !datesTBD,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
       ticketPriceMax: formData.get("ticketPriceMax") ? parseFloat(formData.get("ticketPriceMax") as string) : null,
@@ -172,25 +174,41 @@ export default function NewEventPage() {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="startDate">Start Date *</Label>
-                  <Input
-                    id="startDate"
-                    name="startDate"
-                    type="datetime-local"
-                    required
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="datesTBD"
+                    type="checkbox"
+                    checked={datesTBD}
+                    onChange={(e) => setDatesTBD(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
                   />
+                  <Label htmlFor="datesTBD" className="font-normal">
+                    Dates to be determined (TBD)
+                  </Label>
                 </div>
-                <div>
-                  <Label htmlFor="endDate">End Date *</Label>
-                  <Input
-                    id="endDate"
-                    name="endDate"
-                    type="datetime-local"
-                    required
-                  />
-                </div>
+                {!datesTBD && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="startDate">Start Date *</Label>
+                      <Input
+                        id="startDate"
+                        name="startDate"
+                        type="datetime-local"
+                        required={!datesTBD}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="endDate">End Date *</Label>
+                      <Input
+                        id="endDate"
+                        name="endDate"
+                        type="datetime-local"
+                        required={!datesTBD}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
