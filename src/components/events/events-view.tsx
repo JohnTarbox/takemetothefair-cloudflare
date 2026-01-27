@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight, List } from "lucide-react";
 import { EventCard } from "./event-card";
 import { SortableHeader, SortConfig, sortData, getNextSortDirection } from "@/components/ui/sortable-table";
 import { formatDateRange } from "@/lib/utils";
 import type { events, venues, promoters } from "@/lib/db/schema";
+
+type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -85,57 +87,438 @@ interface CalendarViewProps {
   events: EventWithRelations[];
 }
 
+// Additional helper functions for calendar views
+function getWeekStart(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getDay();
+  d.setDate(d.getDate() - day);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function formatDayHeader(date: Date): string {
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+function formatFullDate(date: Date): string {
+  return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatShortMonth(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "short" });
+}
+
+function getEventsForDate(events: EventWithRelations[], date: Date): EventWithRelations[] {
+  return events.filter((event) => {
+    const startDate = event.startDate ? new Date(event.startDate) : null;
+    const endDate = event.endDate ? new Date(event.endDate) : startDate;
+    return isDateInRange(date, startDate, endDate);
+  });
+}
+
 function CalendarView({ events }: CalendarViewProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [calendarViewType, setCalendarViewType] = useState<CalendarViewType>("month");
   const [selectedEvent, setSelectedEvent] = useState<EventWithRelations | null>(null);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  const daysInMonth = getDaysInMonth(year, month);
-  const firstDayOfMonth = getFirstDayOfMonth(year, month);
   const today = new Date();
 
-  const prevMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
+  // Navigation functions
+  const navigate = (direction: "prev" | "next") => {
+    const d = new Date(currentDate);
+    switch (calendarViewType) {
+      case "day":
+        d.setDate(d.getDate() + (direction === "next" ? 1 : -1));
+        break;
+      case "week":
+        d.setDate(d.getDate() + (direction === "next" ? 7 : -7));
+        break;
+      case "month":
+        d.setMonth(d.getMonth() + (direction === "next" ? 1 : -1));
+        break;
+      case "year":
+        d.setFullYear(d.getFullYear() + (direction === "next" ? 1 : -1));
+        break;
+      case "schedule":
+        d.setMonth(d.getMonth() + (direction === "next" ? 1 : -1));
+        break;
+    }
+    setCurrentDate(d);
   };
 
   const goToToday = () => {
     setCurrentDate(new Date());
   };
 
-  // Get events for a specific day
-  const getEventsForDay = (day: number): EventWithRelations[] => {
-    const date = new Date(year, month, day);
-    return events.filter((event) => {
-      const startDate = event.startDate ? new Date(event.startDate) : null;
-      const endDate = event.endDate ? new Date(event.endDate) : startDate;
-      return isDateInRange(date, startDate, endDate);
-    });
+  // Get title based on view type
+  const getTitle = (): string => {
+    switch (calendarViewType) {
+      case "day":
+        return formatFullDate(currentDate);
+      case "week":
+        const weekStart = getWeekStart(currentDate);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        if (weekStart.getMonth() === weekEnd.getMonth()) {
+          return `${formatShortMonth(weekStart)} ${weekStart.getDate()} - ${weekEnd.getDate()}, ${weekStart.getFullYear()}`;
+        }
+        return `${formatShortMonth(weekStart)} ${weekStart.getDate()} - ${formatShortMonth(weekEnd)} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`;
+      case "month":
+        return formatMonthYear(currentDate);
+      case "year":
+        return year.toString();
+      case "schedule":
+        return formatMonthYear(currentDate);
+    }
   };
 
-  // Build calendar grid
-  const calendarDays: (number | null)[] = [];
-
-  // Add empty cells for days before the first day of the month
-  for (let i = 0; i < firstDayOfMonth; i++) {
-    calendarDays.push(null);
-  }
-
-  // Add all days of the month
-  for (let day = 1; day <= daysInMonth; day++) {
-    calendarDays.push(day);
-  }
-
-  // Fill remaining cells to complete the grid (6 rows x 7 days = 42 cells)
-  while (calendarDays.length < 42) {
-    calendarDays.push(null);
-  }
-
   const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const viewOptions: { value: CalendarViewType; label: string }[] = [
+    { value: "day", label: "Day" },
+    { value: "week", label: "Week" },
+    { value: "month", label: "Month" },
+    { value: "year", label: "Year" },
+    { value: "schedule", label: "Schedule" },
+  ];
+
+  // Render Day View
+  const renderDayView = () => {
+    const dayEvents = getEventsForDate(events, currentDate);
+    const hours = Array.from({ length: 24 }, (_, i) => i);
+
+    return (
+      <div className="border-t border-gray-200">
+        <div className="text-center py-2 border-b border-gray-200 bg-gray-50">
+          <div className="text-sm text-gray-500">{currentDate.toLocaleDateString("en-US", { weekday: "long" })}</div>
+          <div className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-blue-600" : "text-gray-900"}`}>
+            {currentDate.getDate()}
+          </div>
+        </div>
+        <div className="max-h-[600px] overflow-y-auto">
+          {dayEvents.length === 0 ? (
+            <div className="py-12 text-center text-gray-500">No events scheduled for this day</div>
+          ) : (
+            <div className="divide-y divide-gray-200">
+              {dayEvents.map((event) => (
+                <Link
+                  key={event.id}
+                  href={`/events/${event.slug}`}
+                  className="block p-4 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900">{event.name}</div>
+                      <div className="text-sm text-gray-500 mt-1">
+                        {formatDateRange(event.startDate, event.endDate)}
+                      </div>
+                      {event.venue && (
+                        <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                          <MapPin className="w-3 h-3" />
+                          {event.venue.name}, {event.venue.city}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // Render Week View
+  const renderWeekView = () => {
+    const weekStart = getWeekStart(currentDate);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+
+    return (
+      <div>
+        {/* Week day headers */}
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+          {days.map((day, i) => (
+            <div key={i} className="py-2 text-center border-r border-gray-200 last:border-r-0">
+              <div className="text-xs text-gray-500 uppercase">{weekDays[i]}</div>
+              <div className={`text-lg font-semibold ${isSameDay(day, today) ? "bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}>
+                {day.getDate()}
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Week grid */}
+        <div className="grid grid-cols-7 min-h-[400px]">
+          {days.map((day, i) => {
+            const dayEvents = getEventsForDate(events, day);
+            return (
+              <div key={i} className="border-r border-gray-200 last:border-r-0 p-1">
+                <div className="space-y-1">
+                  {dayEvents.slice(0, 5).map((event) => (
+                    <Link
+                      key={event.id}
+                      href={`/events/${event.slug}`}
+                      className={`block px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity`}
+                      title={event.name}
+                    >
+                      {event.name}
+                    </Link>
+                  ))}
+                  {dayEvents.length > 5 && (
+                    <div className="text-xs text-gray-500 px-1.5">+{dayEvents.length - 5} more</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // Render Month View
+  const renderMonthView = () => {
+    const daysInMonth = getDaysInMonth(year, month);
+    const firstDayOfMonth = getFirstDayOfMonth(year, month);
+
+    const calendarDays: (number | null)[] = [];
+    for (let i = 0; i < firstDayOfMonth; i++) {
+      calendarDays.push(null);
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      calendarDays.push(day);
+    }
+    while (calendarDays.length < 42) {
+      calendarDays.push(null);
+    }
+
+    return (
+      <div>
+        {/* Week Day Headers */}
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+          {weekDays.map((day) => (
+            <div key={day} className="py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+              {day}
+            </div>
+          ))}
+        </div>
+        {/* Calendar Grid */}
+        <div className="grid grid-cols-7">
+          {calendarDays.map((day, index) => {
+            const isToday = day !== null && isSameDay(new Date(year, month, day), today);
+            const dayEvents = day !== null ? getEventsForDate(events, new Date(year, month, day)) : [];
+            const isCurrentMonth = day !== null;
+
+            return (
+              <div
+                key={index}
+                className={`min-h-[100px] border-b border-r border-gray-200 ${
+                  index % 7 === 0 ? "border-l-0" : ""
+                } ${!isCurrentMonth ? "bg-gray-50" : "bg-white"}`}
+              >
+                {day !== null && (
+                  <div className="p-1">
+                    <div className="flex justify-center mb-1">
+                      <span
+                        className={`inline-flex items-center justify-center w-7 h-7 text-sm ${
+                          isToday ? "bg-blue-600 text-white rounded-full font-semibold" : "text-gray-700"
+                        }`}
+                      >
+                        {day}
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {dayEvents.slice(0, 3).map((event) => (
+                        <Link
+                          key={event.id}
+                          href={`/events/${event.slug}`}
+                          className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity`}
+                          title={event.name}
+                        >
+                          {event.name}
+                        </Link>
+                      ))}
+                      {dayEvents.length > 3 && (
+                        <button
+                          onClick={() => setSelectedEvent(dayEvents[0])}
+                          className="block w-full text-left px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                        >
+                          +{dayEvents.length - 3} more
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // Render Year View
+  const renderYearView = () => {
+    const months = Array.from({ length: 12 }, (_, i) => i);
+
+    return (
+      <div className="grid grid-cols-3 md:grid-cols-4 gap-4 p-4">
+        {months.map((monthIndex) => {
+          const monthDate = new Date(year, monthIndex, 1);
+          const daysInMonth = getDaysInMonth(year, monthIndex);
+          const firstDay = getFirstDayOfMonth(year, monthIndex);
+          const monthEvents = events.filter((event) => {
+            const startDate = event.startDate ? new Date(event.startDate) : null;
+            const endDate = event.endDate ? new Date(event.endDate) : startDate;
+            if (!startDate) return false;
+            const monthStart = new Date(year, monthIndex, 1);
+            const monthEnd = new Date(year, monthIndex + 1, 0);
+            return (startDate <= monthEnd && (endDate || startDate) >= monthStart);
+          });
+
+          const miniDays: (number | null)[] = [];
+          for (let i = 0; i < firstDay; i++) miniDays.push(null);
+          for (let d = 1; d <= daysInMonth; d++) miniDays.push(d);
+
+          return (
+            <div
+              key={monthIndex}
+              className="bg-white border border-gray-200 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+              onClick={() => {
+                setCurrentDate(new Date(year, monthIndex, 1));
+                setCalendarViewType("month");
+              }}
+            >
+              <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
+                <div className="text-sm font-medium text-gray-900">
+                  {monthDate.toLocaleDateString("en-US", { month: "long" })}
+                </div>
+                {monthEvents.length > 0 && (
+                  <div className="text-xs text-blue-600">{monthEvents.length} event{monthEvents.length !== 1 ? "s" : ""}</div>
+                )}
+              </div>
+              <div className="p-2">
+                <div className="grid grid-cols-7 gap-0.5 text-center">
+                  {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                    <div key={i} className="text-[10px] text-gray-400 font-medium">{d}</div>
+                  ))}
+                  {miniDays.slice(0, 42).map((day, i) => {
+                    const hasEvent = day !== null && getEventsForDate(events, new Date(year, monthIndex, day)).length > 0;
+                    const isCurrentDay = day !== null && isSameDay(new Date(year, monthIndex, day), today);
+                    return (
+                      <div
+                        key={i}
+                        className={`text-[10px] w-5 h-5 flex items-center justify-center rounded-full ${
+                          isCurrentDay ? "bg-blue-600 text-white" : hasEvent ? "bg-blue-100 text-blue-700" : "text-gray-700"
+                        }`}
+                      >
+                        {day}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // Render Schedule View
+  const renderScheduleView = () => {
+    // Get events for the current month and beyond, sorted by date
+    const scheduleEvents = events
+      .filter((event) => {
+        const startDate = event.startDate ? new Date(event.startDate) : null;
+        if (!startDate) return false;
+        const viewStart = new Date(year, month, 1);
+        return startDate >= viewStart || (event.endDate && new Date(event.endDate) >= viewStart);
+      })
+      .sort((a, b) => {
+        const aDate = a.startDate ? new Date(a.startDate).getTime() : Infinity;
+        const bDate = b.startDate ? new Date(b.startDate).getTime() : Infinity;
+        return aDate - bDate;
+      });
+
+    // Group events by date
+    const groupedEvents: { [key: string]: EventWithRelations[] } = {};
+    scheduleEvents.forEach((event) => {
+      if (event.startDate) {
+        const dateKey = new Date(event.startDate).toDateString();
+        if (!groupedEvents[dateKey]) {
+          groupedEvents[dateKey] = [];
+        }
+        groupedEvents[dateKey].push(event);
+      }
+    });
+
+    const sortedDates = Object.keys(groupedEvents).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+    return (
+      <div className="max-h-[600px] overflow-y-auto">
+        {sortedDates.length === 0 ? (
+          <div className="py-12 text-center text-gray-500">No upcoming events</div>
+        ) : (
+          <div className="divide-y divide-gray-200">
+            {sortedDates.map((dateKey) => {
+              const date = new Date(dateKey);
+              const isCurrentDay = isSameDay(date, today);
+              return (
+                <div key={dateKey}>
+                  <div className={`sticky top-0 px-4 py-2 bg-gray-50 border-b border-gray-100 ${isCurrentDay ? "bg-blue-50" : ""}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`text-2xl font-bold ${isCurrentDay ? "text-blue-600" : "text-gray-900"}`}>
+                        {date.getDate()}
+                      </div>
+                      <div>
+                        <div className={`text-sm font-medium ${isCurrentDay ? "text-blue-600" : "text-gray-900"}`}>
+                          {date.toLocaleDateString("en-US", { weekday: "long" })}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {date.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {groupedEvents[dateKey].map((event) => (
+                      <Link
+                        key={event.id}
+                        href={`/events/${event.slug}`}
+                        className="block px-4 py-3 hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-gray-900">{event.name}</div>
+                            <div className="text-sm text-gray-500 mt-1">
+                              {formatDateRange(event.startDate, event.endDate)}
+                            </div>
+                            {event.venue && (
+                              <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                                <MapPin className="w-3 h-3" />
+                                {event.venue.name}, {event.venue.city}, {event.venue.state}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -150,97 +533,49 @@ function CalendarView({ events }: CalendarViewProps) {
           </button>
           <div className="flex items-center">
             <button
-              onClick={prevMonth}
+              onClick={() => navigate("prev")}
               className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-              aria-label="Previous month"
+              aria-label="Previous"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
             <button
-              onClick={nextMonth}
+              onClick={() => navigate("next")}
               className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-              aria-label="Next month"
+              aria-label="Next"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
           </div>
+          <h2 className="text-lg font-semibold text-gray-900 ml-2">
+            {getTitle()}
+          </h2>
         </div>
-        <h2 className="text-lg font-semibold text-gray-900">
-          {formatMonthYear(currentDate)}
-        </h2>
-        <div className="w-24" /> {/* Spacer for centering */}
-      </div>
 
-      {/* Week Day Headers */}
-      <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
-        {weekDays.map((day) => (
-          <div
-            key={day}
-            className="py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-          >
-            {day}
-          </div>
-        ))}
-      </div>
-
-      {/* Calendar Grid */}
-      <div className="grid grid-cols-7">
-        {calendarDays.map((day, index) => {
-          const isToday = day !== null && isSameDay(new Date(year, month, day), today);
-          const dayEvents = day !== null ? getEventsForDay(day) : [];
-          const isCurrentMonth = day !== null;
-
-          return (
-            <div
-              key={index}
-              className={`min-h-[100px] border-b border-r border-gray-200 ${
-                index % 7 === 0 ? "border-l-0" : ""
-              } ${!isCurrentMonth ? "bg-gray-50" : "bg-white"}`}
+        {/* View Type Selector */}
+        <div className="flex items-center gap-1 bg-white border border-gray-300 rounded-lg p-0.5">
+          {viewOptions.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setCalendarViewType(option.value)}
+              className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                calendarViewType === option.value
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-600 hover:bg-gray-100"
+              }`}
             >
-              {day !== null && (
-                <div className="p-1">
-                  {/* Day Number */}
-                  <div className="flex justify-center mb-1">
-                    <span
-                      className={`inline-flex items-center justify-center w-7 h-7 text-sm ${
-                        isToday
-                          ? "bg-blue-600 text-white rounded-full font-semibold"
-                          : "text-gray-700"
-                      }`}
-                    >
-                      {day}
-                    </span>
-                  </div>
-
-                  {/* Events */}
-                  <div className="space-y-0.5">
-                    {dayEvents.slice(0, 3).map((event) => (
-                      <Link
-                        key={event.id}
-                        href={`/events/${event.slug}`}
-                        className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(
-                          event.id
-                        )} hover:opacity-80 transition-opacity`}
-                        title={event.name}
-                      >
-                        {event.name}
-                      </Link>
-                    ))}
-                    {dayEvents.length > 3 && (
-                      <button
-                        onClick={() => setSelectedEvent(dayEvents[0])}
-                        className="block w-full text-left px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
-                      >
-                        +{dayEvents.length - 3} more
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* Calendar Content */}
+      {calendarViewType === "day" && renderDayView()}
+      {calendarViewType === "week" && renderWeekView()}
+      {calendarViewType === "month" && renderMonthView()}
+      {calendarViewType === "year" && renderYearView()}
+      {calendarViewType === "schedule" && renderScheduleView()}
 
       {/* Event Details Modal */}
       {selectedEvent && (
@@ -286,7 +621,9 @@ function CalendarView({ events }: CalendarViewProps) {
       {/* Legend */}
       <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
         <p className="text-xs text-gray-500">
-          Click on an event to view details. Events spanning multiple days appear on each day.
+          {calendarViewType === "year"
+            ? "Click on a month to view details. Highlighted days have events."
+            : "Click on an event to view details. Events spanning multiple days appear on each day."}
         </p>
       </div>
     </div>
