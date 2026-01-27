@@ -40,8 +40,14 @@ export default function NewEventPage() {
   const fetchVenues = async () => {
     try {
       const res = await fetch("/api/venues");
-      const data = await res.json() as Venue[];
-      setVenues(data);
+      if (!res.ok) {
+        console.error("Failed to fetch venues:", res.status);
+        return;
+      }
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setVenues(data);
+      }
     } catch (err) {
       console.error("Failed to fetch venues:", err);
     }
@@ -50,9 +56,15 @@ export default function NewEventPage() {
   const fetchPromoters = async () => {
     try {
       const res = await fetch("/api/admin/promoters");
-      const data = await res.json() as { promoter: Promoter }[];
-      // Extract promoter from nested structure
-      setPromoters(data.map(item => item.promoter));
+      if (!res.ok) {
+        console.error("Failed to fetch promoters:", res.status);
+        return;
+      }
+      const data = await res.json();
+      // Handle both array and error response
+      if (Array.isArray(data)) {
+        setPromoters(data.map((item: { promoter: Promoter }) => item.promoter));
+      }
     } catch (err) {
       console.error("Failed to fetch promoters:", err);
     }
