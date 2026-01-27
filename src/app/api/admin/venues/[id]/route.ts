@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
 
@@ -61,57 +62,46 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
-  try {
-    const body = await request.json() as Record<string, unknown>;
-    const {
-      name,
-      address,
-      city,
-      state,
-      zip,
-      latitude,
-      longitude,
-      capacity,
-      amenities,
-      contactEmail,
-      contactPhone,
-      website,
-      description,
-      imageUrl,
-      status,
-    } = body;
+  // Validate request body
+  const validation = await validateRequestBody(request, venueUpdateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
+  const data = validation.data;
+
+  try {
     const db = getCloudflareDb();
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (name) {
-      updateData.name = name;
-      updateData.slug = createSlug(name);
+    if (data.name) {
+      updateData.name = data.name;
+      updateData.slug = createSlug(data.name);
     }
-    if (address) updateData.address = address;
-    if (city) updateData.city = city;
-    if (state) updateData.state = state;
-    if (zip) updateData.zip = zip;
-    if (latitude !== undefined) updateData.latitude = latitude;
-    if (longitude !== undefined) updateData.longitude = longitude;
-    if (capacity !== undefined) updateData.capacity = capacity;
-    if (amenities) updateData.amenities = JSON.stringify(amenities);
-    if (contactEmail !== undefined) updateData.contactEmail = contactEmail;
-    if (contactPhone !== undefined) updateData.contactPhone = contactPhone;
-    if (website !== undefined) updateData.website = website;
-    if (description !== undefined) updateData.description = description;
-    if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
-    if (status) updateData.status = status;
+    if (data.address) updateData.address = data.address;
+    if (data.city) updateData.city = data.city;
+    if (data.state) updateData.state = data.state;
+    if (data.zip) updateData.zip = data.zip;
+    if (data.latitude !== undefined) updateData.latitude = data.latitude;
+    if (data.longitude !== undefined) updateData.longitude = data.longitude;
+    if (data.capacity !== undefined) updateData.capacity = data.capacity;
+    if (data.amenities) updateData.amenities = JSON.stringify(data.amenities);
+    if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
+    if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
+    if (data.website !== undefined) updateData.website = data.website;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
+    if (data.status) updateData.status = data.status;
 
     await db.update(venues).set(updateData).where(eq(venues.id, id));
 
-    const updatedVenue = await db
+    const [updatedVenue] = await db
       .select()
       .from(venues)
       .where(eq(venues.id, id))
       .limit(1);
 
-    return NextResponse.json(updatedVenue[0]);
+    return NextResponse.json(updatedVenue);
   } catch (error) {
     console.error("Failed to update venue:", error);
     return NextResponse.json({ error: "Failed to update venue" }, { status: 500 });

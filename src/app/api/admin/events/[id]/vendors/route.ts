@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { eventVendorAddSchema, eventVendorUpdateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
 
@@ -52,14 +53,15 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  // Validate request body
+  const validation = await validateRequestBody(request, eventVendorAddSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+
+  const data = validation.data;
+
   try {
-    const body = await request.json() as Record<string, unknown>;
-    const { vendorId, status, boothInfo } = body;
-
-    if (!vendorId) {
-      return NextResponse.json({ error: "Vendor ID is required" }, { status: 400 });
-    }
-
     const db = getCloudflareDb();
 
     // Check if vendor is already added to this event
@@ -68,7 +70,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       .from(eventVendors)
       .where(and(
         eq(eventVendors.eventId, id),
-        eq(eventVendors.vendorId, vendorId as string)
+        eq(eventVendors.vendorId, data.vendorId)
       ))
       .limit(1);
 
@@ -80,12 +82,12 @@ export async function POST(request: NextRequest, { params }: Params) {
     await db.insert(eventVendors).values({
       id: eventVendorId,
       eventId: id,
-      vendorId: vendorId as string,
-      status: (status as "PENDING" | "APPROVED" | "REJECTED") || "APPROVED",
-      boothInfo: boothInfo as string | undefined,
+      vendorId: data.vendorId,
+      status: data.status,
+      boothInfo: data.boothInfo,
     });
 
-    const newEventVendor = await db
+    const [newEventVendor] = await db
       .select()
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
@@ -93,8 +95,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       .limit(1);
 
     return NextResponse.json({
-      ...newEventVendor[0].event_vendors,
-      vendor: newEventVendor[0].vendors,
+      ...newEventVendor.event_vendors,
+      vendor: newEventVendor.vendors,
     }, { status: 201 });
   } catch (error) {
     console.error("Failed to add vendor to event:", error);
@@ -111,38 +113,39 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  // Validate request body
+  const validation = await validateRequestBody(request, eventVendorUpdateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+
+  const data = validation.data;
+
   try {
-    const body = await request.json() as Record<string, unknown>;
-    const { eventVendorId, status, boothInfo } = body;
-
-    if (!eventVendorId) {
-      return NextResponse.json({ error: "Event vendor ID is required" }, { status: 400 });
-    }
-
     const db = getCloudflareDb();
 
     const updateData: Record<string, unknown> = {};
-    if (status) updateData.status = status;
-    if (boothInfo !== undefined) updateData.boothInfo = boothInfo;
+    if (data.status) updateData.status = data.status;
+    if (data.boothInfo !== undefined) updateData.boothInfo = data.boothInfo;
 
     await db
       .update(eventVendors)
       .set(updateData)
       .where(and(
-        eq(eventVendors.id, eventVendorId as string),
+        eq(eventVendors.id, data.eventVendorId),
         eq(eventVendors.eventId, id)
       ));
 
-    const updated = await db
+    const [updated] = await db
       .select()
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(eq(eventVendors.id, eventVendorId as string))
+      .where(eq(eventVendors.id, data.eventVendorId))
       .limit(1);
 
     return NextResponse.json({
-      ...updated[0].event_vendors,
-      vendor: updated[0].vendors,
+      ...updated.event_vendors,
+      vendor: updated.vendors,
     });
   } catch (error) {
     console.error("Failed to update event vendor:", error);

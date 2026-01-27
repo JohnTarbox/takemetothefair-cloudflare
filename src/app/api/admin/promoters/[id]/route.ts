@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, users } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
 
@@ -61,31 +62,36 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
-  try {
-    const body = await request.json() as Record<string, unknown>;
-    const { companyName, description, website, logoUrl, verified } = body;
+  // Validate request body
+  const validation = await validateRequestBody(request, promoterUpdateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
+  const data = validation.data;
+
+  try {
     const db = getCloudflareDb();
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (companyName) {
-      updateData.companyName = companyName;
-      updateData.slug = createSlug(companyName);
+    if (data.companyName) {
+      updateData.companyName = data.companyName;
+      updateData.slug = createSlug(data.companyName);
     }
-    if (description !== undefined) updateData.description = description;
-    if (website !== undefined) updateData.website = website;
-    if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
-    if (verified !== undefined) updateData.verified = verified;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.website !== undefined) updateData.website = data.website;
+    if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
+    if (data.verified !== undefined) updateData.verified = data.verified;
 
     await db.update(promoters).set(updateData).where(eq(promoters.id, id));
 
-    const updatedPromoter = await db
+    const [updatedPromoter] = await db
       .select()
       .from(promoters)
       .where(eq(promoters.id, id))
       .limit(1);
 
-    return NextResponse.json(updatedPromoter[0]);
+    return NextResponse.json(updatedPromoter);
   } catch (error) {
     console.error("Failed to update promoter:", error);
     return NextResponse.json({ error: "Failed to update promoter" }, { status: 500 });

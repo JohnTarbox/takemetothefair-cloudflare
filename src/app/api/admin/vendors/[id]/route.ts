@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
 
@@ -63,33 +64,38 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
-  try {
-    const body = await request.json() as Record<string, unknown>;
-    const { businessName, description, vendorType, website, logoUrl, verified, commercial } = body;
+  // Validate request body
+  const validation = await validateRequestBody(request, vendorUpdateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
+  const data = validation.data;
+
+  try {
     const db = getCloudflareDb();
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (businessName) {
-      updateData.businessName = businessName;
-      updateData.slug = createSlug(businessName as string);
+    if (data.businessName) {
+      updateData.businessName = data.businessName;
+      updateData.slug = createSlug(data.businessName);
     }
-    if (description !== undefined) updateData.description = description;
-    if (vendorType !== undefined) updateData.vendorType = vendorType;
-    if (website !== undefined) updateData.website = website;
-    if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
-    if (verified !== undefined) updateData.verified = verified;
-    if (commercial !== undefined) updateData.commercial = commercial;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.vendorType !== undefined) updateData.vendorType = data.vendorType;
+    if (data.website !== undefined) updateData.website = data.website;
+    if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
+    if (data.verified !== undefined) updateData.verified = data.verified;
+    if (data.commercial !== undefined) updateData.commercial = data.commercial;
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
-    const updatedVendor = await db
+    const [updatedVendor] = await db
       .select()
       .from(vendors)
       .where(eq(vendors.id, id))
       .limit(1);
 
-    return NextResponse.json(updatedVendor[0]);
+    return NextResponse.json(updatedVendor);
   } catch (error) {
     console.error("Failed to update vendor:", error);
     return NextResponse.json({ error: "Failed to update vendor" }, { status: 500 });

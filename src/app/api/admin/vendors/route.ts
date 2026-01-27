@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, eventVendors, users } from "@/lib/db/schema";
-import { eq, count } from "drizzle-orm";
+import { vendors, users } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { getVendorsWithCounts } from "@/lib/queries";
+import { vendorCreateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
 
@@ -15,27 +17,7 @@ export async function GET() {
 
   try {
     const db = getCloudflareDb();
-    const vendorList = await db
-      .select()
-      .from(vendors)
-      .leftJoin(users, eq(vendors.userId, users.id))
-      .orderBy(vendors.businessName);
-
-    const vendorsWithCounts = await Promise.all(
-      vendorList.map(async (v) => {
-        const eventCount = await db
-          .select({ count: count() })
-          .from(eventVendors)
-          .where(eq(eventVendors.vendorId, v.vendors.id));
-
-        return {
-          ...v.vendors,
-          user: v.users ? { email: v.users.email, name: v.users.name } : null,
-          _count: { events: eventCount[0]?.count || 0 },
-        };
-      })
-    );
-
+    const vendorsWithCounts = await getVendorsWithCounts(db);
     return NextResponse.json(vendorsWithCounts);
   } catch (error) {
     console.error("Failed to fetch vendors:", error);
@@ -49,36 +31,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  try {
-    const body = await request.json() as Record<string, unknown>;
-    const { userId, businessName, description, vendorType, website, logoUrl, verified, commercial } = body;
+  // Validate request body
+  const validation = await validateRequestBody(request, vendorCreateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
+  const data = validation.data;
+
+  try {
     const db = getCloudflareDb();
     const vendorId = crypto.randomUUID();
 
     await db.insert(vendors).values({
       id: vendorId,
-      userId: userId as string,
-      businessName: businessName as string,
-      slug: createSlug(businessName as string),
-      description: description as string | undefined,
-      vendorType: vendorType as string | undefined,
-      website: website as string | undefined,
-      logoUrl: logoUrl as string | undefined,
-      verified: verified as boolean | undefined,
-      commercial: commercial as boolean | undefined,
+      userId: data.userId,
+      businessName: data.businessName,
+      slug: createSlug(data.businessName),
+      description: data.description,
+      vendorType: data.vendorType,
+      products: JSON.stringify(data.products),
+      website: data.website,
+      socialLinks: data.socialLinks,
+      logoUrl: data.logoUrl,
+      verified: data.verified,
+      commercial: data.commercial,
     });
 
     // Update user role to VENDOR
-    await db.update(users).set({ role: "VENDOR" }).where(eq(users.id, userId));
+    await db.update(users).set({ role: "VENDOR" }).where(eq(users.id, data.userId));
 
-    const newVendor = await db
+    const [newVendor] = await db
       .select()
       .from(vendors)
       .where(eq(vendors.id, vendorId))
       .limit(1);
 
-    return NextResponse.json(newVendor[0], { status: 201 });
+    return NextResponse.json(newVendor, { status: 201 });
   } catch (error) {
     console.error("Failed to create vendor:", error);
     return NextResponse.json({ error: "Failed to create vendor" }, { status: 500 });

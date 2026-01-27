@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { events } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { getEventsWithRelations } from "@/lib/queries";
+import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
-
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -19,22 +20,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const db = getCloudflareDb();
-
-    const baseQuery = db
-      .select()
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id));
-
-    const results = status
-      ? await baseQuery.where(eq(events.status, status as "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED")).orderBy(desc(events.createdAt))
-      : await baseQuery.orderBy(desc(events.createdAt));
-
-    const eventsList = results.map((r) => ({
-      ...r.events,
-      venue: r.venues ? { name: r.venues.name } : null,
-      promoter: r.promoters ? { companyName: r.promoters.companyName } : null,
-    }));
+    const eventsList = await getEventsWithRelations(db, {
+      status: status || undefined,
+      includeVendorCounts: true,
+    });
 
     return NextResponse.json(eventsList);
   } catch (error) {
@@ -49,58 +38,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  try {
-    const body = await request.json() as Record<string, unknown>;
-    const {
-      name,
-      description,
-      venueId,
-      promoterId,
-      startDate,
-      endDate,
-      datesConfirmed,
-      categories,
-      tags,
-      ticketUrl,
-      ticketPriceMin,
-      ticketPriceMax,
-      imageUrl,
-      featured,
-      commercialVendorsAllowed,
-      status,
-    } = body;
+  // Validate request body
+  const validation = await validateRequestBody(request, eventCreateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
+  const data = validation.data;
+
+  try {
     const db = getCloudflareDb();
     const eventId = crypto.randomUUID();
 
     await db.insert(events).values({
       id: eventId,
-      name: name as string,
-      slug: createSlug(name as string),
-      description: description as string | undefined,
-      venueId: venueId as string,
-      promoterId: promoterId as string,
-      startDate: startDate ? new Date(startDate as string) : null,
-      endDate: endDate ? new Date(endDate as string) : null,
-      datesConfirmed: datesConfirmed !== false && startDate !== null,
-      categories: JSON.stringify(categories || []),
-      tags: JSON.stringify(tags || []),
-      ticketUrl: ticketUrl as string | undefined,
-      ticketPriceMin: ticketPriceMin as number | undefined,
-      ticketPriceMax: ticketPriceMax as number | undefined,
-      imageUrl: imageUrl as string | undefined,
-      featured: (featured as boolean) || false,
-      commercialVendorsAllowed: commercialVendorsAllowed !== false,
-      status: (status as "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED") || "APPROVED",
+      name: data.name,
+      slug: createSlug(data.name),
+      description: data.description,
+      venueId: data.venueId,
+      promoterId: data.promoterId,
+      startDate: data.startDate ? new Date(data.startDate) : null,
+      endDate: data.endDate ? new Date(data.endDate) : null,
+      datesConfirmed: data.datesConfirmed,
+      categories: JSON.stringify(data.categories),
+      tags: JSON.stringify(data.tags),
+      ticketUrl: data.ticketUrl,
+      ticketPriceMin: data.ticketPriceMin,
+      ticketPriceMax: data.ticketPriceMax,
+      imageUrl: data.imageUrl,
+      featured: data.featured,
+      commercialVendorsAllowed: data.commercialVendorsAllowed,
+      status: data.status,
+      sourceName: data.sourceName,
+      sourceUrl: data.sourceUrl,
+      sourceId: data.sourceId,
     });
 
-    const newEvent = await db
+    const [newEvent] = await db
       .select()
       .from(events)
       .where(eq(events.id, eventId))
       .limit(1);
 
-    return NextResponse.json(newEvent[0], { status: 201 });
+    return NextResponse.json(newEvent, { status: 201 });
   } catch (error) {
     console.error("Failed to create event:", error);
     return NextResponse.json({ error: "Failed to create event" }, { status: 500 });

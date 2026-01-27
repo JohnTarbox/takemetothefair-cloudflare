@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { userUpdateSchema, validateRequestBody } from "@/lib/validations";
 
 export const runtime = "edge";
 
@@ -18,25 +19,30 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
-  try {
-    const body = await request.json() as Record<string, unknown>;
-    const { role, name } = body;
+  // Validate request body
+  const validation = await validateRequestBody(request, userUpdateSchema);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
+  const data = validation.data;
+
+  try {
     const db = getCloudflareDb();
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (role) updateData.role = role;
-    if (name !== undefined) updateData.name = name;
+    if (data.role) updateData.role = data.role;
+    if (data.name !== undefined) updateData.name = data.name;
 
     await db.update(users).set(updateData).where(eq(users.id, id));
 
-    const updatedUser = await db
+    const [updatedUser] = await db
       .select({ id: users.id, email: users.email, name: users.name, role: users.role })
       .from(users)
       .where(eq(users.id, id))
       .limit(1);
 
-    return NextResponse.json(updatedUser[0]);
+    return NextResponse.json(updatedUser);
   } catch (error) {
     console.error("Failed to update user:", error);
     return NextResponse.json({ error: "Failed to update user" }, { status: 500 });
