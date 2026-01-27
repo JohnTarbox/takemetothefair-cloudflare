@@ -4,6 +4,7 @@ import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { scrapeMaineFairs, scrapeEventDetails, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
+import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scrapers/vtnhfairs";
 import { createSlug } from "@/lib/utils";
 
 // Helper function to find or create a venue
@@ -61,6 +62,10 @@ export async function GET(request: Request) {
 
     if (source === "mainefairs.net") {
       result = await scrapeMaineFairs();
+    } else if (source === "vtnhfairs.org" || source === "vtnhfairs.org-vt") {
+      result = await scrapeVtFairs();
+    } else if (source === "vtnhfairs.org-nh") {
+      result = await scrapeNhFairs();
     } else {
       return NextResponse.json({ error: "Unknown source" }, { status: 400 });
     }
@@ -168,7 +173,13 @@ export async function POST(request: Request) {
         // Optionally fetch additional details
         let eventData = { ...event };
         if (fetchDetails && event.sourceUrl) {
-          const details = await scrapeEventDetails(event.sourceUrl);
+          // Use the appropriate scraper based on source
+          let details: Partial<ScrapedEvent> = {};
+          if (event.sourceName === "mainefairs.net") {
+            details = await scrapeEventDetails(event.sourceUrl);
+          } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
+            details = await scrapeVtNhEventDetails(event.sourceUrl);
+          }
           eventData = { ...eventData, ...details };
         }
 
@@ -303,7 +314,17 @@ export async function PATCH(request: Request) {
       try {
         if (!event.sourceUrl) continue;
 
-        const details = await scrapeEventDetails(event.sourceUrl);
+        // Use the appropriate scraper based on source
+        let details: Partial<ScrapedEvent> = {};
+        if (event.sourceName === "mainefairs.net") {
+          details = await scrapeEventDetails(event.sourceUrl);
+        } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
+          details = await scrapeVtNhEventDetails(event.sourceUrl);
+        } else {
+          // Unknown source, skip
+          results.unchanged++;
+          continue;
+        }
 
         // Update if we got new details
         if (details.description || details.startDate || details.endDate || details.imageUrl || details.website) {
