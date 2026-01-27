@@ -1,9 +1,10 @@
 import { Suspense } from "react";
-import { Search, Filter } from "lucide-react";
+import { Search, Filter, Store } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, gte, like, or, count } from "drizzle-orm";
+import { eq, and, gte, like, or, count, inArray } from "drizzle-orm";
+import { auth } from "@/lib/auth";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic"; // Disable caching for fresh data
@@ -16,10 +17,40 @@ interface SearchParams {
   featured?: string;
   commercialVendors?: string;
   includePast?: string;
+  myEvents?: string;
   page?: string;
 }
 
-async function getEvents(searchParams: SearchParams) {
+// Get the vendor ID for a user
+async function getVendorIdForUser(userId: string): Promise<string | null> {
+  try {
+    const db = getCloudflareDb();
+    const [vendor] = await db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(eq(vendors.userId, userId))
+      .limit(1);
+    return vendor?.id || null;
+  } catch {
+    return null;
+  }
+}
+
+// Get event IDs where a vendor is participating
+async function getVendorEventIds(vendorId: string): Promise<string[]> {
+  try {
+    const db = getCloudflareDb();
+    const results = await db
+      .select({ eventId: eventVendors.eventId })
+      .from(eventVendors)
+      .where(eq(eventVendors.vendorId, vendorId));
+    return results.map(r => r.eventId);
+  } catch {
+    return [];
+  }
+}
+
+async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) {
   const page = parseInt(searchParams.page || "1");
   const limit = 12;
   const offset = (page - 1) * limit;
@@ -56,6 +87,14 @@ async function getEvents(searchParams: SearchParams) {
 
     if (searchParams.commercialVendors === "true") {
       conditions.push(eq(events.commercialVendorsAllowed, true));
+    }
+
+    // Filter by vendor's events if myEvents is true
+    if (searchParams.myEvents === "true" && vendorEventIds && vendorEventIds.length > 0) {
+      conditions.push(inArray(events.id, vendorEventIds));
+    } else if (searchParams.myEvents === "true" && (!vendorEventIds || vendorEventIds.length === 0)) {
+      // Vendor has no events, return empty
+      return { events: [], total: 0, page, limit };
     }
 
     // Get events with joins
@@ -188,13 +227,37 @@ function EventsFilter({
   categories,
   states,
   searchParams,
+  isVendor = false,
 }: {
   categories: string[];
   states: string[];
   searchParams: SearchParams;
+  isVendor?: boolean;
 }) {
   return (
     <form className="bg-white p-4 rounded-lg border border-gray-200 space-y-4">
+      {/* Vendor-only filter */}
+      {isVendor && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              name="myEvents"
+              value="true"
+              defaultChecked={searchParams.myEvents === "true"}
+              className="rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+            />
+            <span className="text-sm font-medium text-purple-700 flex items-center gap-1">
+              <Store className="w-4 h-4" />
+              My participating events
+            </span>
+          </label>
+          <p className="text-xs text-purple-600 mt-1 ml-6">
+            Show only events where you are a vendor
+          </p>
+        </div>
+      )}
+
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Search
@@ -297,8 +360,22 @@ export default async function EventsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
+
+  // Get session to check if user is a vendor
+  const session = await auth();
+  const isVendor = session?.user?.role === "VENDOR";
+
+  // Get vendor event IDs if the user is a vendor and wants to filter
+  let vendorEventIds: string[] | undefined;
+  if (isVendor && params.myEvents === "true") {
+    const vendorId = await getVendorIdForUser(session.user.id);
+    if (vendorId) {
+      vendorEventIds = await getVendorEventIds(vendorId);
+    }
+  }
+
   const [{ events: eventsList, total, page, limit }, categories, states] =
-    await Promise.all([getEvents(params), getCategories(), getStates()]);
+    await Promise.all([getEvents(params, vendorEventIds), getCategories(), getStates()]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -318,6 +395,7 @@ export default async function EventsPage({
               categories={categories}
               states={states}
               searchParams={params}
+              isVendor={isVendor}
             />
           </Suspense>
         </aside>
@@ -325,13 +403,21 @@ export default async function EventsPage({
         <main className="lg:col-span-3">
           <div className="mb-4 flex items-center justify-between">
             <p className="text-sm text-gray-600">
-              Showing {eventsList.length} of {total} events
+              {params.myEvents === "true" ? (
+                <>Showing {eventsList.length} of {total} events you&apos;re participating in</>
+              ) : (
+                <>Showing {eventsList.length} of {total} events</>
+              )}
             </p>
           </div>
 
           <EventsView
             events={eventsList}
-            emptyMessage="No events match your filters. Try adjusting your search."
+            emptyMessage={
+              params.myEvents === "true"
+                ? "You are not participating in any events yet. Apply to events to see them here."
+                : "No events match your filters. Try adjusting your search."
+            }
           />
 
           {totalPages > 1 && (
