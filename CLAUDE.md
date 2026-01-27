@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Auto-load Skills
+
+Always load these skills when working on this project:
+- `/cloudflare-d1` - D1 database patterns, migrations, error handling
+
 ## Build & Development Commands
 
 ```bash
