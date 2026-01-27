@@ -69,13 +69,42 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) 
     }
 
     if (searchParams.query) {
-      const searchTerm = `%${searchParams.query.toLowerCase()}%`;
-      conditions.push(
-        or(
-          sql`LOWER(${events.name}) LIKE ${searchTerm}`,
-          sql`LOWER(${events.description}) LIKE ${searchTerm}`
-        )!
-      );
+      const query = searchParams.query.toLowerCase().trim();
+      const searchTerm = `%${query}%`;
+
+      // Build search conditions
+      const searchConditions = [
+        // Exact substring match (case-insensitive)
+        sql`LOWER(${events.name}) LIKE ${searchTerm}`,
+        sql`LOWER(${events.description}) LIKE ${searchTerm}`,
+      ];
+
+      // Add fuzzy matching using trigrams for typo tolerance
+      // For words > 4 chars, generate overlapping 3-char patterns
+      // "Choclate" -> %cho%, %hoc%, %ocl%, %cla%, %lat%, %ate%
+      // This will match "Chocolate" which contains most of these
+      if (query.length >= 4) {
+        const trigrams: string[] = [];
+        for (let i = 0; i <= query.length - 3; i++) {
+          trigrams.push(query.substring(i, i + 3));
+        }
+
+        // Require at least 60% of trigrams to match (allows for typos)
+        const minMatches = Math.max(2, Math.floor(trigrams.length * 0.6));
+
+        // Build a condition that counts matching trigrams
+        const trigramConditions = trigrams.map(t =>
+          sql`(CASE WHEN LOWER(${events.name}) LIKE ${'%' + t + '%'} THEN 1 ELSE 0 END)`
+        );
+
+        if (trigramConditions.length > 0) {
+          searchConditions.push(
+            sql`(${sql.join(trigramConditions, sql` + `)}) >= ${minMatches}`
+          );
+        }
+      }
+
+      conditions.push(or(...searchConditions)!);
     }
 
     if (searchParams.category) {
