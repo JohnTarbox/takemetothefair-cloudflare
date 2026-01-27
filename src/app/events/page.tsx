@@ -139,8 +139,8 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) 
 
         return {
           ...r.events,
-          venue: r.venues!,
-          promoter: r.promoters!,
+          venue: r.venues,
+          promoter: r.promoters,
           vendors: eventVendorResults
             .filter((ev) => ev.vendors !== null)
             .map((ev) => ({

@@ -23,8 +23,8 @@ type VendorSummary = {
 };
 
 type EventWithRelations = Event & {
-  venue: Venue;
-  promoter: Promoter;
+  venue: Venue | null;
+  promoter: Promoter | null;
   vendors?: VendorSummary[];
 };
 

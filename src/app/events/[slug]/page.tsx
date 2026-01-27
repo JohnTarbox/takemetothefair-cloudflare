@@ -86,11 +86,11 @@ async function getEvent(slug: string) {
     const eventData = eventResults[0];
 
     // Get promoter's user
-    const promoterUser = await db
+    const promoterUser = eventData.promoters ? await db
       .select({ name: users.name, email: users.email })
       .from(users)
-      .where(eq(users.id, eventData.promoters!.userId))
-      .limit(1);
+      .where(eq(users.id, eventData.promoters.userId))
+      .limit(1) : [];
 
     // Get event vendors
     const eventVendorResults = await db
@@ -107,11 +107,11 @@ async function getEvent(slug: string) {
 
     return {
       ...eventData.events,
-      venue: eventData.venues!,
-      promoter: {
-        ...eventData.promoters!,
+      venue: eventData.venues,
+      promoter: eventData.promoters ? {
+        ...eventData.promoters,
         user: promoterUser[0] || { name: null, email: null },
-      },
+      } : null,
       eventVendors: eventVendorResults.map((ev) => ({
         ...ev.event_vendors,
         vendor: ev.vendors!,
@@ -133,7 +133,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   return {
     title: `${event.name} | Meet Me at the Fair`,
-    description: event.description?.slice(0, 160) || `${event.name} at ${event.venue.name}`,
+    description: event.description?.slice(0, 160) || `${event.name}${event.venue ? ` at ${event.venue.name}` : ""}`,
   };
 }
 
@@ -279,7 +279,7 @@ export default async function EventDetailPage({ params }: Props) {
                     <AddToCalendar
                       title={event.name}
                       description={event.description || undefined}
-                      location={`${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`}
+                      location={event.venue ? `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}` : undefined}
                       startDate={event.startDate}
                       endDate={event.endDate}
                       url={`https://meetmeatthefair.com/events/${event.slug}`}
@@ -296,31 +296,40 @@ export default async function EventDetailPage({ params }: Props) {
                 </div>
               </div>
 
-              <div className="flex items-start gap-3">
-                <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
-                <div>
-                  <Link
-                    href={`/venues/${event.venue.slug}`}
-                    className="font-medium text-gray-900 hover:text-blue-600"
-                  >
-                    {event.venue.name}
-                  </Link>
-                  <p className="text-sm text-gray-500">
-                    {event.venue.address}
-                    <br />
-                    {event.venue.city}, {event.venue.state} {event.venue.zip}
-                  </p>
-                  <a
-                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    View on Google Maps
-                  </a>
+              {event.venue ? (
+                <div className="flex items-start gap-3">
+                  <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
+                  <div>
+                    <Link
+                      href={`/venues/${event.venue.slug}`}
+                      className="font-medium text-gray-900 hover:text-blue-600"
+                    >
+                      {event.venue.name}
+                    </Link>
+                    <p className="text-sm text-gray-500">
+                      {event.venue.address}
+                      <br />
+                      {event.venue.city}, {event.venue.state} {event.venue.zip}
+                    </p>
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      View on Google Maps
+                    </a>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-start gap-3">
+                  <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-gray-500">Venue to be announced</p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-start gap-3">
                 <Tag className="w-5 h-5 text-blue-600 mt-0.5" />

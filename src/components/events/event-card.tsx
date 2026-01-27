@@ -23,8 +23,8 @@ type VendorSummary = {
 
 interface EventCardProps {
   event: Event & {
-    venue: Venue;
-    promoter: Promoter;
+    venue: Venue | null;
+    promoter: Promoter | null;
     vendors?: VendorSummary[];
   };
 }
@@ -67,19 +67,21 @@ export function EventCard({ event }: EventCardProps) {
               <AddToCalendar
                 title={event.name}
                 description={event.description || undefined}
-                location={`${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`}
+                location={event.venue ? `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}` : undefined}
                 startDate={event.startDate}
                 endDate={event.endDate}
                 url={`https://meetmeatthefair.com/events/${event.slug}`}
                 variant="icon"
               />
             </div>
-            <div className="flex items-center">
-              <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
-              <span className="truncate">
-                {event.venue.name}, {event.venue.city}, {event.venue.state}
-              </span>
-            </div>
+            {event.venue && (
+              <div className="flex items-center">
+                <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
+                <span className="truncate">
+                  {event.venue.name}, {event.venue.city}, {event.venue.state}
+                </span>
+              </div>
+            )}
             {event.ticketPriceMin !== null && (
               <div className="flex items-center">
                 <Tag className="w-4 h-4 mr-2 flex-shrink-0" />
