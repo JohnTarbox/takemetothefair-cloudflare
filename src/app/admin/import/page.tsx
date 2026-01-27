@@ -95,7 +95,7 @@ export default function ImportEventsPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `import-results-${new Date().toISOString().split("T")[0]}.csv`;
+    link.download = `import-results-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
