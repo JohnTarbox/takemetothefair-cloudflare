@@ -21,15 +21,15 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
   const [isLoading, setIsLoading] = useState(true);
 
   const sizeClasses = {
-    sm: "w-4 h-4",
-    md: "w-5 h-5",
-    lg: "w-6 h-6",
+    sm: "w-5 h-5",
+    md: "w-6 h-6",
+    lg: "w-7 h-7",
   };
 
   const buttonSizeClasses = {
-    sm: "p-1",
-    md: "p-1.5",
-    lg: "p-2",
+    sm: "p-1.5",
+    md: "p-2",
+    lg: "p-2.5",
   };
 
   // Check if item is favorited on mount
@@ -106,7 +106,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
     return (
       <button
         className={cn(
-          "rounded-full bg-white/90 shadow-sm transition-all",
+          "rounded-full bg-white shadow-md border border-gray-200 transition-all",
           buttonSizeClasses[size],
           className
         )}
@@ -122,7 +122,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
       onClick={toggleFavorite}
       disabled={isPending}
       className={cn(
-        "rounded-full bg-white/90 shadow-sm hover:bg-white transition-all hover:scale-110",
+        "rounded-full bg-white shadow-md border border-gray-200 hover:shadow-lg transition-all hover:scale-110",
         buttonSizeClasses[size],
         isPending && "opacity-50 cursor-wait",
         className
@@ -135,7 +135,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
           "transition-colors",
           isFavorited
             ? "fill-red-500 text-red-500"
-            : "text-gray-400 hover:text-red-400"
+            : "text-gray-500 hover:text-red-400"
         )}
       />
     </button>
