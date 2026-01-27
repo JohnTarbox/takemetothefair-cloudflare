@@ -3,7 +3,7 @@ import { Search, Filter, Store } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, gte, like, or, count, inArray } from "drizzle-orm";
+import { eq, and, gte, or, count, inArray, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
 export const runtime = "edge";
@@ -69,10 +69,11 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[]) 
     }
 
     if (searchParams.query) {
+      const searchTerm = `%${searchParams.query.toLowerCase()}%`;
       conditions.push(
         or(
-          like(events.name, `%${searchParams.query}%`),
-          like(events.description, `%${searchParams.query}%`)
+          sql`LOWER(${events.name}) LIKE ${searchTerm}`,
+          sql`LOWER(${events.description}) LIKE ${searchTerm}`
         )!
       );
     }
