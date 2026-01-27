@@ -351,6 +351,35 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
     }
 
     // Extract venue/location from HTML if not found in JSON-LD
+    // Look for Maine Public's specific venue structure
+    if (!details.venue) {
+      const venueNameMatch = html.match(/<span[^>]*class="VenueInformation-name"[^>]*>([^<]+)<\/span>/i);
+      const streetMatch = html.match(/<div[^>]*class="VenueInformation-address-streetAddress"[^>]*>([^<]+)<\/div>/i);
+      const cityMatch = html.match(/<span[^>]*class="VenueInformation-address-city"[^>]*>([^<]+)<\/span>/i);
+      const stateMatch = html.match(/<span[^>]*class="VenueInformation-address-state"[^>]*>([^<]+)<\/span>/i);
+      const zipMatch = html.match(/<span[^>]*class="VenueInformation-address-zip"[^>]*>([^<]+)<\/span>/i);
+
+      if (venueNameMatch) {
+        const venueName = venueNameMatch[1].trim();
+        const streetAddress = streetMatch ? streetMatch[1].trim() : undefined;
+        const city = cityMatch ? cityMatch[1].trim() : undefined;
+        const state = stateMatch ? stateMatch[1].trim() : "ME";
+        const zip = zipMatch ? zipMatch[1].trim() : undefined;
+
+        details.venue = {
+          name: venueName,
+          streetAddress,
+          city,
+          state: state === "Maine" ? "ME" : state,
+          zip,
+        };
+        details.location = venueName;
+        if (city) details.city = city;
+        if (state) details.state = state === "Maine" ? "ME" : state;
+      }
+    }
+
+    // Fallback for location text
     if (!details.location) {
       const venueMatch = html.match(/(?:Location|Venue|Where)[\s:]*<[^>]*>([^<]+)</i);
       if (venueMatch) {
