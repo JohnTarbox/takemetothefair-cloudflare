@@ -99,12 +99,19 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     setError("");
 
     const formData = new FormData(e.currentTarget);
+
+    // Convert datetime-local to ISO format
+    const startDateLocal = formData.get("startDate") as string;
+    const endDateLocal = formData.get("endDate") as string;
+    const startDate = datesTBD || !startDateLocal ? null : new Date(startDateLocal).toISOString();
+    const endDate = datesTBD || !endDateLocal ? null : new Date(endDateLocal).toISOString();
+
     const data = {
       name: formData.get("name"),
       description: formData.get("description") || null,
       venueId: formData.get("venueId") || null,
-      startDate: datesTBD ? null : formData.get("startDate"),
-      endDate: datesTBD ? null : formData.get("endDate"),
+      startDate,
+      endDate,
       datesConfirmed: !datesTBD,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
