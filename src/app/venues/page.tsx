@@ -1,22 +1,29 @@
 import Link from "next/link";
-import Image from "next/image";
-import { MapPin, Users, Calendar, Search, X, Heart } from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { venues, events, userFavorites } from "@/lib/db/schema";
-import { eq, and, like, sql, isNotNull, inArray } from "drizzle-orm";
-import { parseJsonArray } from "@/types";
+import { venues, userFavorites } from "@/lib/db/schema";
+import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { VenuesView } from "@/components/venues/venues-view";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
 
+// Helper to build query strings while preserving existing params
+function buildQueryString(params: Record<string, string | undefined>): string {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) searchParams.set(key, value);
+  });
+  const str = searchParams.toString();
+  return str ? `?${str}` : "";
+}
 
 interface SearchParams {
   state?: string;
   q?: string;
   favorites?: string;
+  hasEvents?: string;
 }
 
 async function getUserFavoriteIds(userId: string): Promise<string[]> {
@@ -56,6 +63,18 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
     }
 
     // Single query: Get venues with event counts using subquery
+    const eventCountSubquery = sql<number>`(
+      SELECT COUNT(*) FROM events
+      WHERE events.venue_id = venues.id
+      AND events.status = 'APPROVED'
+      AND events.end_date >= unixepoch('now')
+    )`;
+
+    // Add hasEvents filter condition if requested
+    if (searchParams.hasEvents === "true") {
+      conditions.push(sql`${eventCountSubquery} > 0`);
+    }
+
     const venuesWithCounts = await db
       .select({
         id: venues.id,
@@ -68,19 +87,25 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
         capacity: venues.capacity,
         amenities: venues.amenities,
         imageUrl: venues.imageUrl,
-        eventCount: sql<number>`(
-          SELECT COUNT(*) FROM events
-          WHERE events.venue_id = venues.id
-          AND events.status = 'APPROVED'
-          AND events.end_date >= unixepoch('now')
-        )`.as('event_count'),
+        website: venues.website,
+        eventCount: eventCountSubquery.as('event_count'),
       })
       .from(venues)
       .where(and(...conditions))
       .orderBy(venues.name);
 
     return venuesWithCounts.map(venue => ({
-      ...venue,
+      id: venue.id,
+      name: venue.name,
+      slug: venue.slug,
+      address: venue.address,
+      city: venue.city,
+      state: venue.state,
+      zip: venue.zip,
+      capacity: venue.capacity,
+      amenities: venue.amenities,
+      imageUrl: venue.imageUrl,
+      website: venue.website,
       _count: {
         events: venue.eventCount || 0,
       },
@@ -128,8 +153,9 @@ export default async function VenuesPage({
     getStates(),
   ]);
 
-  const hasFilters = params.state || params.q || params.favorites;
+  const hasFilters = params.state || params.q || params.favorites || params.hasEvents;
   const showingFavorites = params.favorites === "true";
+  const showingWithEvents = params.hasEvents === "true";
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -150,6 +176,12 @@ export default async function VenuesPage({
                 {params.state && (
                   <input type="hidden" name="state" value={params.state} />
                 )}
+                {params.hasEvents && (
+                  <input type="hidden" name="hasEvents" value={params.hasEvents} />
+                )}
+                {params.favorites && (
+                  <input type="hidden" name="favorites" value={params.favorites} />
+                )}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
@@ -168,7 +200,7 @@ export default async function VenuesPage({
               <h3 className="font-medium text-gray-900 mb-3">Filter by State</h3>
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 <Link
-                  href={params.q ? `/venues?q=${encodeURIComponent(params.q)}` : "/venues"}
+                  href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                   className={`block px-3 py-2 rounded-lg text-sm ${
                     !params.state
                       ? "bg-blue-50 text-blue-700 font-medium"
@@ -180,7 +212,7 @@ export default async function VenuesPage({
                 {states.map((state) => (
                   <Link
                     key={state}
-                    href={`/venues?state=${encodeURIComponent(state)}${params.q ? `&q=${encodeURIComponent(params.q)}` : ""}`}
+                    href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       params.state === state
                         ? "bg-blue-50 text-blue-700 font-medium"
@@ -193,13 +225,35 @@ export default async function VenuesPage({
               </div>
             </div>
 
+            {/* Has Events Filter */}
+            <div>
+              <h3 className="font-medium text-gray-900 mb-3">Events</h3>
+              {showingWithEvents ? (
+                <Link
+                  href={`/venues${buildQueryString({ state: params.state, q: params.q, favorites: params.favorites })}`}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 font-medium"
+                >
+                  <Calendar className="w-4 h-4" />
+                  With Upcoming Events
+                </Link>
+              ) : (
+                <Link
+                  href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  <Calendar className="w-4 h-4" />
+                  With Upcoming Events
+                </Link>
+              )}
+            </div>
+
             {/* Favorites Filter */}
             {isLoggedIn && (
               <div>
                 <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
                 {showingFavorites ? (
                   <Link
-                    href={`/venues${params.state ? `?state=${encodeURIComponent(params.state)}` : ""}${params.q ? `${params.state ? "&" : "?"}q=${encodeURIComponent(params.q)}` : ""}`}
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents })}`}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
                   >
                     <Heart className="w-4 h-4 fill-current" />
@@ -207,7 +261,7 @@ export default async function VenuesPage({
                   </Link>
                 ) : (
                   <Link
-                    href={`/venues?favorites=true${params.state ? `&state=${encodeURIComponent(params.state)}` : ""}${params.q ? `&q=${encodeURIComponent(params.q)}` : ""}`}
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                   >
                     <Heart className="w-4 h-4" />
@@ -231,94 +285,16 @@ export default async function VenuesPage({
         </aside>
 
         <main className="lg:col-span-3">
-          {venueList.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-gray-500">
-                {showingFavorites
-                  ? "You haven't favorited any venues yet."
-                  : hasFilters
-                    ? "No venues found matching your criteria."
-                    : "No venues available at this time."}
-              </p>
-              {hasFilters && (
-                <Link
-                  href="/venues"
-                  className="mt-4 inline-block text-blue-600 hover:text-blue-700"
-                >
-                  Clear filters
-                </Link>
-              )}
-            </div>
-          ) : (
-            <>
-              <p className="text-sm text-gray-500 mb-4">
-                {venueList.length} venue{venueList.length !== 1 ? "s" : ""} found
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {venueList.map((venue) => {
-                  const amenities = parseJsonArray(venue.amenities);
-                  return (
-                    <Link key={venue.id} href={`/venues/${venue.slug}`}>
-                      <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
-                        <div className="aspect-video relative bg-gray-100">
-                          {venue.imageUrl ? (
-                            <Image
-                              src={venue.imageUrl}
-                              alt={venue.name}
-                              fill
-                              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                              className="object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-gray-400">
-                              <MapPin className="w-12 h-12" />
-                            </div>
-                          )}
-                        </div>
-                        <div className="p-4">
-                          <h3 className="font-semibold text-lg text-gray-900">
-                            {venue.name}
-                          </h3>
-                          <div className="mt-2 space-y-1 text-sm text-gray-600">
-                            <div className="flex items-center">
-                              <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
-                              <span>
-                                {venue.city}, {venue.state}
-                              </span>
-                            </div>
-                            {venue.capacity && (
-                              <div className="flex items-center">
-                                <Users className="w-4 h-4 mr-2 flex-shrink-0" />
-                                <span>Capacity: {venue.capacity.toLocaleString()}</span>
-                              </div>
-                            )}
-                            <div className="flex items-center">
-                              <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-                              <span>{venue._count.events} upcoming events</span>
-                            </div>
-                          </div>
-                          {amenities.length > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-1">
-                              {amenities.slice(0, 3).map((amenity) => (
-                                <Badge key={amenity} variant="default">
-                                  {amenity}
-                                </Badge>
-                              ))}
-                              {amenities.length > 3 && (
-                                <Badge variant="default">
-                                  +{amenities.length - 3}
-                                </Badge>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </Card>
-                    </Link>
-                  );
-                })}
-              </div>
-            </>
-          )}
+          <VenuesView
+            venues={venueList}
+            emptyMessage={
+              showingFavorites
+                ? "You haven't favorited any venues yet."
+                : hasFilters
+                  ? "No venues found matching your criteria."
+                  : "No venues available at this time."
+            }
+          />
         </main>
       </div>
     </div>
