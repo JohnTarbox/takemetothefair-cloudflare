@@ -29,6 +29,30 @@ interface VenueCardProps {
 export function VenueCard({ venue }: VenueCardProps) {
   const amenities = parseJsonArray(venue.amenities);
 
+  // Build full address string
+  const formatAddress = () => {
+    const parts: string[] = [];
+    if (venue.address) parts.push(venue.address);
+
+    const cityStateZip: string[] = [];
+    if (venue.city) cityStateZip.push(venue.city);
+    if (venue.state) cityStateZip.push(venue.state);
+    if (venue.zip) cityStateZip.push(venue.zip);
+
+    if (cityStateZip.length > 0) {
+      // Format as "City, State Zip"
+      if (venue.city && venue.state) {
+        parts.push(`${venue.city}, ${venue.state}${venue.zip ? ` ${venue.zip}` : ""}`);
+      } else {
+        parts.push(cityStateZip.join(", "));
+      }
+    }
+
+    return parts.length > 0 ? parts : null;
+  };
+
+  const addressParts = formatAddress();
+
   return (
     <Card className="h-full hover:shadow-md transition-shadow">
       <Link href={`/venues/${venue.slug}`} className="block">
@@ -58,12 +82,16 @@ export function VenueCard({ venue }: VenueCardProps) {
             {venue.name}
           </h3>
           <div className="mt-2 space-y-1 text-sm text-gray-600">
-            <div className="flex items-center">
-              <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
-              <span>
-                {venue.city}, {venue.state}
-              </span>
-            </div>
+            {addressParts && (
+              <div className="flex items-start">
+                <MapPin className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" />
+                <div>
+                  {addressParts.map((part, i) => (
+                    <div key={i}>{part}</div>
+                  ))}
+                </div>
+              </div>
+            )}
             {venue.capacity && (
               <div className="flex items-center">
                 <Users className="w-4 h-4 mr-2 flex-shrink-0" />
