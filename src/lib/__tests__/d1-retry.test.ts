@@ -165,6 +165,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("SQLITE_ERROR: syntax error"));
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("SQLITE_ERROR: syntax error");
@@ -176,6 +177,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("UNIQUE constraint failed"));
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("UNIQUE constraint failed");
@@ -187,6 +189,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("FOREIGN KEY constraint failed"));
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("FOREIGN KEY constraint failed");
@@ -198,6 +201,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("Something went wrong"));
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("Something went wrong");
@@ -211,6 +215,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("database is locked"));
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("database is locked");
@@ -222,6 +227,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("database is locked"));
 
       const promise = withD1Retry(operation, { maxRetries: 5 });
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("database is locked");
@@ -233,6 +239,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(new Error("database is locked"));
 
       const promise = withD1Retry(operation, { maxRetries: 0 });
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("database is locked");
@@ -246,6 +253,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue("string error");
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow("string error");
@@ -256,6 +264,7 @@ describe("withD1Retry", () => {
         .mockRejectedValue(undefined);
 
       const promise = withD1Retry(operation);
+      promise.catch(() => {});
       await vi.runAllTimersAsync();
 
       await expect(promise).rejects.toThrow();
@@ -318,6 +327,7 @@ describe("createRetryableOperation", () => {
     const wrappedFn = createRetryableOperation(originalFn, { maxRetries: 1 });
 
     const promise = wrappedFn();
+    promise.catch(() => {});
     await vi.runAllTimersAsync();
 
     await expect(promise).rejects.toThrow("database is locked");
