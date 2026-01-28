@@ -98,7 +98,6 @@ async function getUpcomingEventsWithVendorCounts() {
     if (upcomingEvents.length === 0) return [];
 
     // Get vendor counts for these events
-    const _eventIds = upcomingEvents.map(e => e.events.id);
     const vendorCounts = await db
       .select({
         eventId: eventVendors.eventId,

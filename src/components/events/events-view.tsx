@@ -173,10 +173,6 @@ function getWeekStart(date: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function formatDayHeader(date: Date): string {
-  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-}
-
 function formatFullDate(date: Date): string {
   return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 }
@@ -263,7 +259,6 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
   // Render Day View
   const renderDayView = () => {
     const dayEvents = getEventsForDate(events, currentDate);
-    const hours = Array.from({ length: 24 }, (_, i) => i);
 
     return (
       <div className="border-t border-gray-200">
