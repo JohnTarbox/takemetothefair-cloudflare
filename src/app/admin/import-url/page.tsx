@@ -12,7 +12,6 @@ import {
   Calendar,
   MapPin,
   DollarSign,
-  Image as ImageIcon,
   ChevronRight,
   ChevronLeft,
   Sparkles,
@@ -92,8 +91,8 @@ export default function ImportUrlPage() {
 
   // Fetched content state
   const [fetchedContent, setFetchedContent] = useState("");
-  const [pageTitle, setPageTitle] = useState("");
-  const [ogImage, setOgImage] = useState("");
+  const [_pageTitle, setPageTitle] = useState("");
+  const [_ogImage, setOgImage] = useState("");
 
   // Multi-event extraction state
   const [extractedEvents, setExtractedEvents] = useState<ExtractedEvent[]>([]);
@@ -215,7 +214,7 @@ export default function ImportUrlPage() {
         ogImage: data.ogImage,
         jsonLd: data.jsonLd,
       });
-    } catch (err) {
+    } catch {
       setError("Failed to fetch page. Try pasting the content manually.");
       setStep("url-input");
     }
@@ -268,7 +267,7 @@ export default function ImportUrlPage() {
         setSelectedEventIds(allIds);
         setStep("select-events");
       }
-    } catch (err) {
+    } catch {
       setError("Failed to extract event data. Please fill in manually.");
       setStep("review");
     }
@@ -514,7 +513,7 @@ export default function ImportUrlPage() {
         } else {
           errors.push(`${event.name}: ${data.error || "Failed to save"}`);
         }
-      } catch (err) {
+      } catch {
         errors.push(`${event.name}: Network error`);
       }
     }

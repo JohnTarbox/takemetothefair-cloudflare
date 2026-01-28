@@ -110,7 +110,7 @@ describe("POST /api/favorites", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const _data = await response.json();
 
     expect(response.status).toBe(400);
   });
@@ -190,7 +190,7 @@ describe("DELETE /api/favorites", () => {
     );
 
     const response = await DELETE(request);
-    const data = await response.json();
+    const _data = await response.json();
 
     expect(response.status).toBe(400);
   });

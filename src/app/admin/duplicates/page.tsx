@@ -11,7 +11,6 @@ import type {
   DuplicateEntityType,
   DuplicatePair,
   MergePreviewResponse,
-  FindDuplicatesResponse,
 } from "@/lib/duplicates/types";
 
 const ENTITY_TYPES: { value: DuplicateEntityType; label: string }[] = [

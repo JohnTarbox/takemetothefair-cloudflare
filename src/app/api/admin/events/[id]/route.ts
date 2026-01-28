@@ -108,7 +108,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       // Only update slug if it would change
       if (newSlug !== currentEvent.slug) {
         // Check if new slug already exists for another event
-        let slug = newSlug;
+        const slug = newSlug;
         let slugSuffix = 0;
         while (true) {
           const existingSlug = await db

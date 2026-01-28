@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, vendors, promoters, eventVendors } from "@/lib/db/schema";
-import { sql, eq, count, inArray } from "drizzle-orm";
+import { eq, count } from "drizzle-orm";
 import {
   findDuplicatePairs,
   getVenueComparisonString,

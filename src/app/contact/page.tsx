@@ -1,4 +1,4 @@
-import { Mail, MapPin, MessageSquare } from "lucide-react";
+import { Mail, MessageSquare } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Metadata } from "next";
 

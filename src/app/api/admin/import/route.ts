@@ -490,7 +490,7 @@ export async function POST(request: Request) {
 }
 
 // PATCH - Sync existing events from their sources
-export async function PATCH(request: Request) {
+export async function PATCH(_request: Request) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

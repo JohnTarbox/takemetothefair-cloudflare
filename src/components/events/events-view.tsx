@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight, List } from "lucide-react";
+import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight } from "lucide-react";
 import { EventCard } from "./event-card";
 import { SortableHeader, SortConfig, sortData, getNextSortDirection } from "@/components/ui/sortable-table";
 import { formatDateRange } from "@/lib/utils";

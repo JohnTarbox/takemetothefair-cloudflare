@@ -94,7 +94,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       // Only update slug if it would change
       if (newSlug !== currentVendor.slug) {
         // Check if new slug already exists for another vendor
-        let slug = newSlug;
+        const slug = newSlug;
         let slugSuffix = 0;
         while (true) {
           const existingSlug = await db

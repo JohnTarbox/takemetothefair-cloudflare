@@ -48,7 +48,7 @@ export async function GET(request: Request) {
 
     // Get event counts for all vendors
     const vendorIds = vendorResults.map(v => v.id);
-    let eventCounts = new Map<string, number>();
+    const eventCounts = new Map<string, number>();
 
     if (vendorIds.length > 0) {
       const vendorEventCounts = await db

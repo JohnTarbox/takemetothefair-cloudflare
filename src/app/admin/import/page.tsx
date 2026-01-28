@@ -6,7 +6,6 @@ import {
   ArrowLeft,
   Download,
   RefreshCw,
-  Check,
   Calendar,
   MapPin,
   ExternalLink,

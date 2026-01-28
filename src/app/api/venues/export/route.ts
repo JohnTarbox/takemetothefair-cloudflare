@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
-import { eq, and, sql, isNotNull } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 
 export const runtime = "edge";

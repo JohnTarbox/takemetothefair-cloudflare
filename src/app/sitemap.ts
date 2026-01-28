@@ -1,7 +1,7 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors } from "@/lib/db/schema";
-import { eq, gte } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 export const runtime = "edge";
 

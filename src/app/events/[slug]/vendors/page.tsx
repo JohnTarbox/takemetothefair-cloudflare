@@ -6,7 +6,6 @@ import Link from "next/link";
 import { Store, Search, Grid, List, ArrowLeft, CheckCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 
 export const runtime = "edge";
 

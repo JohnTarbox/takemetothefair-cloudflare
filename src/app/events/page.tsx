@@ -523,8 +523,6 @@ export default async function EventsPage({
   }
 
   const viewMode = parseView(params.view);
-  const isCalendarView = viewMode === "calendar";
-
   const [{ events: eventsList, total, page, limit }, categories, states] =
     await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates()]);
 

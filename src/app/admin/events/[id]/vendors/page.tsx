@@ -474,7 +474,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
               <Store className="w-12 h-12 text-gray-400 mx-auto mb-3" />
               <p className="text-gray-500">No vendors added to this event yet</p>
               <p className="text-sm text-gray-400 mt-1">
-                Use "Quick Add Multiple" to add several vendors at once
+                Use &quot;Quick Add Multiple&quot; to add several vendors at once
               </p>
             </div>
           ) : (

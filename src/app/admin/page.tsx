@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Calendar, MapPin, Store, Users, Megaphone, Clock, UserPlus } from "lucide-react";
+import { Calendar, MapPin, Store, Users, Clock, UserPlus } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
@@ -98,7 +98,7 @@ async function getUpcomingEventsWithVendorCounts() {
     if (upcomingEvents.length === 0) return [];
 
     // Get vendor counts for these events
-    const eventIds = upcomingEvents.map(e => e.events.id);
+    const _eventIds = upcomingEvents.map(e => e.events.id);
     const vendorCounts = await db
       .select({
         eventId: eventVendors.eventId,
