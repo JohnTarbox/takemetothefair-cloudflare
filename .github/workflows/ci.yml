@@ -69,6 +69,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Initialize D1 database
+        run: npx wrangler d1 migrations apply takemetothefair-db --local
+
+      - name: Seed database
+        run: npx tsx scripts/seed.ts
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
@@ -76,6 +82,9 @@ jobs:
         run: npm run test:e2e -- --project=chromium
         env:
           CI: true
+          AUTH_SECRET: ci-test-secret-at-least-32-characters-long
+          NEXTAUTH_SECRET: ci-test-secret-at-least-32-characters-long
+          NEXTAUTH_URL: http://localhost:3000
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
