@@ -1,17 +1,12 @@
 // Scraper for mainemade.com events
 // Extracts event data from their events page with pagination support
 
-import { ScrapedEvent, ScrapedVenue, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
+import { ScrapedEvent, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
 
 const SOURCE_NAME = "mainemade.com";
 const BASE_URL = "https://www.mainemade.com/events/";
 const MAX_PAGES = 10; // Safety limit
 
-// Extract event slug from URL like /event/midcoast-winter-artisan-fair/
-function extractSlugFromUrl(url: string): string {
-  const match = url.match(/\/event\/([^/]+)/);
-  return match ? match[1].replace(/\/$/, "") : url.replace(/[^a-z0-9]/gi, "-").toLowerCase();
-}
 
 // Parse events from HTML
 function parseEventsFromHtml(html: string): ScrapedEvent[] {

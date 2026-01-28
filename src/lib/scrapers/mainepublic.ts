@@ -1,7 +1,7 @@
 // Scraper for mainepublic.org community calendar
 // Extracts event data from their community calendar page
 
-import { ScrapedEvent, ScrapedVenue, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
+import { ScrapedEvent, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
 
 const SOURCE_NAME = "mainepublic.org";
 const CALENDAR_URL = "https://www.mainepublic.org/community-calendar";
@@ -44,20 +44,12 @@ function parseTime(timeText: string): { hours: number; minutes: number } | null 
   return { hours, minutes };
 }
 
-// Extract event slug from URL
-function extractSlugFromUrl(url: string): string {
-  const match = url.match(/\/event\/([^/?]+)/);
-  return match ? match[1] : url.replace(/[^a-z0-9]/gi, "-").toLowerCase();
-}
-
 // Parse the HTML to extract events
 function parseEventsFromHtml(html: string): ScrapedEvent[] {
   const events: ScrapedEvent[] = [];
 
   // Look for event cards/links
   // Pattern: event links with format /community-calendar/event/slug
-  const eventLinkPattern = /<a[^>]*href="(https?:\/\/www\.mainepublic\.org\/community-calendar\/event\/[^"]+)"[^>]*>([^<]+)<\/a>/gi;
-
   // Also look for event containers that have more structured data
   // The site uses article or div elements for event cards
 

@@ -82,18 +82,6 @@ function createSlugFromName(name: string): string {
 // Extract events from HTML
 function parseEventsFromHtml(html: string): ScrapedEvent[] {
   const events: ScrapedEvent[] = [];
-  const currentYear = new Date().getFullYear();
-
-  // Event patterns to look for - these are the main events listed on the page
-  const eventPatterns = [
-    // Pattern: Bold event name followed by venue and date info
-    // Example: "8th Annual Summerfest" at Wells Junior High... June 27–28, 2026
-    {
-      regex: /<b>([^<]*(?:Summerfest|Annual|Weekend|Christmas|Last Minute|Makers Market)[^<]*)<\/b>/gi,
-      type: 'bold'
-    }
-  ];
-
   // Define known events with their details (since the page structure is informal)
   // These are extracted from the page content analysis
   const knownEvents = [

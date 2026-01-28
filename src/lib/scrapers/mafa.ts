@@ -164,7 +164,6 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
         }
 
         // Find website URL that appears after this fair name
-        const nextSpanIndex = i < allSpans.length - 1 ? allSpans[i + 1].index : Infinity;
         let website: string | undefined;
 
         // Check next span for website

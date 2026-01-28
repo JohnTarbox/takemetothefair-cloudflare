@@ -15,7 +15,7 @@ export type EventStatus = "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCE
 export type VenueStatus = "ACTIVE" | "INACTIVE";
 export type ApplicationStatus = "PENDING" | "APPROVED" | "REJECTED";
 
-import type { User, Venue, Promoter, Event, Vendor, EventVendor, EventDay } from "@/lib/db/schema";
+import type { User, Venue, Promoter, Event, Vendor, EventVendor } from "@/lib/db/schema";
 
 export type EventWithRelations = Event & {
   promoter: Promoter & { user: Pick<User, "name" | "email"> };

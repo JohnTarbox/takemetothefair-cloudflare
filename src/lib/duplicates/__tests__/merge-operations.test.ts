@@ -2,7 +2,7 @@
  * Tests for Duplicate Merge Operations
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getMergePreview, executeMerge } from "../merge-operations";
 
 // Mock database helper
@@ -202,8 +202,6 @@ describe("executeMerge", () => {
       const primaryVenue = { id: "primary-id", name: "Primary Venue" };
 
       let selectCallCount = 0;
-      let whereCallCount = 0;
-      let updateCallCount = 0;
 
       const db = {
         select: vi.fn().mockImplementation(() => ({
@@ -222,7 +220,6 @@ describe("executeMerge", () => {
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
             where: vi.fn().mockImplementation(() => {
-              updateCallCount++;
               return Promise.resolve(updateResults);
             }),
           })),

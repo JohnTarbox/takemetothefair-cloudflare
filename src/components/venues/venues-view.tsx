@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { LayoutGrid, Table, MapPin, Users, ExternalLink, Download } from "lucide-react";
+import { LayoutGrid, Table, Users, ExternalLink, Download } from "lucide-react";
 import { VenueCard } from "./venue-card";
 import { SortableHeader, SortConfig, sortData, getNextSortDirection } from "@/components/ui/sortable-table";
 import { parseJsonArray } from "@/types";

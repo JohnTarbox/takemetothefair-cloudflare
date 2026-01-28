@@ -401,7 +401,6 @@ describe("scrapeEventDetails", () => {
   });
 
   it("extracts dates from HTML fallback", async () => {
-    const currentYear = new Date().getFullYear();
     const mockHtml = `
       <html>
         <div>June 15 - June 17</div>

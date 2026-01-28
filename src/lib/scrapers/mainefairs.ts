@@ -137,9 +137,6 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
     // The site uses a card layout with event names linking to detail pages
 
     // Match event links with their URLs
-    const eventLinkRegex = /<a[^>]*href="(https?:\/\/mainefairs\.net\/event\/[^"]+)"[^>]*>([^<]+)<\/a>/gi;
-    const dateRegex = /(\w+\s+\d+\s*[-–]\s*(?:\w+\s+)?\d+)/g;
-
     // Find all event sections - they typically have a date marker followed by event info
     // Split by date markers
     const sections = html.split(/<div[^>]*class="[^"]*tribe-events-calendar-list__event-date-tag[^"]*"[^>]*>/i);

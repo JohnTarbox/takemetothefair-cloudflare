@@ -2,7 +2,7 @@
  * Reusable query helpers to eliminate N+1 queries and reduce code duplication
  */
 
-import { eq, count, sql, and, gte } from "drizzle-orm";
+import { eq, count, and, gte } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,

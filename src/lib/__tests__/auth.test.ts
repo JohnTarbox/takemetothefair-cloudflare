@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // Test the password hashing functions directly
 // The edge-compatible implementation uses SHA-256 via crypto.subtle
