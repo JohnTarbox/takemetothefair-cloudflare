@@ -43,6 +43,27 @@
       "when": 1769520000000,
       "tag": "0008_nullable_promoter_user",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1769524000000,
+      "tag": "0009_add_event_days",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1769528000000,
+      "tag": "0010_add_vendor_profile_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1769532000000,
+      "tag": "0011_add_vendor_commercial",
+      "breakpoints": true
     }
   ]
 }
