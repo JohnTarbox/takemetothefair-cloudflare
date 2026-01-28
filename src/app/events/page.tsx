@@ -21,6 +21,14 @@ interface SearchParams {
   myEvents?: string;
   favorites?: string;
   page?: string;
+  view?: string;
+}
+
+type ViewMode = "cards" | "table" | "calendar";
+
+function parseView(view?: string): ViewMode {
+  if (view === "table" || view === "calendar") return view;
+  return "cards";
 }
 
 // Get favorite IDs for a user
@@ -67,6 +75,8 @@ async function getVendorEventIds(vendorId: string): Promise<string[]> {
 }
 
 async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], favoriteIds?: string[]) {
+  const viewMode = parseView(searchParams.view);
+  const isCalendarView = viewMode === "calendar";
   const page = parseInt(searchParams.page || "1");
   const limit = 12;
   const offset = (page - 1) * limit;
@@ -166,24 +176,27 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     }
 
     // Get events with joins
-    let query = db
-      .select()
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(...conditions))
-      .orderBy(events.startDate)
-      .limit(limit)
-      .offset(offset);
+    // Build separate queries for calendar (no pagination) vs cards/table (paginated)
+    const stateConditions = searchParams.state
+      ? [...conditions, eq(venues.state, searchParams.state)]
+      : conditions;
 
-    // Filter by state if provided (after join)
-    if (searchParams.state) {
+    let query;
+    if (isCalendarView) {
       query = db
         .select()
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(...conditions, eq(venues.state, searchParams.state)))
+        .where(and(...stateConditions))
+        .orderBy(events.startDate);
+    } else {
+      query = db
+        .select()
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
+        .where(and(...stateConditions))
         .orderBy(events.startDate)
         .limit(limit)
         .offset(offset);
@@ -247,26 +260,16 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     }));
 
     // Count total
-    const countConditions = [...conditions];
-    if (searchParams.state) {
-      const countResult = await db
-        .select({ count: count() })
-        .from(events)
-        .leftJoin(venues, eq(events.venueId, venues.id))
-        .where(and(...countConditions, eq(venues.state, searchParams.state)));
-
-      return {
-        events: eventsWithVendors,
-        total: countResult[0]?.count || 0,
-        page,
-        limit,
-      };
-    }
-
-    const countResult = await db
-      .select({ count: count() })
-      .from(events)
-      .where(and(...countConditions));
+    const countResult = searchParams.state
+      ? await db
+          .select({ count: count() })
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(and(...stateConditions))
+      : await db
+          .select({ count: count() })
+          .from(events)
+          .where(and(...conditions));
 
     return {
       events: eventsWithVendors,
@@ -277,29 +280,6 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
   } catch (e) {
     console.error("Error fetching events:", e);
     return { events: [], total: 0, page: 1, limit };
-  }
-}
-
-async function getAllEventsForCalendar() {
-  try {
-    const db = getCloudflareDb();
-    const results = await db
-      .select()
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(eq(events.status, "APPROVED"), gte(events.endDate, new Date())))
-      .orderBy(events.startDate);
-
-    return results.map(r => ({
-      ...r.events,
-      venue: r.venues,
-      promoter: r.promoters,
-      vendors: [] as { id: string; businessName: string; slug: string; logoUrl: string | null; vendorType: string | null }[],
-    }));
-  } catch (e) {
-    console.error("Error fetching all events for calendar:", e);
-    return [];
   }
 }
 
@@ -351,8 +331,19 @@ function EventsFilter({
   isVendor?: boolean;
   isLoggedIn?: boolean;
 }) {
+  const viewMode = parseView(searchParams.view);
+  const clearParams = new URLSearchParams();
+  if (viewMode !== "cards") {
+    clearParams.set("view", viewMode);
+  }
+  const clearHref = `/events${clearParams.toString() ? `?${clearParams.toString()}` : ""}`;
+
   return (
     <form className="bg-white p-4 rounded-lg border border-gray-200 space-y-4">
+      {searchParams.view && (
+        <input type="hidden" name="view" value={searchParams.view} />
+      )}
+
       {/* Vendor-only filter */}
       {isVendor && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
@@ -494,7 +485,7 @@ function EventsFilter({
           Apply Filters
         </button>
         <a
-          href="/events"
+          href={clearHref}
           className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
         >
           Clear
@@ -531,8 +522,11 @@ export default async function EventsPage({
     favoriteIds = await getUserFavoriteIds(session.user.id, "EVENT");
   }
 
-  const [{ events: eventsList, total, page, limit }, categories, states, allCalendarEvents] =
-    await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates(), getAllEventsForCalendar()]);
+  const viewMode = parseView(params.view);
+  const isCalendarView = viewMode === "calendar";
+
+  const [{ events: eventsList, total, page, limit }, categories, states] =
+    await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates()]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -561,7 +555,13 @@ export default async function EventsPage({
         <main className="lg:col-span-3">
           <div className="mb-4 flex items-center justify-between">
             <p className="text-sm text-gray-600">
-              {params.myEvents === "true" ? (
+              {isCalendarView ? (
+                params.myEvents === "true" ? (
+                  <>Showing all {total} events you&apos;re participating in on calendar</>
+                ) : (
+                  <>Showing all {total} events on calendar</>
+                )
+              ) : params.myEvents === "true" ? (
                 <>Showing {eventsList.length} of {total} events you&apos;re participating in</>
               ) : (
                 <>Showing {eventsList.length} of {total} events</>
@@ -571,7 +571,7 @@ export default async function EventsPage({
 
           <EventsView
             events={eventsList}
-            allEvents={allCalendarEvents}
+            view={viewMode}
             emptyMessage={
               params.myEvents === "true"
                 ? "You are not participating in any events yet. Apply to events to see them here."
