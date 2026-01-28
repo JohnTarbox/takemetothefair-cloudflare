@@ -1,7 +1,17 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/lib/db/schema";
-import { hashPassword } from "../src/lib/auth";
+
+// Inline hashPassword to avoid importing from src/lib/auth.ts which pulls in
+// Cloudflare-specific modules that aren't available in the seed script context.
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + (process.env.AUTH_SECRET || "fallback-secret"));
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 // Find the correct D1 database file
 import { readdirSync } from "fs";
