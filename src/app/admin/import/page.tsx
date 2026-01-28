@@ -214,6 +214,14 @@ export default function ImportEventsPage() {
         }),
       });
 
+      // Check content type before parsing JSON
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await res.text();
+        console.error("Non-JSON response:", text.substring(0, 500));
+        throw new Error(`Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`);
+      }
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -221,14 +229,22 @@ export default function ImportEventsPage() {
       }
 
       const venuesMsg = data.venuesCreated ? ` ${data.venuesCreated} venues created.` : "";
-      setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped.${venuesMsg} ${data.errors?.length || 0} errors.`);
+      const errorsMsg = data.errors?.length > 0 ? ` Errors: ${data.errors.join("; ")}` : "";
+      setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped.${venuesMsg}${errorsMsg}`);
 
       // Save the lists of imported and updated events
       setImportedEvents(data.importedEvents || []);
       setUpdatedEvents(data.updatedEvents || []);
 
-      // Refresh the preview
-      await handlePreview();
+      // Clear selection and mark imported events as existing in the current list
+      setSelectedEvents(new Set());
+      setEvents(prevEvents =>
+        prevEvents.map(e =>
+          eventsToImport.some(imported => imported.sourceId === e.sourceId)
+            ? { ...e, exists: true }
+            : e
+        )
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to import events");
     } finally {
@@ -607,6 +623,10 @@ export default function ImportEventsPage() {
                     <option value="yes">Commercial OK</option>
                     <option value="no">No Commercial</option>
                   </select>
+                  <Button variant="outline" size="sm" onClick={handlePreview} disabled={loading}>
+                    <RefreshCw className={`w-3 h-3 mr-1 ${loading ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
                   {updateExisting ? (
                     <Button variant="outline" size="sm" onClick={selectAll}>
                       Select All ({filteredStats.total})

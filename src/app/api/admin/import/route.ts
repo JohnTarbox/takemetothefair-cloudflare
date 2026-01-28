@@ -27,15 +27,15 @@ async function findOrCreateVenue(
   const decodedName = decodeHtmlEntities(scrapedVenue.name);
   const venueSlug = createSlug(decodedName);
   const venueCity = (scrapedVenue.city || "").toLowerCase().trim();
+  const venueState = (scrapedVenue.state || "").toUpperCase().trim();
 
-  // Try to find existing venue by name AND city
-  // This prevents matching "DoubleTree by Hilton" in Burlington with one in Portland
+  // Try to find existing venue by slug
   const existingVenues = await db
     .select()
     .from(venues)
     .where(eq(venues.slug, venueSlug));
 
-  // Look for a venue with matching city
+  // Look for a venue with matching city (if we have city info)
   if (existingVenues.length > 0 && venueCity) {
     const matchingVenue = existingVenues.find(
       (v) => v.city.toLowerCase().trim() === venueCity
@@ -43,26 +43,44 @@ async function findOrCreateVenue(
     if (matchingVenue) {
       return matchingVenue.id;
     }
-    // Name matches but city doesn't - create new venue with unique slug
+    // Name matches but city doesn't - will create new venue with unique slug below
   } else if (existingVenues.length > 0 && !venueCity) {
-    // No city info from scraper - create new venue to avoid wrong match
-    // It's safer to create a potential duplicate than match the wrong venue
-    console.log(`[findOrCreateVenue] No city provided for "${decodedName}" - creating new venue to avoid wrong match`);
+    // No city info from scraper - try to match by state if available
+    if (venueState) {
+      const matchingVenue = existingVenues.find(
+        (v) => v.state.toUpperCase().trim() === venueState
+      );
+      if (matchingVenue) {
+        console.log(`[findOrCreateVenue] Matched existing venue "${matchingVenue.name}" by state ${venueState}`);
+        return matchingVenue.id;
+      }
+    }
+    // No state match either - just use the first existing venue with this slug
+    // This is safer than creating duplicates with no distinguishing info
+    console.log(`[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`);
+    return existingVenues[0].id;
   }
 
-  // Create new venue with decoded name
-  // If slug already exists (same name, different city), append city to make it unique
+  // No existing venue found, or existing venue has different city - create new one
+  // Generate unique slug if needed
   let finalSlug = venueSlug;
-  if (existingVenues.length > 0 && venueCity) {
-    finalSlug = `${venueSlug}-${createSlug(venueCity)}`;
-    // Check if this slug also exists
+  if (existingVenues.length > 0) {
+    // Slug already exists - make it unique
+    if (venueCity) {
+      finalSlug = `${venueSlug}-${createSlug(venueCity)}`;
+    } else if (venueState) {
+      finalSlug = `${venueSlug}-${venueState.toLowerCase()}`;
+    } else {
+      finalSlug = `${venueSlug}-${crypto.randomUUID().substring(0, 8)}`;
+    }
+
+    // Check if this slug also exists, add random suffix if needed
     const slugCheck = await db
       .select()
       .from(venues)
       .where(eq(venues.slug, finalSlug))
       .limit(1);
     if (slugCheck.length > 0) {
-      // Add a random suffix if even the city-appended slug exists
       finalSlug = `${finalSlug}-${crypto.randomUUID().substring(0, 8)}`;
     }
   }

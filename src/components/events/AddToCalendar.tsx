@@ -7,17 +7,28 @@ import {
   generateGoogleCalendarUrl,
   generateOutlookCalendarUrl,
   generateICSDataUrl,
+  generateMultiDayICSDataUrl,
 } from "@/lib/utils";
+
+interface EventDay {
+  id?: string;
+  date: string;
+  openTime: string;
+  closeTime: string;
+  notes?: string | null;
+  closed?: boolean;
+}
 
 interface AddToCalendarProps {
   title: string;
   description?: string;
   location?: string;
-  startDate: Date | string;
-  endDate: Date | string;
+  startDate: Date | string | null;
+  endDate: Date | string | null;
   url?: string;
   variant?: "button" | "link" | "icon";
   className?: string;
+  eventDays?: EventDay[];
 }
 
 export function AddToCalendar({
@@ -29,22 +40,46 @@ export function AddToCalendar({
   url,
   variant = "button",
   className = "",
+  eventDays = [],
 }: AddToCalendarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Filter to open days only
+  const openDays = eventDays.filter((d) => !d.closed);
+  const hasMultiDaySchedule = openDays.length > 0;
+
+  // For Google/Outlook, use the first day's hours if we have per-day schedule
+  const effectiveStartDate = hasMultiDaySchedule && openDays[0]
+    ? new Date(`${openDays[0].date}T${openDays[0].openTime}:00`)
+    : startDate ? new Date(startDate) : new Date();
+
+  const effectiveEndDate = hasMultiDaySchedule && openDays[openDays.length - 1]
+    ? new Date(`${openDays[openDays.length - 1].date}T${openDays[openDays.length - 1].closeTime}:00`)
+    : endDate ? new Date(endDate) : new Date();
 
   const eventParams = {
     title,
     description,
     location,
-    startDate,
-    endDate,
+    startDate: effectiveStartDate,
+    endDate: effectiveEndDate,
     url,
   };
 
   const googleUrl = generateGoogleCalendarUrl(eventParams);
   const outlookUrl = generateOutlookCalendarUrl(eventParams);
-  const icsUrl = generateICSDataUrl(eventParams);
+
+  // Use multi-day ICS if we have per-day schedules, otherwise use standard ICS
+  const icsUrl = hasMultiDaySchedule
+    ? generateMultiDayICSDataUrl({
+        title,
+        description,
+        location,
+        url,
+        eventDays: openDays,
+      })
+    : generateICSDataUrl(eventParams);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -67,6 +102,7 @@ export function AddToCalendar({
     {
       name: "Google Calendar",
       href: googleUrl,
+      note: hasMultiDaySchedule ? "(first day only)" : undefined,
       icon: (
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
           <path d="M19.5 22h-15A2.5 2.5 0 0 1 2 19.5v-15A2.5 2.5 0 0 1 4.5 2h15A2.5 2.5 0 0 1 22 4.5v15a2.5 2.5 0 0 1-2.5 2.5zM9 17v-5H7v5h2zm4 0v-8h-2v8h2zm4 0V9h-2v8h2z" />
@@ -76,6 +112,7 @@ export function AddToCalendar({
     {
       name: "Outlook Calendar",
       href: outlookUrl,
+      note: hasMultiDaySchedule ? "(first day only)" : undefined,
       icon: (
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8zm1-13h-2v6l5.25 3.15.75-1.23-4-2.42V7z" />
@@ -83,7 +120,7 @@ export function AddToCalendar({
       ),
     },
     {
-      name: "Download .ics",
+      name: hasMultiDaySchedule ? "Download .ics (all days)" : "Download .ics",
       href: icsUrl,
       download: `${title.replace(/[^a-z0-9]/gi, "-").toLowerCase()}.ics`,
       icon: (
@@ -109,7 +146,7 @@ export function AddToCalendar({
         </button>
 
         {isOpen && (
-          <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+          <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
             {calendarOptions.map((option) => (
               <a
                 key={option.name}
@@ -121,7 +158,10 @@ export function AddToCalendar({
                 onClick={() => setIsOpen(false)}
               >
                 {option.icon}
-                {option.name}
+                <span className="flex-1">{option.name}</span>
+                {option.note && (
+                  <span className="text-xs text-gray-400">{option.note}</span>
+                )}
               </a>
             ))}
           </div>
@@ -147,7 +187,7 @@ export function AddToCalendar({
         </button>
 
         {isOpen && (
-          <div className="absolute left-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+          <div className="absolute left-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
             {calendarOptions.map((option) => (
               <a
                 key={option.name}
@@ -159,7 +199,10 @@ export function AddToCalendar({
                 onClick={() => setIsOpen(false)}
               >
                 {option.icon}
-                {option.name}
+                <span className="flex-1">{option.name}</span>
+                {option.note && (
+                  <span className="text-xs text-gray-400">{option.note}</span>
+                )}
               </a>
             ))}
           </div>
@@ -198,7 +241,10 @@ export function AddToCalendar({
               onClick={() => setIsOpen(false)}
             >
               {option.icon}
-              {option.name}
+              <span className="flex-1">{option.name}</span>
+              {option.note && (
+                <span className="text-xs text-gray-400">{option.note}</span>
+              )}
             </a>
           ))}
         </div>

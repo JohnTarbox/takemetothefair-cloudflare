@@ -113,6 +113,18 @@ export const eventVendors = sqliteTable("event_vendors", {
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
+// Event Days table - per-day schedules for multi-day events
+export const eventDays = sqliteTable("event_days", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  eventId: text("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  date: text("date").notNull(), // "YYYY-MM-DD" format
+  openTime: text("open_time").notNull(), // "HH:MM" 24-hour format
+  closeTime: text("close_time").notNull(), // "HH:MM" 24-hour format
+  notes: text("notes"),
+  closed: integer("closed", { mode: "boolean" }).default(false),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
 // User Favorites table
 export const userFavorites = sqliteTable("user_favorites", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -186,6 +198,11 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   promoter: one(promoters, { fields: [events.promoterId], references: [promoters.id] }),
   venue: one(venues, { fields: [events.venueId], references: [venues.id] }),
   eventVendors: many(eventVendors),
+  eventDays: many(eventDays),
+}));
+
+export const eventDaysRelations = relations(eventDays, ({ one }) => ({
+  event: one(events, { fields: [eventDays.eventId], references: [events.id] }),
 }));
 
 export const vendorsRelations = relations(vendors, ({ one, many }) => ({
@@ -221,5 +238,6 @@ export type Promoter = typeof promoters.$inferSelect;
 export type Event = typeof events.$inferSelect;
 export type Vendor = typeof vendors.$inferSelect;
 export type EventVendor = typeof eventVendors.$inferSelect;
+export type EventDay = typeof eventDays.$inferSelect;
 export type UserFavorite = typeof userFavorites.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;

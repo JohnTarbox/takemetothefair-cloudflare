@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { promoters, events, venues } from "@/lib/db/schema";
+import { promoters, events, venues, eventDays } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 
@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
       ticketPriceMin,
       ticketPriceMax,
       imageUrl,
+      eventDays: eventDaysInput,
     } = body;
 
     let slug = createSlug(name);
@@ -117,6 +118,21 @@ export async function POST(request: NextRequest) {
       imageUrl,
       status: "PENDING",
     });
+
+    // Insert event days if provided
+    if (Array.isArray(eventDaysInput) && eventDaysInput.length > 0) {
+      await db.insert(eventDays).values(
+        eventDaysInput.map((day: { date: string; openTime: string; closeTime: string; notes?: string; closed?: boolean }) => ({
+          id: crypto.randomUUID(),
+          eventId,
+          date: day.date,
+          openTime: day.openTime,
+          closeTime: day.closeTime,
+          notes: day.notes || null,
+          closed: day.closed || false,
+        }))
+      );
+    }
 
     const newEvent = await db
       .select()

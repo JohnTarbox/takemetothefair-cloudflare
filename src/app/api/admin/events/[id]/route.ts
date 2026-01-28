@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
+import { events, venues, promoters, eventVendors, vendors, eventDays } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
@@ -45,6 +45,13 @@ export async function GET(request: NextRequest, { params }: Params) {
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
       .where(eq(eventVendors.eventId, id));
 
+    // Get event days
+    const eventDayResults = await db
+      .select()
+      .from(eventDays)
+      .where(eq(eventDays.eventId, id))
+      .orderBy(eventDays.date);
+
     const event = {
       ...eventData.events,
       venue: eventData.venues,
@@ -53,6 +60,7 @@ export async function GET(request: NextRequest, { params }: Params) {
         ...ev.event_vendors,
         vendor: ev.vendors,
       })),
+      eventDays: eventDayResults,
     };
 
     return NextResponse.json(event);
@@ -137,6 +145,27 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.status) updateData.status = data.status;
 
     await db.update(events).set(updateData).where(eq(events.id, id));
+
+    // Handle eventDays update if provided
+    if (data.eventDays !== undefined) {
+      // Delete existing event days
+      await db.delete(eventDays).where(eq(eventDays.eventId, id));
+
+      // Insert new event days if any
+      if (data.eventDays && data.eventDays.length > 0) {
+        await db.insert(eventDays).values(
+          data.eventDays.map((day) => ({
+            id: crypto.randomUUID(),
+            eventId: id,
+            date: day.date,
+            openTime: day.openTime,
+            closeTime: day.closeTime,
+            notes: day.notes || null,
+            closed: day.closed || false,
+          }))
+        );
+      }
+    }
 
     const [updatedEvent] = await db
       .select()

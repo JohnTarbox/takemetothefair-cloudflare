@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 
 export const runtime = "edge";
 
@@ -35,6 +36,7 @@ export default function CreateEventPage() {
     ticketPriceMax: "",
     imageUrl: "",
   });
+  const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
 
   useEffect(() => {
     fetchVenues();
@@ -60,6 +62,10 @@ export default function CreateEventPage() {
       [e.target.name]: e.target.value,
     }));
   };
+
+  const handleEventDaysChange = useCallback((days: EventDayInput[]) => {
+    setEventDays(days);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,6 +103,7 @@ export default function CreateEventPage() {
             ? parseFloat(formData.ticketPriceMax)
             : null,
           imageUrl: formData.imageUrl || null,
+          eventDays: eventDays.length > 0 ? eventDays : [],
         }),
       });
 
@@ -114,6 +121,14 @@ export default function CreateEventPage() {
       setLoading(false);
     }
   };
+
+  // Build datetime-local string for DailyScheduleInput
+  const startDateTimeStr = formData.startDate && formData.startTime
+    ? `${formData.startDate}T${formData.startTime}`
+    : null;
+  const endDateTimeStr = formData.endDate && formData.endTime
+    ? `${formData.endDate}T${formData.endTime}`
+    : null;
 
   return (
     <div className="max-w-2xl">
@@ -212,6 +227,14 @@ export default function CreateEventPage() {
                 required
               />
             </div>
+
+            <DailyScheduleInput
+              startDate={startDateTimeStr}
+              endDate={endDateTimeStr}
+              initialDays={[]}
+              onChange={handleEventDaysChange}
+              disabled={loading}
+            />
 
             <Input
               label="Categories (comma-separated)"

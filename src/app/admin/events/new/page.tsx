@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 
 export const runtime = "edge";
 
@@ -31,6 +32,9 @@ export default function NewEventPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [promoters, setPromoters] = useState<Promoter[]>([]);
   const [datesTBD, setDatesTBD] = useState(false);
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
 
   useEffect(() => {
     fetchVenues();
@@ -61,7 +65,6 @@ export default function NewEventPage() {
         return;
       }
       const data = await res.json();
-      // API returns flat promoter objects with id, companyName, etc.
       if (Array.isArray(data)) {
         setPromoters(data);
       }
@@ -70,6 +73,10 @@ export default function NewEventPage() {
     }
   };
 
+  const handleEventDaysChange = useCallback((days: EventDayInput[]) => {
+    setEventDays(days);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
@@ -77,11 +84,9 @@ export default function NewEventPage() {
 
     const formData = new FormData(e.currentTarget);
 
-    // Convert datetime-local to ISO format
-    const startDateLocal = formData.get("startDate") as string;
-    const endDateLocal = formData.get("endDate") as string;
-    const startDate = datesTBD || !startDateLocal ? null : new Date(startDateLocal).toISOString();
-    const endDate = datesTBD || !endDateLocal ? null : new Date(endDateLocal).toISOString();
+    // Use controlled state values for dates
+    const startDateISO = datesTBD || !startDate ? null : new Date(startDate).toISOString();
+    const endDateISO = datesTBD || !endDate ? null : new Date(endDate).toISOString();
 
     const promoterId = formData.get("promoterId") as string;
     if (!promoterId) {
@@ -95,8 +100,8 @@ export default function NewEventPage() {
       description: formData.get("description") || null,
       venueId: formData.get("venueId") || null,
       promoterId,
-      startDate,
-      endDate,
+      startDate: startDateISO,
+      endDate: endDateISO,
       datesConfirmed: !datesTBD,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
@@ -105,6 +110,7 @@ export default function NewEventPage() {
       featured: formData.get("featured") === "on",
       commercialVendorsAllowed: formData.get("commercialVendorsAllowed") === "on",
       status: formData.get("status") || "APPROVED",
+      eventDays: eventDays.length > 0 ? eventDays : [],
     };
 
     try {
@@ -214,26 +220,40 @@ export default function NewEventPage() {
                   </Label>
                 </div>
                 {!datesTBD && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="startDate">Start Date *</Label>
-                      <Input
-                        id="startDate"
-                        name="startDate"
-                        type="datetime-local"
-                        required={!datesTBD}
-                      />
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="startDate">Start Date *</Label>
+                        <Input
+                          id="startDate"
+                          name="startDate"
+                          type="datetime-local"
+                          required={!datesTBD}
+                          value={startDate}
+                          onChange={(e) => setStartDate(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="endDate">End Date *</Label>
+                        <Input
+                          id="endDate"
+                          name="endDate"
+                          type="datetime-local"
+                          required={!datesTBD}
+                          value={endDate}
+                          onChange={(e) => setEndDate(e.target.value)}
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <Label htmlFor="endDate">End Date *</Label>
-                      <Input
-                        id="endDate"
-                        name="endDate"
-                        type="datetime-local"
-                        required={!datesTBD}
-                      />
-                    </div>
-                  </div>
+
+                    <DailyScheduleInput
+                      startDate={startDate}
+                      endDate={endDate}
+                      initialDays={[]}
+                      onChange={handleEventDaysChange}
+                      disabled={loading}
+                    />
+                  </>
                 )}
               </div>
 

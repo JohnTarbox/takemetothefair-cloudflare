@@ -62,6 +62,15 @@ export const vendorCreateSchema = z.object({
 
 export const vendorUpdateSchema = vendorCreateSchema.partial().omit({ userId: true });
 
+// Event Day schema (per-day schedule)
+export const eventDaySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format"),
+  openTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
+  closeTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
+  notes: z.string().max(200).optional().nullable(),
+  closed: z.boolean().optional().default(false),
+});
+
 // Event schemas
 export const eventCreateSchema = z.object({
   name: nameSchema,
@@ -90,6 +99,7 @@ export const eventCreateSchema = z.object({
   sourceName: z.string().optional().nullable(),
   sourceUrl: urlSchema,
   sourceId: z.string().optional().nullable(),
+  eventDays: z.array(eventDaySchema).optional(),
 });
 
 export const eventUpdateSchema = eventCreateSchema.partial();

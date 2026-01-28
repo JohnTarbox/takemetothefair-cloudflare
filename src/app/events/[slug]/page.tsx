@@ -17,8 +17,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange, formatPrice } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors, users } from "@/lib/db/schema";
+import { events, venues, promoters, eventVendors, vendors, users, eventDays } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
@@ -105,6 +106,13 @@ async function getEvent(slug: string) {
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
       .where(and(eq(eventVendors.eventId, eventData.events.id), eq(eventVendors.status, "APPROVED")));
 
+    // Get event days (per-day schedule)
+    const eventDayResults = await db
+      .select()
+      .from(eventDays)
+      .where(eq(eventDays.eventId, eventData.events.id))
+      .orderBy(eventDays.date);
+
     // Increment view count
     await db
       .update(events)
@@ -122,6 +130,7 @@ async function getEvent(slug: string) {
         ...ev.event_vendors,
         vendor: ev.vendors!,
       })),
+      eventDays: eventDayResults,
     };
   } catch (e) {
     console.error("Error fetching event:", e);
@@ -365,15 +374,20 @@ export default async function EventDetailPage({ params }: Props) {
                       endDate={event.endDate}
                       url={`https://meetmeatthefair.com/events/${event.slug}`}
                       variant="icon"
+                      eventDays={event.eventDays}
                     />
                   </div>
-                  <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                    <Clock className="w-4 h-4" />
-                    {new Date(event.startDate).toLocaleTimeString("en-US", {
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                  </p>
+                  {event.eventDays && event.eventDays.length > 0 ? (
+                    <DailyScheduleDisplay days={event.eventDays} className="mt-2" />
+                  ) : event.startDate ? (
+                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                      <Clock className="w-4 h-4" />
+                      {new Date(event.startDate).toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </p>
+                  ) : null}
                 </div>
               </div>
 

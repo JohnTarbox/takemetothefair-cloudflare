@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events } from "@/lib/db/schema";
+import { events, eventDays } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
@@ -73,6 +73,21 @@ export async function POST(request: NextRequest) {
       sourceUrl: data.sourceUrl,
       sourceId: data.sourceId,
     });
+
+    // Insert event days if provided
+    if (data.eventDays && data.eventDays.length > 0) {
+      await db.insert(eventDays).values(
+        data.eventDays.map((day) => ({
+          id: crypto.randomUUID(),
+          eventId,
+          date: day.date,
+          openTime: day.openTime,
+          closeTime: day.closeTime,
+          notes: day.notes || null,
+          closed: day.closed || false,
+        }))
+      );
+    }
 
     const [newEvent] = await db
       .select()

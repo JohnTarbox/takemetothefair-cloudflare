@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **This is the PRIMARY codebase.** Always work here (`takemetothefair-cloudflare`), not in the legacy Prisma-based `takemetothefair` directory.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Auto-load Skills

@@ -11,6 +11,7 @@ import {
   Download,
   GitMerge,
   Link2,
+  Database,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 
@@ -25,6 +26,7 @@ const adminNav = [
   { name: "Users", href: "/admin/users", icon: Users },
   { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
   { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
+  { name: "Database", href: "/admin/database", icon: Database },
 ];
 
 export default async function AdminLayout({

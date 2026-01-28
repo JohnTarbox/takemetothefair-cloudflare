@@ -143,6 +143,64 @@ export function generateICSContent(params: CalendarEventParams): string {
   return icsContent;
 }
 
+// Multi-day ICS generation for events with per-day schedules
+interface EventDayForICS {
+  date: string; // YYYY-MM-DD
+  openTime: string; // HH:MM
+  closeTime: string; // HH:MM
+  notes?: string | null;
+  closed?: boolean;
+}
+
+interface MultiDayCalendarParams {
+  title: string;
+  description?: string;
+  location?: string;
+  url?: string;
+  eventDays: EventDayForICS[];
+}
+
+export function generateMultiDayICSContent(params: MultiDayCalendarParams): string {
+  const { title, description, location, url, eventDays } = params;
+
+  const openDays = eventDays.filter((d) => !d.closed);
+
+  const eventDescription = url
+    ? `${description || ""}\\n\\nMore info: ${url}`.trim()
+    : description || "";
+
+  const events = openDays.map((day) => {
+    const startDateTime = new Date(`${day.date}T${day.openTime}:00`);
+    const endDateTime = new Date(`${day.date}T${day.closeTime}:00`);
+    const dayTitle = day.notes ? `${title} - ${day.notes}` : title;
+
+    return [
+      "BEGIN:VEVENT",
+      `UID:${day.date}-${crypto.randomUUID()}@meetmeatthefair.com`,
+      `DTSTART:${formatDateForICS(startDateTime)}Z`,
+      `DTEND:${formatDateForICS(endDateTime)}Z`,
+      `SUMMARY:${dayTitle}`,
+      `DESCRIPTION:${eventDescription.replace(/\n/g, "\\n")}`,
+      `LOCATION:${location || ""}`,
+      `URL:${url || ""}`,
+      "END:VEVENT",
+    ].join("\r\n");
+  });
+
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Meet Me at the Fair//EN",
+    ...events,
+    "END:VCALENDAR",
+  ].join("\r\n");
+}
+
+export function generateMultiDayICSDataUrl(params: MultiDayCalendarParams): string {
+  const icsContent = generateMultiDayICSContent(params);
+  return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsContent)}`;
+}
+
 export function generateICSDataUrl(params: CalendarEventParams): string {
   const icsContent = generateICSContent(params);
   return `data:text/calendar;charset=utf-8,${encodeURIComponent(icsContent)}`;

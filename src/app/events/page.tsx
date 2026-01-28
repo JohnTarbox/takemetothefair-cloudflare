@@ -3,7 +3,7 @@ import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, userFavorites } from "@/lib/db/schema";
-import { eq, and, gte, or, count, inArray, sql, like } from "drizzle-orm";
+import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
 export const runtime = "edge";
@@ -17,6 +17,7 @@ interface SearchParams {
   featured?: string;
   commercialVendors?: string;
   includePast?: string;
+  includeTBD?: string;
   myEvents?: string;
   favorites?: string;
   page?: string;
@@ -78,9 +79,23 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
       eq(events.status, "APPROVED"),
     ];
 
-    // Only filter to future events unless includePast is true
+    // Date filtering logic:
+    // - includePast=true: show all events (past, future, and TBD)
+    // - includeTBD=true: show future events AND events with null dates
+    // - default: show only future events with confirmed dates
     if (searchParams.includePast !== "true") {
-      conditions.push(gte(events.endDate, new Date()));
+      if (searchParams.includeTBD === "true") {
+        // Show future events OR events with null end dates (TBD)
+        conditions.push(
+          or(
+            gte(events.endDate, new Date()),
+            isNull(events.endDate)
+          )!
+        );
+      } else {
+        // Show only future events with confirmed dates
+        conditions.push(gte(events.endDate, new Date()));
+      }
     }
 
     if (searchParams.query) {
@@ -409,6 +424,17 @@ function EventsFilter({
           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
         <span className="text-sm text-gray-700">Commercial vendors allowed</span>
+      </label>
+
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          name="includeTBD"
+          value="true"
+          defaultChecked={searchParams.includeTBD === "true"}
+          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <span className="text-sm text-gray-700">Include dates TBD</span>
       </label>
 
       <label className="flex items-center gap-2">
