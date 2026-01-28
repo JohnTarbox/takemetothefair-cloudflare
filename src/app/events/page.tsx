@@ -21,6 +21,7 @@ interface SearchParams {
   myEvents?: string;
   favorites?: string;
   page?: string;
+  view?: string;
 }
 
 // Get favorite IDs for a user
@@ -67,9 +68,10 @@ async function getVendorEventIds(vendorId: string): Promise<string[]> {
 }
 
 async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], favoriteIds?: string[]) {
+  const isCalendarView = searchParams.view === "calendar";
   const page = parseInt(searchParams.page || "1");
-  const limit = 12;
-  const offset = (page - 1) * limit;
+  const limit = isCalendarView ? 500 : 12;
+  const offset = isCalendarView ? 0 : (page - 1) * limit;
 
   try {
     const db = getCloudflareDb();
