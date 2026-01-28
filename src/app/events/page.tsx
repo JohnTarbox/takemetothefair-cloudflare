@@ -553,28 +553,10 @@ export default async function EventsPage({
                 ? "You are not participating in any events yet. Apply to events to see them here."
                 : "No events match your filters. Try adjusting your search."
             }
+            currentPage={page}
+            totalPages={totalPages}
+            searchParams={params as Record<string, string>}
           />
-
-          {totalPages > 1 && (
-            <div className="mt-8 flex justify-center gap-2">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                <a
-                  key={p}
-                  href={`/events?${new URLSearchParams({
-                    ...params,
-                    page: p.toString(),
-                  } as Record<string, string>).toString()}`}
-                  className={`px-4 py-2 rounded-lg ${
-                    p === page
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  {p}
-                </a>
-              ))}
-            </div>
-          )}
         </main>
       </div>
     </div>

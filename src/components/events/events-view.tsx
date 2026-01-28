@@ -31,6 +31,10 @@ type EventWithRelations = Event & {
 interface EventsViewProps {
   events: EventWithRelations[];
   emptyMessage?: string;
+  // Pagination props
+  currentPage?: number;
+  totalPages?: number;
+  searchParams?: Record<string, string>;
 }
 
 // Calendar helper functions
@@ -633,6 +637,9 @@ function CalendarView({ events }: CalendarViewProps) {
 export function EventsView({
   events,
   emptyMessage = "No events found",
+  currentPage = 1,
+  totalPages = 1,
+  searchParams = {},
 }: EventsViewProps) {
   const [viewMode, setViewMode] = useState<"cards" | "table" | "calendar">("cards");
   const [sortConfig, setSortConfig] = useState<SortConfig>({
@@ -836,6 +843,28 @@ export function EventsView({
 
       {/* Calendar View */}
       {viewMode === "calendar" && <CalendarView events={events} />}
+
+      {/* Pagination - only shown for cards/table views, not calendar */}
+      {viewMode !== "calendar" && totalPages > 1 && (
+        <div className="mt-8 flex justify-center gap-2">
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+            <a
+              key={p}
+              href={`/events?${new URLSearchParams({
+                ...searchParams,
+                page: p.toString(),
+              }).toString()}`}
+              className={`px-4 py-2 rounded-lg ${
+                p === currentPage
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              {p}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
