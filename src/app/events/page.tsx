@@ -218,23 +218,29 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     }[] = [];
 
     if (eventIds.length > 0) {
-      allEventVendors = await db
-        .select({
-          eventId: eventVendors.eventId,
-          vendorId: vendors.id,
-          businessName: vendors.businessName,
-          slug: vendors.slug,
-          logoUrl: vendors.logoUrl,
-          vendorType: vendors.vendorType,
-        })
-        .from(eventVendors)
-        .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(
-          and(
-            inArray(eventVendors.eventId, eventIds),
-            eq(eventVendors.status, "APPROVED")
-          )
-        );
+      // D1 has a limit on SQL bind variables, so batch large arrays
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
+        const batch = eventIds.slice(i, i + BATCH_SIZE);
+        const batchResults = await db
+          .select({
+            eventId: eventVendors.eventId,
+            vendorId: vendors.id,
+            businessName: vendors.businessName,
+            slug: vendors.slug,
+            logoUrl: vendors.logoUrl,
+            vendorType: vendors.vendorType,
+          })
+          .from(eventVendors)
+          .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+          .where(
+            and(
+              inArray(eventVendors.eventId, batch),
+              eq(eventVendors.status, "APPROVED")
+            )
+          );
+        allEventVendors.push(...batchResults);
+      }
     }
 
     // Group vendors by event ID in memory
@@ -278,7 +284,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
       limit,
     };
   } catch (e) {
-    console.error("Error fetching events:", e);
+    console.error("Error fetching events:", e, "isCalendar:", isCalendarView);
     return { events: [], total: 0, page: 1, limit };
   }
 }
