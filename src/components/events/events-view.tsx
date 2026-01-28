@@ -30,6 +30,7 @@ type EventWithRelations = Event & {
 
 interface EventsViewProps {
   events: EventWithRelations[];
+  allEvents?: EventWithRelations[];
   emptyMessage?: string;
   // Pagination props
   currentPage?: number;
@@ -636,34 +637,17 @@ function CalendarView({ events }: CalendarViewProps) {
 
 export function EventsView({
   events,
+  allEvents,
   emptyMessage = "No events found",
   currentPage = 1,
   totalPages = 1,
   searchParams = {},
 }: EventsViewProps) {
-  const initialView = (searchParams.view === "calendar" || searchParams.view === "table")
-    ? searchParams.view as "cards" | "table" | "calendar"
-    : "cards";
-  const [viewMode, setViewMode] = useState<"cards" | "table" | "calendar">(initialView);
+  const [viewMode, setViewMode] = useState<"cards" | "table" | "calendar">("cards");
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "startDate",
     direction: "asc",
   });
-
-  const handleViewChange = (newView: "cards" | "table" | "calendar") => {
-    setViewMode(newView);
-    // Update URL to sync view mode with server for proper data loading
-    const params = new URLSearchParams(window.location.search);
-    if (newView === "calendar") {
-      params.set("view", "calendar");
-      params.delete("page");
-    } else if (newView === "table") {
-      params.set("view", "table");
-    } else {
-      params.delete("view");
-    }
-    window.location.href = `/events?${params.toString()}`;
-  };
 
   const handleSort = (column: string) => {
     setSortConfig(getNextSortDirection(sortConfig, column));
@@ -712,7 +696,7 @@ export function EventsView({
         )}
         <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-white">
           <button
-            onClick={() => handleViewChange("cards")}
+            onClick={() => setViewMode("cards")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === "cards"
                 ? "bg-blue-600 text-white"
@@ -723,7 +707,7 @@ export function EventsView({
             Cards
           </button>
           <button
-            onClick={() => handleViewChange("table")}
+            onClick={() => setViewMode("table")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === "table"
                 ? "bg-blue-600 text-white"
@@ -734,7 +718,7 @@ export function EventsView({
             Table
           </button>
           <button
-            onClick={() => handleViewChange("calendar")}
+            onClick={() => setViewMode("calendar")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === "calendar"
                 ? "bg-blue-600 text-white"
@@ -860,7 +844,7 @@ export function EventsView({
       )}
 
       {/* Calendar View */}
-      {viewMode === "calendar" && <CalendarView events={events} />}
+      {viewMode === "calendar" && <CalendarView events={allEvents || events} />}
 
       {/* Pagination - only shown for cards/table views, not calendar */}
       {viewMode !== "calendar" && totalPages > 1 && (

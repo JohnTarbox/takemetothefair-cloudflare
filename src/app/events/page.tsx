@@ -21,7 +21,6 @@ interface SearchParams {
   myEvents?: string;
   favorites?: string;
   page?: string;
-  view?: string;
 }
 
 // Get favorite IDs for a user
@@ -68,10 +67,9 @@ async function getVendorEventIds(vendorId: string): Promise<string[]> {
 }
 
 async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], favoriteIds?: string[]) {
-  const isCalendarView = searchParams.view === "calendar";
   const page = parseInt(searchParams.page || "1");
-  const limit = isCalendarView ? 500 : 12;
-  const offset = isCalendarView ? 0 : (page - 1) * limit;
+  const limit = 12;
+  const offset = (page - 1) * limit;
 
   try {
     const db = getCloudflareDb();
@@ -279,6 +277,29 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
   } catch (e) {
     console.error("Error fetching events:", e);
     return { events: [], total: 0, page: 1, limit };
+  }
+}
+
+async function getAllEventsForCalendar() {
+  try {
+    const db = getCloudflareDb();
+    const results = await db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .where(and(eq(events.status, "APPROVED"), gte(events.endDate, new Date())))
+      .orderBy(events.startDate);
+
+    return results.map(r => ({
+      ...r.events,
+      venue: r.venues,
+      promoter: r.promoters,
+      vendors: [] as { id: string; businessName: string; slug: string; logoUrl: string | null; vendorType: string | null }[],
+    }));
+  } catch (e) {
+    console.error("Error fetching all events for calendar:", e);
+    return [];
   }
 }
 
@@ -510,8 +531,8 @@ export default async function EventsPage({
     favoriteIds = await getUserFavoriteIds(session.user.id, "EVENT");
   }
 
-  const [{ events: eventsList, total, page, limit }, categories, states] =
-    await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates()]);
+  const [{ events: eventsList, total, page, limit }, categories, states, allCalendarEvents] =
+    await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates(), getAllEventsForCalendar()]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -550,6 +571,7 @@ export default async function EventsPage({
 
           <EventsView
             events={eventsList}
+            allEvents={allCalendarEvents}
             emptyMessage={
               params.myEvents === "true"
                 ? "You are not participating in any events yet. Apply to events to see them here."
