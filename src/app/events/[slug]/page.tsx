@@ -11,6 +11,7 @@ import {
   Store,
   AlertCircle,
   Pencil,
+  UserPlus,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -449,12 +450,20 @@ export default async function EventDetailPage({ params }: Props) {
               )}
 
               {isAdmin && (
-                <Link href={`/admin/events/${event.id}/edit`}>
-                  <Button variant="outline" className="w-full mt-3">
-                    <Pencil className="w-4 h-4 mr-2" />
-                    Edit Event
-                  </Button>
-                </Link>
+                <div className="space-y-2 mt-3 pt-3 border-t">
+                  <Link href={`/admin/events/${event.id}/vendors`}>
+                    <Button className="w-full">
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Manage Vendors
+                    </Button>
+                  </Link>
+                  <Link href={`/admin/events/${event.id}/edit`}>
+                    <Button variant="outline" className="w-full">
+                      <Pencil className="w-4 h-4 mr-2" />
+                      Edit Event
+                    </Button>
+                  </Link>
+                </div>
               )}
             </CardContent>
           </Card>

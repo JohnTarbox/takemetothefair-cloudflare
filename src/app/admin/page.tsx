@@ -1,12 +1,10 @@
 import Link from "next/link";
-import { Calendar, MapPin, Store, Users, Megaphone, Clock, UserPlus, ExternalLink } from "lucide-react";
+import { Calendar, MapPin, Store, Users, Megaphone, Clock, UserPlus } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
-import { eq, count, gte, and, sql } from "drizzle-orm";
-import { formatDateRange } from "@/lib/utils";
+import { eq, count, gte, and } from "drizzle-orm";
+import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 
 export const runtime = "edge";
 
@@ -95,7 +93,7 @@ async function getUpcomingEventsWithVendorCounts() {
         gte(events.endDate, now)
       ))
       .orderBy(events.startDate)
-      .limit(10);
+      .limit(50);
 
     if (upcomingEvents.length === 0) return [];
 
@@ -241,64 +239,7 @@ export default async function AdminDashboard() {
         </Card>
 
         {/* Upcoming Events - Manage Vendors */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Manage Event Vendors
-            </h2>
-            <Link href="/admin/events">
-              <Button variant="outline" size="sm">
-                View All Events
-              </Button>
-            </Link>
-          </CardHeader>
-          <CardContent>
-            {upcomingEvents.length === 0 ? (
-              <p className="text-gray-500 py-4">No upcoming events</p>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {upcomingEvents.map((event) => (
-                  <div
-                    key={event.id}
-                    className="py-4"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/events/${event.slug}`}
-                            className="font-medium text-gray-900 hover:text-blue-600 truncate"
-                          >
-                            {event.name}
-                          </Link>
-                          <Link href={`/events/${event.slug}`} target="_blank">
-                            <ExternalLink className="w-3 h-3 text-gray-400" />
-                          </Link>
-                        </div>
-                        <p className="text-sm text-gray-500">
-                          {formatDateRange(event.startDate, event.endDate)}
-                          {event.venue && ` • ${event.venue.city}, ${event.venue.state}`}
-                        </p>
-                        <div className="mt-1 flex items-center gap-2">
-                          <Badge variant={event.vendorCount > 0 ? "success" : "secondary"}>
-                            <Store className="w-3 h-3 mr-1" />
-                            {event.vendorCount} vendor{event.vendorCount !== 1 ? "s" : ""}
-                          </Badge>
-                        </div>
-                      </div>
-                      <Link href={`/admin/events/${event.id}/vendors`}>
-                        <Button size="sm">
-                          <UserPlus className="w-4 h-4 mr-1" />
-                          Manage
-                        </Button>
-                      </Link>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <EventVendorsPanel events={upcomingEvents} />
       </div>
     </div>
   );
