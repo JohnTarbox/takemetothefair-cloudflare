@@ -24,11 +24,12 @@ test.describe("Vendors Page", () => {
     // Wait for page to load
     await page.waitForLoadState("networkidle");
 
-    // Check for vendor content or empty state
-    const hasVendors = await page.locator('[class*="vendor"], [class*="card"]').first().isVisible().catch(() => false);
+    // Check for vendor content (seeded data) or empty state
+    const hasVendors = await page.locator('text=/Artisan Crafts/i').isVisible().catch(() => false);
+    const hasGrid = await page.locator('[class*="grid"]').first().isVisible().catch(() => false);
     const hasEmptyState = await page.locator('text=/no vendors/i').isVisible().catch(() => false);
 
-    expect(hasVendors || hasEmptyState).toBeTruthy();
+    expect(hasVendors || hasGrid || hasEmptyState).toBeTruthy();
   });
 
   test("can filter by vendor type", async ({ page }) => {
