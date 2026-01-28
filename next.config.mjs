@@ -23,7 +23,10 @@ const nextConfig = {
 
 // Enable Cloudflare bindings in development
 if (process.env.NODE_ENV === "development") {
-  await setupDevPlatform();
+  await setupDevPlatform({
+    // In CI, use local-only mode to avoid needing Cloudflare auth for remote bindings (AI)
+    ...(process.env.CI ? { configPath: "wrangler.ci.toml" } : {}),
+  });
 }
 
 export default nextConfig;
