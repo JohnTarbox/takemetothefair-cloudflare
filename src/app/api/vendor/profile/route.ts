@@ -41,8 +41,12 @@ export async function PATCH(request: NextRequest) {
 
   try {
     const body = await request.json() as Record<string, unknown>;
-    const { businessName, description, vendorType, products, website, logoUrl } =
-      body;
+    const {
+      businessName, description, vendorType, products, website, logoUrl,
+      contactName, contactEmail, contactPhone,
+      address, city, state, zip,
+      yearEstablished, paymentMethods, licenseInfo, insuranceInfo
+    } = body;
 
     const db = getCloudflareDb();
 
@@ -56,6 +60,20 @@ export async function PATCH(request: NextRequest) {
     if (products) updateData.products = JSON.stringify(products);
     if (website !== undefined) updateData.website = website;
     if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
+    // Contact Information
+    if (contactName !== undefined) updateData.contactName = contactName;
+    if (contactEmail !== undefined) updateData.contactEmail = contactEmail;
+    if (contactPhone !== undefined) updateData.contactPhone = contactPhone;
+    // Physical Address
+    if (address !== undefined) updateData.address = address;
+    if (city !== undefined) updateData.city = city;
+    if (state !== undefined) updateData.state = state;
+    if (zip !== undefined) updateData.zip = zip;
+    // Business Details
+    if (yearEstablished !== undefined) updateData.yearEstablished = yearEstablished;
+    if (paymentMethods) updateData.paymentMethods = JSON.stringify(paymentMethods);
+    if (licenseInfo !== undefined) updateData.licenseInfo = licenseInfo;
+    if (insuranceInfo !== undefined) updateData.insuranceInfo = insuranceInfo;
 
     await db
       .update(vendors)

@@ -56,6 +56,20 @@ export async function POST(request: NextRequest) {
       logoUrl: data.logoUrl,
       verified: data.verified,
       commercial: data.commercial,
+      // Contact Information
+      contactName: data.contactName,
+      contactEmail: data.contactEmail,
+      contactPhone: data.contactPhone,
+      // Physical Address
+      address: data.address,
+      city: data.city,
+      state: data.state,
+      zip: data.zip,
+      // Business Details
+      yearEstablished: data.yearEstablished,
+      paymentMethods: JSON.stringify(data.paymentMethods),
+      licenseInfo: data.licenseInfo,
+      insuranceInfo: data.insuranceInfo,
     });
 
     // Update user role to VENDOR

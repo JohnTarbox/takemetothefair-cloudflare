@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Store, Globe, CheckCircle, Calendar, MapPin, Pencil } from "lucide-react";
+import { Store, Globe, CheckCircle, Calendar, MapPin, Pencil, Mail, Phone, User, CreditCard, Building } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -325,6 +325,30 @@ export default async function VendorDetailPage({ params }: Props) {
               <h3 className="font-semibold text-gray-900">Contact & Links</h3>
             </CardHeader>
             <CardContent className="space-y-3">
+              {vendor.contactName && (
+                <div className="flex items-center gap-3 text-gray-700">
+                  <User className="w-5 h-5 text-gray-400" />
+                  {vendor.contactName}
+                </div>
+              )}
+              {vendor.contactEmail && (
+                <a
+                  href={`mailto:${vendor.contactEmail}`}
+                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                >
+                  <Mail className="w-5 h-5 text-blue-600" />
+                  {vendor.contactEmail}
+                </a>
+              )}
+              {vendor.contactPhone && (
+                <a
+                  href={`tel:${vendor.contactPhone}`}
+                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                >
+                  <Phone className="w-5 h-5 text-blue-600" />
+                  {vendor.contactPhone}
+                </a>
+              )}
               {vendor.website && (
                 <a
                   href={vendor.website}
@@ -353,6 +377,61 @@ export default async function VendorDetailPage({ params }: Props) {
                 )}
             </CardContent>
           </Card>
+
+          {/* Location Card */}
+          {(vendor.address || vendor.city) && (
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold text-gray-900">Location</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-start gap-3 text-gray-700">
+                  <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    {vendor.address && <div>{vendor.address}</div>}
+                    {(vendor.city || vendor.state || vendor.zip) && (
+                      <div>
+                        {[vendor.city, vendor.state].filter(Boolean).join(", ")}
+                        {vendor.zip && ` ${vendor.zip}`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Business Details Card */}
+          {(vendor.yearEstablished || vendor.paymentMethods) && (
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold text-gray-900">Business Details</h3>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {vendor.yearEstablished && (
+                  <div className="flex items-center gap-3 text-gray-700">
+                    <Building className="w-5 h-5 text-gray-400" />
+                    <span>Est. {vendor.yearEstablished}</span>
+                  </div>
+                )}
+                {(() => {
+                  const paymentMethods = parseJsonArray(vendor.paymentMethods);
+                  return paymentMethods.length > 0 && (
+                    <div className="flex items-start gap-3 text-gray-700">
+                      <CreditCard className="w-5 h-5 text-gray-400 mt-0.5" />
+                      <div className="flex flex-wrap gap-1">
+                        {paymentMethods.map((method) => (
+                          <Badge key={method} variant="secondary" className="text-xs">
+                            {method}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardContent className="p-6">

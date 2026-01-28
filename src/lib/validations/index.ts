@@ -58,6 +58,20 @@ export const vendorCreateSchema = z.object({
   logoUrl: urlSchema,
   verified: z.boolean().optional().default(false),
   commercial: z.boolean().optional().default(false),
+  // Contact Information
+  contactName: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
+  contactEmail: emailSchema,
+  contactPhone: phoneSchema,
+  // Physical Address
+  address: z.string().max(VALIDATION.ADDRESS_MAX_LENGTH).optional().nullable(),
+  city: z.string().max(VALIDATION.CITY_MAX_LENGTH).optional().nullable(),
+  state: z.string().max(VALIDATION.STATE_MAX_LENGTH).optional().nullable(),
+  zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
+  // Business Details
+  yearEstablished: z.number().int().min(1800).max(new Date().getFullYear()).optional().nullable(),
+  paymentMethods: z.array(z.string()).optional().default([]),
+  licenseInfo: z.string().max(500).optional().nullable(),
+  insuranceInfo: z.string().max(500).optional().nullable(),
 });
 
 export const vendorUpdateSchema = vendorCreateSchema.partial().omit({ userId: true });

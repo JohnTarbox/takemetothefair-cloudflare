@@ -99,6 +99,20 @@ export const vendors = sqliteTable("vendors", {
   logoUrl: text("logo_url"),
   verified: integer("verified", { mode: "boolean" }).default(false),
   commercial: integer("commercial", { mode: "boolean" }).default(false),
+  // Contact Information
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  // Physical Address
+  address: text("address"),
+  city: text("city"),
+  state: text("state"),
+  zip: text("zip"),
+  // Business Details
+  yearEstablished: integer("year_established"),
+  paymentMethods: text("payment_methods").default("[]"), // JSON array
+  licenseInfo: text("license_info"),
+  insuranceInfo: text("insurance_info"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });

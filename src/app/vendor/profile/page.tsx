@@ -18,6 +18,20 @@ interface VendorProfile {
   website: string | null;
   logoUrl: string | null;
   verified: boolean;
+  // Contact Information
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  // Physical Address
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  // Business Details
+  yearEstablished: number | null;
+  paymentMethods: string | null;
+  licenseInfo: string | null;
+  insuranceInfo: string | null;
 }
 
 export default function VendorProfilePage() {
@@ -32,6 +46,20 @@ export default function VendorProfilePage() {
     products: "",
     website: "",
     logoUrl: "",
+    // Contact Information
+    contactName: "",
+    contactEmail: "",
+    contactPhone: "",
+    // Physical Address
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+    // Business Details
+    yearEstablished: "",
+    paymentMethods: "",
+    licenseInfo: "",
+    insuranceInfo: "",
   });
 
   useEffect(() => {
@@ -44,6 +72,16 @@ export default function VendorProfilePage() {
       if (res.ok) {
         const data = await res.json();
         setProfile(data);
+        // Parse paymentMethods from JSON string
+        let paymentMethods: string[] = [];
+        try {
+          if (data.paymentMethods) {
+            paymentMethods = JSON.parse(data.paymentMethods);
+          }
+        } catch {
+          paymentMethods = [];
+        }
+
         setFormData({
           businessName: data.businessName || "",
           description: data.description || "",
@@ -51,6 +89,20 @@ export default function VendorProfilePage() {
           products: data.products?.join(", ") || "",
           website: data.website || "",
           logoUrl: data.logoUrl || "",
+          // Contact Information
+          contactName: data.contactName || "",
+          contactEmail: data.contactEmail || "",
+          contactPhone: data.contactPhone || "",
+          // Physical Address
+          address: data.address || "",
+          city: data.city || "",
+          state: data.state || "",
+          zip: data.zip || "",
+          // Business Details
+          yearEstablished: data.yearEstablished?.toString() || "",
+          paymentMethods: paymentMethods.join(", "),
+          licenseInfo: data.licenseInfo || "",
+          insuranceInfo: data.insuranceInfo || "",
         });
       }
     } catch (error) {
@@ -84,6 +136,11 @@ export default function VendorProfilePage() {
             .split(",")
             .map((p) => p.trim())
             .filter(Boolean),
+          paymentMethods: formData.paymentMethods
+            .split(",")
+            .map((p) => p.trim())
+            .filter(Boolean),
+          yearEstablished: formData.yearEstablished ? parseInt(formData.yearEstablished, 10) : null,
         }),
       });
 
@@ -207,9 +264,127 @@ export default function VendorProfilePage() {
               placeholder="https://..."
             />
 
-            <Button type="submit" isLoading={saving} disabled={saving}>
-              Save Changes
-            </Button>
+            {/* Contact Information Section */}
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Contact Information</h3>
+              <div className="space-y-4">
+                <Input
+                  label="Contact Name"
+                  name="contactName"
+                  value={formData.contactName}
+                  onChange={handleChange}
+                  placeholder="Primary contact person"
+                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    label="Contact Email"
+                    type="email"
+                    name="contactEmail"
+                    value={formData.contactEmail}
+                    onChange={handleChange}
+                    placeholder="contact@business.com"
+                  />
+                  <Input
+                    label="Contact Phone"
+                    type="tel"
+                    name="contactPhone"
+                    value={formData.contactPhone}
+                    onChange={handleChange}
+                    placeholder="(555) 123-4567"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Physical Address Section */}
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Physical Address</h3>
+              <div className="space-y-4">
+                <Input
+                  label="Street Address"
+                  name="address"
+                  value={formData.address}
+                  onChange={handleChange}
+                  placeholder="123 Main Street"
+                />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="col-span-2">
+                    <Input
+                      label="City"
+                      name="city"
+                      value={formData.city}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <Input
+                    label="State"
+                    name="state"
+                    value={formData.state}
+                    onChange={handleChange}
+                    placeholder="ME"
+                    maxLength={2}
+                  />
+                  <Input
+                    label="ZIP Code"
+                    name="zip"
+                    value={formData.zip}
+                    onChange={handleChange}
+                    placeholder="04101"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Business Details Section */}
+            <div className="border-t pt-6 mt-6">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Business Details</h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    label="Year Established"
+                    type="number"
+                    name="yearEstablished"
+                    value={formData.yearEstablished}
+                    onChange={handleChange}
+                    placeholder="2020"
+                    min={1800}
+                    max={new Date().getFullYear()}
+                  />
+                  <div>
+                    <Input
+                      label="Payment Methods"
+                      name="paymentMethods"
+                      value={formData.paymentMethods}
+                      onChange={handleChange}
+                      placeholder="Cash, Credit, Venmo"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Separate with commas</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    label="License/Permit Info"
+                    name="licenseInfo"
+                    value={formData.licenseInfo}
+                    onChange={handleChange}
+                    placeholder="License number or details"
+                  />
+                  <Input
+                    label="Insurance Info"
+                    name="insuranceInfo"
+                    value={formData.insuranceInfo}
+                    onChange={handleChange}
+                    placeholder="Insurance details"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-6">
+              <Button type="submit" isLoading={saving} disabled={saving}>
+                Save Changes
+              </Button>
+            </div>
           </form>
         </CardContent>
       </Card>

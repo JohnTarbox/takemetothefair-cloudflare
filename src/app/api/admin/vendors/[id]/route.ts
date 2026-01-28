@@ -117,6 +117,20 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
     if (data.verified !== undefined) updateData.verified = data.verified;
     if (data.commercial !== undefined) updateData.commercial = data.commercial;
+    // Contact Information
+    if (data.contactName !== undefined) updateData.contactName = data.contactName;
+    if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
+    if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
+    // Physical Address
+    if (data.address !== undefined) updateData.address = data.address;
+    if (data.city !== undefined) updateData.city = data.city;
+    if (data.state !== undefined) updateData.state = data.state;
+    if (data.zip !== undefined) updateData.zip = data.zip;
+    // Business Details
+    if (data.yearEstablished !== undefined) updateData.yearEstablished = data.yearEstablished;
+    if (data.paymentMethods !== undefined) updateData.paymentMethods = JSON.stringify(data.paymentMethods);
+    if (data.licenseInfo !== undefined) updateData.licenseInfo = data.licenseInfo;
+    if (data.insuranceInfo !== undefined) updateData.insuranceInfo = data.insuranceInfo;
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
