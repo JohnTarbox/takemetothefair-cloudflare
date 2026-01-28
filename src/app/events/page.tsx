@@ -553,22 +553,6 @@ export default async function EventsPage({
         </aside>
 
         <main className="lg:col-span-3">
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-gray-600">
-              {isCalendarView ? (
-                params.myEvents === "true" ? (
-                  <>Showing all {total} events you&apos;re participating in on calendar</>
-                ) : (
-                  <>Showing all {total} events on calendar</>
-                )
-              ) : params.myEvents === "true" ? (
-                <>Showing {eventsList.length} of {total} events you&apos;re participating in</>
-              ) : (
-                <>Showing {eventsList.length} of {total} events</>
-              )}
-            </p>
-          </div>
-
           <EventsView
             events={eventsList}
             view={viewMode}
@@ -580,6 +564,8 @@ export default async function EventsPage({
             currentPage={page}
             totalPages={totalPages}
             searchParams={params as Record<string, string>}
+            total={total}
+            myEvents={params.myEvents === "true"}
           />
         </main>
       </div>

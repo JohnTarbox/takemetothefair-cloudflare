@@ -37,6 +37,74 @@ interface EventsViewProps {
   currentPage?: number;
   totalPages?: number;
   searchParams?: Record<string, string>;
+  total?: number;
+  myEvents?: boolean;
+}
+
+function getCalendarPeriodSummary(
+  events: EventWithRelations[],
+  viewType: CalendarViewType,
+  currentDate: Date
+): { count: number; label: string } {
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+
+  switch (viewType) {
+    case "month": {
+      const monthStart = new Date(year, month, 1);
+      const monthEnd = new Date(year, month + 1, 0);
+      const filtered = events.filter((e) => {
+        const start = e.startDate ? new Date(e.startDate) : null;
+        const end = e.endDate ? new Date(e.endDate) : start;
+        if (!start) return false;
+        return start <= monthEnd && (end || start) >= monthStart;
+      });
+      const monthName = currentDate.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      return { count: filtered.length, label: `in ${monthName}` };
+    }
+    case "week": {
+      const weekStart = getWeekStart(currentDate);
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekEnd.getDate() + 6);
+      const filtered = events.filter((e) => {
+        const start = e.startDate ? new Date(e.startDate) : null;
+        const end = e.endDate ? new Date(e.endDate) : start;
+        if (!start) return false;
+        return start <= weekEnd && (end || start) >= weekStart;
+      });
+      const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return { count: filtered.length, label: `this week (${fmt(weekStart)} - ${fmt(weekEnd)})` };
+    }
+    case "day": {
+      const filtered = events.filter((e) => {
+        const start = e.startDate ? new Date(e.startDate) : null;
+        const end = e.endDate ? new Date(e.endDate) : start;
+        return isDateInRange(currentDate, start, end);
+      });
+      const dayLabel = currentDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+      return { count: filtered.length, label: `on ${dayLabel}` };
+    }
+    case "year": {
+      const yearStart = new Date(year, 0, 1);
+      const yearEnd = new Date(year, 11, 31);
+      const filtered = events.filter((e) => {
+        const start = e.startDate ? new Date(e.startDate) : null;
+        const end = e.endDate ? new Date(e.endDate) : start;
+        if (!start) return false;
+        return start <= yearEnd && (end || start) >= yearStart;
+      });
+      return { count: filtered.length, label: `in ${year}` };
+    }
+    case "schedule": {
+      const viewStart = new Date(year, month, 1);
+      const filtered = events.filter((e) => {
+        const start = e.startDate ? new Date(e.startDate) : null;
+        if (!start) return false;
+        return start >= viewStart || (e.endDate && new Date(e.endDate) >= viewStart);
+      });
+      return { count: filtered.length, label: "on calendar" };
+    }
+  }
 }
 
 // Calendar helper functions
@@ -91,6 +159,10 @@ function getEventColor(eventId: string): string {
 
 interface CalendarViewProps {
   events: EventWithRelations[];
+  currentDate: Date;
+  onDateChange: (date: Date) => void;
+  calendarViewType: CalendarViewType;
+  onViewTypeChange: (type: CalendarViewType) => void;
 }
 
 // Additional helper functions for calendar views
@@ -121,9 +193,9 @@ function getEventsForDate(events: EventWithRelations[], date: Date): EventWithRe
   });
 }
 
-function CalendarView({ events }: CalendarViewProps) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [calendarViewType, setCalendarViewType] = useState<CalendarViewType>("month");
+function CalendarView({ events, currentDate, onDateChange, calendarViewType, onViewTypeChange }: CalendarViewProps) {
+  const setCurrentDate = onDateChange;
+  const setCalendarViewType = onViewTypeChange;
   const [selectedEvent, setSelectedEvent] = useState<EventWithRelations | null>(null);
 
   const year = currentDate.getFullYear();
@@ -643,9 +715,13 @@ export function EventsView({
   currentPage = 1,
   totalPages = 1,
   searchParams = {},
+  total,
+  myEvents = false,
 }: EventsViewProps) {
   const currentSearchParams = useSearchParams();
   const viewMode = view;
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [calendarViewType, setCalendarViewType] = useState<CalendarViewType>("month");
 
   const switchView = (newView: string) => {
     const params = new URLSearchParams(currentSearchParams.toString());
@@ -691,8 +767,28 @@ export function EventsView({
     );
   }
 
+  const summaryText = (() => {
+    const suffix = myEvents ? " you're participating in" : "";
+    if (viewMode === "calendar") {
+      const { count, label } = getCalendarPeriodSummary(events, calendarViewType, calendarDate);
+      if (calendarViewType === "schedule") {
+        return `Showing all ${count} event${count !== 1 ? "s" : ""}${suffix} ${label}`;
+      }
+      return `Showing ${count} event${count !== 1 ? "s" : ""}${suffix} ${label}`;
+    }
+    if (total !== undefined) {
+      return `Showing ${events.length} of ${total} event${total !== 1 ? "s" : ""}${suffix}`;
+    }
+    return null;
+  })();
+
   return (
     <div>
+      {/* Summary Text */}
+      {summaryText && (
+        <p className="text-sm text-gray-600 mb-4">{summaryText}</p>
+      )}
+
       {/* View Toggle and Download */}
       <div className="flex justify-end items-center gap-3 mb-4">
         {viewMode === "table" && (
@@ -854,7 +950,15 @@ export function EventsView({
       )}
 
       {/* Calendar View */}
-      {viewMode === "calendar" && <CalendarView events={events} />}
+      {viewMode === "calendar" && (
+        <CalendarView
+          events={events}
+          currentDate={calendarDate}
+          onDateChange={setCalendarDate}
+          calendarViewType={calendarViewType}
+          onViewTypeChange={setCalendarViewType}
+        />
+      )}
 
       {/* Pagination - only shown for cards/table views, not calendar */}
       {viewMode !== "calendar" && totalPages > 1 && (
