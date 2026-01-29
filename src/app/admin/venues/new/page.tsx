@@ -21,6 +21,7 @@ export default function NewVenuePage() {
   const [lookupResults, setLookupResults] = useState<{
     field: string; label: string; value: string; checked: boolean; currentValue: string;
   }[] | null>(null);
+  const [googleData, setGoogleData] = useState<Record<string, string>>({});
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -260,11 +261,17 @@ export default function NewVenuePage() {
                   type="button"
                   size="sm"
                   onClick={() => {
+                    const newGoogleData: Record<string, string> = { ...googleData };
                     for (const item of lookupResults) {
                       if (!item.checked) continue;
                       const input = document.getElementById(item.field) as HTMLInputElement;
                       if (input) input.value = item.value;
+                      const googleFields = ["googlePlaceId", "googleMapsUrl", "openingHours", "googleRating", "googleRatingCount", "googleTypes", "accessibility", "parking"];
+                      if (googleFields.includes(item.field)) {
+                        newGoogleData[item.field] = item.value;
+                      }
                     }
+                    setGoogleData(newGoogleData);
                     setLookupResults(null);
                   }}
                 >
@@ -416,15 +423,107 @@ export default function NewVenuePage() {
               </div>
             </div>
 
-            {/* Hidden inputs for Google Places fields */}
-            <input type="hidden" id="googlePlaceId" name="googlePlaceId" />
-            <input type="hidden" id="googleMapsUrl" name="googleMapsUrl" />
-            <input type="hidden" id="openingHours" name="openingHours" />
-            <input type="hidden" id="googleRating" name="googleRating" />
-            <input type="hidden" id="googleRatingCount" name="googleRatingCount" />
-            <input type="hidden" id="googleTypes" name="googleTypes" />
-            <input type="hidden" id="accessibility" name="accessibility" />
-            <input type="hidden" id="parking" name="parking" />
+            {/* Google Places Data Section */}
+            {Object.keys(googleData).length > 0 && (
+              <div className="border-t pt-4 mt-4">
+                <p className="text-sm font-medium text-gray-700 mb-3">Google Places Data</p>
+                <div className="space-y-3">
+                  {googleData.googlePlaceId && (
+                    <div>
+                      <Label htmlFor="googlePlaceId" className="text-xs text-gray-500">Place ID</Label>
+                      <Input id="googlePlaceId" name="googlePlaceId" readOnly defaultValue={googleData.googlePlaceId} className="bg-gray-50 text-sm" />
+                    </div>
+                  )}
+                  {googleData.googleMapsUrl && (
+                    <div>
+                      <Label htmlFor="googleMapsUrl" className="text-xs text-gray-500">Google Maps URL</Label>
+                      <div className="flex gap-2">
+                        <Input id="googleMapsUrl" name="googleMapsUrl" readOnly defaultValue={googleData.googleMapsUrl} className="bg-gray-50 text-sm" />
+                        <a href={googleData.googleMapsUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-gray-50">Open</a>
+                      </div>
+                    </div>
+                  )}
+                  {(googleData.googleRating || googleData.googleRatingCount) && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="googleRating" className="text-xs text-gray-500">Rating</Label>
+                        <Input id="googleRating" name="googleRating" readOnly defaultValue={googleData.googleRating ?? ""} className="bg-gray-50 text-sm" />
+                      </div>
+                      <div>
+                        <Label htmlFor="googleRatingCount" className="text-xs text-gray-500">Rating Count</Label>
+                        <Input id="googleRatingCount" name="googleRatingCount" readOnly defaultValue={googleData.googleRatingCount ?? ""} className="bg-gray-50 text-sm" />
+                      </div>
+                    </div>
+                  )}
+                  {googleData.googleTypes && (
+                    <div>
+                      <Label className="text-xs text-gray-500">Types</Label>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {(JSON.parse(googleData.googleTypes) as string[]).map((t: string) => (
+                          <span key={t} className="px-2 py-0.5 bg-gray-100 rounded text-xs">{t.replace(/_/g, " ")}</span>
+                        ))}
+                      </div>
+                      <input type="hidden" id="googleTypes" name="googleTypes" defaultValue={googleData.googleTypes} />
+                    </div>
+                  )}
+                  {googleData.openingHours && (
+                    <div>
+                      <Label className="text-xs text-gray-500">Opening Hours</Label>
+                      <div className="mt-1 text-sm bg-gray-50 rounded-md p-2 space-y-0.5">
+                        {(() => {
+                          try {
+                            const hours = JSON.parse(googleData.openingHours) as { weekdayDescriptions?: string[] };
+                            return hours.weekdayDescriptions?.map((d: string, i: number) => (
+                              <div key={i} className="text-xs">{d}</div>
+                            )) || <div className="text-xs text-gray-400">No schedule available</div>;
+                          } catch { return <div className="text-xs text-gray-400">Invalid format</div>; }
+                        })()}
+                      </div>
+                      <input type="hidden" id="openingHours" name="openingHours" defaultValue={googleData.openingHours} />
+                    </div>
+                  )}
+                  {googleData.accessibility && (
+                    <div>
+                      <Label className="text-xs text-gray-500">Accessibility</Label>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {Object.entries(JSON.parse(googleData.accessibility) as Record<string, boolean>)
+                          .filter(([, v]) => v)
+                          .map(([k]) => (
+                            <span key={k} className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs">
+                              {k.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim()}
+                            </span>
+                          ))}
+                      </div>
+                      <input type="hidden" id="accessibility" name="accessibility" defaultValue={googleData.accessibility} />
+                    </div>
+                  )}
+                  {googleData.parking && (
+                    <div>
+                      <Label className="text-xs text-gray-500">Parking</Label>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {Object.entries(JSON.parse(googleData.parking) as Record<string, boolean>)
+                          .filter(([, v]) => v)
+                          .map(([k]) => (
+                            <span key={k} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
+                              {k.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim()}
+                            </span>
+                          ))}
+                      </div>
+                      <input type="hidden" id="parking" name="parking" defaultValue={googleData.parking} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {/* Hidden fallbacks for fields not yet populated */}
+            {!googleData.googlePlaceId && <input type="hidden" id="googlePlaceId" name="googlePlaceId" />}
+            {!googleData.googleMapsUrl && <input type="hidden" id="googleMapsUrl" name="googleMapsUrl" />}
+            {!googleData.openingHours && <input type="hidden" id="openingHours" name="openingHours" />}
+            {!googleData.googleRating && <input type="hidden" id="googleRating" name="googleRating" />}
+            {!googleData.googleRatingCount && <input type="hidden" id="googleRatingCount" name="googleRatingCount" />}
+            {!googleData.googleTypes && <input type="hidden" id="googleTypes" name="googleTypes" />}
+            {!googleData.accessibility && <input type="hidden" id="accessibility" name="accessibility" />}
+            {!googleData.parking && <input type="hidden" id="parking" name="parking" />}
 
             <div className="flex gap-4">
               <Button type="submit" disabled={loading}>
