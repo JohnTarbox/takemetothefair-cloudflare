@@ -50,11 +50,22 @@ export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
   try {
     const eventId = crypto.randomUUID();
+    let slug = createSlug(data.name);
+
+    // Check for duplicate slug and append suffix if needed
+    const existing = await db
+      .select({ id: events.id })
+      .from(events)
+      .where(eq(events.slug, slug))
+      .limit(1);
+    if (existing.length > 0) {
+      slug = `${slug}-${Date.now()}`;
+    }
 
     await db.insert(events).values({
       id: eventId,
       name: data.name,
-      slug: createSlug(data.name),
+      slug,
       description: data.description,
       venueId: data.venueId,
       promoterId: data.promoterId,
@@ -99,6 +110,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(newEvent, { status: 201 });
   } catch (error) {
     await logError(db, { message: "Failed to create event", error, source: "api/admin/events", request });
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("UNIQUE constraint failed") || message.includes("unique")) {
+      return NextResponse.json({ error: "An event with this name already exists" }, { status: 409 });
+    }
+    if (message.includes("FOREIGN KEY constraint failed")) {
+      return NextResponse.json({ error: "Invalid promoter or venue selected" }, { status: 400 });
+    }
     return NextResponse.json({ error: "Failed to create event" }, { status: 500 });
   }
 }
