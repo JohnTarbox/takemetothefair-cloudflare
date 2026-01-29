@@ -5,13 +5,15 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
 import { eq, count, gte, and } from "drizzle-orm";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
 async function getStats() {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     const [
       totalEventsResult,
@@ -41,7 +43,11 @@ async function getStats() {
       totalEventVendors: totalEventVendorsResult[0]?.count || 0,
     };
   } catch (e) {
-    console.error("Error fetching stats:", e);
+    await logError(db, {
+      message: "Error fetching stats",
+      error: e,
+      source: "app/admin/page.tsx:getStats",
+    });
     return {
       totalEvents: 0,
       pendingEvents: 0,
@@ -55,8 +61,9 @@ async function getStats() {
 }
 
 async function getRecentSubmissions() {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     const results = await db
       .select()
@@ -73,14 +80,19 @@ async function getRecentSubmissions() {
       venue: r.venues!,
     }));
   } catch (e) {
-    console.error("Error fetching submissions:", e);
+    await logError(db, {
+      message: "Error fetching submissions",
+      error: e,
+      source: "app/admin/page.tsx:getRecentSubmissions",
+    });
     return [];
   }
 }
 
 async function getUpcomingEventsWithVendorCounts() {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
     const now = new Date();
 
     // Get upcoming approved events
@@ -115,7 +127,11 @@ async function getUpcomingEventsWithVendorCounts() {
       vendorCount: countMap.get(e.events.id) || 0,
     }));
   } catch (e) {
-    console.error("Error fetching upcoming events:", e);
+    await logError(db, {
+      message: "Error fetching upcoming events",
+      error: e,
+      source: "app/admin/page.tsx:getUpcomingEventsWithVendorCounts",
+    });
     return [];
   }
 }

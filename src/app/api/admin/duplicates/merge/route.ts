@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { executeMerge } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergeRequest } from "@/lib/duplicates/types";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -12,6 +13,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const db = getCloudflareDb();
   try {
     const body: MergeRequest = await request.json();
     const { type, primaryId, duplicateId } = body;
@@ -37,7 +39,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getCloudflareDb();
     const result = await executeMerge(
       db,
       type as DuplicateEntityType,
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Failed to execute merge:", error);
+    await logError(db, { message: "Failed to execute merge", error, source: "api/admin/duplicates/merge", request });
     const message = error instanceof Error ? error.message : "Failed to execute merge";
     return NextResponse.json({ error: message }, { status: 500 });
   }

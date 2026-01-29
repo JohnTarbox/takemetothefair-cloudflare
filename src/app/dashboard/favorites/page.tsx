@@ -6,13 +6,15 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
 import { eq, inArray, desc } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
 async function getFavorites(userId: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get all favorites for this user
     const favorites = await db
@@ -58,7 +60,12 @@ async function getFavorites(userId: string) {
       favorites,
     };
   } catch (e) {
-    console.error("Error fetching favorites:", e);
+    await logError(db, {
+      message: "Error fetching favorites",
+      error: e,
+      source: "app/dashboard/favorites/page.tsx:getFavorites",
+      context: { userId },
+    });
     return { events: [], venues: [], vendors: [], favorites: [] };
   }
 }

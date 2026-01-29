@@ -1,16 +1,18 @@
-import { NextResponse } from "next/server";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { NextRequest, NextResponse } from "next/server";
+import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { auth } from "@/lib/auth";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 // GET - Generate and download a database backup
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const errorDb = getCloudflareDb();
   try {
     const env = getCloudflareEnv();
     const db = env.DB;
@@ -95,7 +97,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Backup error:", error);
+    await logError(errorDb, { message: "Backup error", error, source: "api/admin/database/backup", request });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create backup" },
       { status: 500 }

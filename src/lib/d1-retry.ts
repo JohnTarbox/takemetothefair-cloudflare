@@ -5,6 +5,8 @@
  * D1 can experience temporary failures that resolve with a retry.
  */
 
+import { logError } from "./logger";
+
 // Errors that are safe to retry
 const RETRYABLE_ERRORS = [
   "database is locked",
@@ -70,10 +72,11 @@ export async function withD1Retry<T>(
 
       // Don't retry if we've exhausted attempts
       if (attempt === maxRetries) {
-        console.error(
-          `D1 operation failed after ${maxRetries + 1} attempts:`,
-          lastError.message
-        );
+        await logError(null, {
+          message: `D1 operation failed after ${maxRetries + 1} attempts`,
+          error: lastError,
+          source: "lib/d1-retry.ts:withD1Retry",
+        });
         throw lastError;
       }
 
@@ -82,10 +85,12 @@ export async function withD1Retry<T>(
       const jitter = Math.random() * 0.3 * exponentialDelay; // 0-30% jitter
       const delay = Math.min(exponentialDelay + jitter, maxDelayMs);
 
-      console.warn(
-        `D1 transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delay)}ms:`,
-        lastError.message
-      );
+      await logError(null, {
+        message: `D1 transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${Math.round(delay)}ms`,
+        error: lastError,
+        source: "lib/d1-retry.ts:withD1Retry",
+        level: "warn",
+      });
 
       await sleep(delay);
     }

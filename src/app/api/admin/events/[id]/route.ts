@@ -5,6 +5,7 @@ import { events, venues, promoters, eventVendors, vendors, eventDays } from "@/l
 import { eq, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -21,9 +22,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const eventResults = await db
       .select()
       .from(events)
@@ -65,7 +65,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(event);
   } catch (error) {
-    console.error("Failed to fetch event:", error);
+    await logError(db, { message: "Failed to fetch event", error, source: "api/admin/events/[id]", request });
     return NextResponse.json({ error: "Failed to fetch event" }, { status: 500 });
   }
 }
@@ -86,8 +86,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
 
     // Get current event to check if slug needs updating
     const [currentEvent] = await db
@@ -175,7 +175,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedEvent);
   } catch (error) {
-    console.error("Failed to update event:", error);
+    await logError(db, { message: "Failed to update event", error, source: "api/admin/events/[id]", request });
     const message = error instanceof Error ? error.message : "Failed to update event";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -189,12 +189,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     await db.delete(events).where(eq(events.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Failed to delete event:", error);
+    await logError(db, { message: "Failed to delete event", error, source: "api/admin/events/[id]", request });
     return NextResponse.json({ error: "Failed to delete event" }, { status: 500 });
   }
 }

@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -18,8 +19,8 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const status = searchParams.get("status");
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const eventsList = await getEventsWithRelations(db, {
       status: status || undefined,
       includeVendorCounts: true,
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(eventsList);
   } catch (error) {
-    console.error("Failed to fetch events:", error);
+    await logError(db, { message: "Failed to fetch events", error, source: "api/admin/events", request });
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
 }
@@ -46,8 +47,8 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const eventId = crypto.randomUUID();
 
     await db.insert(events).values({
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newEvent, { status: 201 });
   } catch (error) {
-    console.error("Failed to create event:", error);
+    await logError(db, { message: "Failed to create event", error, source: "api/admin/events", request });
     return NextResponse.json({ error: "Failed to create event" }, { status: 500 });
   }
 }

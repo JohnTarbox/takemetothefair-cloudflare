@@ -3,18 +3,19 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, events, eventVendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const db = getCloudflareDb();
 
     // Get the vendor for this user
     const vendorResults = await db
@@ -37,12 +38,13 @@ export async function GET() {
 
     return NextResponse.json(applications);
   } catch (error) {
-    console.error("Failed to fetch applications:", error);
+    await logError(db, { message: "Failed to fetch applications", error, source: "api/vendor/applications", request });
     return NextResponse.json({ error: "Failed to fetch applications" }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -55,8 +57,6 @@ export async function POST(request: NextRequest) {
     if (!eventId) {
       return NextResponse.json({ error: "Event ID is required" }, { status: 400 });
     }
-
-    const db = getCloudflareDb();
 
     // Get the vendor for this user
     const vendorResults = await db
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newApplication[0], { status: 201 });
   } catch (error) {
-    console.error("Failed to submit application:", error);
+    await logError(db, { message: "Failed to submit application", error, source: "api/vendor/applications", request });
     return NextResponse.json({ error: "Failed to submit application" }, { status: 500 });
   }
 }

@@ -1,16 +1,18 @@
-import { NextResponse } from "next/server";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { NextRequest, NextResponse } from "next/server";
+import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { auth } from "@/lib/auth";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 // POST - Restore database from SQL backup
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const errorDb = getCloudflareDb();
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
@@ -86,7 +88,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    console.error("Restore error:", error);
+    await logError(errorDb, { message: "Restore error", error, source: "api/admin/database/restore", request });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to restore database" },
       { status: 500 }

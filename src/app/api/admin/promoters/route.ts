@@ -6,21 +6,22 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getPromotersWithCounts } from "@/lib/queries";
 import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const promotersWithCounts = await getPromotersWithCounts(db);
     return NextResponse.json(promotersWithCounts);
   } catch (error) {
-    console.error("Failed to fetch promoters:", error);
+    await logError(db, { message: "Failed to fetch promoters", error, source: "api/admin/promoters", request });
     return NextResponse.json({ error: "Failed to fetch promoters" }, { status: 500 });
   }
 }
@@ -39,8 +40,8 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const promoterId = crypto.randomUUID();
 
     await db.insert(promoters).values({
@@ -68,7 +69,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newPromoter, { status: 201 });
   } catch (error) {
-    console.error("Failed to create promoter:", error);
+    await logError(db, { message: "Failed to create promoter", error, source: "api/admin/promoters", request });
     return NextResponse.json({ error: "Failed to create promoter" }, { status: 500 });
   }
 }

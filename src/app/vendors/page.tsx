@@ -5,6 +5,7 @@ import { vendors, users, eventVendors, events, venues, userFavorites } from "@/l
 import { eq, and, gte, isNotNull, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { VendorsView } from "@/components/vendors/vendors-view";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
@@ -40,8 +41,9 @@ async function getUserFavoriteIds(userId: string): Promise<string[]> {
 }
 
 async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Build conditions
     const conditions: ReturnType<typeof eq>[] = [];
@@ -158,14 +160,20 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
 
     return result;
   } catch (e) {
-    console.error("Error fetching vendors:", e);
+    await logError(db, {
+      message: "Error fetching vendors",
+      error: e,
+      source: "app/vendors/page.tsx:getVendors",
+      context: { searchParams },
+    });
     return [];
   }
 }
 
 async function getVendorTypes() {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
     const results = await db
       .selectDistinct({ vendorType: vendors.vendorType })
       .from(vendors)
@@ -176,7 +184,11 @@ async function getVendorTypes() {
       .filter((t): t is string => t !== null)
       .sort();
   } catch (e) {
-    console.error("Error fetching vendor types:", e);
+    await logError(db, {
+      message: "Error fetching vendor types",
+      error: e,
+      source: "app/vendors/page.tsx:getVendorTypes",
+    });
     return [];
   }
 }

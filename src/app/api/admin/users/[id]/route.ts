@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { userUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -27,9 +28,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.role) updateData.role = data.role;
     if (data.name !== undefined) updateData.name = data.name;
@@ -44,7 +44,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedUser);
   } catch (error) {
-    console.error("Failed to update user:", error);
+    await logError(db, { message: "Failed to update user", error, source: "api/admin/users/[id]", request });
     return NextResponse.json({ error: "Failed to update user" }, { status: 500 });
   }
 }

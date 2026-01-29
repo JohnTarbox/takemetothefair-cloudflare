@@ -24,6 +24,7 @@ import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
+import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
@@ -42,8 +43,9 @@ interface Props {
 async function getUserVendorInfo(userId: string | undefined, eventId: string) {
   if (!userId) return null;
 
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get the vendor for this user
     const vendorResults = await db
@@ -71,14 +73,20 @@ async function getUserVendorInfo(userId: string | undefined, eventId: string) {
       existingApplication: existingApplication.length > 0 ? existingApplication[0] : null,
     };
   } catch (e) {
-    console.error("Error fetching vendor info:", e);
+    await logError(db, {
+      message: "Error fetching vendor info",
+      error: e,
+      source: "app/events/[slug]/page.tsx:getUserVendorInfo",
+      context: { userId, eventId },
+    });
     return null;
   }
 }
 
 async function getEvent(slug: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get event with venue and promoter
     const eventResults = await db
@@ -134,7 +142,12 @@ async function getEvent(slug: string) {
       eventDays: eventDayResults,
     };
   } catch (e) {
-    console.error("Error fetching event:", e);
+    await logError(db, {
+      message: "Error fetching event",
+      error: e,
+      source: "app/events/[slug]/page.tsx:getEvent",
+      context: { slug },
+    });
     return null;
   }
 }

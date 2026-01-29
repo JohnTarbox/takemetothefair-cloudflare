@@ -7,13 +7,15 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites } from "@/lib/db/schema";
 import { eq, count } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
 async function getUserStats(userId: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
     const result = await db
       .select({ count: count() })
       .from(userFavorites)
@@ -21,7 +23,12 @@ async function getUserStats(userId: string) {
 
     return { favoritesCount: result[0]?.count || 0 };
   } catch (e) {
-    console.error("Error fetching user stats:", e);
+    await logError(db, {
+      message: "Error fetching user stats",
+      error: e,
+      source: "app/dashboard/page.tsx:getUserStats",
+      context: { userId },
+    });
     return { favoritesCount: 0 };
   }
 }

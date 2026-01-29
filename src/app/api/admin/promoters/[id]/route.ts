@@ -5,6 +5,7 @@ import { promoters, events, users } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -20,9 +21,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const promoterResults = await db
       .select()
       .from(promoters)
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       events: promoterEvents,
     });
   } catch (error) {
-    console.error("Failed to fetch promoter:", error);
+    await logError(db, { message: "Failed to fetch promoter", error, source: "api/admin/promoters/[id]", request });
     return NextResponse.json({ error: "Failed to fetch promoter" }, { status: 500 });
   }
 }
@@ -70,9 +70,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.companyName) {
       updateData.companyName = data.companyName;
@@ -93,7 +92,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedPromoter);
   } catch (error) {
-    console.error("Failed to update promoter:", error);
+    await logError(db, { message: "Failed to update promoter", error, source: "api/admin/promoters/[id]", request });
     return NextResponse.json({ error: "Failed to update promoter" }, { status: 500 });
   }
 }
@@ -106,9 +105,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     // Get promoter to find user
     const promoter = await db
       .select()
@@ -124,7 +122,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(promoters).where(eq(promoters.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Failed to delete promoter:", error);
+    await logError(db, { message: "Failed to delete promoter", error, source: "api/admin/promoters/[id]", request });
     return NextResponse.json({ error: "Failed to delete promoter" }, { status: 500 });
   }
 }

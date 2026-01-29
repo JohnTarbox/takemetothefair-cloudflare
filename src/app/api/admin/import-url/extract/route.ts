@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareAi } from "@/lib/cloudflare";
+import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import type { PageMetadata } from "@/lib/url-import/types";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -57,7 +59,7 @@ export async function POST(request: NextRequest) {
       count: events.length,
     });
   } catch (error) {
-    console.error("Extraction error:", error);
+    await logError(db, { message: "Extraction error", error, source: "api/admin/import-url/extract", request });
     return NextResponse.json(
       {
         success: false,

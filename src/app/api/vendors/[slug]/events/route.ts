@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -9,9 +10,9 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
+  const db = getCloudflareDb();
   try {
     const { slug } = await params;
-    const db = getCloudflareDb();
 
     // Get vendor by slug
     const vendorResults = await db
@@ -84,7 +85,7 @@ export async function GET(
       events: formattedEvents,
     });
   } catch (error) {
-    console.error("Error fetching vendor events:", error);
+    await logError(db, { message: "Error fetching vendor events", error, source: "api/vendors/[slug]/events", request });
     return NextResponse.json(
       { error: "Failed to fetch events" },
       { status: 500 }

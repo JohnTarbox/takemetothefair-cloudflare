@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -19,9 +20,8 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     await db
       .update(events)
       .set({ status: "REJECTED", updatedAt: new Date() })
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedEvent[0]);
   } catch (error) {
-    console.error("Failed to reject event:", error);
+    await logError(db, { message: "Failed to reject event", error, source: "api/admin/events/[id]/reject", request });
     return NextResponse.json({ error: "Failed to reject event" }, { status: 500 });
   }
 }

@@ -5,6 +5,7 @@ import { venues, userFavorites } from "@/lib/db/schema";
 import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
@@ -40,8 +41,9 @@ async function getUserFavoriteIds(userId: string): Promise<string[]> {
 }
 
 async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Build conditions
     const conditions = [eq(venues.status, "ACTIVE")];
@@ -111,14 +113,20 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
       },
     }));
   } catch (e) {
-    console.error("Error fetching venues:", e);
+    await logError(db, {
+      message: "Error fetching venues",
+      error: e,
+      source: "app/venues/page.tsx:getVenues",
+      context: { searchParams },
+    });
     return [];
   }
 }
 
 async function getStates() {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
     const results = await db
       .selectDistinct({ state: venues.state })
       .from(venues)
@@ -129,7 +137,11 @@ async function getStates() {
       .filter((s): s is string => s !== null)
       .sort();
   } catch (e) {
-    console.error("Error fetching states:", e);
+    await logError(db, {
+      message: "Error fetching states",
+      error: e,
+      source: "app/venues/page.tsx:getStates",
+    });
     return [];
   }
 }

@@ -10,6 +10,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
 import { eq, count, desc } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -23,8 +24,9 @@ const statusColors: Record<string, "default" | "success" | "warning" | "danger" 
 };
 
 async function getPromoterEvents(userId: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get the promoter for this user
     const promoterResults = await db
@@ -63,7 +65,12 @@ async function getPromoterEvents(userId: string) {
 
     return eventsWithCounts;
   } catch (e) {
-    console.error("Error fetching promoter events:", e);
+    await logError(db, {
+      message: "Error fetching promoter events",
+      error: e,
+      source: "app/promoter/events/page.tsx:getPromoterEvents",
+      context: { userId },
+    });
     return [];
   }
 }

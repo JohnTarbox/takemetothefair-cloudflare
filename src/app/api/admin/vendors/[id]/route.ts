@@ -5,6 +5,7 @@ import { vendors, eventVendors, events, users } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -20,9 +21,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const vendorResults = await db
       .select()
       .from(vendors)
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       })),
     });
   } catch (error) {
-    console.error("Failed to fetch vendor:", error);
+    await logError(db, { message: "Failed to fetch vendor", error, source: "api/admin/vendors/[id]", request });
     return NextResponse.json({ error: "Failed to fetch vendor" }, { status: 500 });
   }
 }
@@ -72,8 +72,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
 
     // Get current vendor to check if slug needs updating
     const [currentVendor] = await db
@@ -142,7 +142,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedVendor);
   } catch (error) {
-    console.error("Failed to update vendor:", error);
+    await logError(db, { message: "Failed to update vendor", error, source: "api/admin/vendors/[id]", request });
     const message = error instanceof Error ? error.message : "Failed to update vendor";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -156,9 +156,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     // Get vendor to find user
     const vendor = await db
       .select()
@@ -174,7 +173,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(vendors).where(eq(vendors.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Failed to delete vendor:", error);
+    await logError(db, { message: "Failed to delete vendor", error, source: "api/admin/vendors/[id]", request });
     return NextResponse.json({ error: "Failed to delete vendor" }, { status: 500 });
   }
 }

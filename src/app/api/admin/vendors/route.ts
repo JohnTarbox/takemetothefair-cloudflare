@@ -6,21 +6,22 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getVendorsWithCounts } from "@/lib/queries";
 import { vendorCreateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const vendorsWithCounts = await getVendorsWithCounts(db);
     return NextResponse.json(vendorsWithCounts);
   } catch (error) {
-    console.error("Failed to fetch vendors:", error);
+    await logError(db, { message: "Failed to fetch vendors", error, source: "api/admin/vendors", request });
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
 }
@@ -39,8 +40,8 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const vendorId = crypto.randomUUID();
 
     await db.insert(vendors).values({
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newVendor, { status: 201 });
   } catch (error) {
-    console.error("Failed to create vendor:", error);
+    await logError(db, { message: "Failed to create vendor", error, source: "api/admin/vendors", request });
     return NextResponse.json({ error: "Failed to create vendor" }, { status: 500 });
   }
 }

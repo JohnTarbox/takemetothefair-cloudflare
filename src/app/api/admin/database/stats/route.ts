@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { NextRequest, NextResponse } from "next/server";
+import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { auth } from "@/lib/auth";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -10,12 +11,13 @@ interface TableStats {
 }
 
 // GET - Get database statistics
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const errorDb = getCloudflareDb();
   try {
     const env = getCloudflareEnv();
     const db = env.DB;
@@ -65,7 +67,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Stats error:", error);
+    await logError(errorDb, { message: "Stats error", error, source: "api/admin/database/stats", request });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to get database stats" },
       { status: 500 }

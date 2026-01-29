@@ -12,6 +12,7 @@ import { eq, and, gte } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -22,8 +23,9 @@ interface Props {
 }
 
 async function getVenue(slug: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get venue
     const venueResults = await db
@@ -63,7 +65,12 @@ async function getVenue(slug: string) {
       events: venueEvents,
     };
   } catch (e) {
-    console.error("Error fetching venue:", e);
+    await logError(db, {
+      message: "Error fetching venue",
+      error: e,
+      source: "app/venues/[slug]/page.tsx:getVenue",
+      context: { slug },
+    });
     return null;
   }
 }

@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
-export async function GET() {
+export async function GET(request: Request) {
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const venueList = await db
       .select({
         id: venues.id,
@@ -22,7 +23,7 @@ export async function GET() {
 
     return NextResponse.json(venueList);
   } catch (error) {
-    console.error("Failed to fetch venues:", error);
+    await logError(db, { message: "Failed to fetch venues", error, source: "api/venues", request });
     return NextResponse.json({ error: "Failed to fetch venues" }, { status: 500 });
   }
 }

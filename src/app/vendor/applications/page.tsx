@@ -9,6 +9,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -20,8 +21,9 @@ const statusColors: Record<string, "default" | "success" | "warning" | "danger">
 };
 
 async function getApplications(userId: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get the vendor for this user
     const vendorResults = await db
@@ -53,7 +55,12 @@ async function getApplications(userId: string) {
         },
       }));
   } catch (e) {
-    console.error("Error fetching applications:", e);
+    await logError(db, {
+      message: "Error fetching applications",
+      error: e,
+      source: "app/vendor/applications/page.tsx:getApplications",
+      context: { userId },
+    });
     return [];
   }
 }

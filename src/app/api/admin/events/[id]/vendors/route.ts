@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { eventVendorAddSchema, eventVendorUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -21,9 +22,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const eventVendorResults = await db
       .select()
       .from(eventVendors)
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(vendorList);
   } catch (error) {
-    console.error("Failed to fetch event vendors:", error);
+    await logError(db, { message: "Failed to fetch event vendors", error, source: "api/admin/events/[id]/vendors", request });
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
 }
@@ -61,8 +61,8 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
 
     // Check if vendor is already added to this event
     const existing = await db
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       vendor: newEventVendor.vendors,
     }, { status: 201 });
   } catch (error) {
-    console.error("Failed to add vendor to event:", error);
+    await logError(db, { message: "Failed to add vendor to event", error, source: "api/admin/events/[id]/vendors", request });
     return NextResponse.json({ error: "Failed to add vendor" }, { status: 500 });
   }
 }
@@ -121,8 +121,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
 
     const updateData: Record<string, unknown> = {};
     if (data.status) updateData.status = data.status;
@@ -148,7 +148,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       vendor: updated.vendors,
     });
   } catch (error) {
-    console.error("Failed to update event vendor:", error);
+    await logError(db, { message: "Failed to update event vendor", error, source: "api/admin/events/[id]/vendors", request });
     return NextResponse.json({ error: "Failed to update vendor" }, { status: 500 });
   }
 }
@@ -162,6 +162,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
     const { searchParams } = new URL(request.url);
     const eventVendorId = searchParams.get("eventVendorId");
@@ -169,8 +170,6 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     if (!eventVendorId) {
       return NextResponse.json({ error: "Event vendor ID is required" }, { status: 400 });
     }
-
-    const db = getCloudflareDb();
 
     await db
       .delete(eventVendors)
@@ -181,7 +180,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Failed to remove vendor from event:", error);
+    await logError(db, { message: "Failed to remove vendor from event", error, source: "api/admin/events/[id]/vendors", request });
     return NextResponse.json({ error: "Failed to remove vendor" }, { status: 500 });
   }
 }

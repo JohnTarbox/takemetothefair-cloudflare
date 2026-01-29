@@ -11,6 +11,7 @@ import {
   getPromoterComparisonString,
 } from "@/lib/duplicates/similarity";
 import type { DuplicateEntityType, FindDuplicatesResponse } from "@/lib/duplicates/types";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -38,8 +39,8 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     let duplicates;
     let totalEntities = 0;
 
@@ -200,7 +201,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error("Failed to find duplicates:", error);
+    await logError(db, { message: "Failed to find duplicates", error, source: "api/admin/duplicates", request });
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
       { error: `Failed to find duplicates: ${message}` },

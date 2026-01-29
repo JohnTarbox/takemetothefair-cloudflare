@@ -5,6 +5,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, userFavorites } from "@/lib/db/schema";
 import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 export const revalidate = 60; // Cache for 1 minute
@@ -81,8 +82,9 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
   const limit = 12;
   const offset = (page - 1) * limit;
 
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Build conditions
     const conditions = [
@@ -284,7 +286,12 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
       limit,
     };
   } catch (e) {
-    console.error("Error fetching events:", e, "isCalendar:", isCalendarView);
+    await logError(db, {
+      message: "Error fetching events",
+      error: e,
+      source: "app/events/page.tsx:getEvents",
+      context: { isCalendarView, page, limit },
+    });
     return { events: [], total: 0, page: 1, limit };
   }
 }

@@ -5,6 +5,7 @@ import { users, promoters, vendors } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
 import { eq } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -19,6 +20,7 @@ const registerSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const db = getCloudflareDb();
   try {
     const body = await request.json() as Record<string, unknown>;
     const validation = registerSchema.safeParse(body);
@@ -33,8 +35,6 @@ export async function POST(request: NextRequest) {
 
     const { email, password, name, role, companyName, businessName } =
       validation.data;
-
-    const db = getCloudflareDb();
 
     const existingUser = await db
       .select()
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    console.error("Registration error:", error);
+    await logError(db, { message: "Registration error", error, source: "api/auth/register", request });
     return NextResponse.json(
       { error: "An error occurred during registration" },
       { status: 500 }

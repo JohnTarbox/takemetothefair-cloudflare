@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { getMergePreview } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergePreviewRequest } from "@/lib/duplicates/types";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -12,6 +13,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const db = getCloudflareDb();
   try {
     const body: MergePreviewRequest = await request.json();
     const { type, primaryId, duplicateId } = body;
@@ -37,7 +39,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const db = getCloudflareDb();
     const preview = await getMergePreview(
       db,
       type as DuplicateEntityType,
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(preview);
   } catch (error) {
-    console.error("Failed to generate merge preview:", error);
+    await logError(db, { message: "Failed to generate merge preview", error, source: "api/admin/duplicates/preview", request });
     const message = error instanceof Error ? error.message : "Failed to generate merge preview";
     return NextResponse.json({ error: message }, { status: 500 });
   }

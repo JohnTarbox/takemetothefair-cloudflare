@@ -13,6 +13,7 @@ import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -23,8 +24,9 @@ interface Props {
 }
 
 async function getVendor(slug: string) {
+  const db = getCloudflareDb();
+
   try {
-    const db = getCloudflareDb();
 
     // Get vendor with user
     const vendorResults = await db
@@ -68,7 +70,12 @@ async function getVendor(slug: string) {
       eventVendors: vendorEvents,
     };
   } catch (e) {
-    console.error("Error fetching vendor:", e);
+    await logError(db, {
+      message: "Error fetching vendor",
+      error: e,
+      source: "app/vendors/[slug]/page.tsx:getVendor",
+      context: { slug },
+    });
     return null;
   }
 }

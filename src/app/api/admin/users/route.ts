@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, promoters, vendors } from "@/lib/db/schema";
 import { notInArray } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -15,8 +16,8 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const available = searchParams.get("available");
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
 
     if (available === "promoter") {
       // Get users who don't have a promoter profile
@@ -82,7 +83,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(userList);
   } catch (error) {
-    console.error("Failed to fetch users:", error);
+    await logError(db, { message: "Failed to fetch users", error, source: "api/admin/users", request });
     return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 });
   }
 }
