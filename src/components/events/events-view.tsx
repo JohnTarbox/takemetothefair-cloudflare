@@ -268,7 +268,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
             {currentDate.getDate()}
           </div>
         </div>
-        <div className="max-h-[600px] overflow-y-auto">
+        <div className="max-h-[600px] overflow-y-auto print:max-h-none print:overflow-visible">
           {dayEvents.length === 0 ? (
             <div className="py-12 text-center text-gray-500">No events scheduled for this day</div>
           ) : (
@@ -534,7 +534,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
     const sortedDates = Object.keys(groupedEvents).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
 
     return (
-      <div className="max-h-[600px] overflow-y-auto">
+      <div className="max-h-[600px] overflow-y-auto print:max-h-none print:overflow-visible">
         {sortedDates.length === 0 ? (
           <div className="py-12 text-center text-gray-500">No upcoming events</div>
         ) : (
