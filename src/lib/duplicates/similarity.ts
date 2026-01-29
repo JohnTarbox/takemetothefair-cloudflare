@@ -125,20 +125,31 @@ export function combinedSimilarity(
 
 /**
  * Find all pairs of entities that exceed the similarity threshold
+ * @param getExactMatchKey Optional function that returns a key for exact-match detection
+ *   (e.g. Google Place ID). When two entities share the same non-empty key,
+ *   their similarity is set to 0.99 regardless of text similarity.
  */
 export function findDuplicatePairs<T extends { id: string }>(
   entities: T[],
   getComparisonString: (entity: T) => string,
-  threshold: number = 0.7
+  threshold: number = 0.7,
+  getExactMatchKey?: (entity: T) => string | null | undefined
 ): Array<{ entity1: T; entity2: T; similarity: number }> {
   const pairs: Array<{ entity1: T; entity2: T; similarity: number }> = [];
 
   for (let i = 0; i < entities.length; i++) {
     for (let j = i + 1; j < entities.length; j++) {
-      const str1 = getComparisonString(entities[i]);
-      const str2 = getComparisonString(entities[j]);
-
-      const similarity = combinedSimilarity(str1, str2);
+      // Check for exact match key (e.g. same Google Place ID)
+      let similarity: number;
+      const key1 = getExactMatchKey?.(entities[i]);
+      const key2 = getExactMatchKey?.(entities[j]);
+      if (key1 && key2 && key1 === key2) {
+        similarity = 0.99;
+      } else {
+        const str1 = getComparisonString(entities[i]);
+        const str2 = getComparisonString(entities[j]);
+        similarity = combinedSimilarity(str1, str2);
+      }
 
       if (similarity >= threshold) {
         pairs.push({

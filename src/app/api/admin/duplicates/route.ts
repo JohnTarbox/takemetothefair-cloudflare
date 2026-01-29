@@ -75,7 +75,8 @@ export async function GET(request: NextRequest) {
         duplicates = findDuplicatePairs(
           venuesWithCounts,
           getVenueComparisonString,
-          threshold
+          threshold,
+          (v) => v.googlePlaceId
         );
         break;
       }
