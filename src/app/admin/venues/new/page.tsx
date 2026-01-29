@@ -18,6 +18,9 @@ export default function NewVenuePage() {
   const [error, setError] = useState("");
   const [geocoding, setGeocoding] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
+  const [lookupResults, setLookupResults] = useState<{
+    field: string; label: string; value: string; checked: boolean;
+  }[] | null>(null);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -125,17 +128,24 @@ export default function NewVenuePage() {
         zip: string | null;
         photoUrl: string | null;
       };
-      const setIfEmpty = (id: string, value: string | null) => {
-        if (!value) return;
-        const input = document.getElementById(id) as HTMLInputElement;
-        if (input && !input.value) input.value = value;
-      };
-      setIfEmpty("contactPhone", result.phone);
-      setIfEmpty("website", result.website);
-      setIfEmpty("zip", result.zip);
-      if (result.lat != null) setIfEmpty("latitude", String(result.lat));
-      if (result.lng != null) setIfEmpty("longitude", String(result.lng));
-      setIfEmpty("imageUrl", result.photoUrl);
+      const fieldMap: { field: string; label: string; value: string | null }[] = [
+        { field: "contactPhone", label: "Phone", value: result.phone },
+        { field: "website", label: "Website", value: result.website },
+        { field: "zip", label: "ZIP", value: result.zip },
+        { field: "latitude", label: "Latitude", value: result.lat != null ? String(result.lat) : null },
+        { field: "longitude", label: "Longitude", value: result.lng != null ? String(result.lng) : null },
+        { field: "imageUrl", label: "Photo", value: result.photoUrl },
+      ];
+      const applicable = fieldMap.filter(f => {
+        if (!f.value) return false;
+        const input = document.getElementById(f.field) as HTMLInputElement;
+        return !input?.value;
+      }).map(f => ({ field: f.field, label: f.label, value: f.value!, checked: true }));
+      if (applicable.length === 0) {
+        setError("Lookup returned no new data for empty fields.");
+      } else {
+        setLookupResults(applicable);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lookup failed");
     } finally {
@@ -174,6 +184,54 @@ export default function NewVenuePage() {
           {error && (
             <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
               {error}
+            </div>
+          )}
+
+          {lookupResults && (
+            <div className="mb-4 p-4 border rounded-md bg-blue-50 space-y-3">
+              <p className="font-medium text-sm">Google Lookup Results</p>
+              {lookupResults.map((item, i) => (
+                <label key={item.field} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={item.checked}
+                    onChange={() => {
+                      setLookupResults(prev => prev!.map((r, j) => j === i ? { ...r, checked: !r.checked } : r));
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span className="flex-1">
+                    <span className="font-medium">{item.label}:</span>{" "}
+                    {item.field === "imageUrl" ? (
+                      <span className="block">
+                        <img src={item.value} alt="Preview" className="mt-1 max-h-24 rounded" />
+                        <span className="text-xs text-gray-500 break-all">{item.value}</span>
+                      </span>
+                    ) : (
+                      <span>{item.value}</span>
+                    )}
+                  </span>
+                </label>
+              ))}
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    for (const item of lookupResults) {
+                      if (!item.checked) continue;
+                      const input = document.getElementById(item.field) as HTMLInputElement;
+                      if (input) input.value = item.value;
+                    }
+                    setLookupResults(null);
+                  }}
+                >
+                  Apply Selected
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => setLookupResults(null)}>
+                  Dismiss
+                </Button>
+              </div>
             </div>
           )}
 
