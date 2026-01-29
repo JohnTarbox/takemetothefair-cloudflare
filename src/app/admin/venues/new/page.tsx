@@ -43,14 +43,14 @@ export default function NewVenuePage() {
       website: formData.get("website") || null,
       description: formData.get("description") || null,
       imageUrl: formData.get("imageUrl") || null,
-      googlePlaceId: formData.get("googlePlaceId") || null,
-      googleMapsUrl: formData.get("googleMapsUrl") || null,
-      openingHours: formData.get("openingHours") || null,
-      googleRating: formData.get("googleRating") ? parseFloat(formData.get("googleRating") as string) : null,
-      googleRatingCount: formData.get("googleRatingCount") ? parseInt(formData.get("googleRatingCount") as string) : null,
-      googleTypes: formData.get("googleTypes") || null,
-      accessibility: formData.get("accessibility") || null,
-      parking: formData.get("parking") || null,
+      googlePlaceId: googleData.googlePlaceId || null,
+      googleMapsUrl: googleData.googleMapsUrl || null,
+      openingHours: googleData.openingHours || null,
+      googleRating: googleData.googleRating ? parseFloat(googleData.googleRating) : null,
+      googleRatingCount: googleData.googleRatingCount ? parseInt(googleData.googleRatingCount) : null,
+      googleTypes: googleData.googleTypes || null,
+      accessibility: googleData.accessibility || null,
+      parking: googleData.parking || null,
       status: formData.get("status") || "ACTIVE",
     };
 
@@ -463,7 +463,7 @@ export default function NewVenuePage() {
                           <span key={t} className="px-2 py-0.5 bg-gray-100 rounded text-xs">{t.replace(/_/g, " ")}</span>
                         ))}
                       </div>
-                      <input type="hidden" id="googleTypes" name="googleTypes" defaultValue={googleData.googleTypes} />
+
                     </div>
                   )}
                   {googleData.openingHours && (
@@ -479,7 +479,7 @@ export default function NewVenuePage() {
                           } catch { return <div className="text-xs text-gray-400">Invalid format</div>; }
                         })()}
                       </div>
-                      <input type="hidden" id="openingHours" name="openingHours" defaultValue={googleData.openingHours} />
+
                     </div>
                   )}
                   {googleData.accessibility && (
@@ -494,7 +494,7 @@ export default function NewVenuePage() {
                             </span>
                           ))}
                       </div>
-                      <input type="hidden" id="accessibility" name="accessibility" defaultValue={googleData.accessibility} />
+
                     </div>
                   )}
                   {googleData.parking && (
@@ -509,21 +509,12 @@ export default function NewVenuePage() {
                             </span>
                           ))}
                       </div>
-                      <input type="hidden" id="parking" name="parking" defaultValue={googleData.parking} />
+
                     </div>
                   )}
                 </div>
               </div>
             )}
-            {/* Hidden fallbacks for fields not yet populated */}
-            {!googleData.googlePlaceId && <input type="hidden" id="googlePlaceId" name="googlePlaceId" />}
-            {!googleData.googleMapsUrl && <input type="hidden" id="googleMapsUrl" name="googleMapsUrl" />}
-            {!googleData.openingHours && <input type="hidden" id="openingHours" name="openingHours" />}
-            {!googleData.googleRating && <input type="hidden" id="googleRating" name="googleRating" />}
-            {!googleData.googleRatingCount && <input type="hidden" id="googleRatingCount" name="googleRatingCount" />}
-            {!googleData.googleTypes && <input type="hidden" id="googleTypes" name="googleTypes" />}
-            {!googleData.accessibility && <input type="hidden" id="accessibility" name="accessibility" />}
-            {!googleData.parking && <input type="hidden" id="parking" name="parking" />}
 
             <div className="flex gap-4">
               <Button type="submit" disabled={loading}>
