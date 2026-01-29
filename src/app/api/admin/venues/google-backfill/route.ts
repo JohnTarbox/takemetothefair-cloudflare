@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNull, inArray, and } from "drizzle-orm";
 import { lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 
@@ -19,17 +19,28 @@ export async function POST(request: NextRequest) {
   const apiKey = env.GOOGLE_MAPS_API_KEY;
 
   try {
+    const body = await request.json().catch(() => ({})) as { venueIds?: string[] };
+    const venueIds = body.venueIds;
+
     const missingGoogle = await db
       .select()
       .from(venues)
-      .where(isNull(venues.googlePlaceId));
+      .where(
+        venueIds?.length
+          ? and(isNull(venues.googlePlaceId), inArray(venues.id, venueIds))
+          : isNull(venues.googlePlaceId)
+      );
 
     let success = 0;
     let failed = 0;
     let skipped = 0;
 
     for (const venue of missingGoogle) {
-      const result = await lookupPlace(venue.name, venue.city, venue.state, apiKey);
+      const result = await lookupPlace(venue.name, venue.city, venue.state, apiKey, {
+        address: venue.address || undefined,
+        lat: venue.latitude ? Number(venue.latitude) : undefined,
+        lng: venue.longitude ? Number(venue.longitude) : undefined,
+      });
 
       if (result && result.googlePlaceId) {
         const updates: Record<string, unknown> = {

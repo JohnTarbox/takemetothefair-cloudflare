@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, MapPin, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, MapPin, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,18 @@ interface Venue {
   _count: { events: number };
 }
 
+interface BackfillPreview {
+  venueId: string;
+  venueName: string;
+  venueCity: string;
+  venueState: string;
+  googleName: string | null;
+  googlePlaceId: string | null;
+  googleRating: number | null;
+  googleAddress: string | null;
+  photoUrl: string | null;
+}
+
 export default function AdminVenuesPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +47,9 @@ export default function AdminVenuesPage() {
   const [batchResult, setBatchResult] = useState<string | null>(null);
   const [backfillingGoogle, setBackfillingGoogle] = useState(false);
   const [googleBackfillResult, setGoogleBackfillResult] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [backfillPreview, setBackfillPreview] = useState<BackfillPreview[]>([]);
+  const [selectedVenueIds, setSelectedVenueIds] = useState<Set<string>>(new Set());
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "name",
     direction: "asc",
@@ -72,20 +87,63 @@ export default function AdminVenuesPage() {
   const missingCoordCount = venues.filter((v) => v.latitude == null).length;
   const missingGoogleCount = venues.filter((v) => v.googlePlaceId == null).length;
 
-  const handleGoogleBackfill = async () => {
+  const handleGooglePreview = async () => {
+    setPreviewLoading(true);
+    setGoogleBackfillResult(null);
+    try {
+      const res = await fetch("/api/admin/venues/google-backfill/preview", { method: "POST" });
+      const data = await res.json() as BackfillPreview[];
+      if (data.length === 0) {
+        setGoogleBackfillResult("No Google matches found for any venues.");
+        return;
+      }
+      setBackfillPreview(data);
+      setSelectedVenueIds(new Set(data.map((d) => d.venueId)));
+    } catch {
+      setGoogleBackfillResult("Google backfill preview failed");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleApplySelected = async () => {
+    if (selectedVenueIds.size === 0) return;
     setBackfillingGoogle(true);
     setGoogleBackfillResult(null);
     try {
-      const res = await fetch("/api/admin/venues/google-backfill", { method: "POST" });
+      const res = await fetch("/api/admin/venues/google-backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ venueIds: Array.from(selectedVenueIds) }),
+      });
       const data = await res.json() as { success: number; failed: number; skipped: number; total: number };
       setGoogleBackfillResult(
         `Google backfill: ${data.success} updated, ${data.skipped} skipped, ${data.failed} failed (${data.total} total)`
       );
+      setBackfillPreview([]);
+      setSelectedVenueIds(new Set());
       fetchVenues();
     } catch {
       setGoogleBackfillResult("Google backfill failed");
     } finally {
       setBackfillingGoogle(false);
+    }
+  };
+
+  const toggleVenueSelection = (venueId: string) => {
+    setSelectedVenueIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(venueId)) next.delete(venueId);
+      else next.add(venueId);
+      return next;
+    });
+  };
+
+  const toggleAllSelection = () => {
+    if (selectedVenueIds.size === backfillPreview.length) {
+      setSelectedVenueIds(new Set());
+    } else {
+      setSelectedVenueIds(new Set(backfillPreview.map((d) => d.venueId)));
     }
   };
 
@@ -133,12 +191,12 @@ export default function AdminVenuesPage() {
           {missingGoogleCount > 0 && (
             <Button
               variant="outline"
-              disabled={backfillingGoogle}
-              onClick={handleGoogleBackfill}
+              disabled={previewLoading || backfillingGoogle}
+              onClick={handleGooglePreview}
             >
               <Search className="w-4 h-4 mr-2" />
-              {backfillingGoogle
-                ? "Backfilling..."
+              {previewLoading
+                ? "Looking up..."
                 : `Backfill Google Data (${missingGoogleCount})`}
             </Button>
           )}
@@ -173,6 +231,81 @@ export default function AdminVenuesPage() {
         <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">
           {googleBackfillResult}
         </div>
+      )}
+
+      {backfillPreview.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-medium text-gray-900">
+                Google Backfill Preview — {backfillPreview.length} matches found
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setBackfillPreview([]); setSelectedVenueIds(new Set()); }}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-2 px-3 text-left">
+                      <input
+                        type="checkbox"
+                        checked={selectedVenueIds.size === backfillPreview.length}
+                        onChange={toggleAllSelection}
+                      />
+                    </th>
+                    <th className="py-2 px-3 text-left font-medium text-gray-600">Venue</th>
+                    <th className="py-2 px-3 text-left font-medium text-gray-600">City/State</th>
+                    <th className="py-2 px-3 text-left font-medium text-gray-600">Google Match</th>
+                    <th className="py-2 px-3 text-left font-medium text-gray-600">Google Address</th>
+                    <th className="py-2 px-3 text-left font-medium text-gray-600">Rating</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backfillPreview.map((p) => (
+                    <tr key={p.venueId} className="border-b border-gray-100">
+                      <td className="py-2 px-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedVenueIds.has(p.venueId)}
+                          onChange={() => toggleVenueSelection(p.venueId)}
+                        />
+                      </td>
+                      <td className="py-2 px-3 font-medium text-gray-900">{p.venueName}</td>
+                      <td className="py-2 px-3 text-gray-600">{p.venueCity}, {p.venueState}</td>
+                      <td className="py-2 px-3 text-gray-600">{p.googleName || "-"}</td>
+                      <td className="py-2 px-3 text-gray-600">{p.googleAddress || "-"}</td>
+                      <td className="py-2 px-3 text-gray-600">{p.googleRating ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center gap-3 mt-4">
+              <Button
+                disabled={selectedVenueIds.size === 0 || backfillingGoogle}
+                onClick={handleApplySelected}
+              >
+                {backfillingGoogle
+                  ? "Applying..."
+                  : `Apply Selected (${selectedVenueIds.size})`}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => { setBackfillPreview([]); setSelectedVenueIds(new Set()); }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Card>

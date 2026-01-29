@@ -111,28 +111,61 @@ export async function lookupPlace(
   name: string,
   city: string,
   state: string,
-  apiKey?: string | null
+  apiKey?: string | null,
+  options?: { address?: string; lat?: number; lng?: number }
 ): Promise<PlaceLookupResult | null> {
   if (!apiKey) return null;
 
-  const textQuery = `${name} ${city} ${state}`;
+  const address = options?.address;
+  const textQuery = address
+    ? `${name} ${address} ${city} ${state}`
+    : `${name} ${city} ${state}`;
   const url = "https://places.googleapis.com/v1/places:searchText";
+
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Goog-Api-Key": apiKey,
+    "X-Goog-FieldMask":
+      "places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.addressComponents,places.photos,places.regularOpeningHours,places.rating,places.userRatingCount,places.types,places.accessibilityOptions,places.parkingOptions,places.editorialSummary,places.businessStatus,places.outdoorSeating",
+  };
+
+  const buildBody = (query: string) => {
+    const body: Record<string, unknown> = { textQuery: query };
+    if (options?.lat != null && options?.lng != null) {
+      body.locationBias = {
+        circle: {
+          center: { latitude: options.lat, longitude: options.lng },
+          radius: 5000.0,
+        },
+      };
+    }
+    return body;
+  };
 
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask":
-          "places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.addressComponents,places.photos,places.regularOpeningHours,places.rating,places.userRatingCount,places.types,places.accessibilityOptions,places.parkingOptions,places.editorialSummary,places.businessStatus,places.outdoorSeating",
-      },
-      body: JSON.stringify({ textQuery }),
+      headers,
+      body: JSON.stringify(buildBody(textQuery)),
     });
 
     if (!res.ok) return null;
 
-    const data = (await res.json()) as PlacesSearchResponse;
+    let data = (await res.json()) as PlacesSearchResponse;
+
+    // Retry with address-only query if no results and address was provided
+    if (!data.places?.length && address) {
+      const fallbackQuery = `${address} ${city} ${state}`;
+      const retryRes = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buildBody(fallbackQuery)),
+      });
+      if (retryRes.ok) {
+        data = (await retryRes.json()) as PlacesSearchResponse;
+      }
+    }
+
     if (!data.places?.length) return null;
 
     const place = data.places[0];
