@@ -5,6 +5,7 @@ import Credentials from "next-auth/providers/credentials";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq } from "drizzle-orm";
+import { logError } from "./logger";
 
 type UserRole = "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
 
@@ -31,19 +32,77 @@ declare module "next-auth/jwt" {
   }
 }
 
-// Simple password hashing for edge runtime (no bcrypt)
-export async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + (process.env.AUTH_SECRET || "fallback-secret"));
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const newHash = await hashPassword(password);
-  return newHash === hash;
+function fromHex(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+// PBKDF2 password hashing for edge runtime (Web Crypto API)
+const PBKDF2_ITERATIONS = 100_000;
+const SALT_LENGTH = 16; // 16 bytes = 32 hex chars
+
+export async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return `${toHex(salt.buffer)}:${toHex(derivedBits)}`;
+}
+
+async function verifyPbkdf2(password: string, saltHex: string, hashHex: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const salt = fromHex(saltHex);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return toHex(derivedBits) === hashHex;
+}
+
+// Legacy SHA-256 verification for backward compatibility
+async function verifyLegacySha256(password: string, storedHash: string): Promise<boolean> {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) return false;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + secret);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return toHex(hash) === storedHash;
+}
+
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  if (storedHash.includes(":")) {
+    const [salt, hash] = storedHash.split(":");
+    return verifyPbkdf2(password, salt, hash);
+  }
+  // Legacy format: plain SHA-256 hex
+  return verifyLegacySha256(password, storedHash);
 }
 
 // Create NextAuth config
@@ -65,8 +124,9 @@ const authConfig: NextAuthConfig = {
           return null;
         }
 
+        const db = getCloudflareDb();
+
         try {
-          const db = getCloudflareDb();
 
           const user = await db.query.users.findFirst({
             where: eq(schema.users.email, credentials.email as string),
@@ -85,6 +145,19 @@ const authConfig: NextAuthConfig = {
             return null;
           }
 
+          // Re-hash legacy SHA-256 passwords to PBKDF2 on successful login
+          if (!user.passwordHash.includes(":")) {
+            try {
+              const newHash = await hashPassword(credentials.password as string);
+              await db
+                .update(schema.users)
+                .set({ passwordHash: newHash })
+                .where(eq(schema.users.id, user.id));
+            } catch {
+              // Non-fatal: login still succeeds even if re-hash fails
+            }
+          }
+
           return {
             id: user.id,
             email: user.email,
@@ -93,7 +166,12 @@ const authConfig: NextAuthConfig = {
             role: user.role as UserRole,
           };
         } catch (error) {
-          console.error("Auth error:", error);
+          await logError(db, {
+            message: "Auth error",
+            error,
+            source: "lib/auth.ts:authorize",
+            context: { email: credentials.email },
+          });
           return null;
         }
       },

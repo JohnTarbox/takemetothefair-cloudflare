@@ -1,103 +1,112 @@
 import { describe, it, expect } from "vitest";
 
-// Test the password hashing functions directly
-// The edge-compatible implementation uses SHA-256 via crypto.subtle
+// Test PBKDF2 password hashing (mirrors src/lib/auth.ts implementation)
+const PBKDF2_ITERATIONS = 100_000;
 
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + "test-secret");
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const newHash = await hashPassword(password);
-  return newHash === hash;
+function fromHex(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return `${toHex(salt.buffer)}:${toHex(derivedBits)}`;
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  if (!storedHash.includes(":")) return false;
+  const [saltHex, hashHex] = storedHash.split(":");
+  const encoder = new TextEncoder();
+  const salt = fromHex(saltHex);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derivedBits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return toHex(derivedBits) === hashHex;
 }
 
 describe("hashPassword", () => {
-  it("hashes a password", async () => {
-    const password = "testPassword123";
-    const hash = await hashPassword(password);
-
-    expect(hash).toBeDefined();
-    expect(hash).not.toBe(password);
-    expect(hash.length).toBe(64); // SHA-256 produces 64 hex characters
+  it("hashes a password in salt:hash format", async () => {
+    const hash = await hashPassword("testPassword123");
+    expect(hash).toContain(":");
+    const [salt, derived] = hash.split(":");
+    expect(salt.length).toBe(32); // 16 bytes = 32 hex
+    expect(derived.length).toBe(64); // 32 bytes = 64 hex
   });
 
-  it("generates same hash for same password", async () => {
-    const password = "testPassword123";
-    const hash1 = await hashPassword(password);
-    const hash2 = await hashPassword(password);
-
-    // SHA-256 is deterministic (unlike bcrypt with salt)
-    expect(hash1).toBe(hash2);
+  it("generates different hashes for same password (random salt)", async () => {
+    const hash1 = await hashPassword("testPassword123");
+    const hash2 = await hashPassword("testPassword123");
+    expect(hash1).not.toBe(hash2);
   });
 
   it("generates different hashes for different passwords", async () => {
     const hash1 = await hashPassword("password1");
     const hash2 = await hashPassword("password2");
-
     expect(hash1).not.toBe(hash2);
-  });
-
-  it("generates valid hex string", async () => {
-    const password = "testPassword123";
-    const hash = await hashPassword(password);
-
-    expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
 describe("verifyPassword", () => {
   it("returns true for correct password", async () => {
-    const password = "testPassword123";
-    const hash = await hashPassword(password);
-
-    const isValid = await verifyPassword(password, hash);
-    expect(isValid).toBe(true);
+    const hash = await hashPassword("testPassword123");
+    expect(await verifyPassword("testPassword123", hash)).toBe(true);
   });
 
   it("returns false for incorrect password", async () => {
-    const password = "testPassword123";
-    const wrongPassword = "wrongPassword456";
-    const hash = await hashPassword(password);
-
-    const isValid = await verifyPassword(wrongPassword, hash);
-    expect(isValid).toBe(false);
+    const hash = await hashPassword("testPassword123");
+    expect(await verifyPassword("wrongPassword456", hash)).toBe(false);
   });
 
   it("returns false for empty password against valid hash", async () => {
-    const password = "testPassword123";
-    const hash = await hashPassword(password);
-
-    const isValid = await verifyPassword("", hash);
-    expect(isValid).toBe(false);
+    const hash = await hashPassword("testPassword123");
+    expect(await verifyPassword("", hash)).toBe(false);
   });
 
   it("handles special characters in password", async () => {
     const password = "Test@Pass#123!$%^&*()";
     const hash = await hashPassword(password);
-
-    const isValid = await verifyPassword(password, hash);
-    expect(isValid).toBe(true);
+    expect(await verifyPassword(password, hash)).toBe(true);
   });
 
   it("handles unicode characters in password", async () => {
     const password = "Test密码123";
     const hash = await hashPassword(password);
-
-    const isValid = await verifyPassword(password, hash);
-    expect(isValid).toBe(true);
+    expect(await verifyPassword(password, hash)).toBe(true);
   });
 
   it("is case sensitive", async () => {
-    const password = "TestPassword";
-    const hash = await hashPassword(password);
-
-    const isValid = await verifyPassword("testpassword", hash);
-    expect(isValid).toBe(false);
+    const hash = await hashPassword("TestPassword");
+    expect(await verifyPassword("testpassword", hash)).toBe(false);
   });
 });

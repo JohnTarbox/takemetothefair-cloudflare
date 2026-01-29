@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 const FETCH_TIMEOUT = 15000; // 15 seconds
 
 export async function GET(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,6 +34,47 @@ export async function GET(request: NextRequest) {
   } catch {
     return NextResponse.json(
       { success: false, error: "Please enter a valid URL" },
+      { status: 400 }
+    );
+  }
+
+  // SSRF protection: block internal/private hostnames and IPs
+  const hostname = parsedUrl.hostname.toLowerCase();
+  if (
+    hostname === "localhost" ||
+    hostname === "[::1]" ||
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal")
+  ) {
+    return NextResponse.json(
+      { success: false, error: "Internal URLs are not allowed" },
+      { status: 400 }
+    );
+  }
+
+  // Block private/reserved IP ranges
+  const ipMatch = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (ipMatch) {
+    const [, a, b] = ipMatch.map(Number);
+    if (
+      a === 127 ||                          // 127.0.0.0/8
+      a === 10 ||                           // 10.0.0.0/8
+      (a === 172 && b >= 16 && b <= 31) ||  // 172.16.0.0/12
+      (a === 192 && b === 168) ||           // 192.168.0.0/16
+      (a === 169 && b === 254) ||           // 169.254.0.0/16
+      a === 0                               // 0.0.0.0/8
+    ) {
+      return NextResponse.json(
+        { success: false, error: "Internal URLs are not allowed" },
+        { status: 400 }
+      );
+    }
+  }
+
+  // Block IPv6 private ranges
+  if (hostname.startsWith("[fc") || hostname.startsWith("[fd") || hostname.startsWith("[fe80")) {
+    return NextResponse.json(
+      { success: false, error: "Internal URLs are not allowed" },
       { status: 400 }
     );
   }
@@ -115,7 +159,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.error("Fetch error:", error);
+    await logError(db, { message: "Fetch error", error, source: "api/admin/import-url/fetch", request });
     return NextResponse.json(
       {
         success: false,

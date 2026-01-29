@@ -14,6 +14,10 @@ export function createSlug(text: string): string {
   });
 }
 
+export function sanitizeLikeInput(input: string): string {
+  return input.replace(/[%_]/g, "\\$&");
+}
+
 export function formatDate(date: Date | string): string {
   const d = new Date(date);
   return d.toLocaleDateString("en-US", {

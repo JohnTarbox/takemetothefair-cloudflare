@@ -4,18 +4,20 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventDays } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const db = getCloudflareDb();
 
     const promoterResults = await db
       .select()
@@ -43,19 +45,19 @@ export async function GET() {
 
     return NextResponse.json(eventsList);
   } catch (error) {
-    console.error("Failed to fetch events:", error);
+    await logError(db, { message: "Failed to fetch events", error, source: "api/promoter/events", request });
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const db = getCloudflareDb();
 
     const promoterResults = await db
       .select()
@@ -72,7 +74,10 @@ export async function POST(request: NextRequest) {
 
     const promoter = promoterResults[0];
 
-    const body = await request.json() as Record<string, unknown>;
+    const validation = await validateRequestBody(request, promoterEventCreateSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
     const {
       name,
       description,
@@ -86,7 +91,7 @@ export async function POST(request: NextRequest) {
       ticketPriceMax,
       imageUrl,
       eventDays: eventDaysInput,
-    } = body;
+    } = validation.data;
 
     let slug = createSlug(name);
     const existingEvent = await db
@@ -142,7 +147,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newEvent[0], { status: 201 });
   } catch (error) {
-    console.error("Failed to create event:", error);
+    await logError(db, { message: "Failed to create event", error, source: "api/promoter/events", request });
     return NextResponse.json({ error: "Failed to create event" }, { status: 500 });
   }
 }

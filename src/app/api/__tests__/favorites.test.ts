@@ -95,7 +95,7 @@ describe("POST /api/favorites", () => {
     const data = await response.json();
 
     expect(response.status).toBe(400);
-    expect(data.error).toBe("Invalid type or id");
+    expect(data.error).toContain("type:");
   });
 
   it("returns 400 when id is missing", async () => {

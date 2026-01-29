@@ -2,10 +2,19 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { eq, and, gte, like, or } from "drizzle-orm";
+import { auth } from "@/lib/auth";
+import { sanitizeLikeInput } from "@/lib/utils";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 export async function GET(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const db = getCloudflareDb();
   try {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get("query");
@@ -15,8 +24,6 @@ export async function GET(request: Request) {
     const commercialVendors = searchParams.get("commercialVendors");
     const includePast = searchParams.get("includePast");
 
-    const db = getCloudflareDb();
-
     // Build conditions (same as the events page)
     const conditions = [eq(events.status, "APPROVED")];
 
@@ -25,16 +32,17 @@ export async function GET(request: Request) {
     }
 
     if (query) {
+      const safeQuery = sanitizeLikeInput(query);
       conditions.push(
         or(
-          like(events.name, `%${query}%`),
-          like(events.description, `%${query}%`)
+          like(events.name, `%${safeQuery}%`),
+          like(events.description, `%${safeQuery}%`)
         )!
       );
     }
 
     if (category) {
-      conditions.push(like(events.categories, `%${category}%`));
+      conditions.push(like(events.categories, `%${sanitizeLikeInput(category)}%`));
     }
 
     if (featured === "true") {
@@ -105,7 +113,7 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error("Error exporting events:", error);
+    await logError(db, { message: "Error exporting events", error, source: "api/events/export", request });
     return NextResponse.json({ error: "Failed to export events" }, { status: 500 });
   }
 }

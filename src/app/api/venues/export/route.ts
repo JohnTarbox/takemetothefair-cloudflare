@@ -3,16 +3,23 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+import { auth } from "@/lib/auth";
+import { sanitizeLikeInput } from "@/lib/utils";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 export async function GET(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const db = getCloudflareDb();
   try {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get("q");
     const state = searchParams.get("state");
-
-    const db = getCloudflareDb();
 
     // Build conditions
     const conditions = [eq(venues.status, "ACTIVE")];
@@ -23,7 +30,7 @@ export async function GET(request: Request) {
 
     if (query) {
       conditions.push(
-        sql`(${venues.name} LIKE ${'%' + query + '%'} OR ${venues.city} LIKE ${'%' + query + '%'})`
+        sql`(${venues.name} LIKE ${'%' + sanitizeLikeInput(query) + '%'} OR ${venues.city} LIKE ${'%' + sanitizeLikeInput(query) + '%'})`
       );
     }
 
@@ -87,7 +94,7 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error("Error exporting venues:", error);
+    await logError(db, { message: "Error exporting venues", error, source: "api/venues/export", request });
     return NextResponse.json({ error: "Failed to export venues" }, { status: 500 });
   }
 }

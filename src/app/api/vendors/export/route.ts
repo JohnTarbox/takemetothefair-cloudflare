@@ -3,17 +3,23 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events } from "@/lib/db/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
 import { parseJsonArray } from "@/types";
+import { auth } from "@/lib/auth";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 export async function GET(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const db = getCloudflareDb();
   try {
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type");
     const hasEvents = searchParams.get("hasEvents");
     const query = searchParams.get("q");
-
-    const db = getCloudflareDb();
 
     // Build conditions
     const conditions: ReturnType<typeof eq>[] = [];
@@ -130,7 +136,7 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error("Error exporting vendors:", error);
+    await logError(db, { message: "Error exporting vendors", error, source: "api/vendors/export", request });
     return NextResponse.json({ error: "Failed to export vendors" }, { status: 500 });
   }
 }

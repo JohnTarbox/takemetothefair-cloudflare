@@ -158,6 +158,54 @@ export const userUpdateSchema = z.object({
   role: z.enum(["ADMIN", "PROMOTER", "VENDOR", "USER"]).optional(),
 });
 
+// Vendor profile update (self-service)
+export const vendorProfileUpdateSchema = z.object({
+  businessName: nameSchema.optional(),
+  description: descriptionSchema,
+  vendorType: z.string().max(100).optional().nullable(),
+  products: z.array(z.string()).optional(),
+  website: urlSchema,
+  logoUrl: urlSchema,
+  contactName: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
+  contactEmail: emailSchema,
+  contactPhone: phoneSchema,
+  address: z.string().max(VALIDATION.ADDRESS_MAX_LENGTH).optional().nullable(),
+  city: z.string().max(VALIDATION.CITY_MAX_LENGTH).optional().nullable(),
+  state: z.string().max(VALIDATION.STATE_MAX_LENGTH).optional().nullable(),
+  zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
+  yearEstablished: z.number().int().min(1800).max(new Date().getFullYear()).optional().nullable(),
+  paymentMethods: z.array(z.string()).optional(),
+  licenseInfo: z.string().max(500).optional().nullable(),
+  insuranceInfo: z.string().max(500).optional().nullable(),
+});
+
+// Promoter event creation
+export const promoterEventCreateSchema = z.object({
+  name: nameSchema,
+  description: descriptionSchema,
+  venueId: z.string().min(1).optional().nullable(),
+  startDate: z.string().min(1),
+  endDate: z.string().min(1),
+  categories: z.array(z.string()).optional().default([]),
+  tags: z.array(z.string()).optional().default([]),
+  ticketUrl: urlSchema,
+  ticketPriceMin: z.number().min(0).optional().nullable(),
+  ticketPriceMax: z.number().min(0).optional().nullable(),
+  imageUrl: urlSchema,
+  eventDays: z.array(eventDaySchema).optional(),
+});
+
+// User profile update
+export const userProfileUpdateSchema = z.object({
+  name: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
+});
+
+// Favorite toggle
+export const favoriteSchema = z.object({
+  type: z.enum(["EVENT", "VENUE", "VENDOR", "PROMOTER"]),
+  id: z.string().min(1),
+});
+
 // Helper function to validate and parse request body
 export async function validateRequestBody<T extends z.ZodType>(
   request: Request,

@@ -3,6 +3,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { validateRequestBody, favoriteSchema } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -10,6 +12,7 @@ const VALID_TYPES = ["EVENT", "VENUE", "VENDOR", "PROMOTER"] as const;
 type FavoritableType = (typeof VALID_TYPES)[number];
 
 export async function GET(request: NextRequest) {
+  const db = getCloudflareDb();
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -18,8 +21,6 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const type = searchParams.get("type") as FavoritableType | null;
-
-    const db = getCloudflareDb();
 
     let query = db
       .select({
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ favorites });
   } catch (error) {
-    console.error("Error fetching favorites:", error);
+    await logError(db, { message: "Error fetching favorites", error, source: "api/favorites", request });
     return NextResponse.json(
       { error: "Failed to fetch favorites" },
       { status: 500 }
@@ -59,23 +60,18 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const db = getCloudflareDb();
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
-    const { type, id } = body;
-
-    if (!type || !id || !VALID_TYPES.includes(type)) {
-      return NextResponse.json(
-        { error: "Invalid type or id" },
-        { status: 400 }
-      );
+    const validation = await validateRequestBody(request, favoriteSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-
-    const db = getCloudflareDb();
+    const { type, id } = validation.data;
 
     // Check if already favorited
     const existing = await db
@@ -103,7 +99,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ favorited: true, message: "Added to favorites" });
   } catch (error) {
-    console.error("Error adding favorite:", error);
+    await logError(db, { message: "Error adding favorite", error, source: "api/favorites", request });
     return NextResponse.json(
       { error: "Failed to add favorite" },
       { status: 500 }
@@ -112,6 +108,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+  const db = getCloudflareDb();
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -129,8 +126,6 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    const db = getCloudflareDb();
-
     await db
       .delete(userFavorites)
       .where(
@@ -143,7 +138,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ favorited: false, message: "Removed from favorites" });
   } catch (error) {
-    console.error("Error removing favorite:", error);
+    await logError(db, { message: "Error removing favorite", error, source: "api/favorites", request });
     return NextResponse.json(
       { error: "Failed to remove favorite" },
       { status: 500 }

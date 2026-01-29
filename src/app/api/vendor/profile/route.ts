@@ -4,18 +4,20 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
+import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const db = getCloudflareDb();
     const vendor = await db
       .select()
       .from(vendors)
@@ -28,27 +30,29 @@ export async function GET() {
 
     return NextResponse.json(vendor[0]);
   } catch (error) {
-    console.error("Failed to fetch vendor profile:", error);
+    await logError(db, { message: "Failed to fetch vendor profile", error, source: "api/vendor/profile", request });
     return NextResponse.json({ error: "Failed to fetch profile" }, { status: 500 });
   }
 }
 
 export async function PATCH(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const body = await request.json() as Record<string, unknown>;
+    const validation = await validateRequestBody(request, vendorProfileUpdateSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
     const {
       businessName, description, vendorType, products, website, logoUrl,
       contactName, contactEmail, contactPhone,
       address, city, state, zip,
       yearEstablished, paymentMethods, licenseInfo, insuranceInfo
-    } = body;
-
-    const db = getCloudflareDb();
+    } = validation.data;
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (businessName) {
@@ -88,7 +92,7 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json(updatedVendor[0]);
   } catch (error) {
-    console.error("Failed to update vendor profile:", error);
+    await logError(db, { message: "Failed to update vendor profile", error, source: "api/vendor/profile", request });
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
   }
 }
