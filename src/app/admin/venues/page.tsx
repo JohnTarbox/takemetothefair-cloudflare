@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, MapPin, Search, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, MapPin, Search, X, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,7 @@ export default function AdminVenuesPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [backfillPreview, setBackfillPreview] = useState<BackfillPreview[]>([]);
   const [selectedVenueIds, setSelectedVenueIds] = useState<Set<string>>(new Set());
+  const [filterMissingGoogle, setFilterMissingGoogle] = useState(false);
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "name",
     direction: "asc",
@@ -166,7 +167,11 @@ export default function AdminVenuesPage() {
     setSortConfig(getNextSortDirection(sortConfig, column));
   };
 
-  const sortedVenues = sortData(venues, sortConfig, {
+  const filteredVenues = filterMissingGoogle
+    ? venues.filter((v) => v.googlePlaceId == null)
+    : venues;
+
+  const sortedVenues = sortData(filteredVenues, sortConfig, {
     name: (v) => v.name,
     location: (v) => `${v.city}, ${v.state}`,
     capacity: (v) => v.capacity || 0,
@@ -188,6 +193,17 @@ export default function AdminVenuesPage() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Manage Venues</h1>
         <div className="flex items-center gap-2">
+          {missingGoogleCount > 0 && (
+            <Button
+              variant={filterMissingGoogle ? "default" : "outline"}
+              onClick={() => setFilterMissingGoogle(!filterMissingGoogle)}
+            >
+              <Filter className="w-4 h-4 mr-2" />
+              {filterMissingGoogle
+                ? `Missing Google (${missingGoogleCount})`
+                : `Filter Missing Google (${missingGoogleCount})`}
+            </Button>
+          )}
           {missingGoogleCount > 0 && (
             <Button
               variant="outline"
@@ -310,7 +326,11 @@ export default function AdminVenuesPage() {
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">{venues.length} venues total</p>
+          <p className="text-sm text-gray-600">
+            {filterMissingGoogle
+              ? `${filteredVenues.length} of ${venues.length} venues missing Google Place ID`
+              : `${venues.length} venues total`}
+          </p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
