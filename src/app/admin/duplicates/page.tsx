@@ -539,11 +539,110 @@ export default function AdminDuplicatesPage() {
                                 {entityType === "venues" && (
                                   <>
                                     <p className="text-gray-600">
-                                      {e.city as string}, {e.state as string}
+                                      {e.address as string}
                                     </p>
+                                    <p className="text-gray-600">
+                                      {e.city as string}, {e.state as string} {e.zip as string}
+                                    </p>
+                                    {(e.latitude || e.longitude) && (
+                                      <p className="text-gray-400 text-xs">
+                                        {e.latitude as number}, {e.longitude as number}
+                                      </p>
+                                    )}
                                     <p className="text-gray-600">
                                       {count?.events || 0} events
                                     </p>
+                                    {e.contactPhone && (
+                                      <p className="text-gray-600">Phone: {e.contactPhone as string}</p>
+                                    )}
+                                    {e.contactEmail && (
+                                      <p className="text-gray-600">Email: {e.contactEmail as string}</p>
+                                    )}
+                                    {e.website && (
+                                      <p className="text-gray-600 truncate">Web: {e.website as string}</p>
+                                    )}
+                                    {e.capacity && (
+                                      <p className="text-gray-600">Capacity: {e.capacity as number}</p>
+                                    )}
+                                    {e.description && (
+                                      <p className="text-gray-400 text-xs line-clamp-2 mt-1">{e.description as string}</p>
+                                    )}
+                                    {e.imageUrl && (
+                                      <img src={e.imageUrl as string} alt="" className="mt-2 max-h-20 rounded" />
+                                    )}
+                                    {/* Google Places fields */}
+                                    {(e.googlePlaceId || e.googleRating != null || e.openingHours || e.googleTypes || e.accessibility || e.parking || e.googleMapsUrl) && (
+                                      <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                                        <p className="text-xs font-medium text-gray-500">Google Places</p>
+                                        {e.googlePlaceId && (
+                                          <p className="text-gray-400 text-xs truncate">ID: {e.googlePlaceId as string}</p>
+                                        )}
+                                        {e.googleMapsUrl && (
+                                          <p className="text-xs"><a href={e.googleMapsUrl as string} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Maps link</a></p>
+                                        )}
+                                        {e.googleRating != null && (
+                                          <p className="text-gray-600 text-xs">Rating: {e.googleRating as number}/5 ({e.googleRatingCount as number} reviews)</p>
+                                        )}
+                                        {e.googleTypes && (() => {
+                                          try {
+                                            const types = JSON.parse(e.googleTypes as string) as string[];
+                                            return (
+                                              <div className="flex flex-wrap gap-1">
+                                                {types.slice(0, 5).map((t) => (
+                                                  <span key={t} className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px]">{t.replace(/_/g, " ")}</span>
+                                                ))}
+                                              </div>
+                                            );
+                                          } catch { return null; }
+                                        })()}
+                                        {e.openingHours && (() => {
+                                          try {
+                                            const hours = JSON.parse(e.openingHours as string) as { weekdayDescriptions?: string[] };
+                                            if (!hours.weekdayDescriptions?.length) return null;
+                                            return (
+                                              <details className="text-xs">
+                                                <summary className="text-gray-500 cursor-pointer">Hours</summary>
+                                                <div className="mt-1 space-y-0.5 text-gray-400">
+                                                  {hours.weekdayDescriptions.map((d, i) => (
+                                                    <div key={i}>{d}</div>
+                                                  ))}
+                                                </div>
+                                              </details>
+                                            );
+                                          } catch { return null; }
+                                        })()}
+                                        {e.accessibility && (() => {
+                                          try {
+                                            const opts = Object.entries(JSON.parse(e.accessibility as string) as Record<string, boolean>).filter(([, v]) => v);
+                                            if (!opts.length) return null;
+                                            return (
+                                              <div className="flex flex-wrap gap-1">
+                                                {opts.map(([k]) => (
+                                                  <span key={k} className="px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px]">
+                                                    {k.replace(/([A-Z])/g, " $1").trim()}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            );
+                                          } catch { return null; }
+                                        })()}
+                                        {e.parking && (() => {
+                                          try {
+                                            const opts = Object.entries(JSON.parse(e.parking as string) as Record<string, boolean>).filter(([, v]) => v);
+                                            if (!opts.length) return null;
+                                            return (
+                                              <div className="flex flex-wrap gap-1">
+                                                {opts.map(([k]) => (
+                                                  <span key={k} className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px]">
+                                                    {k.replace(/([A-Z])/g, " $1").trim()}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            );
+                                          } catch { return null; }
+                                        })()}
+                                      </div>
+                                    )}
                                   </>
                                 )}
                                 {entityType === "events" && (
