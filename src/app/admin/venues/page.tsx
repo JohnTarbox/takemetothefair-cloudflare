@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, MapPin } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, MapPin, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ interface Venue {
   status: string;
   capacity: number | null;
   latitude: number | null;
+  googlePlaceId: string | null;
   _count: { events: number };
 }
 
@@ -32,6 +33,8 @@ export default function AdminVenuesPage() {
   const [loading, setLoading] = useState(true);
   const [batchGeocoding, setBatchGeocoding] = useState(false);
   const [batchResult, setBatchResult] = useState<string | null>(null);
+  const [backfillingGoogle, setBackfillingGoogle] = useState(false);
+  const [googleBackfillResult, setGoogleBackfillResult] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "name",
     direction: "asc",
@@ -67,6 +70,24 @@ export default function AdminVenuesPage() {
   };
 
   const missingCoordCount = venues.filter((v) => v.latitude == null).length;
+  const missingGoogleCount = venues.filter((v) => v.googlePlaceId == null).length;
+
+  const handleGoogleBackfill = async () => {
+    setBackfillingGoogle(true);
+    setGoogleBackfillResult(null);
+    try {
+      const res = await fetch("/api/admin/venues/google-backfill", { method: "POST" });
+      const data = await res.json() as { success: number; failed: number; skipped: number; total: number };
+      setGoogleBackfillResult(
+        `Google backfill: ${data.success} updated, ${data.skipped} skipped, ${data.failed} failed (${data.total} total)`
+      );
+      fetchVenues();
+    } catch {
+      setGoogleBackfillResult("Google backfill failed");
+    } finally {
+      setBackfillingGoogle(false);
+    }
+  };
 
   const handleBatchGeocode = async () => {
     setBatchGeocoding(true);
@@ -109,6 +130,18 @@ export default function AdminVenuesPage() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Manage Venues</h1>
         <div className="flex items-center gap-2">
+          {missingGoogleCount > 0 && (
+            <Button
+              variant="outline"
+              disabled={backfillingGoogle}
+              onClick={handleGoogleBackfill}
+            >
+              <Search className="w-4 h-4 mr-2" />
+              {backfillingGoogle
+                ? "Backfilling..."
+                : `Backfill Google Data (${missingGoogleCount})`}
+            </Button>
+          )}
           {missingCoordCount > 0 && (
             <Button
               variant="outline"
@@ -133,6 +166,12 @@ export default function AdminVenuesPage() {
       {batchResult && (
         <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">
           {batchResult}
+        </div>
+      )}
+
+      {googleBackfillResult && (
+        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">
+          {googleBackfillResult}
         </div>
       )}
 
