@@ -5,6 +5,8 @@ import { events, venues, promoters } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
+import { logError } from "@/lib/logger";
+import { geocodeAddress } from "@/lib/google-maps";
 
 export const runtime = "edge";
 
@@ -18,6 +20,7 @@ interface ImportRequest {
 }
 
 export async function POST(request: NextRequest) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -41,8 +44,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    const db = getCloudflareDb();
 
     // Verify promoter exists
     const promoter = await db
@@ -110,6 +111,26 @@ export async function POST(request: NextRequest) {
         status: "ACTIVE",
       });
       venueId = newVenueId;
+
+      // Auto-geocode the new venue
+      try {
+        const geo = await geocodeAddress(
+          venueOption.address || "",
+          venueOption.city || "",
+          venueOption.state || ""
+        );
+        if (geo) {
+          const geoUpdates: Record<string, unknown> = {
+            latitude: geo.lat,
+            longitude: geo.lng,
+            updatedAt: new Date(),
+          };
+          if (geo.zip) geoUpdates.zip = geo.zip;
+          await db.update(venues).set(geoUpdates).where(eq(venues.id, newVenueId));
+        }
+      } catch {
+        // Non-blocking: venue still created without coordinates
+      }
     }
     // For type === "none", venueId remains null
 
@@ -181,7 +202,7 @@ export async function POST(request: NextRequest) {
       venueId, // Return venueId for reuse in batch imports
     });
   } catch (error) {
-    console.error("Error saving event:", error);
+    await logError(db, { message: "Error saving event", error, source: "api/admin/import-url", request });
     return NextResponse.json(
       { success: false, error: "Failed to save event. Please try again." },
       { status: 500 }

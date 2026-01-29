@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,12 +23,15 @@ interface Venue {
   state: string;
   status: string;
   capacity: number | null;
+  latitude: number | null;
   _count: { events: number };
 }
 
 export default function AdminVenuesPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
+  const [batchGeocoding, setBatchGeocoding] = useState(false);
+  const [batchResult, setBatchResult] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "name",
     direction: "asc",
@@ -63,6 +66,23 @@ export default function AdminVenuesPage() {
     }
   };
 
+  const missingCoordCount = venues.filter((v) => v.latitude == null).length;
+
+  const handleBatchGeocode = async () => {
+    setBatchGeocoding(true);
+    setBatchResult(null);
+    try {
+      const res = await fetch("/api/admin/venues/geocode-batch", { method: "POST" });
+      const data = await res.json() as { success: number; failed: number; total: number };
+      setBatchResult(`Geocoded ${data.success} of ${data.total} venues (${data.failed} failed)`);
+      fetchVenues();
+    } catch {
+      setBatchResult("Batch geocode failed");
+    } finally {
+      setBatchGeocoding(false);
+    }
+  };
+
   const handleSort = (column: string) => {
     setSortConfig(getNextSortDirection(sortConfig, column));
   };
@@ -88,13 +108,33 @@ export default function AdminVenuesPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Manage Venues</h1>
-        <Link href="/admin/venues/new">
-          <Button>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Venue
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {missingCoordCount > 0 && (
+            <Button
+              variant="outline"
+              disabled={batchGeocoding}
+              onClick={handleBatchGeocode}
+            >
+              <MapPin className="w-4 h-4 mr-2" />
+              {batchGeocoding
+                ? "Geocoding..."
+                : `Geocode Missing (${missingCoordCount})`}
+            </Button>
+          )}
+          <Link href="/admin/venues/new">
+            <Button>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Venue
+            </Button>
+          </Link>
+        </div>
       </div>
+
+      {batchResult && (
+        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">
+          {batchResult}
+        </div>
+      )}
 
       <Card>
         <CardHeader>

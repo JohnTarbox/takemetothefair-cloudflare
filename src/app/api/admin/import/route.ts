@@ -11,6 +11,8 @@ import { scrapeMaineMade, scrapeMaineMadeEventDetails } from "@/lib/scrapers/mai
 import { scrapeNewEnglandCraftFairs, scrapeNewEnglandCraftFairsEventDetails } from "@/lib/scrapers/newenglandcraftfairs";
 import { scrapeFairsAndFestivals, scrapeFairsAndFestivalsUrl, scrapeEventDetails as scrapeFairsAndFestivalsEventDetails } from "@/lib/scrapers/fairsandfestivals";
 import { createSlug } from "@/lib/utils";
+import { logError } from "@/lib/logger";
+import { geocodeAddress } from "@/lib/google-maps";
 
 // Helper function to find or create a venue
 // Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
@@ -97,6 +99,27 @@ async function findOrCreateVenue(
     status: "ACTIVE",
   });
 
+  // Auto-geocode the new venue
+  try {
+    const geo = await geocodeAddress(
+      scrapedVenue.streetAddress || "",
+      scrapedVenue.city || "",
+      scrapedVenue.state || "ME",
+      scrapedVenue.zip || undefined
+    );
+    if (geo) {
+      const geoUpdates: Record<string, unknown> = {
+        latitude: geo.lat,
+        longitude: geo.lng,
+        updatedAt: new Date(),
+      };
+      if (!scrapedVenue.zip && geo.zip) geoUpdates.zip = geo.zip;
+      await db.update(venues).set(geoUpdates).where(eq(venues.id, newVenueId));
+    }
+  } catch {
+    // Non-blocking: venue still created without coordinates
+  }
+
   return newVenueId;
 }
 
@@ -104,6 +127,7 @@ export const runtime = "edge";
 
 // GET - Preview events from a source
 export async function GET(request: Request) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -137,7 +161,7 @@ export async function GET(request: Request) {
         try {
           result = await scrapeFairsAndFestivalsUrl(customUrl);
         } catch (scrapeError) {
-          console.error("[FairsAndFestivals Custom URL] Scrape error:", scrapeError);
+          await logError(db, { message: "[FairsAndFestivals Custom URL] Scrape error", error: scrapeError, source: "api/admin/import", request });
           return NextResponse.json(
             { error: `Failed to scrape custom URL: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}` },
             { status: 500 }
@@ -182,14 +206,12 @@ export async function GET(request: Request) {
             }
             return { ...event, ...details };
           } catch (error) {
-            console.error(`Error fetching details for ${event.name}:`, error);
+            await logError(db, { message: `Error fetching details for ${event.name}`, error, source: "api/admin/import", request });
             return event;
           }
         })
       );
     }
-
-    const db = getCloudflareDb();
 
     // Check which events already exist
     const existingEvents = await db
@@ -214,7 +236,7 @@ export async function GET(request: Request) {
       existingCount: eventsWithStatus.filter(e => e.exists).length,
     });
   } catch (error) {
-    console.error("Error previewing import:", error);
+    await logError(db, { message: "Error previewing import", error, source: "api/admin/import", request });
     return NextResponse.json(
       { error: "Failed to preview events" },
       { status: 500 }
@@ -224,6 +246,7 @@ export async function GET(request: Request) {
 
 // POST - Import selected events
 export async function POST(request: Request) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -249,8 +272,6 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-
-    const db = getCloudflareDb();
 
     // Verify venue exists if provided
     if (venueId) {
@@ -317,7 +338,7 @@ export async function POST(request: Request) {
               console.log(`[Import Debug] Details returned:`, JSON.stringify(details));
             }
           } catch (scrapeError) {
-            console.error(`[Import Debug] Scraper error for ${event.name}:`, scrapeError);
+            await logError(db, { message: `[Import Debug] Scraper error for ${event.name}`, error: scrapeError, source: "api/admin/import", request });
             results.errors.push(`Scraper error for ${event.name}: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}`);
           }
           eventData = { ...eventData, ...details };
@@ -481,7 +502,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json(results);
   } catch (error) {
-    console.error("Error importing events:", error);
+    await logError(db, { message: "Error importing events", error, source: "api/admin/import", request });
     return NextResponse.json(
       { error: "Failed to import events" },
       { status: 500 }
@@ -490,14 +511,14 @@ export async function POST(request: Request) {
 }
 
 // PATCH - Sync existing events from their sources
-export async function PATCH(_request: Request) {
+export async function PATCH(request: Request) {
+  const db = getCloudflareDb();
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    const db = getCloudflareDb();
 
     // Get all events with sync enabled
     const syncableEvents = await db
@@ -588,7 +609,7 @@ export async function PATCH(_request: Request) {
 
     return NextResponse.json(results);
   } catch (error) {
-    console.error("Error syncing events:", error);
+    await logError(db, { message: "Error syncing events", error, source: "api/admin/import", request });
     return NextResponse.json(
       { error: "Failed to sync events" },
       { status: 500 }

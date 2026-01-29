@@ -37,6 +37,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [geocoding, setGeocoding] = useState(false);
+  const [lookingUp, setLookingUp] = useState(false);
 
   useEffect(() => {
     fetchVenue();
@@ -98,6 +100,86 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
     }
   };
 
+  const handleGeocode = async () => {
+    setGeocoding(true);
+    setError("");
+    try {
+      const form = document.querySelector("form") as HTMLFormElement;
+      const formData = new FormData(form);
+      const res = await fetch("/api/admin/venues/geocode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: formData.get("address"),
+          city: formData.get("city"),
+          state: formData.get("state"),
+          zip: formData.get("zip") || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json() as { error?: string };
+        throw new Error(data.error || "Geocoding failed");
+      }
+      const result = await res.json() as { lat: number; lng: number; zip: string | null };
+      const latInput = document.getElementById("latitude") as HTMLInputElement;
+      const lngInput = document.getElementById("longitude") as HTMLInputElement;
+      if (latInput) latInput.value = String(result.lat);
+      if (lngInput) lngInput.value = String(result.lng);
+      if (result.zip) {
+        const zipInput = document.getElementById("zip") as HTMLInputElement;
+        if (zipInput && !zipInput.value) zipInput.value = result.zip;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Geocoding failed");
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const handleLookup = async () => {
+    setLookingUp(true);
+    setError("");
+    try {
+      const form = document.querySelector("form") as HTMLFormElement;
+      const formData = new FormData(form);
+      const res = await fetch("/api/admin/venues/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.get("name"),
+          city: formData.get("city"),
+          state: formData.get("state"),
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json() as { error?: string };
+        throw new Error(data.error || "Lookup failed");
+      }
+      const result = await res.json() as {
+        phone: string | null;
+        website: string | null;
+        lat: number | null;
+        lng: number | null;
+        zip: string | null;
+      };
+      // Only fill empty fields
+      const setIfEmpty = (id: string, value: string | null) => {
+        if (!value) return;
+        const input = document.getElementById(id) as HTMLInputElement;
+        if (input && !input.value) input.value = value;
+      };
+      setIfEmpty("contactPhone", result.phone);
+      setIfEmpty("website", result.website);
+      setIfEmpty("zip", result.zip);
+      if (result.lat != null) setIfEmpty("latitude", String(result.lat));
+      if (result.lng != null) setIfEmpty("longitude", String(result.lng));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Lookup failed");
+    } finally {
+      setLookingUp(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
@@ -132,7 +214,18 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
 
       <Card className="max-w-2xl">
         <CardHeader>
-          <CardTitle>Edit Venue</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Edit Venue</CardTitle>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={lookingUp}
+              onClick={handleLookup}
+            >
+              {lookingUp ? "Looking up..." : "Lookup on Google"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {error && (
@@ -168,26 +261,40 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="latitude">Latitude</Label>
-                  <Input
-                    id="latitude"
-                    name="latitude"
-                    type="number"
-                    step="any"
-                    defaultValue={venue.latitude ?? ""}
-                  />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Coordinates</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={geocoding}
+                    onClick={handleGeocode}
+                  >
+                    {geocoding ? "Geocoding..." : "Geocode Address"}
+                  </Button>
                 </div>
-                <div>
-                  <Label htmlFor="longitude">Longitude</Label>
-                  <Input
-                    id="longitude"
-                    name="longitude"
-                    type="number"
-                    step="any"
-                    defaultValue={venue.longitude ?? ""}
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="latitude">Latitude</Label>
+                    <Input
+                      id="latitude"
+                      name="latitude"
+                      type="number"
+                      step="any"
+                      defaultValue={venue.latitude ?? ""}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="longitude">Longitude</Label>
+                    <Input
+                      id="longitude"
+                      name="longitude"
+                      type="number"
+                      step="any"
+                      defaultValue={venue.longitude ?? ""}
+                    />
+                  </div>
                 </div>
               </div>
 
