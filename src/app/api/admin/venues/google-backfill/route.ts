@@ -54,6 +54,9 @@ export async function POST(request: NextRequest) {
           parking: result.parking,
           updatedAt: new Date(),
         };
+        if (result.name) {
+          updates.name = result.name;
+        }
         if (result.description) {
           updates.description = result.description;
         }
