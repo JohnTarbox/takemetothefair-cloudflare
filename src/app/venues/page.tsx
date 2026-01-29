@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { Search, X, Heart, Calendar } from "lucide-react";
+import { Search, X, Heart, Calendar, Filter } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, userFavorites } from "@/lib/db/schema";
-import { eq, and, sql, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, sql, isNotNull, isNull, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
@@ -25,6 +25,7 @@ interface SearchParams {
   q?: string;
   favorites?: string;
   hasEvents?: string;
+  missingGoogle?: string;
 }
 
 async function getUserFavoriteIds(userId: string): Promise<string[]> {
@@ -71,6 +72,10 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
       AND events.status = 'APPROVED'
       AND events.end_date >= unixepoch('now')
     )`;
+
+    if (searchParams.missingGoogle === "true") {
+      conditions.push(isNull(venues.googlePlaceId));
+    }
 
     // Add hasEvents filter condition if requested
     if (searchParams.hasEvents === "true") {
@@ -154,6 +159,7 @@ export default async function VenuesPage({
   const params = await searchParams;
   const session = await auth();
   const isLoggedIn = !!session?.user?.id;
+  const isAdmin = session?.user?.role === "ADMIN";
 
   let favoriteIds: string[] | undefined;
   if (isLoggedIn && params.favorites === "true") {
@@ -165,9 +171,10 @@ export default async function VenuesPage({
     getStates(),
   ]);
 
-  const hasFilters = params.state || params.q || params.favorites || params.hasEvents;
+  const hasFilters = params.state || params.q || params.favorites || params.hasEvents || params.missingGoogle;
   const showingFavorites = params.favorites === "true";
   const showingWithEvents = params.hasEvents === "true";
+  const showingMissingGoogle = params.missingGoogle === "true";
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -194,6 +201,9 @@ export default async function VenuesPage({
                 {params.favorites && (
                   <input type="hidden" name="favorites" value={params.favorites} />
                 )}
+                {params.missingGoogle && (
+                  <input type="hidden" name="missingGoogle" value={params.missingGoogle} />
+                )}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                   <input
@@ -212,7 +222,7 @@ export default async function VenuesPage({
               <h3 className="font-medium text-gray-900 mb-3">Filter by State</h3>
               <div className="space-y-2 max-h-64 overflow-y-auto">
                 <Link
-                  href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
+                  href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                   className={`block px-3 py-2 rounded-lg text-sm ${
                     !params.state
                       ? "bg-blue-50 text-blue-700 font-medium"
@@ -224,7 +234,7 @@ export default async function VenuesPage({
                 {states.map((state) => (
                   <Link
                     key={state}
-                    href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
+                    href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       params.state === state
                         ? "bg-blue-50 text-blue-700 font-medium"
@@ -242,7 +252,7 @@ export default async function VenuesPage({
               <h3 className="font-medium text-gray-900 mb-3">Events</h3>
               {showingWithEvents ? (
                 <Link
-                  href={`/venues${buildQueryString({ state: params.state, q: params.q, favorites: params.favorites })}`}
+                  href={`/venues${buildQueryString({ state: params.state, q: params.q, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 font-medium"
                 >
                   <Calendar className="w-4 h-4" />
@@ -265,7 +275,7 @@ export default async function VenuesPage({
                 <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
                 {showingFavorites ? (
                   <Link
-                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents })}`}
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, missingGoogle: params.missingGoogle })}`}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
                   >
                     <Heart className="w-4 h-4 fill-current" />
@@ -278,6 +288,30 @@ export default async function VenuesPage({
                   >
                     <Heart className="w-4 h-4" />
                     My Favorites
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {/* Admin: Missing Google Place ID Filter */}
+            {isAdmin && (
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Admin</h3>
+                {showingMissingGoogle ? (
+                  <Link
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-amber-50 text-amber-700 font-medium"
+                  >
+                    <Filter className="w-4 h-4" />
+                    Missing Google ID
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: "true" })}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    <Filter className="w-4 h-4" />
+                    Missing Google ID
                   </Link>
                 )}
               </div>
