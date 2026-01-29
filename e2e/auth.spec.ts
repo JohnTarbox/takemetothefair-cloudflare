@@ -90,10 +90,8 @@ test.describe("Register Page", () => {
   test("displays link to login page", async ({ page }) => {
     await page.goto("/register");
 
-    const loginLink = page.locator('a[href="/login"]');
-    if (await loginLink.isVisible()) {
-      await expect(loginLink).toBeVisible();
-    }
+    const loginLink = page.locator('a[href="/login"]').first();
+    await expect(loginLink).toBeVisible();
   });
 });
 
