@@ -6,21 +6,22 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getVenuesWithEventCounts } from "@/lib/queries";
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const venuesWithCounts = await getVenuesWithEventCounts(db);
     return NextResponse.json(venuesWithCounts);
   } catch (error) {
-    console.error("Failed to fetch venues:", error);
+    await logError(db, { message: "Failed to fetch venues", error, source: "api/admin/venues", request });
     return NextResponse.json({ error: "Failed to fetch venues" }, { status: 500 });
   }
 }
@@ -39,8 +40,8 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const venueId = crypto.randomUUID();
 
     await db.insert(venues).values({
@@ -60,6 +61,14 @@ export async function POST(request: NextRequest) {
       website: data.website,
       description: data.description,
       imageUrl: data.imageUrl,
+      googlePlaceId: data.googlePlaceId,
+      googleMapsUrl: data.googleMapsUrl,
+      openingHours: data.openingHours,
+      googleRating: data.googleRating,
+      googleRatingCount: data.googleRatingCount,
+      googleTypes: data.googleTypes,
+      accessibility: data.accessibility,
+      parking: data.parking,
       status: data.status,
     });
 
@@ -71,7 +80,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newVenue, { status: 201 });
   } catch (error) {
-    console.error("Failed to create venue:", error);
+    await logError(db, { message: "Failed to create venue", error, source: "api/admin/venues", request });
     return NextResponse.json({ error: "Failed to create venue" }, { status: 500 });
   }
 }

@@ -33,6 +33,14 @@ export const venues = sqliteTable("venues", {
   website: text("website"),
   description: text("description"),
   imageUrl: text("image_url"),
+  googlePlaceId: text("google_place_id"),
+  googleMapsUrl: text("google_maps_url"),
+  openingHours: text("opening_hours"),
+  googleRating: real("google_rating"),
+  googleRatingCount: integer("google_rating_count"),
+  googleTypes: text("google_types"),
+  accessibility: text("accessibility"),
+  parking: text("parking"),
   status: text("status", { enum: ["ACTIVE", "INACTIVE"] }).default("ACTIVE").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
@@ -245,6 +253,21 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
 
+// Error Logs table
+export const errorLogs = sqliteTable("error_logs", {
+  id: text("id").primaryKey(),
+  timestamp: integer("timestamp").notNull(),
+  level: text("level").notNull().default("error"),
+  message: text("message").notNull(),
+  context: text("context").default("{}"),
+  url: text("url"),
+  method: text("method"),
+  statusCode: integer("status_code"),
+  stackTrace: text("stack_trace"),
+  userAgent: text("user_agent"),
+  source: text("source"),
+});
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type Venue = typeof venues.$inferSelect;
@@ -255,3 +278,4 @@ export type EventVendor = typeof eventVendors.$inferSelect;
 export type EventDay = typeof eventDays.$inferSelect;
 export type UserFavorite = typeof userFavorites.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type ErrorLog = typeof errorLogs.$inferSelect;

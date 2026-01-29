@@ -27,6 +27,14 @@ interface Venue {
   website: string | null;
   description: string | null;
   imageUrl: string | null;
+  googlePlaceId: string | null;
+  googleMapsUrl: string | null;
+  openingHours: string | null;
+  googleRating: number | null;
+  googleRatingCount: number | null;
+  googleTypes: string | null;
+  accessibility: string | null;
+  parking: string | null;
   status: string;
 }
 
@@ -40,7 +48,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
   const [geocoding, setGeocoding] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupResults, setLookupResults] = useState<{
-    field: string; label: string; value: string; checked: boolean;
+    field: string; label: string; value: string; checked: boolean; currentValue: string;
   }[] | null>(null);
 
   useEffect(() => {
@@ -80,6 +88,14 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       website: formData.get("website") || null,
       description: formData.get("description") || null,
       imageUrl: formData.get("imageUrl") || null,
+      googlePlaceId: formData.get("googlePlaceId") || null,
+      googleMapsUrl: formData.get("googleMapsUrl") || null,
+      openingHours: formData.get("openingHours") || null,
+      googleRating: formData.get("googleRating") ? parseFloat(formData.get("googleRating") as string) : null,
+      googleRatingCount: formData.get("googleRatingCount") ? parseInt(formData.get("googleRatingCount") as string) : null,
+      googleTypes: formData.get("googleTypes") || null,
+      accessibility: formData.get("accessibility") || null,
+      parking: formData.get("parking") || null,
       status: formData.get("status"),
     };
 
@@ -159,30 +175,61 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
         throw new Error(data.error || "Lookup failed");
       }
       const result = await res.json() as {
+        name: string | null;
         phone: string | null;
         website: string | null;
         lat: number | null;
         lng: number | null;
+        address: string | null;
+        city: string | null;
+        state: string | null;
         zip: string | null;
+        formattedAddress: string | null;
         photoUrl: string | null;
+        googlePlaceId: string | null;
+        googleMapsUrl: string | null;
+        openingHours: string | null;
+        googleRating: number | null;
+        googleRatingCount: number | null;
+        googleTypes: string | null;
+        accessibility: string | null;
+        parking: string | null;
+        description: string | null;
+        businessStatus: string | null;
+        outdoorSeating: boolean | null;
       };
       const fieldMap: { field: string; label: string; value: string | null }[] = [
+        { field: "name", label: "Name", value: result.name },
+        { field: "address", label: "Address", value: result.address || result.formattedAddress },
+        { field: "city", label: "City", value: result.city },
+        { field: "state", label: "State", value: result.state },
         { field: "contactPhone", label: "Phone", value: result.phone },
         { field: "website", label: "Website", value: result.website },
         { field: "zip", label: "ZIP", value: result.zip },
         { field: "latitude", label: "Latitude", value: result.lat != null ? String(result.lat) : null },
         { field: "longitude", label: "Longitude", value: result.lng != null ? String(result.lng) : null },
         { field: "imageUrl", label: "Photo", value: result.photoUrl },
+        { field: "description", label: "Description", value: result.description },
+        { field: "googlePlaceId", label: "Google Place ID", value: result.googlePlaceId },
+        { field: "googleMapsUrl", label: "Google Maps URL", value: result.googleMapsUrl },
+        { field: "openingHours", label: "Opening Hours", value: result.openingHours },
+        { field: "googleRating", label: "Rating", value: result.googleRating != null ? String(result.googleRating) : null },
+        { field: "googleRatingCount", label: "Rating Count", value: result.googleRatingCount != null ? String(result.googleRatingCount) : null },
+        { field: "googleTypes", label: "Types", value: result.googleTypes },
+        { field: "accessibility", label: "Accessibility", value: result.accessibility },
+        { field: "parking", label: "Parking", value: result.parking },
+        { field: "businessStatus", label: "Business Status", value: result.businessStatus },
+        { field: "outdoorSeating", label: "Outdoor Seating", value: result.outdoorSeating != null ? String(result.outdoorSeating) : null },
       ];
-      const applicable = fieldMap.filter(f => {
-        if (!f.value) return false;
+      const items = fieldMap.filter(f => f.value != null).map(f => {
         const input = document.getElementById(f.field) as HTMLInputElement;
-        return !input?.value;
-      }).map(f => ({ field: f.field, label: f.label, value: f.value!, checked: true }));
-      if (applicable.length === 0) {
-        setError("Lookup returned no new data for empty fields.");
+        const currentValue = input?.value || "";
+        return { field: f.field, label: f.label, value: f.value!, checked: !currentValue, currentValue };
+      });
+      if (items.length === 0) {
+        setError("Lookup returned no data from Google.");
       } else {
-        setLookupResults(applicable);
+        setLookupResults(items);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lookup failed");
@@ -267,6 +314,9 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                       </span>
                     ) : (
                       <span>{item.value}</span>
+                    )}
+                    {item.currentValue && (
+                      <span className="block text-xs text-gray-500">Current: {item.currentValue}</span>
                     )}
                   </span>
                 </label>
@@ -431,6 +481,16 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                 </select>
               </div>
             </div>
+
+            {/* Hidden inputs for Google Places fields */}
+            <input type="hidden" id="googlePlaceId" name="googlePlaceId" defaultValue={venue.googlePlaceId ?? ""} />
+            <input type="hidden" id="googleMapsUrl" name="googleMapsUrl" defaultValue={venue.googleMapsUrl ?? ""} />
+            <input type="hidden" id="openingHours" name="openingHours" defaultValue={venue.openingHours ?? ""} />
+            <input type="hidden" id="googleRating" name="googleRating" defaultValue={venue.googleRating ?? ""} />
+            <input type="hidden" id="googleRatingCount" name="googleRatingCount" defaultValue={venue.googleRatingCount ?? ""} />
+            <input type="hidden" id="googleTypes" name="googleTypes" defaultValue={venue.googleTypes ?? ""} />
+            <input type="hidden" id="accessibility" name="accessibility" defaultValue={venue.accessibility ?? ""} />
+            <input type="hidden" id="parking" name="parking" defaultValue={venue.parking ?? ""} />
 
             <div className="flex gap-4">
               <Button type="submit" disabled={saving}>

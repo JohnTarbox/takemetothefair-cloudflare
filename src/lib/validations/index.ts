@@ -28,6 +28,14 @@ export const venueCreateSchema = z.object({
   website: urlSchema,
   description: descriptionSchema,
   imageUrl: urlSchema,
+  googlePlaceId: z.string().optional().nullable(),
+  googleMapsUrl: urlSchema,
+  openingHours: z.string().optional().nullable(),
+  googleRating: z.number().min(0).max(5).optional().nullable(),
+  googleRatingCount: z.number().int().min(0).optional().nullable(),
+  googleTypes: z.string().optional().nullable(),
+  accessibility: z.string().optional().nullable(),
+  parking: z.string().optional().nullable(),
   status: z.enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE]).optional().default(VENUE_STATUS.ACTIVE),
 });
 

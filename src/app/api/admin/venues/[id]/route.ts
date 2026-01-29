@@ -5,6 +5,7 @@ import { venues, events } from "@/lib/db/schema";
 import { eq, desc, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -21,9 +22,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
-
     const venueResults = await db
       .select()
       .from(venues)
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       events: venueEvents,
     });
   } catch (error) {
-    console.error("Failed to fetch venue:", error);
+    await logError(db, { message: "Failed to fetch venue", error, source: "api/admin/venues/[id]", request });
     return NextResponse.json({ error: "Failed to fetch venue" }, { status: 500 });
   }
 }
@@ -70,8 +70,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const data = validation.data;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
 
     // Get current venue to check if slug needs updating
     const [currentVenue] = await db
@@ -122,6 +122,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.website !== undefined) updateData.website = data.website;
     if (data.description !== undefined) updateData.description = data.description;
     if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
+    if (data.googlePlaceId !== undefined) updateData.googlePlaceId = data.googlePlaceId;
+    if (data.googleMapsUrl !== undefined) updateData.googleMapsUrl = data.googleMapsUrl;
+    if (data.openingHours !== undefined) updateData.openingHours = data.openingHours;
+    if (data.googleRating !== undefined) updateData.googleRating = data.googleRating;
+    if (data.googleRatingCount !== undefined) updateData.googleRatingCount = data.googleRatingCount;
+    if (data.googleTypes !== undefined) updateData.googleTypes = data.googleTypes;
+    if (data.accessibility !== undefined) updateData.accessibility = data.accessibility;
+    if (data.parking !== undefined) updateData.parking = data.parking;
     if (data.status) updateData.status = data.status;
 
     await db.update(venues).set(updateData).where(eq(venues.id, id));
@@ -134,7 +142,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedVenue);
   } catch (error) {
-    console.error("Failed to update venue:", error);
+    await logError(db, { message: "Failed to update venue", error, source: "api/admin/venues/[id]", request });
     const message = error instanceof Error ? error.message : "Failed to update venue";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -148,12 +156,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
   const { id } = await params;
 
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     await db.delete(venues).where(eq(venues.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Failed to delete venue:", error);
+    await logError(db, { message: "Failed to delete venue", error, source: "api/admin/venues/[id]", request });
     return NextResponse.json({ error: "Failed to delete venue" }, { status: 500 });
   }
 }
