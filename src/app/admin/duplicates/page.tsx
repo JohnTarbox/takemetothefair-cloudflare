@@ -509,13 +509,16 @@ export default function AdminDuplicatesPage() {
                           const count = e._count as Record<string, number>;
 
                           return (
-                            <button
+                            <div
                               key={e.id as string}
                               onClick={() => {
                                 setPrimaryId(e.id as string);
                                 setPreview(null);
                               }}
-                              className={`text-left p-4 border-2 rounded-lg transition-colors ${
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { setPrimaryId(e.id as string); setPreview(null); } }}
+                              className={`text-left p-4 border-2 rounded-lg transition-colors cursor-pointer ${
                                 isSelected
                                   ? "border-blue-500 bg-blue-50"
                                   : "border-gray-200 hover:border-gray-300"
@@ -576,85 +579,38 @@ export default function AdminDuplicatesPage() {
                                       <p className="text-gray-400 text-xs truncate">
                                         Place ID: {(e.googlePlaceId as string) || "—"}
                                       </p>
-                                      <p className="text-xs">
-                                        Maps:{" "}
-                                        {e.googleMapsUrl ? (
-                                          <a href={e.googleMapsUrl as string} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">link</a>
-                                        ) : "—"}
+                                      <p className="text-xs text-gray-600">
+                                        Maps: {(e.googleMapsUrl as string) ? "yes" : "—"}
                                       </p>
                                       <p className="text-gray-600 text-xs">
                                         Rating: {e.googleRating != null ? `${e.googleRating as number}/5 (${e.googleRatingCount as number} reviews)` : "—"}
                                       </p>
-                                      <div>
-                                        <span className="text-xs text-gray-400">Types: </span>
-                                        {e.googleTypes ? (() => {
+                                      <p className="text-gray-600 text-xs">
+                                        Types: {e.googleTypes ? (() => {
                                           try {
-                                            const types = JSON.parse(e.googleTypes as string) as string[];
-                                            return (
-                                              <span className="inline-flex flex-wrap gap-1">
-                                                {types.slice(0, 5).map((t) => (
-                                                  <span key={t} className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px]">{t.replace(/_/g, " ")}</span>
-                                                ))}
-                                              </span>
-                                            );
-                                          } catch { return <span className="text-xs text-gray-400">—</span>; }
-                                        })() : <span className="text-xs text-gray-400">—</span>}
-                                      </div>
-                                      <div>
-                                        <span className="text-xs text-gray-400">Hours: </span>
-                                        {e.openingHours ? (() => {
+                                            return (JSON.parse(e.googleTypes as string) as string[]).slice(0, 5).map(t => t.replace(/_/g, " ")).join(", ");
+                                          } catch { return "—"; }
+                                        })() : "—"}
+                                      </p>
+                                      <p className="text-gray-600 text-xs">
+                                        Hours: {e.openingHours ? "yes" : "—"}
+                                      </p>
+                                      <p className="text-gray-600 text-xs">
+                                        Accessibility: {e.accessibility ? (() => {
                                           try {
-                                            const hours = JSON.parse(e.openingHours as string) as { weekdayDescriptions?: string[] };
-                                            if (!hours.weekdayDescriptions?.length) return <span className="text-xs text-gray-400">—</span>;
-                                            return (
-                                              <details className="text-xs inline">
-                                                <summary className="text-gray-500 cursor-pointer inline">show</summary>
-                                                <div className="mt-1 space-y-0.5 text-gray-400">
-                                                  {hours.weekdayDescriptions.map((d, i) => (
-                                                    <div key={i}>{d}</div>
-                                                  ))}
-                                                </div>
-                                              </details>
-                                            );
-                                          } catch { return <span className="text-xs text-gray-400">—</span>; }
-                                        })() : <span className="text-xs text-gray-400">—</span>}
-                                      </div>
-                                      <div>
-                                        <span className="text-xs text-gray-400">Accessibility: </span>
-                                        {e.accessibility ? (() => {
+                                            const opts = Object.entries(JSON.parse(e.accessibility as string) as Record<string, boolean>).filter(([, v]) => v).map(([k]) => k.replace(/([A-Z])/g, " $1").trim());
+                                            return opts.length ? opts.join(", ") : "—";
+                                          } catch { return "—"; }
+                                        })() : "—"}
+                                      </p>
+                                      <p className="text-gray-600 text-xs">
+                                        Parking: {e.parking ? (() => {
                                           try {
-                                            const opts = Object.entries(JSON.parse(e.accessibility as string) as Record<string, boolean>).filter(([, v]) => v);
-                                            if (!opts.length) return <span className="text-xs text-gray-400">—</span>;
-                                            return (
-                                              <span className="inline-flex flex-wrap gap-1">
-                                                {opts.map(([k]) => (
-                                                  <span key={k} className="px-1.5 py-0.5 bg-green-50 text-green-700 rounded text-[10px]">
-                                                    {k.replace(/([A-Z])/g, " $1").trim()}
-                                                  </span>
-                                                ))}
-                                              </span>
-                                            );
-                                          } catch { return <span className="text-xs text-gray-400">—</span>; }
-                                        })() : <span className="text-xs text-gray-400">—</span>}
-                                      </div>
-                                      <div>
-                                        <span className="text-xs text-gray-400">Parking: </span>
-                                        {e.parking ? (() => {
-                                          try {
-                                            const opts = Object.entries(JSON.parse(e.parking as string) as Record<string, boolean>).filter(([, v]) => v);
-                                            if (!opts.length) return <span className="text-xs text-gray-400">—</span>;
-                                            return (
-                                              <span className="inline-flex flex-wrap gap-1">
-                                                {opts.map(([k]) => (
-                                                  <span key={k} className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px]">
-                                                    {k.replace(/([A-Z])/g, " $1").trim()}
-                                                  </span>
-                                                ))}
-                                              </span>
-                                            );
-                                          } catch { return <span className="text-xs text-gray-400">—</span>; }
-                                        })() : <span className="text-xs text-gray-400">—</span>}
-                                      </div>
+                                            const opts = Object.entries(JSON.parse(e.parking as string) as Record<string, boolean>).filter(([, v]) => v).map(([k]) => k.replace(/([A-Z])/g, " $1").trim());
+                                            return opts.length ? opts.join(", ") : "—";
+                                          } catch { return "—"; }
+                                        })() : "—"}
+                                      </p>
                                     </div>
                                   </>
                                 )}
@@ -691,7 +647,7 @@ export default function AdminDuplicatesPage() {
                                   </p>
                                 )}
                               </div>
-                            </button>
+                            </div>
                           );
                         }
                       )}
