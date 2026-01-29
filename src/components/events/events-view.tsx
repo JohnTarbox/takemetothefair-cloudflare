@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight, Printer } from "lucide-react";
 import { EventCard } from "./event-card";
 import { SortableHeader, SortConfig, sortData, getNextSortDirection } from "@/components/ui/sortable-table";
 import { formatDateRange } from "@/lib/utils";
@@ -594,9 +594,13 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden print:border-0">
+      {/* Print-only title */}
+      <div className="hidden print:block px-4 py-3 border-b border-gray-200">
+        <h1 className="text-xl font-bold text-gray-900">Events Calendar — {getTitle()}</h1>
+      </div>
       {/* Calendar Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 print:hidden">
         <div className="flex items-center gap-2">
           <button
             onClick={goToToday}
@@ -652,7 +656,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
 
       {/* Event Details Modal */}
       {selectedEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
           <div
             className="absolute inset-0 bg-black/50"
             onClick={() => setSelectedEvent(null)}
@@ -692,7 +696,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
       )}
 
       {/* Legend */}
-      <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+      <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 print:hidden">
         <p className="text-xs text-gray-500">
           {calendarViewType === "year"
             ? "Click on a month to view details. Highlighted days have events."
@@ -785,7 +789,7 @@ export function EventsView({
       )}
 
       {/* View Toggle and Download */}
-      <div className="flex justify-end items-center gap-3 mb-4">
+      <div className="flex justify-end items-center gap-3 mb-4 print:hidden">
         {viewMode === "table" && (
           <button
             onClick={downloadCSV}
@@ -793,6 +797,15 @@ export function EventsView({
           >
             <Download className="w-4 h-4" />
             Download CSV
+          </button>
+        )}
+        {viewMode === "calendar" && (
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white transition-colors"
+          >
+            <Printer className="w-4 h-4" />
+            Print
           </button>
         )}
         <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-white">

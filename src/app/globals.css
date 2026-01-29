@@ -25,3 +25,53 @@ body {
     text-wrap: balance;
   }
 }
+
+@media print {
+  /* Hide non-calendar elements */
+  nav,
+  footer,
+  header {
+    display: none !important;
+  }
+
+  /* Full-width calendar */
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* Clean print rendering */
+  * {
+    box-shadow: none !important;
+  }
+
+  /* Show full event names (no truncation) */
+  .truncate {
+    overflow: visible !important;
+    text-overflow: unset !important;
+    white-space: normal !important;
+  }
+
+  /* Ensure colored backgrounds print */
+  .bg-blue-500, .bg-green-500, .bg-purple-500, .bg-pink-500,
+  .bg-indigo-500, .bg-teal-500, .bg-orange-500, .bg-cyan-500 {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .bg-blue-600 {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .bg-blue-100 {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Ensure borders are visible */
+  .border-gray-200 {
+    border-color: #e5e7eb !important;
+  }
+}
