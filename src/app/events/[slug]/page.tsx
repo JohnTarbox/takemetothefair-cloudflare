@@ -421,7 +421,7 @@ export default async function EventDetailPage({ params }: Props) {
                       {event.venue.city}, {event.venue.state} {event.venue.zip}
                     </p>
                     <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`}
+                      href={event.venue.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
