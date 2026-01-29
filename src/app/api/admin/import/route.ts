@@ -9,6 +9,7 @@ import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
 import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
 import { scrapeMaineMade, scrapeMaineMadeEventDetails } from "@/lib/scrapers/mainemade";
 import { scrapeNewEnglandCraftFairs, scrapeNewEnglandCraftFairsEventDetails } from "@/lib/scrapers/newenglandcraftfairs";
+import { scrapeJoycesCraftShows, scrapeJoycesCraftShowsEventDetails } from "@/lib/scrapers/joycescraftshows";
 import { scrapeFairsAndFestivals, scrapeFairsAndFestivalsUrl, scrapeEventDetails as scrapeFairsAndFestivalsEventDetails } from "@/lib/scrapers/fairsandfestivals";
 import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
@@ -158,6 +159,8 @@ export async function GET(request: Request) {
       result = await scrapeMaineMade();
     } else if (source === "newenglandcraftfairs.com") {
       result = await scrapeNewEnglandCraftFairs();
+    } else if (source === "joycescraftshows.com") {
+      result = await scrapeJoycesCraftShows();
     } else if (source.startsWith("fairsandfestivals.net")) {
       // Support custom URL or state-specific sources like "fairsandfestivals.net-ME"
       if (source === "fairsandfestivals.net-custom" && customUrl) {
@@ -204,6 +207,8 @@ export async function GET(request: Request) {
               details = await scrapeMaineMadeEventDetails(event.sourceUrl);
             } else if (source === "newenglandcraftfairs.com") {
               details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
+            } else if (source === "joycescraftshows.com") {
+              details = await scrapeJoycesCraftShowsEventDetails(event.sourceUrl);
             } else if (source.startsWith("fairsandfestivals.net")) {
               details = await scrapeFairsAndFestivalsEventDetails(event.sourceUrl);
             }
@@ -332,6 +337,8 @@ export async function POST(request: Request) {
               details = await scrapeMaineMadeEventDetails(event.sourceUrl);
             } else if (event.sourceName === "newenglandcraftfairs.com") {
               details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
+            } else if (event.sourceName === "joycescraftshows.com") {
+              details = await scrapeJoycesCraftShowsEventDetails(event.sourceUrl);
             } else if (event.sourceName.startsWith("fairsandfestivals.net")) {
               details = await scrapeFairsAndFestivalsEventDetails(event.sourceUrl);
             }
@@ -561,6 +568,8 @@ export async function PATCH(request: Request) {
           details = await scrapeMaineMadeEventDetails(event.sourceUrl);
         } else if (event.sourceName === "newenglandcraftfairs.com") {
           details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
+        } else if (event.sourceName === "joycescraftshows.com") {
+          details = await scrapeJoycesCraftShowsEventDetails(event.sourceUrl);
         } else if (event.sourceName?.startsWith("fairsandfestivals.net")) {
           details = await scrapeFairsAndFestivalsEventDetails(event.sourceUrl);
         } else {

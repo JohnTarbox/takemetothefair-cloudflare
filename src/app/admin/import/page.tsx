@@ -462,6 +462,7 @@ export default function ImportEventsPage() {
                   <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
                   <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
                   <option value="newenglandcraftfairs.com">New England Craft Fairs (newenglandcraftfairs.com)</option>
+                  <option value="joycescraftshows.com">Joyce&apos;s Craft Shows (joycescraftshows.com)</option>
                   <optgroup label="FairsAndFestivals.net (by state)">
                     <option value="fairsandfestivals.net-ME">Maine (fairsandfestivals.net)</option>
                     <option value="fairsandfestivals.net-MA">Massachusetts (fairsandfestivals.net)</option>
