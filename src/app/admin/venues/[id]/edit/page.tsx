@@ -161,6 +161,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
         lat: number | null;
         lng: number | null;
         zip: string | null;
+        photoUrl: string | null;
       };
       // Only fill empty fields
       const setIfEmpty = (id: string, value: string | null) => {
@@ -173,6 +174,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       setIfEmpty("zip", result.zip);
       if (result.lat != null) setIfEmpty("latitude", String(result.lat));
       if (result.lng != null) setIfEmpty("longitude", String(result.lng));
+      setIfEmpty("imageUrl", result.photoUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lookup failed");
     } finally {

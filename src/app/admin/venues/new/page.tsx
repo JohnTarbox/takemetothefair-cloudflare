@@ -123,6 +123,7 @@ export default function NewVenuePage() {
         lat: number | null;
         lng: number | null;
         zip: string | null;
+        photoUrl: string | null;
       };
       const setIfEmpty = (id: string, value: string | null) => {
         if (!value) return;
@@ -134,6 +135,7 @@ export default function NewVenuePage() {
       setIfEmpty("zip", result.zip);
       if (result.lat != null) setIfEmpty("latitude", String(result.lat));
       if (result.lng != null) setIfEmpty("longitude", String(result.lng));
+      setIfEmpty("imageUrl", result.photoUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lookup failed");
     } finally {

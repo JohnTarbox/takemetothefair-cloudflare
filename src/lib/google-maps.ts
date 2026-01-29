@@ -14,6 +14,7 @@ interface PlaceLookupResult {
   lng: number | null;
   zip: string | null;
   formattedAddress: string | null;
+  photoUrl: string | null;
 }
 
 interface GeocodingResponse {
@@ -37,6 +38,7 @@ interface PlacesSearchResponse {
     location?: { latitude: number; longitude: number };
     nationalPhoneNumber?: string;
     websiteUri?: string;
+    photos?: Array<{ name: string }>;
     addressComponents?: Array<{
       longText: string;
       shortText: string;
@@ -98,7 +100,7 @@ export async function lookupPlace(
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
         "X-Goog-FieldMask":
-          "places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.addressComponents",
+          "places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.addressComponents,places.photos",
       },
       body: JSON.stringify({ textQuery }),
     });
@@ -113,6 +115,23 @@ export async function lookupPlace(
       c.types.includes("postal_code")
     );
 
+    // Fetch photo URL if available
+    let photoUrl: string | null = null;
+    if (place.photos?.length) {
+      try {
+        const photoName = place.photos[0].name;
+        const photoRes = await fetch(
+          `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${apiKey}&skipHttpRedirect=true`
+        );
+        if (photoRes.ok) {
+          const photoData = (await photoRes.json()) as { photoUri?: string };
+          photoUrl = photoData.photoUri || null;
+        }
+      } catch {
+        // Photo fetch failed, continue without it
+      }
+    }
+
     return {
       phone: place.nationalPhoneNumber || null,
       website: place.websiteUri || null,
@@ -120,6 +139,7 @@ export async function lookupPlace(
       lng: place.location?.longitude ?? null,
       zip: zipComponent?.shortText || null,
       formattedAddress: place.formattedAddress || null,
+      photoUrl,
     };
   } catch {
     return null;
