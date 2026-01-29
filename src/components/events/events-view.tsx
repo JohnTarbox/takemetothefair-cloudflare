@@ -785,7 +785,7 @@ export function EventsView({
     <div>
       {/* Summary Text */}
       {summaryText && (
-        <p className="text-sm text-gray-600 mb-4">{summaryText}</p>
+        <p className="text-sm text-gray-600 mb-4 print:hidden">{summaryText}</p>
       )}
 
       {/* View Toggle and Download */}

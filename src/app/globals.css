@@ -74,4 +74,9 @@ body {
   .border-gray-200 {
     border-color: #e5e7eb !important;
   }
+
+  /* Compact calendar cells to fit one page */
+  .min-h-\[100px\] {
+    min-height: 70px !important;
+  }
 }
