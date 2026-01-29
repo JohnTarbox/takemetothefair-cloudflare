@@ -12,6 +12,7 @@ import { scrapeNewEnglandCraftFairs, scrapeNewEnglandCraftFairsEventDetails } fr
 import { scrapeFairsAndFestivals, scrapeFairsAndFestivalsUrl, scrapeEventDetails as scrapeFairsAndFestivalsEventDetails } from "@/lib/scrapers/fairsandfestivals";
 import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 
 // Helper function to find or create a venue
@@ -101,11 +102,13 @@ async function findOrCreateVenue(
 
   // Auto-geocode the new venue
   try {
+    const cfEnv = getCloudflareEnv();
     const geo = await geocodeAddress(
       scrapedVenue.streetAddress || "",
       scrapedVenue.city || "",
       scrapedVenue.state || "ME",
-      scrapedVenue.zip || undefined
+      scrapedVenue.zip || undefined,
+      cfEnv.GOOGLE_MAPS_API_KEY
     );
     if (geo) {
       const geoUpdates: Record<string, unknown> = {

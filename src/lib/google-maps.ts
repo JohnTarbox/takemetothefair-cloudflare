@@ -45,17 +45,13 @@ interface PlacesSearchResponse {
   }>;
 }
 
-function getApiKey(): string | null {
-  return process.env.GOOGLE_MAPS_API_KEY || null;
-}
-
 export async function geocodeAddress(
   address: string,
   city: string,
   state: string,
-  zip?: string
+  zip?: string,
+  apiKey?: string | null
 ): Promise<GeocodeResult | null> {
-  const apiKey = getApiKey();
   if (!apiKey) return null;
 
   const parts = [address, city, state, zip].filter(Boolean).join(", ");
@@ -87,9 +83,9 @@ export async function geocodeAddress(
 export async function lookupPlace(
   name: string,
   city: string,
-  state: string
+  state: string,
+  apiKey?: string | null
 ): Promise<PlaceLookupResult | null> {
-  const apiKey = getApiKey();
   if (!apiKey) return null;
 
   const textQuery = `${name} ${city} ${state}`;

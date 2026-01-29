@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq, isNull } from "drizzle-orm";
 import { geocodeAddress } from "@/lib/google-maps";
@@ -15,6 +15,8 @@ export async function POST(request: NextRequest) {
   }
 
   const db = getCloudflareDb();
+  const env = getCloudflareEnv();
+  const apiKey = env.GOOGLE_MAPS_API_KEY;
 
   try {
     const missingCoords = await db
@@ -30,7 +32,8 @@ export async function POST(request: NextRequest) {
         venue.address,
         venue.city,
         venue.state,
-        venue.zip || undefined
+        venue.zip || undefined,
+        apiKey
       );
 
       if (result) {

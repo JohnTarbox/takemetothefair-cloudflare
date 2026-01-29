@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 
 export const runtime = "edge";
@@ -114,10 +115,13 @@ export async function POST(request: NextRequest) {
 
       // Auto-geocode the new venue
       try {
+        const cfEnv = getCloudflareEnv();
         const geo = await geocodeAddress(
           venueOption.address || "",
           venueOption.city || "",
-          venueOption.state || ""
+          venueOption.state || "",
+          undefined,
+          cfEnv.GOOGLE_MAPS_API_KEY
         );
         if (geo) {
           const geoUpdates: Record<string, unknown> = {
