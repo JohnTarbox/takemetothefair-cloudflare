@@ -5,6 +5,7 @@ import { venues } from "@/lib/db/schema";
 import { eq, isNull, inArray, and } from "drizzle-orm";
 import { lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
+import { createSlug } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
         };
         if (result.name) {
           updates.name = result.name;
+          updates.slug = createSlug(result.name);
         }
         if (result.description) {
           updates.description = result.description;
