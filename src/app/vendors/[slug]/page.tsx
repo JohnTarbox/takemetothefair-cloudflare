@@ -59,10 +59,14 @@ async function getVendor(slug: string) {
         ...ev.event_vendors,
         event: {
           ...ev.events!,
-          venue: ev.venues!,
+          venue: ev.venues ?? null,
         },
       }))
-      .sort((a, b) => new Date(a.event.startDate).getTime() - new Date(b.event.startDate).getTime());
+      .sort((a, b) => {
+        const aTime = a.event.startDate ? new Date(a.event.startDate).getTime() : 0;
+        const bTime = b.event.startDate ? new Date(b.event.startDate).getTime() : 0;
+        return aTime - bTime;
+      });
 
     return {
       ...vendor.vendors,
@@ -135,11 +139,12 @@ export default async function VendorDetailPage({ params }: Props) {
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
 
+  const now = new Date();
   const upcomingEvents = vendor.eventVendors.filter(
-    (ev) => new Date(ev.event.endDate) >= new Date()
+    (ev) => !ev.event.endDate || new Date(ev.event.endDate) >= now
   );
   const pastEvents = vendor.eventVendors.filter(
-    (ev) => new Date(ev.event.endDate) < new Date()
+    (ev) => ev.event.endDate && new Date(ev.event.endDate) < now
   );
 
   return (
@@ -234,17 +239,19 @@ export default async function VendorDetailPage({ params }: Props) {
                           <AddToCalendar
                             title={event.name}
                             description={event.description || undefined}
-                            location={`${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}`}
+                            location={event.venue ? `${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}` : undefined}
                             startDate={event.startDate}
                             endDate={event.endDate}
                             url={`https://meetmeatthefair.com/events/${event.slug}`}
                             variant="icon"
                           />
                         </div>
-                        <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                          <MapPin className="w-3 h-3" />
-                          {event.venue.name}, {event.venue.city}
-                        </p>
+                        {event.venue && (
+                          <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                            <MapPin className="w-3 h-3" />
+                            {event.venue.name}, {event.venue.city}
+                          </p>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
