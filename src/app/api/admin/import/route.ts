@@ -3,14 +3,9 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { scrapeMaineFairs, scrapeEventDetails, decodeHtmlEntities, type ScrapedEvent, type ScrapedVenue } from "@/lib/scrapers/mainefairs";
-import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "@/lib/scrapers/vtnhfairs";
-import { scrapeMafaFairs, scrapeMafaEventDetails } from "@/lib/scrapers/mafa";
-import { scrapeMainePublic, scrapeMainePublicEventDetails } from "@/lib/scrapers/mainepublic";
-import { scrapeMaineMade, scrapeMaineMadeEventDetails } from "@/lib/scrapers/mainemade";
-import { scrapeNewEnglandCraftFairs, scrapeNewEnglandCraftFairsEventDetails } from "@/lib/scrapers/newenglandcraftfairs";
-import { scrapeJoycesCraftShows, scrapeJoycesCraftShowsEventDetails } from "@/lib/scrapers/joycescraftshows";
-import { scrapeFairsAndFestivals, scrapeFairsAndFestivalsUrl, scrapeEventDetails as scrapeFairsAndFestivalsEventDetails } from "@/lib/scrapers/fairsandfestivals";
+import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
+import { decodeHtmlEntities } from "@/lib/scrapers/utils";
+import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
 import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -145,41 +140,24 @@ export async function GET(request: Request) {
   try {
     let result;
 
-    if (source === "mainefairs.net") {
-      result = await scrapeMaineFairs();
-    } else if (source === "mafa.org") {
-      result = await scrapeMafaFairs();
-    } else if (source === "vtnhfairs.org" || source === "vtnhfairs.org-vt") {
-      result = await scrapeVtFairs();
-    } else if (source === "vtnhfairs.org-nh") {
-      result = await scrapeNhFairs();
-    } else if (source === "mainepublic.org") {
-      result = await scrapeMainePublic();
-    } else if (source === "mainemade.com") {
-      result = await scrapeMaineMade();
-    } else if (source === "newenglandcraftfairs.com") {
-      result = await scrapeNewEnglandCraftFairs();
-    } else if (source === "joycescraftshows.com") {
-      result = await scrapeJoycesCraftShows();
-    } else if (source.startsWith("fairsandfestivals.net")) {
-      // Support custom URL or state-specific sources like "fairsandfestivals.net-ME"
-      if (source === "fairsandfestivals.net-custom" && customUrl) {
-        try {
-          result = await scrapeFairsAndFestivalsUrl(customUrl);
-        } catch (scrapeError) {
-          await logError(db, { message: "[FairsAndFestivals Custom URL] Scrape error", error: scrapeError, source: "api/admin/import", request });
-          return NextResponse.json(
-            { error: `Failed to scrape custom URL: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}` },
-            { status: 500 }
-          );
-        }
-      } else {
-        const stateMatch = source.match(/fairsandfestivals\.net-([A-Z]{2})/i);
-        const stateCode = stateMatch ? stateMatch[1].toUpperCase() : "ME"; // Default to Maine
-        result = await scrapeFairsAndFestivals(stateCode);
+    const scraper = getScraper(source);
+    if (!scraper) {
+      return NextResponse.json({ error: "Unknown source" }, { status: 400 });
+    }
+
+    const options = parseSourceOptions(source, customUrl);
+    if (source === "fairsandfestivals.net-custom" && options.customUrl) {
+      try {
+        result = await scraper.scrape(options);
+      } catch (scrapeError) {
+        await logError(db, { message: "[FairsAndFestivals Custom URL] Scrape error", error: scrapeError, source: "api/admin/import", request });
+        return NextResponse.json(
+          { error: `Failed to scrape custom URL: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}` },
+          { status: 500 }
+        );
       }
     } else {
-      return NextResponse.json({ error: "Unknown source" }, { status: 400 });
+      result = await scraper.scrape(options);
     }
 
     if (!result.success) {
@@ -194,24 +172,10 @@ export async function GET(request: Request) {
           if (!event.sourceUrl) return event;
 
           try {
-            let details: Partial<ScrapedEvent> = {};
-            if (source === "mainefairs.net") {
-              details = await scrapeEventDetails(event.sourceUrl);
-            } else if (source === "mafa.org") {
-              details = await scrapeMafaEventDetails(event.sourceUrl);
-            } else if (source === "vtnhfairs.org" || source === "vtnhfairs.org-vt" || source === "vtnhfairs.org-nh") {
-              details = await scrapeVtNhEventDetails(event.sourceUrl);
-            } else if (source === "mainepublic.org") {
-              details = await scrapeMainePublicEventDetails(event.sourceUrl);
-            } else if (source === "mainemade.com") {
-              details = await scrapeMaineMadeEventDetails(event.sourceUrl);
-            } else if (source === "newenglandcraftfairs.com") {
-              details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
-            } else if (source === "joycescraftshows.com") {
-              details = await scrapeJoycesCraftShowsEventDetails(event.sourceUrl);
-            } else if (source.startsWith("fairsandfestivals.net")) {
-              details = await scrapeFairsAndFestivalsEventDetails(event.sourceUrl);
-            }
+            const detailsScraper = getDetailsScraper(source);
+            const details: Partial<ScrapedEvent> = detailsScraper
+              ? await detailsScraper(event.sourceUrl)
+              : {};
             return { ...event, ...details };
           } catch (error) {
             await logError(db, { message: `Error fetching details for ${event.name}`, error, source: "api/admin/import", request });
@@ -325,22 +289,9 @@ export async function POST(request: Request) {
           // Use the appropriate scraper based on source
           let details: Partial<ScrapedEvent> = {};
           try {
-            if (event.sourceName === "mainefairs.net") {
-              details = await scrapeEventDetails(event.sourceUrl);
-            } else if (event.sourceName === "mafa.org") {
-              details = await scrapeMafaEventDetails(event.sourceUrl);
-            } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
-              details = await scrapeVtNhEventDetails(event.sourceUrl);
-            } else if (event.sourceName === "mainepublic.org") {
-              details = await scrapeMainePublicEventDetails(event.sourceUrl);
-            } else if (event.sourceName === "mainemade.com") {
-              details = await scrapeMaineMadeEventDetails(event.sourceUrl);
-            } else if (event.sourceName === "newenglandcraftfairs.com") {
-              details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
-            } else if (event.sourceName === "joycescraftshows.com") {
-              details = await scrapeJoycesCraftShowsEventDetails(event.sourceUrl);
-            } else if (event.sourceName.startsWith("fairsandfestivals.net")) {
-              details = await scrapeFairsAndFestivalsEventDetails(event.sourceUrl);
+            const detailsScraper = getDetailsScraper(event.sourceName);
+            if (detailsScraper) {
+              details = await detailsScraper(event.sourceUrl);
             }
             // Log if scraper didn't find dates
             if (!details.startDate && event.sourceName === "mainepublic.org") {
@@ -555,28 +506,13 @@ export async function PATCH(request: Request) {
         if (!event.sourceUrl) continue;
 
         // Use the appropriate scraper based on source
-        let details: Partial<ScrapedEvent> = {};
-        if (event.sourceName === "mainefairs.net") {
-          details = await scrapeEventDetails(event.sourceUrl);
-        } else if (event.sourceName === "mafa.org") {
-          details = await scrapeMafaEventDetails(event.sourceUrl);
-        } else if (event.sourceName === "vtnhfairs.org" || event.sourceName === "vtnhfairs.org-vt" || event.sourceName === "vtnhfairs.org-nh") {
-          details = await scrapeVtNhEventDetails(event.sourceUrl);
-        } else if (event.sourceName === "mainepublic.org") {
-          details = await scrapeMainePublicEventDetails(event.sourceUrl);
-        } else if (event.sourceName === "mainemade.com") {
-          details = await scrapeMaineMadeEventDetails(event.sourceUrl);
-        } else if (event.sourceName === "newenglandcraftfairs.com") {
-          details = await scrapeNewEnglandCraftFairsEventDetails(event.sourceUrl);
-        } else if (event.sourceName === "joycescraftshows.com") {
-          details = await scrapeJoycesCraftShowsEventDetails(event.sourceUrl);
-        } else if (event.sourceName?.startsWith("fairsandfestivals.net")) {
-          details = await scrapeFairsAndFestivalsEventDetails(event.sourceUrl);
-        } else {
+        const detailsScraper = getDetailsScraper(event.sourceName);
+        if (!detailsScraper) {
           // Unknown source, skip
           results.unchanged++;
           continue;
         }
+        const details = await detailsScraper(event.sourceUrl);
 
         // Update if we got new details
         if (details.description || details.startDate || details.endDate || details.imageUrl || details.website) {

@@ -1,7 +1,8 @@
 // Scraper for mainemade.com events
 // Extracts event data from their events page with pagination support
 
-import { ScrapedEvent, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
+import type { ScrapedEvent, ScrapeResult } from "./types";
+import { decodeHtmlEntities } from "./utils";
 
 const SOURCE_NAME = "mainemade.com";
 const BASE_URL = "https://www.mainemade.com/events/";

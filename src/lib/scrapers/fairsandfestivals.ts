@@ -1,7 +1,8 @@
 // Scraper for fairsandfestivals.net
 // Extracts event data from state listing pages (e.g., /states/ME)
 
-import { decodeHtmlEntities, type ScrapedEvent, type ScrapeResult, type ScrapedVenue } from "./mainefairs";
+import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
+import { decodeHtmlEntities } from "./utils";
 
 const SOURCE_NAME = "fairsandfestivals.net";
 const BASE_URL = "https://www.fairsandfestivals.net";

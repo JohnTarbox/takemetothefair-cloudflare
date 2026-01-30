@@ -1,7 +1,8 @@
 // Scraper for joycescraftshows.com
 // Wix-based site, all content client-rendered - using hardcoded event list
 
-import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./mainefairs";
+import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
+import { createSlugFromName } from "./utils";
 
 const SOURCE_NAME = "joycescraftshows.com";
 const BASE_URL = "https://www.joycescraftshows.com";
@@ -56,12 +57,6 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
   return null;
 }
 
-function createSlugFromName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
 
 interface JoycesEvent {
   name: string;

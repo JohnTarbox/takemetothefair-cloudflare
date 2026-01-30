@@ -1,7 +1,8 @@
 // Scraper for mainepublic.org community calendar
 // Extracts event data from their community calendar page
 
-import { ScrapedEvent, ScrapeResult, decodeHtmlEntities } from "./mainefairs";
+import type { ScrapedEvent, ScrapeResult } from "./types";
+import { decodeHtmlEntities } from "./utils";
 
 const SOURCE_NAME = "mainepublic.org";
 const CALENDAR_URL = "https://www.mainepublic.org/community-calendar";

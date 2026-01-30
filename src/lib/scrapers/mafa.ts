@@ -1,8 +1,8 @@
 // Scraper for mafa.org (Massachusetts Agricultural Fairs Association)
 // Extracts fair/event data from their fairs by date page
 
-import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./mainefairs";
-import { decodeHtmlEntities } from "./mainefairs";
+import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
+import { decodeHtmlEntities, createSlugFromName } from "./utils";
 
 // Parse date strings like "July 15-19", "Aug 7-9", "Sept 4-7", "Oct 2-12"
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
@@ -71,12 +71,6 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
 }
 
 // Create a slug from fair name
-function createSlugFromName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
 
 export async function scrapeMafaFairs(): Promise<ScrapeResult> {
   const SOURCE_NAME = "mafa.org";

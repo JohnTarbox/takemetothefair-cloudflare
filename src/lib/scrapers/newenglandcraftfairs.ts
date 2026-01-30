@@ -1,8 +1,8 @@
 // Scraper for newenglandcraftfairs.com
 // Extracts craft fair/show data from their Maine events page
 
-import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./mainefairs";
-import { decodeHtmlEntities } from "./mainefairs";
+import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
+import { decodeHtmlEntities, createSlugFromName } from "./utils";
 
 const SOURCE_NAME = "newenglandcraftfairs.com";
 const EVENTS_URL = "https://www.newenglandcraftfairs.com/maine-craft-fairs.html";
@@ -72,12 +72,6 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
 }
 
 // Create a slug from event name
-function createSlugFromName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
 
 // Extract events from HTML
 function parseEventsFromHtml(html: string): ScrapedEvent[] {

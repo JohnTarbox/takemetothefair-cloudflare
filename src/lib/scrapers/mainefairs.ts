@@ -1,55 +1,12 @@
 // Scraper for mainefairs.net
 // Extracts fair/event data from their calendar page
 
-// Decode common HTML entities
-export function decodeHtmlEntities(text: string): string {
-  if (!text) return text;
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
-}
+// Re-export shared types and utilities for backward compatibility
+export type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
+export { decodeHtmlEntities } from "./utils";
 
-export interface ScrapedVenue {
-  name: string;
-  streetAddress?: string;
-  city?: string;
-  state?: string;
-  zip?: string;
-}
-
-export interface ScrapedEvent {
-  sourceId: string;
-  sourceName: string;
-  sourceUrl: string;
-  name: string;
-  startDate?: Date;
-  endDate?: Date;
-  datesConfirmed?: boolean;
-  description?: string;
-  location?: string;
-  city?: string;
-  state?: string;
-  address?: string;
-  imageUrl?: string;
-  ticketUrl?: string;
-  website?: string;
-  venue?: ScrapedVenue;
-  commercialVendorsAllowed?: boolean;
-  vendorTypes?: string[]; // e.g., ["Art", "Craft", "Food", "Commercial"]
-}
-
-export interface ScrapeResult {
-  success: boolean;
-  events: ScrapedEvent[];
-  error?: string;
-}
+import { decodeHtmlEntities } from "./utils";
+import type { ScrapedEvent, ScrapeResult } from "./types";
 
 // Parse date strings like "June 11 - June 14" with year context
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
