@@ -18,6 +18,18 @@ export function sanitizeLikeInput(input: string): string {
   return input.replace(/[%_]/g, "\\$&");
 }
 
+/**
+ * Find a unique slug by checking existing slugs with the same base.
+ * Appends -2, -3, etc. if the base slug is taken.
+ */
+export function findUniqueSlug(baseSlug: string, existingSlugs: (string | null)[]): string {
+  const existing = new Set(existingSlugs);
+  if (!existing.has(baseSlug)) return baseSlug;
+  let i = 2;
+  while (existing.has(`${baseSlug}-${i}`)) i++;
+  return `${baseSlug}-${i}`;
+}
+
 export function formatDate(date: Date | string): string {
   const d = new Date(date);
   return d.toLocaleDateString("en-US", {

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventDays } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
-import { createSlug } from "@/lib/utils";
+import { eq, desc, or, like } from "drizzle-orm";
+import { createSlug, sanitizeLikeInput, findUniqueSlug } from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
@@ -93,16 +93,13 @@ export async function POST(request: NextRequest) {
       eventDays: eventDaysInput,
     } = validation.data;
 
-    let slug = createSlug(name);
-    const existingEvent = await db
-      .select()
+    const baseSlug = createSlug(name);
+    const escaped = sanitizeLikeInput(baseSlug);
+    const existingSlugs = await db
+      .select({ slug: events.slug })
       .from(events)
-      .where(eq(events.slug, slug))
-      .limit(1);
-
-    if (existingEvent.length > 0) {
-      slug = `${slug}-${Date.now()}`;
-    }
+      .where(or(eq(events.slug, baseSlug), like(events.slug, `${escaped}-%`)));
+    const slug = findUniqueSlug(baseSlug, existingSlugs.map((r) => r.slug));
 
     const eventId = crypto.randomUUID();
 
