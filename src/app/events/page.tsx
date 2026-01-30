@@ -210,7 +210,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     const eventIds = results.map(r => r.events.id);
 
     // Single query: Fetch all vendors for all events at once
-    let allEventVendors: {
+    const allEventVendors: {
       eventId: string;
       vendorId: string;
       businessName: string;

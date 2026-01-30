@@ -1,6 +1,6 @@
 // Scraper registry — single lookup point for all scraper sources
 
-import type { ScraperEntry, ScrapeResult, ScrapedEvent } from "./types";
+import type { ScraperEntry, ScrapedEvent } from "./types";
 import { scrapeMaineFairs, scrapeEventDetails as scrapeMaineFairsDetails } from "./mainefairs";
 import { scrapeVtFairs, scrapeNhFairs, scrapeVtNhEventDetails } from "./vtnhfairs";
 import { scrapeMafaFairs, scrapeMafaEventDetails } from "./mafa";
