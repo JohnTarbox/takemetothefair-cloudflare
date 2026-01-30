@@ -1,0 +1,42 @@
+import { test, expect } from "@playwright/test";
+
+const publicPages = [
+  "/",
+  "/events",
+  "/venues",
+  "/vendors",
+  "/about",
+  "/contact",
+  "/privacy",
+  "/terms",
+];
+
+test.describe("Public pages", () => {
+  for (const path of publicPages) {
+    test(`${path} loads successfully`, async ({ page }) => {
+      const response = await page.goto(path);
+      expect(response?.status()).toBe(200);
+      await expect(page).toHaveTitle(/.+/);
+      await expect(page.locator("h1").first()).toBeVisible();
+    });
+  }
+});
+
+test.describe("Vendor detail regression", () => {
+  test("/vendors/maine-cardworks-inc loads without null-venue crash", async ({
+    page,
+  }) => {
+    const response = await page.goto("/vendors/maine-cardworks-inc");
+    expect(response?.status()).toBe(200);
+    await expect(page.getByRole("heading", { name: "Maine Cardworks" })).toBeVisible();
+  });
+});
+
+test.describe("Protected page redirects", () => {
+  for (const path of ["/dashboard", "/admin"]) {
+    test(`${path} redirects to login`, async ({ page }) => {
+      await page.goto(path, { waitUntil: "domcontentloaded", timeout: 60000 });
+      expect(page.url()).toContain("/login");
+    });
+  }
+});
