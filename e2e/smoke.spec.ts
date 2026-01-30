@@ -9,6 +9,8 @@ const publicPages = [
   "/contact",
   "/privacy",
   "/terms",
+  "/for-promoters",
+  "/for-vendors",
 ];
 
 test.describe("Public pages", () => {
