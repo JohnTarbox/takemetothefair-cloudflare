@@ -34,6 +34,28 @@ test.describe("Vendor detail regression", () => {
   });
 });
 
+test.describe("Sitemap", () => {
+  test("sitemap.xml returns valid XML with expected pages", async ({
+    request,
+  }) => {
+    const response = await request.get("/sitemap.xml");
+    expect(response.status()).toBe(200);
+
+    const body = await response.text();
+    expect(body).toContain("<urlset");
+
+    // Static pages
+    for (const path of publicPages) {
+      expect(body).toContain(path === "/" ? "<loc>" : `${path}</loc>`);
+    }
+
+    // Dynamic pages should exist
+    expect(body).toContain("/events/");
+    expect(body).toContain("/venues/");
+    expect(body).toContain("/vendors/");
+  });
+});
+
 test.describe("Protected page redirects", () => {
   for (const path of ["/dashboard", "/admin"]) {
     test(`${path} redirects to login`, async ({ page }) => {
