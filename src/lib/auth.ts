@@ -3,6 +3,7 @@ import type { JWT } from "next-auth/jwt";
 import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
+import { getRequestContext } from "@cloudflare/next-on-pages";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq, and } from "drizzle-orm";
@@ -106,18 +107,23 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   return verifyLegacySha256(password, storedHash);
 }
 
-// Create NextAuth config
-const authConfig: NextAuthConfig = {
-  session: { strategy: "jwt" },
-  pages: {
-    signIn: "/login",
-    error: "/login",
-  },
-  providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    }),
+// Read env vars at runtime from Cloudflare Pages env
+// (process.env values are inlined at build time and won't have production secrets)
+function getRuntimeEnv(key: string): string | undefined {
+  try {
+    const { env } = getRequestContext();
+    return (env as Record<string, string>)[key];
+  } catch {
+    return process.env[key];
+  }
+}
+
+// Create NextAuth config lazily so Google credentials are read at runtime
+function createAuthConfig(): NextAuthConfig {
+  const googleClientId = getRuntimeEnv("GOOGLE_CLIENT_ID");
+  const googleClientSecret = getRuntimeEnv("GOOGLE_CLIENT_SECRET");
+
+  const providers: NextAuthConfig["providers"] = [
     Credentials({
       name: "credentials",
       credentials: {
@@ -132,7 +138,6 @@ const authConfig: NextAuthConfig = {
         const db = getCloudflareDb();
 
         try {
-
           const user = await db.query.users.findFirst({
             where: eq(schema.users.email, credentials.email as string),
           });
@@ -181,113 +186,140 @@ const authConfig: NextAuthConfig = {
         }
       },
     }),
-  ],
-  callbacks: {
-    async signIn({ user, account, profile }) {
-      if (account?.provider !== "google" || !profile?.email) {
-        return true;
-      }
+  ];
 
-      const db = getCloudflareDb();
+  if (googleClientId && googleClientSecret) {
+    providers.unshift(Google({ clientId: googleClientId, clientSecret: googleClientSecret }));
+  }
 
-      // Check if a user with this email already exists
-      const existingUser = await db.query.users.findFirst({
-        where: eq(schema.users.email, profile.email),
-      });
-
-      // Check if this Google account is already linked
-      const existingAccount = await db.query.accounts.findFirst({
-        where: and(
-          eq(schema.accounts.provider, "google"),
-          eq(schema.accounts.providerAccountId, account.providerAccountId),
-        ),
-      });
-
-      if (existingAccount) {
-        // Already linked — allow sign-in
-        return true;
-      }
-
-      if (existingUser && existingUser.passwordHash) {
-        // User registered with email/password — block to prevent account takeover
-        return "/login?error=OAuthAccountNotLinked";
-      }
-
-      if (!existingUser) {
-        // Create new user
-        const userId = crypto.randomUUID();
-        await db.insert(schema.users).values({
-          id: userId,
-          email: profile.email,
-          name: profile.name ?? null,
-          image: profile.picture as string ?? null,
-          role: "USER",
-          emailVerified: new Date(),
-        });
-        // Link account
-        await db.insert(schema.accounts).values({
-          userId,
-          type: "oauth",
-          provider: "google",
-          providerAccountId: account.providerAccountId,
-          accessToken: account.access_token ?? null,
-          refreshToken: account.refresh_token ?? null,
-          expiresAt: account.expires_at ?? null,
-          tokenType: account.token_type ?? null,
-          scope: account.scope ?? null,
-          idToken: account.id_token ?? null,
-        });
-        // Attach the ID so the jwt callback can use it
-        user.id = userId;
-        user.role = "USER";
-      } else {
-        // Existing user without password (e.g., previous OAuth) — link new account
-        await db.insert(schema.accounts).values({
-          userId: existingUser.id,
-          type: "oauth",
-          provider: "google",
-          providerAccountId: account.providerAccountId,
-          accessToken: account.access_token ?? null,
-          refreshToken: account.refresh_token ?? null,
-          expiresAt: account.expires_at ?? null,
-          tokenType: account.token_type ?? null,
-          scope: account.scope ?? null,
-          idToken: account.id_token ?? null,
-        });
-        user.id = existingUser.id;
-        user.role = existingUser.role as UserRole;
-      }
-
-      return true;
+  return {
+    session: { strategy: "jwt" },
+    pages: {
+      signIn: "/login",
+      error: "/login",
     },
-    async jwt({ token, user }: { token: JWT; user?: User }) {
-      if (user && user.id) {
-        token.id = user.id;
-        if (user.role) {
-          token.role = user.role;
-        } else {
-          // Look up role from DB for OAuth users
-          const db = getCloudflareDb();
-          const dbUser = await db.query.users.findFirst({
-            where: eq(schema.users.id, user.id),
-            columns: { role: true },
-          });
-          token.role = (dbUser?.role as UserRole) || "USER";
+    providers,
+    callbacks: {
+      async signIn({ user, account, profile }) {
+        if (account?.provider !== "google" || !profile?.email) {
+          return true;
         }
-      }
-      return token;
-    },
-    async session({ session, token }: { session: Session; token: JWT }) {
-      if (session.user && token.id) {
-        session.user.id = token.id as string;
-        session.user.role = token.role as UserRole;
-      }
-      return session;
-    },
-  },
-  trustHost: true,
-};
 
-const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+        const db = getCloudflareDb();
 
-export { handlers, auth, signIn, signOut };
+        // Check if this Google account is already linked
+        const existingAccount = await db.query.accounts.findFirst({
+          where: and(
+            eq(schema.accounts.provider, "google"),
+            eq(schema.accounts.providerAccountId, account.providerAccountId),
+          ),
+        });
+
+        if (existingAccount) {
+          // Already linked — look up user to set role
+          const dbUser = await db.query.users.findFirst({
+            where: eq(schema.users.id, existingAccount.userId),
+          });
+          if (dbUser) {
+            user.id = dbUser.id;
+            user.role = dbUser.role as UserRole;
+          }
+          return true;
+        }
+
+        // Check if a user with this email already exists
+        const existingUser = await db.query.users.findFirst({
+          where: eq(schema.users.email, profile.email),
+        });
+
+        if (existingUser && existingUser.passwordHash) {
+          // User registered with email/password — block to prevent account takeover
+          return "/login?error=OAuthAccountNotLinked";
+        }
+
+        if (!existingUser) {
+          // Create new user
+          const userId = crypto.randomUUID();
+          await db.insert(schema.users).values({
+            id: userId,
+            email: profile.email,
+            name: profile.name ?? null,
+            image: profile.picture as string ?? null,
+            role: "USER",
+            emailVerified: new Date(),
+          });
+          await db.insert(schema.accounts).values({
+            userId,
+            type: "oauth",
+            provider: "google",
+            providerAccountId: account.providerAccountId,
+            accessToken: account.access_token ?? null,
+            refreshToken: account.refresh_token ?? null,
+            expiresAt: account.expires_at ?? null,
+            tokenType: account.token_type ?? null,
+            scope: account.scope ?? null,
+            idToken: account.id_token ?? null,
+          });
+          user.id = userId;
+          user.role = "USER";
+        } else {
+          // Existing user without password — link new account
+          await db.insert(schema.accounts).values({
+            userId: existingUser.id,
+            type: "oauth",
+            provider: "google",
+            providerAccountId: account.providerAccountId,
+            accessToken: account.access_token ?? null,
+            refreshToken: account.refresh_token ?? null,
+            expiresAt: account.expires_at ?? null,
+            tokenType: account.token_type ?? null,
+            scope: account.scope ?? null,
+            idToken: account.id_token ?? null,
+          });
+          user.id = existingUser.id;
+          user.role = existingUser.role as UserRole;
+        }
+
+        return true;
+      },
+      async jwt({ token, user }: { token: JWT; user?: User }) {
+        if (user && user.id) {
+          token.id = user.id;
+          if (user.role) {
+            token.role = user.role;
+          } else {
+            const db = getCloudflareDb();
+            const dbUser = await db.query.users.findFirst({
+              where: eq(schema.users.id, user.id),
+              columns: { role: true },
+            });
+            token.role = (dbUser?.role as UserRole) || "USER";
+          }
+        }
+        return token;
+      },
+      async session({ session, token }: { session: Session; token: JWT }) {
+        if (session.user && token.id) {
+          session.user.id = token.id as string;
+          session.user.role = token.role as UserRole;
+        }
+        return session;
+      },
+    },
+    trustHost: true,
+  };
+}
+
+// Create NextAuth per-request so Cloudflare runtime env vars are available
+function initAuth() {
+  return NextAuth(createAuthConfig());
+}
+
+export const handlers = {
+  GET: ((...args: any[]) => initAuth().handlers.GET(...args)),
+  POST: ((...args: any[]) => initAuth().handlers.POST(...args)),
+} as ReturnType<typeof NextAuth>["handlers"];
+
+export const auth = ((...args: any[]) => initAuth().auth(...args)) as ReturnType<typeof NextAuth>["auth"];
+export const signIn = ((...args: any[]) => initAuth().signIn(...args)) as ReturnType<typeof NextAuth>["signIn"];
+export const signOut = ((...args: any[]) => initAuth().signOut(...args)) as ReturnType<typeof NextAuth>["signOut"];
