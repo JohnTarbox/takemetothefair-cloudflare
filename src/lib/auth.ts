@@ -2,6 +2,8 @@ import NextAuth from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
+import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq } from "drizzle-orm";
@@ -112,7 +114,17 @@ const authConfig: NextAuthConfig = {
     signIn: "/login",
     error: "/login",
   },
+  adapter: DrizzleAdapter(getCloudflareDb(), {
+    usersTable: schema.users,
+    accountsTable: schema.accounts,
+    sessionsTable: schema.sessions,
+    verificationTokensTable: schema.verificationTokens,
+  }),
   providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    }),
     Credentials({
       name: "credentials",
       credentials: {
@@ -181,7 +193,18 @@ const authConfig: NextAuthConfig = {
     async jwt({ token, user }: { token: JWT; user?: User }) {
       if (user && user.id) {
         token.id = user.id;
-        token.role = user.role;
+        // For OAuth users, user.role may not be set by authorize()
+        if (user.role) {
+          token.role = user.role;
+        } else {
+          // Look up role from DB
+          const db = getCloudflareDb();
+          const dbUser = await db.query.users.findFirst({
+            where: eq(schema.users.id, user.id),
+            columns: { role: true },
+          });
+          token.role = (dbUser?.role as UserRole) || "USER";
+        }
       }
       return token;
     },
