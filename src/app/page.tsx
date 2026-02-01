@@ -1,3 +1,4 @@
+import { OrganizationSchema } from "@/components/seo/OrganizationSchema";
 import Link from "next/link";
 import { Search, Calendar, MapPin, Users, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,7 @@ export default async function HomePage() {
 
   return (
     <div>
+      <OrganizationSchema />
       {/* Hero Section */}
       <section className="bg-gradient-to-br from-blue-600 to-blue-800 text-white">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28">

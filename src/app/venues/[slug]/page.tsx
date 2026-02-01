@@ -13,6 +13,8 @@ import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 import { logError } from "@/lib/logger";
+import { VenueSchema } from "@/components/seo/VenueSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -130,7 +132,34 @@ export default async function VenueDetailPage({ params }: Props) {
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
 
+  const amenities = parseJsonArray(venue.amenities);
+
   return (
+    <>
+      <VenueSchema
+        name={venue.name}
+        description={venue.description}
+        imageUrl={venue.imageUrl}
+        url={`https://meetmeatthefair.com/venues/${venue.slug}`}
+        address={venue.address}
+        city={venue.city}
+        state={venue.state}
+        zip={venue.zip}
+        latitude={venue.latitude}
+        longitude={venue.longitude}
+        capacity={venue.capacity}
+        telephone={venue.contactPhone}
+        amenities={amenities}
+        googleRating={venue.googleRating}
+        googleRatingCount={venue.googleRatingCount}
+      />
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Venues", url: "https://meetmeatthefair.com/venues" },
+          { name: venue.name, url: `https://meetmeatthefair.com/venues/${venue.slug}` },
+        ]}
+      />
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
@@ -166,7 +195,6 @@ export default async function VenueDetailPage({ params }: Props) {
           )}
 
           {(() => {
-            const amenities = parseJsonArray(venue.amenities);
             return amenities.length > 0 && (
               <div>
                 <h2 className="text-xl font-semibold text-gray-900 mb-3">
@@ -297,5 +325,6 @@ export default async function VenueDetailPage({ params }: Props) {
         </aside>
       </div>
     </div>
+    </>
   );
 }

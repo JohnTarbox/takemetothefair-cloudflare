@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     locale: "en_US",
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "Meet Me at the Fair",
     description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
   },

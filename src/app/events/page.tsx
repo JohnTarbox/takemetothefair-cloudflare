@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
@@ -6,9 +7,23 @@ import { events, venues, promoters, eventVendors, vendors, userFavorites } from 
 import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
+import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
 export const runtime = "edge";
 export const revalidate = 60; // Cache for 1 minute
+
+export const metadata: Metadata = {
+  title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
+  description: "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
+  alternates: { canonical: "https://meetmeatthefair.com/events" },
+  openGraph: {
+    title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
+    description: "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
+    url: "https://meetmeatthefair.com/events",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+  },
+};
 
 
 interface SearchParams {
@@ -543,6 +558,14 @@ export default async function EventsPage({
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <ItemListSchema
+        name="Upcoming Fairs & Festivals"
+        description="Browse upcoming fairs, festivals, and community events"
+        items={eventsList.map((e) => ({
+          name: e.name,
+          url: `https://meetmeatthefair.com/events/${e.slug}`,
+        }))}
+      />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Browse Events</h1>
         <p className="mt-2 text-gray-600">

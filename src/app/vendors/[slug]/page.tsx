@@ -14,6 +14,8 @@ import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
+import { VendorSchema } from "@/components/seo/VendorSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -120,7 +122,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       }),
     },
     twitter: {
-      card: vendor.logoUrl ? "summary" : "summary",
+      card: vendor.logoUrl ? "summary_large_image" : "summary",
       title: vendor.businessName,
       description,
       ...(vendor.logoUrl && { images: [vendor.logoUrl] }),
@@ -147,7 +149,35 @@ export default async function VendorDetailPage({ params }: Props) {
     (ev) => ev.event.endDate && new Date(ev.event.endDate) < now
   );
 
+  const products = parseJsonArray(vendor.products);
+  const paymentMethods = parseJsonArray(vendor.paymentMethods);
+
   return (
+    <>
+      <VendorSchema
+        businessName={vendor.businessName}
+        description={vendor.description}
+        logoUrl={vendor.logoUrl}
+        url={`https://meetmeatthefair.com/vendors/${vendor.slug}`}
+        address={vendor.address}
+        city={vendor.city}
+        state={vendor.state}
+        zip={vendor.zip}
+        telephone={vendor.contactPhone}
+        email={vendor.contactEmail}
+        website={vendor.website}
+        yearEstablished={vendor.yearEstablished}
+        paymentMethods={paymentMethods}
+        socialLinks={vendor.socialLinks as Record<string, string> | null}
+        products={products}
+      />
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Vendors", url: "https://meetmeatthefair.com/vendors" },
+          { name: vendor.businessName, url: `https://meetmeatthefair.com/vendors/${vendor.slug}` },
+        ]}
+      />
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
@@ -189,7 +219,6 @@ export default async function VendorDetailPage({ params }: Props) {
           )}
 
           {(() => {
-            const products = parseJsonArray(vendor.products);
             return products.length > 0 && (
               <div>
                 <h2 className="text-xl font-semibold text-gray-900 mb-3">
@@ -429,7 +458,6 @@ export default async function VendorDetailPage({ params }: Props) {
                   </div>
                 )}
                 {(() => {
-                  const paymentMethods = parseJsonArray(vendor.paymentMethods);
                   return paymentMethods.length > 0 && (
                     <div className="flex items-start gap-3 text-gray-700">
                       <CreditCard className="w-5 h-5 text-gray-400 mt-0.5" />
@@ -460,5 +488,6 @@ export default async function VendorDetailPage({ params }: Props) {
         </aside>
       </div>
     </div>
+    </>
   );
 }

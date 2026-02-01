@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Search, X, Heart, Calendar, Filter } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -6,9 +7,23 @@ import { eq, and, sql, isNotNull, isNull, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
+import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
+
+export const metadata: Metadata = {
+  title: "Fair & Festival Venues | Meet Me at the Fair",
+  description: "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
+  alternates: { canonical: "https://meetmeatthefair.com/venues" },
+  openGraph: {
+    title: "Fair & Festival Venues | Meet Me at the Fair",
+    description: "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
+    url: "https://meetmeatthefair.com/venues",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+  },
+};
 
 // Helper to build query strings while preserving existing params
 function buildQueryString(params: Record<string, string | undefined>): string {
@@ -178,6 +193,14 @@ export default async function VenuesPage({
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <ItemListSchema
+        name="Fair & Festival Venues"
+        description="Fairgrounds and event spaces hosting upcoming events"
+        items={venueList.map((v) => ({
+          name: v.name,
+          url: `https://meetmeatthefair.com/venues/${v.slug}`,
+        }))}
+      />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Venues</h1>
         <p className="mt-2 text-gray-600">
