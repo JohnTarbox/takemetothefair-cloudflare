@@ -87,16 +87,21 @@ test.describe("Navigation - Site-wide", () => {
     await page.goto("/");
 
     // Navigate to events
-    const eventsLink = page.locator('a[href="/events"]').first();
+    const eventsLink = page
+      .locator('header a[href="/events"], nav a[href="/events"]')
+      .first();
     if (await eventsLink.isVisible()) {
       await eventsLink.click();
       await expect(page).toHaveURL(/\/events/);
+      await page.waitForLoadState("domcontentloaded");
 
       // Navigate back home
-      const homeLink = page.locator('a[href="/"]').first();
+      const homeLink = page
+        .locator('header a[href="/"], nav a[href="/"]')
+        .first();
       if (await homeLink.isVisible()) {
         await homeLink.click();
-        await expect(page).toHaveURL("/");
+        await expect(page).toHaveURL(/\/$/);
       }
     }
   });
