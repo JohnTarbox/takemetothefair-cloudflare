@@ -3,10 +3,9 @@ import type { JWT } from "next-auth/jwt";
 import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { logError } from "./logger";
 
 type UserRole = "ADMIN" | "PROMOTER" | "VENDOR" | "USER";
@@ -114,12 +113,6 @@ const authConfig: NextAuthConfig = {
     signIn: "/login",
     error: "/login",
   },
-  adapter: DrizzleAdapter(getCloudflareDb(), {
-    usersTable: schema.users,
-    accountsTable: schema.accounts,
-    sessionsTable: schema.sessions,
-    verificationTokensTable: schema.verificationTokens,
-  }),
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
@@ -190,14 +183,90 @@ const authConfig: NextAuthConfig = {
     }),
   ],
   callbacks: {
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google" || !profile?.email) {
+        return true;
+      }
+
+      const db = getCloudflareDb();
+
+      // Check if a user with this email already exists
+      const existingUser = await db.query.users.findFirst({
+        where: eq(schema.users.email, profile.email),
+      });
+
+      // Check if this Google account is already linked
+      const existingAccount = await db.query.accounts.findFirst({
+        where: and(
+          eq(schema.accounts.provider, "google"),
+          eq(schema.accounts.providerAccountId, account.providerAccountId),
+        ),
+      });
+
+      if (existingAccount) {
+        // Already linked — allow sign-in
+        return true;
+      }
+
+      if (existingUser && existingUser.passwordHash) {
+        // User registered with email/password — block to prevent account takeover
+        return "/login?error=OAuthAccountNotLinked";
+      }
+
+      if (!existingUser) {
+        // Create new user
+        const userId = crypto.randomUUID();
+        await db.insert(schema.users).values({
+          id: userId,
+          email: profile.email,
+          name: profile.name ?? null,
+          image: profile.picture as string ?? null,
+          role: "USER",
+          emailVerified: new Date(),
+        });
+        // Link account
+        await db.insert(schema.accounts).values({
+          userId,
+          type: "oauth",
+          provider: "google",
+          providerAccountId: account.providerAccountId,
+          accessToken: account.access_token ?? null,
+          refreshToken: account.refresh_token ?? null,
+          expiresAt: account.expires_at ?? null,
+          tokenType: account.token_type ?? null,
+          scope: account.scope ?? null,
+          idToken: account.id_token ?? null,
+        });
+        // Attach the ID so the jwt callback can use it
+        user.id = userId;
+        user.role = "USER";
+      } else {
+        // Existing user without password (e.g., previous OAuth) — link new account
+        await db.insert(schema.accounts).values({
+          userId: existingUser.id,
+          type: "oauth",
+          provider: "google",
+          providerAccountId: account.providerAccountId,
+          accessToken: account.access_token ?? null,
+          refreshToken: account.refresh_token ?? null,
+          expiresAt: account.expires_at ?? null,
+          tokenType: account.token_type ?? null,
+          scope: account.scope ?? null,
+          idToken: account.id_token ?? null,
+        });
+        user.id = existingUser.id;
+        user.role = existingUser.role as UserRole;
+      }
+
+      return true;
+    },
     async jwt({ token, user }: { token: JWT; user?: User }) {
       if (user && user.id) {
         token.id = user.id;
-        // For OAuth users, user.role may not be set by authorize()
         if (user.role) {
           token.role = user.role;
         } else {
-          // Look up role from DB
+          // Look up role from DB for OAuth users
           const db = getCloudflareDb();
           const dbUser = await db.query.users.findFirst({
             where: eq(schema.users.id, user.id),
