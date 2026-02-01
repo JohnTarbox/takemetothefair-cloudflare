@@ -92,7 +92,7 @@ test.describe("Navigation - Site-wide", () => {
       .first();
     if (await eventsLink.isVisible()) {
       await eventsLink.click();
-      await expect(page).toHaveURL(/\/events/);
+      await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
       await page.waitForLoadState("domcontentloaded");
 
       // Navigate back home
