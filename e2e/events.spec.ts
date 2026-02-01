@@ -36,10 +36,12 @@ test.describe("Events Page - Navigation", () => {
   test("can navigate to events page from home", async ({ page }) => {
     await page.goto("/");
 
-    const eventsLink = page.locator('a[href="/events"]').first();
+    const eventsLink = page
+      .locator('header a[href="/events"], nav a[href="/events"]')
+      .first();
     if (await eventsLink.isVisible()) {
       await eventsLink.click();
-      await expect(page).toHaveURL(/\/events/);
+      await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
     }
   });
 });

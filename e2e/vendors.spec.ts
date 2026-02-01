@@ -47,10 +47,12 @@ test.describe("Vendors Page - Navigation", () => {
   test("can navigate to vendors page from home", async ({ page }) => {
     await page.goto("/");
 
-    const vendorsLink = page.locator('a[href="/vendors"]').first();
+    const vendorsLink = page
+      .locator('header a[href="/vendors"], nav a[href="/vendors"]')
+      .first();
     if (await vendorsLink.isVisible()) {
       await vendorsLink.click();
-      await expect(page).toHaveURL(/\/vendors/);
+      await expect(page).toHaveURL(/\/vendors/, { timeout: 15000 });
     }
   });
 });

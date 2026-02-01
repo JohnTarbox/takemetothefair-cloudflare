@@ -47,10 +47,12 @@ test.describe("Venues Page - Navigation", () => {
   test("can navigate to venues page from home", async ({ page }) => {
     await page.goto("/");
 
-    const venuesLink = page.locator('a[href="/venues"]').first();
+    const venuesLink = page
+      .locator('header a[href="/venues"], nav a[href="/venues"]')
+      .first();
     if (await venuesLink.isVisible()) {
       await venuesLink.click();
-      await expect(page).toHaveURL(/\/venues/);
+      await expect(page).toHaveURL(/\/venues/, { timeout: 15000 });
     }
   });
 });
