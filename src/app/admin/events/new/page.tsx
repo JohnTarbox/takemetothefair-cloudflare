@@ -85,8 +85,8 @@ export default function NewEventPage() {
     const formData = new FormData(e.currentTarget);
 
     // Use controlled state values for dates
-    const startDateISO = datesTBD || !startDate ? null : new Date(startDate).toISOString();
-    const endDateISO = datesTBD || !endDate ? null : new Date(endDate).toISOString();
+    const startDateISO = datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
+    const endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
 
     const promoterId = formData.get("promoterId") as string;
     if (!promoterId) {
@@ -227,10 +227,16 @@ export default function NewEventPage() {
                         <Input
                           id="startDate"
                           name="startDate"
-                          type="datetime-local"
+                          type="date"
                           required={!datesTBD}
                           value={startDate}
-                          onChange={(e) => setStartDate(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setStartDate(val);
+                            if (!endDate || endDate < val) {
+                              setEndDate(val);
+                            }
+                          }}
                         />
                       </div>
                       <div>
@@ -238,8 +244,9 @@ export default function NewEventPage() {
                         <Input
                           id="endDate"
                           name="endDate"
-                          type="datetime-local"
+                          type="date"
                           required={!datesTBD}
+                          min={startDate || undefined}
                           value={endDate}
                           onChange={(e) => setEndDate(e.target.value)}
                         />
