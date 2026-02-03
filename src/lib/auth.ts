@@ -316,10 +316,15 @@ function initAuth() {
 }
 
 export const handlers = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   GET: ((...args: any[]) => initAuth().handlers.GET(...args)),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   POST: ((...args: any[]) => initAuth().handlers.POST(...args)),
 } as ReturnType<typeof NextAuth>["handlers"];
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const auth = ((...args: any[]) => initAuth().auth(...args)) as ReturnType<typeof NextAuth>["auth"];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const signIn = ((...args: any[]) => initAuth().signIn(...args)) as ReturnType<typeof NextAuth>["signIn"];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const signOut = ((...args: any[]) => initAuth().signOut(...args)) as ReturnType<typeof NextAuth>["signOut"];
