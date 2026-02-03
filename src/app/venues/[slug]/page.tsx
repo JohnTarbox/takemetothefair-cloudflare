@@ -150,8 +150,6 @@ export default async function VenueDetailPage({ params }: Props) {
         capacity={venue.capacity}
         telephone={venue.contactPhone}
         amenities={amenities}
-        googleRating={venue.googleRating}
-        googleRatingCount={venue.googleRatingCount}
       />
       <BreadcrumbSchema
         items={[

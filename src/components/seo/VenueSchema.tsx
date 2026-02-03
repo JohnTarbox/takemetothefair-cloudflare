@@ -12,8 +12,6 @@ interface VenueSchemaProps {
   capacity?: number | null;
   telephone?: string | null;
   amenities?: string[];
-  googleRating?: number | null;
-  googleRatingCount?: number | null;
 }
 
 export function VenueSchema({
@@ -30,8 +28,6 @@ export function VenueSchema({
   capacity,
   telephone,
   amenities,
-  googleRating,
-  googleRatingCount,
 }: VenueSchemaProps) {
   const schema = {
     "@context": "https://schema.org",
@@ -65,15 +61,6 @@ export function VenueSchema({
             name: a,
             value: true,
           }))
-        : undefined,
-    aggregateRating:
-      googleRating && googleRatingCount
-        ? {
-            "@type": "AggregateRating",
-            ratingValue: googleRating,
-            ratingCount: googleRatingCount,
-            bestRating: 5,
-          }
         : undefined,
   };
 
