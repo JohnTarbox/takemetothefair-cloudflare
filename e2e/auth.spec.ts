@@ -41,7 +41,7 @@ test.describe("Login Page", () => {
   test("can navigate to register page", async ({ page }) => {
     await page.goto("/login");
 
-    const registerLink = page.locator('a[href="/register"]');
+    const registerLink = page.getByRole("link", { name: "Sign up" });
     if (await registerLink.isVisible()) {
       await registerLink.click();
       await expect(page).toHaveURL("/register");
