@@ -274,7 +274,7 @@ describe("getSlugPrefixBounds", () => {
   });
 
   it("bounds exclude the base slug itself", () => {
-    const [lower, upper] = getSlugPrefixBounds("my-event");
+    const [lower, _upper] = getSlugPrefixBounds("my-event");
     // "my-event" should NOT be > lower (it's less than "my-event-")
     expect("my-event" > lower).toBe(false);
   });
