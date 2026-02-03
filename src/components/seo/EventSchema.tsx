@@ -38,10 +38,10 @@ export function EventSchema({
     "@context": "https://schema.org",
     "@type": "Event",
     name,
-    description: description || undefined,
+    description: description || `${name} - a fair and community event.`,
     startDate: new Date(startDate).toISOString(),
     endDate: new Date(endDate).toISOString(),
-    image: imageUrl || undefined,
+    image: imageUrl || "https://meetmeatthefair.com/og-image.png",
     url,
     eventStatus: "https://schema.org/EventScheduled",
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
@@ -63,25 +63,38 @@ export function EventSchema({
       ? {
           "@type": "Organization",
           name: organizer.name,
-          url: organizer.url || undefined,
+          url: organizer.url || url,
         }
-      : undefined,
-    offers:
-      ticketPriceMin !== null && ticketPriceMin !== undefined
-        ? {
-            "@type": "Offer",
-            url: ticketUrl || url,
-            price: ticketPriceMin,
-            priceCurrency: "USD",
-            availability: "https://schema.org/InStock",
-            validFrom: new Date().toISOString(),
-            ...(ticketPriceMax !== null &&
-              ticketPriceMax !== undefined &&
-              ticketPriceMax !== ticketPriceMin && {
-                highPrice: ticketPriceMax,
-              }),
-          }
-        : undefined,
+      : {
+          "@type": "Organization",
+          name: "Meet Me at the Fair",
+          url: "https://meetmeatthefair.com",
+        },
+    performer: {
+      "@type": "PerformingGroup",
+      name: "Various Vendors & Exhibitors",
+    },
+    offers: ticketPriceMin !== null && ticketPriceMin !== undefined
+      ? {
+          "@type": "Offer",
+          url: ticketUrl || url,
+          price: ticketPriceMin,
+          priceCurrency: "USD",
+          availability: "https://schema.org/InStock",
+          validFrom: new Date().toISOString(),
+          ...(ticketPriceMax !== null &&
+            ticketPriceMax !== undefined &&
+            ticketPriceMax !== ticketPriceMin && {
+              highPrice: ticketPriceMax,
+            }),
+        }
+      : {
+          "@type": "Offer",
+          url: ticketUrl || url,
+          price: 0,
+          priceCurrency: "USD",
+          availability: "https://schema.org/InStock",
+        },
   };
 
   // Remove undefined values for cleaner output
