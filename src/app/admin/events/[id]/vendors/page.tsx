@@ -26,6 +26,9 @@ interface EventVendor {
   vendorId: string;
   status: string;
   boothInfo: string | null;
+  interested: boolean | null;
+  applied: boolean | null;
+  accepted: boolean | null;
   vendor: Vendor;
 }
 
@@ -184,6 +187,24 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
       setEventVendors(eventVendors.filter((ev) => ev.id !== eventVendorId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove vendor");
+    }
+  };
+
+  const handleUpdateFlag = async (eventVendorId: string, flag: "interested" | "applied" | "accepted", value: boolean) => {
+    try {
+      const res = await fetch(`/api/admin/events/${id}/vendors`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventVendorId, [flag]: value }),
+      });
+
+      if (!res.ok) throw new Error("Failed to update flag");
+
+      setEventVendors(eventVendors.map((ev) =>
+        ev.id === eventVendorId ? { ...ev, [flag]: value } : ev
+      ));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update flag");
     }
   };
 
@@ -516,6 +537,35 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                         {ev.boothInfo && (
                           <p className="text-sm text-gray-500">Booth: {ev.boothInfo}</p>
                         )}
+                        <div className="flex items-center gap-3 mt-2">
+                          <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={ev.interested ?? false}
+                              onChange={(e) => handleUpdateFlag(ev.id, "interested", e.target.checked)}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            Interested
+                          </label>
+                          <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={ev.applied ?? false}
+                              onChange={(e) => handleUpdateFlag(ev.id, "applied", e.target.checked)}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            Applied
+                          </label>
+                          <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={ev.accepted ?? false}
+                              onChange={(e) => handleUpdateFlag(ev.id, "accepted", e.target.checked)}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            Accepted
+                          </label>
+                        </div>
                       </div>
                     </div>
 

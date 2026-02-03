@@ -136,6 +136,9 @@ export const eventVendorCreateSchema = z.object({
     EVENT_VENDOR_STATUS.APPROVED,
     EVENT_VENDOR_STATUS.REJECTED,
   ]).optional().default(EVENT_VENDOR_STATUS.PENDING),
+  interested: z.boolean().optional(),
+  applied: z.boolean().optional(),
+  accepted: z.boolean().optional(),
 });
 
 // Schema for adding vendor to event (eventId comes from URL params)
@@ -147,6 +150,9 @@ export const eventVendorAddSchema = z.object({
     EVENT_VENDOR_STATUS.APPROVED,
     EVENT_VENDOR_STATUS.REJECTED,
   ]).optional().default(EVENT_VENDOR_STATUS.APPROVED),
+  interested: z.boolean().optional(),
+  applied: z.boolean().optional(),
+  accepted: z.boolean().optional(),
 });
 
 export const eventVendorUpdateSchema = z.object({
@@ -157,6 +163,9 @@ export const eventVendorUpdateSchema = z.object({
     EVENT_VENDOR_STATUS.APPROVED,
     EVENT_VENDOR_STATUS.REJECTED,
   ]).optional(),
+  interested: z.boolean().optional(),
+  applied: z.boolean().optional(),
+  accepted: z.boolean().optional(),
 });
 
 // User schemas

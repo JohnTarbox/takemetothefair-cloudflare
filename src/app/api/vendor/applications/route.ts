@@ -119,6 +119,7 @@ export async function POST(request: NextRequest) {
       vendorId: vendor.id,
       boothInfo: boothInfo as string | undefined,
       status: "PENDING",
+      applied: true,
     });
 
     const newApplication = await db

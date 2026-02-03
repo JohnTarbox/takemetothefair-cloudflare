@@ -108,7 +108,7 @@ export default async function VendorApplicationsPage() {
               <CardContent className="p-6">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <Link
                         href={`/events/${app.event.slug}`}
                         className="text-lg font-semibold text-gray-900 hover:text-blue-600"
@@ -118,6 +118,15 @@ export default async function VendorApplicationsPage() {
                       <Badge variant={statusColors[app.status]}>
                         {app.status}
                       </Badge>
+                      {app.interested && (
+                        <Badge variant="default">Interested</Badge>
+                      )}
+                      {app.applied && (
+                        <Badge variant="default">Applied</Badge>
+                      )}
+                      {app.accepted && (
+                        <Badge variant="success">Accepted</Badge>
+                      )}
                     </div>
                     <div className="mt-2 space-y-1 text-sm text-gray-600">
                       <div className="flex items-center gap-2">

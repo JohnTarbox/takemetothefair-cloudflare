@@ -132,6 +132,9 @@ export const eventVendors = sqliteTable("event_vendors", {
   vendorId: text("vendor_id").notNull().references(() => vendors.id, { onDelete: "cascade" }),
   boothInfo: text("booth_info"),
   status: text("status", { enum: ["PENDING", "APPROVED", "REJECTED"] }).default("PENDING").notNull(),
+  interested: integer("interested", { mode: "boolean" }).default(false),
+  applied: integer("applied", { mode: "boolean" }).default(false),
+  accepted: integer("accepted", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 

@@ -85,6 +85,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       vendorId: data.vendorId,
       status: data.status,
       boothInfo: data.boothInfo,
+      interested: data.interested,
+      applied: data.applied,
+      accepted: data.accepted,
     });
 
     const [newEventVendor] = await db
@@ -127,6 +130,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const updateData: Record<string, unknown> = {};
     if (data.status) updateData.status = data.status;
     if (data.boothInfo !== undefined) updateData.boothInfo = data.boothInfo;
+    if (data.interested !== undefined) updateData.interested = data.interested;
+    if (data.applied !== undefined) updateData.applied = data.applied;
+    if (data.accepted !== undefined) updateData.accepted = data.accepted;
 
     await db
       .update(eventVendors)
