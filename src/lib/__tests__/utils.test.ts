@@ -8,6 +8,7 @@ import {
   generateGoogleCalendarUrl,
   generateOutlookCalendarUrl,
   generateICSContent,
+  getSlugPrefixBounds,
 } from "../utils";
 
 describe("createSlug", () => {
@@ -245,5 +246,44 @@ describe("generateICSContent", () => {
     });
 
     expect(ics).toContain("URL:https://example.com/event");
+  });
+});
+
+describe("getSlugPrefixBounds", () => {
+  it("returns correct bounds for simple slug", () => {
+    const [lower, upper] = getSlugPrefixBounds("my-event");
+    expect(lower).toBe("my-event-");
+    expect(upper).toBe("my-event/");
+  });
+
+  it("bounds correctly capture numbered suffixes", () => {
+    const [lower, upper] = getSlugPrefixBounds("my-event");
+    // "my-event-2" should be > lower and < upper
+    expect("my-event-2" > lower).toBe(true);
+    expect("my-event-2" < upper).toBe(true);
+  });
+
+  it("bounds correctly capture text suffixes", () => {
+    const [lower, upper] = getSlugPrefixBounds("fair");
+    // "fair-2026" should be in bounds
+    expect("fair-2026" > lower).toBe(true);
+    expect("fair-2026" < upper).toBe(true);
+    // "fair-extended-edition" should be in bounds
+    expect("fair-extended-edition" > lower).toBe(true);
+    expect("fair-extended-edition" < upper).toBe(true);
+  });
+
+  it("bounds exclude the base slug itself", () => {
+    const [lower, upper] = getSlugPrefixBounds("my-event");
+    // "my-event" should NOT be > lower (it's less than "my-event-")
+    expect("my-event" > lower).toBe(false);
+  });
+
+  it("bounds exclude unrelated slugs", () => {
+    const [lower, upper] = getSlugPrefixBounds("my-event");
+    // "my-events" should NOT be captured (it doesn't have the hyphen after "my-event")
+    expect("my-events" > lower && "my-events" < upper).toBe(false);
+    // "my-event" without suffix should NOT be captured
+    expect("my-event" > lower && "my-event" < upper).toBe(false);
   });
 });

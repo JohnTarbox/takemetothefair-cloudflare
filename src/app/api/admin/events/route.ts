@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDays } from "@/lib/db/schema";
-import { eq, or, like } from "drizzle-orm";
-import { createSlug, sanitizeLikeInput, findUniqueSlug } from "@/lib/utils";
+import { eq, or, gt, lt, and } from "drizzle-orm";
+import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -51,11 +51,21 @@ export async function POST(request: NextRequest) {
   try {
     const eventId = crypto.randomUUID();
     const baseSlug = createSlug(data.name);
-    const escaped = sanitizeLikeInput(baseSlug);
+
+    // Handle empty slug (e.g., name with only special characters)
+    if (!baseSlug) {
+      return NextResponse.json({ error: "Event name must contain alphanumeric characters" }, { status: 400 });
+    }
+
+    // Use string range comparison instead of LIKE to avoid "pattern too complex" errors
+    const [lowerBound, upperBound] = getSlugPrefixBounds(baseSlug);
     const existing = await db
       .select({ slug: events.slug })
       .from(events)
-      .where(or(eq(events.slug, baseSlug), like(events.slug, `${escaped}-%`)));
+      .where(or(
+        eq(events.slug, baseSlug),
+        and(gt(events.slug, lowerBound), lt(events.slug, upperBound))
+      ));
     const slug = findUniqueSlug(baseSlug, existing.map((r) => r.slug));
 
     await db.insert(events).values({

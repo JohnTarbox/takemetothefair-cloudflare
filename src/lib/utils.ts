@@ -19,6 +19,22 @@ export function sanitizeLikeInput(input: string): string {
 }
 
 /**
+ * Generate bounds for prefix-based slug queries using string comparison.
+ * This is more reliable than LIKE patterns which can fail with "pattern too complex" errors.
+ *
+ * Returns [lowerBound, upperBound] for use with: slug > lowerBound AND slug < upperBound
+ * Uses ASCII ordering: '-' (45) < '/' (47) < '0' (48) < 'a' (97)
+ */
+export function getSlugPrefixBounds(baseSlug: string): [string, string] {
+  // Lower bound: baseSlug- (exclusive, so we get baseSlug-* but not baseSlug- itself)
+  const lowerBound = `${baseSlug}-`;
+  // Upper bound: baseSlug/ (exclusive) - '/' comes after '-' in ASCII, before '0'
+  // This captures all valid slug continuations (alphanumerics and hyphens)
+  const upperBound = `${baseSlug}/`;
+  return [lowerBound, upperBound];
+}
+
+/**
  * Find a unique slug by checking existing slugs with the same base.
  * Appends -2, -3, etc. if the base slug is taken.
  */
