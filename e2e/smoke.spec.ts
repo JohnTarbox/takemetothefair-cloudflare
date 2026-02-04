@@ -7,6 +7,8 @@ const publicPages = [
   "/vendors",
   "/about",
   "/contact",
+  "/faq",
+  "/search-visibility",
   "/privacy",
   "/terms",
   "/for-promoters",
