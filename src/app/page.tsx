@@ -225,6 +225,37 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Help Section */}
+      <section className="py-12 border-t border-gray-200">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 text-center">
+            <p className="text-gray-600">Need help getting started?</p>
+            <div className="flex gap-4">
+              <Link
+                href="/faq"
+                className="text-blue-600 hover:text-blue-700 font-medium"
+              >
+                FAQ
+              </Link>
+              <span className="text-gray-300">|</span>
+              <Link
+                href="/search-visibility"
+                className="text-blue-600 hover:text-blue-700 font-medium"
+              >
+                Search Visibility
+              </Link>
+              <span className="text-gray-300">|</span>
+              <Link
+                href="/contact"
+                className="text-blue-600 hover:text-blue-700 font-medium"
+              >
+                Contact Us
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
