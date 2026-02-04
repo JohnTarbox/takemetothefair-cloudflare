@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Store, Search, Grid, List, ArrowLeft, CheckCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
 export const runtime = "edge";
 
@@ -90,6 +91,16 @@ export default function EventVendorsPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      {eventInfo && vendors.length > 0 && (
+        <ItemListSchema
+          name={`Vendors at ${eventInfo.name}`}
+          description={`Vendors participating in ${eventInfo.name}`}
+          items={vendors.map((vendor) => ({
+            name: vendor.businessName,
+            url: `https://meetmeatthefair.com/vendors/${vendor.slug}`,
+          }))}
+        />
+      )}
       {/* Header */}
       <div className="mb-8">
         <Link

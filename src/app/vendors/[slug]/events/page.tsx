@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateRange } from "@/lib/utils";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
+import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
 export const runtime = "edge";
 
@@ -120,6 +121,16 @@ export default function VendorEventsPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      {vendorInfo && events.length > 0 && (
+        <ItemListSchema
+          name={`${vendorInfo.businessName}'s Events`}
+          description={`Events featuring ${vendorInfo.businessName}`}
+          items={events.map((event) => ({
+            name: event.name,
+            url: `https://meetmeatthefair.com/events/${event.slug}`,
+          }))}
+        />
+      )}
       {/* Header */}
       <div className="mb-8">
         <Link
