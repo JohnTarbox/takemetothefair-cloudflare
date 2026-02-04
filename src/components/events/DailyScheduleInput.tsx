@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,8 @@ export function DailyScheduleInput({
 }: DailyScheduleInputProps) {
   const [enabled, setEnabled] = useState(initialDays.length > 0);
   const [days, setDays] = useState<EventDayInput[]>(initialDays);
+  // Track if we've synced async initialDays (for edit page where data loads after mount)
+  const initialDaysSyncedRef = useRef(initialDays.length > 0);
 
   // Generate days when dates change or feature is enabled
   useEffect(() => {
@@ -92,14 +94,22 @@ export function DailyScheduleInput({
     }
   }, [enabled, startDate, endDate, days]);
 
-  // Notify parent of changes
+  // Notify parent of changes (multi-day only - single-day handles its own onChange)
+  const isSingleDay =
+    startDate &&
+    endDate &&
+    new Date(startDate).toDateString() === new Date(endDate).toDateString();
+
   useEffect(() => {
+    // Skip for single-day events - they handle onChange directly
+    if (isSingleDay) return;
+
     if (enabled) {
       onChange(days);
     } else {
       onChange([]);
     }
-  }, [enabled, days, onChange]);
+  }, [enabled, days, onChange, isSingleDay]);
 
   const handleToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setEnabled(e.target.checked);
@@ -128,16 +138,126 @@ export function DailyScheduleInput({
     );
   }, [days]);
 
-  // Can only enable for multi-day events
+  // Check if multi-day event
   const isMultiDay =
     startDate &&
     endDate &&
     new Date(startDate).toDateString() !== new Date(endDate).toDateString();
 
+  // Single-day event: initialize days and notify parent
+  useEffect(() => {
+    if (!isSingleDay || !startDate) return;
+
+    const dateStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
+
+    // Check if initialDays has data we should use (async load from edit page)
+    const hasInitialData = initialDays.length > 0;
+
+    // Sync when initialDays arrives asynchronously (edit page loads data after mount)
+    if (hasInitialData && !initialDaysSyncedRef.current) {
+      initialDaysSyncedRef.current = true;
+      const existing = initialDays[0];
+      const newDay = {
+        date: dateStr,
+        openTime: existing.openTime,
+        closeTime: existing.closeTime,
+        notes: existing.notes || "",
+        closed: existing.closed,
+      };
+      setDays([newDay]);
+      onChange([newDay]);
+      return;
+    }
+
+    // Initialize with defaults if no data yet
+    if (days.length === 0 || days[0].date !== dateStr) {
+      const newDay = {
+        date: dateStr,
+        openTime: "10:00",
+        closeTime: "18:00",
+        notes: "",
+        closed: false,
+      };
+      setDays([newDay]);
+      onChange([newDay]);
+    }
+  }, [isSingleDay, startDate, initialDays, days, onChange]);
+
+  // Single-day event: show simplified hours input
+  if (isSingleDay && startDate) {
+    const dateStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
+    const singleDay = days.length > 0 ? days[0] : {
+      date: dateStr,
+      openTime: "10:00",
+      closeTime: "18:00",
+      notes: "",
+      closed: false,
+    };
+
+    const handleSingleDayChange = (field: keyof EventDayInput, value: string | boolean) => {
+      const updated = { ...singleDay, date: dateStr, [field]: value };
+      setDays([updated]);
+      onChange([updated]); // Directly notify parent
+    };
+
+    return (
+      <div className="space-y-4">
+        <Label className="text-sm font-medium">Event Hours</Label>
+        <div className="border rounded-lg p-4 space-y-4">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="singleDayOpenTime" className="text-sm text-gray-600 w-12">
+                Open
+              </Label>
+              <Input
+                id="singleDayOpenTime"
+                type="time"
+                value={singleDay.openTime}
+                onChange={(e) => handleSingleDayChange("openTime", e.target.value)}
+                disabled={disabled}
+                className="w-32"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="singleDayCloseTime" className="text-sm text-gray-600 w-12">
+                Close
+              </Label>
+              <Input
+                id="singleDayCloseTime"
+                type="time"
+                value={singleDay.closeTime}
+                onChange={(e) => handleSingleDayChange("closeTime", e.target.value)}
+                disabled={disabled}
+                className="w-32"
+              />
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="singleDayNotes" className="text-sm text-gray-600">
+              Notes (optional)
+            </Label>
+            <Input
+              id="singleDayNotes"
+              type="text"
+              value={singleDay.notes}
+              onChange={(e) => handleSingleDayChange("notes", e.target.value)}
+              placeholder="e.g., Early bird entry at 9:00 AM"
+              disabled={disabled}
+              className="mt-1"
+              maxLength={200}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No dates selected yet
   if (!isMultiDay) {
     return null;
   }
 
+  // Multi-day event: show toggle + daily schedule grid
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
