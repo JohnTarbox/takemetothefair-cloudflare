@@ -223,6 +223,8 @@ export default async function EventDetailPage({ params }: Props) {
           city: event.venue.city,
           state: event.venue.state,
           zip: event.venue.zip,
+          latitude: event.venue.latitude,
+          longitude: event.venue.longitude,
         } : null}
         organizer={event.promoter ? {
           name: event.promoter.companyName,
@@ -231,6 +233,7 @@ export default async function EventDetailPage({ params }: Props) {
         ticketPriceMin={event.ticketPriceMin}
         ticketPriceMax={event.ticketPriceMax}
         ticketUrl={event.ticketUrl}
+        categories={parseJsonArray(event.categories)}
       />
       <BreadcrumbSchema
         items={[

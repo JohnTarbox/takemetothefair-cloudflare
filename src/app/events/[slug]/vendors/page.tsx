@@ -98,6 +98,7 @@ export default function EventVendorsPage() {
           items={vendors.map((vendor) => ({
             name: vendor.businessName,
             url: `https://meetmeatthefair.com/vendors/${vendor.slug}`,
+            image: vendor.logoUrl,
           }))}
         />
       )}

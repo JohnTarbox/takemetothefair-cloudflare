@@ -199,6 +199,7 @@ export default async function VenuesPage({
         items={venueList.map((v) => ({
           name: v.name,
           url: `https://meetmeatthefair.com/venues/${v.slug}`,
+          image: v.imageUrl,
         }))}
       />
       <div className="mb-8">

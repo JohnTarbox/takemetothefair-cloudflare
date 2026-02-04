@@ -11,6 +11,8 @@ interface EventSchemaProps {
     city?: string | null;
     state?: string | null;
     zip?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   } | null;
   organizer?: {
     name: string;
@@ -19,6 +21,7 @@ interface EventSchemaProps {
   ticketPriceMin?: number | null;
   ticketPriceMax?: number | null;
   ticketUrl?: string | null;
+  categories?: string[];
 }
 
 export function EventSchema({
@@ -33,7 +36,11 @@ export function EventSchema({
   ticketPriceMin,
   ticketPriceMax,
   ticketUrl,
+  categories,
 }: EventSchemaProps) {
+  // Calculate isAccessibleForFree based on ticket price
+  const isAccessibleForFree = ticketPriceMin === 0 || ticketPriceMin === null || ticketPriceMin === undefined;
+
   const schema = {
     "@context": "https://schema.org",
     "@type": "Event",
@@ -45,6 +52,13 @@ export function EventSchema({
     url,
     eventStatus: "https://schema.org/EventScheduled",
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    isAccessibleForFree,
+    about: categories && categories.length > 0
+      ? categories.map((category) => ({
+          "@type": "Thing",
+          name: category,
+        }))
+      : undefined,
     location: venue
       ? {
           "@type": "Place",
@@ -57,6 +71,13 @@ export function EventSchema({
             postalCode: venue.zip || undefined,
             addressCountry: "US",
           },
+          geo: venue.latitude && venue.longitude
+            ? {
+                "@type": "GeoCoordinates",
+                latitude: venue.latitude,
+                longitude: venue.longitude,
+              }
+            : undefined,
         }
       : undefined,
     organizer: organizer

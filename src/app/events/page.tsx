@@ -564,6 +564,7 @@ export default async function EventsPage({
         items={eventsList.map((e) => ({
           name: e.name,
           url: `https://meetmeatthefair.com/events/${e.slug}`,
+          image: e.imageUrl,
         }))}
       />
       <div className="mb-8">

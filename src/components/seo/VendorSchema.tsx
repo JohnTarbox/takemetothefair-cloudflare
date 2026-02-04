@@ -1,3 +1,22 @@
+// Map common vendor types to schema.org LocalBusiness subtypes
+function getSchemaType(vendorType?: string | null): string {
+  if (!vendorType) return "LocalBusiness";
+
+  const type = vendorType.toLowerCase();
+
+  // Food-related types
+  if (type.includes("food") || type.includes("restaurant") || type.includes("catering") || type.includes("bakery") || type.includes("cafe")) {
+    return "FoodEstablishment";
+  }
+
+  // Craft/artisan/retail types
+  if (type.includes("craft") || type.includes("artisan") || type.includes("handmade") || type.includes("jewelry") || type.includes("retail") || type.includes("shop") || type.includes("boutique")) {
+    return "Store";
+  }
+
+  return "LocalBusiness";
+}
+
 interface VendorSchemaProps {
   businessName: string;
   description?: string | null;
@@ -14,6 +33,7 @@ interface VendorSchemaProps {
   paymentMethods?: string[];
   socialLinks?: Record<string, string> | null;
   products?: string[];
+  vendorType?: string | null;
 }
 
 export function VendorSchema({
@@ -32,6 +52,7 @@ export function VendorSchema({
   paymentMethods,
   socialLinks,
   products,
+  vendorType,
 }: VendorSchemaProps) {
   const sameAs: string[] = [];
   if (website) sameAs.push(website);
@@ -43,7 +64,7 @@ export function VendorSchema({
 
   const schema = {
     "@context": "https://schema.org",
-    "@type": "LocalBusiness",
+    "@type": getSchemaType(vendorType),
     name: businessName,
     description: description || undefined,
     image: logoUrl || undefined,

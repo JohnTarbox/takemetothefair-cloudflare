@@ -239,6 +239,7 @@ export default async function VendorsPage({
         items={vendorList.map((v) => ({
           name: v.businessName,
           url: `https://meetmeatthefair.com/vendors/${v.slug}`,
+          image: v.logoUrl,
         }))}
       />
       <div className="mb-8">

@@ -13,6 +13,15 @@ export function OrganizationSchema() {
           "@type": "ImageObject",
           url: "https://meetmeatthefair.com/icon.png",
         },
+        sameAs: [
+          "https://facebook.com/meetmeatthefair",
+          "https://instagram.com/meetmeatthefair",
+        ],
+        contactPoint: {
+          "@type": "ContactPoint",
+          email: "hello@meetmeatthefair.com",
+          contactType: "customer service",
+        },
       },
       {
         "@type": "WebSite",

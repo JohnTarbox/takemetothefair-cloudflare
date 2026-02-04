@@ -1,6 +1,7 @@
 import { Mail, MessageSquare } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Metadata } from "next";
+import { FAQSchema } from "@/components/seo/FAQSchema";
 
 export const runtime = "edge";
 
@@ -9,9 +10,29 @@ export const metadata: Metadata = {
   description: "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
 };
 
+const faqItems = [
+  {
+    question: "How do I list my event?",
+    answer: "Event promoters can create an account and submit events for approval. Once approved, your event will appear in our calendar and search results.",
+  },
+  {
+    question: "How can I become a vendor at an event?",
+    answer: "Create a vendor profile, browse available events, and submit applications to the events you're interested in. Event promoters will review and respond to your application.",
+  },
+  {
+    question: "Is it free to list events?",
+    answer: "Basic event listings are free. Contact us for information about featured listings and promotional opportunities.",
+  },
+  {
+    question: "How do I report an issue with an event listing?",
+    answer: "If you notice incorrect information or have concerns about a listing, please email us at support@meetmeatthefair.com with details.",
+  },
+];
+
 export default function ContactPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <FAQSchema items={faqItems} />
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           Contact Us

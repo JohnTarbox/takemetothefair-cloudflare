@@ -52,6 +52,10 @@ export function VenueSchema({
             longitude,
           }
         : undefined,
+    hasMap:
+      latitude && longitude
+        ? `https://www.google.com/maps?q=${latitude},${longitude}`
+        : undefined,
     maximumAttendeeCapacity: capacity || undefined,
     telephone: telephone || undefined,
     amenityFeature:
