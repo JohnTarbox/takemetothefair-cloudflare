@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { errorLogs } from "@/lib/db/schema";
-import { desc, eq, like, and, sql } from "drizzle-orm";
+import { desc, eq, like, and, sql, lt } from "drizzle-orm";
 
 export const runtime = "edge";
 
@@ -51,6 +51,54 @@ export async function GET(request: NextRequest) {
     console.error("Failed to fetch error logs:", error);
     return NextResponse.json(
       { error: "Failed to fetch error logs" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const session = await auth();
+  if (!session || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const searchParams = request.nextUrl.searchParams;
+  const id = searchParams.get("id");
+  const olderThan = searchParams.get("olderThan"); // days
+
+  try {
+    const db = getCloudflareDb();
+
+    if (id) {
+      // Delete a single log entry
+      await db.delete(errorLogs).where(eq(errorLogs.id, id));
+      return NextResponse.json({ deleted: 1 });
+    }
+
+    if (olderThan) {
+      // Delete logs older than N days
+      const days = parseInt(olderThan, 10);
+      if (isNaN(days) || days < 1) {
+        return NextResponse.json(
+          { error: "olderThan must be a positive number" },
+          { status: 400 }
+        );
+      }
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+      const result = await db
+        .delete(errorLogs)
+        .where(lt(errorLogs.timestamp, cutoff));
+      return NextResponse.json({ deleted: result.rowsAffected ?? 0 });
+    }
+
+    return NextResponse.json(
+      { error: "Specify 'id' or 'olderThan' parameter" },
+      { status: 400 }
+    );
+  } catch (error) {
+    console.error("Failed to delete error logs:", error);
+    return NextResponse.json(
+      { error: "Failed to delete error logs" },
       { status: 500 }
     );
   }

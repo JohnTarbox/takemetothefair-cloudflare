@@ -30,6 +30,7 @@ const levelColors: Record<string, "danger" | "warning" | "info" | "default"> = {
 export default function AdminLogsPage() {
   const [logs, setLogs] = useState<ErrorLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [level, setLevel] = useState("");
   const [source, setSource] = useState("");
   const [search, setSearch] = useState("");
@@ -59,17 +60,55 @@ export default function AdminLogsPage() {
     fetchLogs();
   }, [fetchLogs]);
 
+  const deleteLog = async (id: string) => {
+    if (!confirm("Delete this log entry?")) return;
+    setDeleting(id);
+    try {
+      await fetch(`/api/admin/logs?id=${id}`, { method: "DELETE" });
+      setLogs((prev) => prev.filter((log) => log.id !== id));
+      if (expandedId === id) setExpandedId(null);
+    } catch (error) {
+      console.error("Failed to delete log:", error);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const clearOldLogs = async (days: number) => {
+    if (!confirm(`Delete all logs older than ${days} days?`)) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/logs?olderThan=${days}`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as { deleted: number };
+      alert(`Deleted ${data.deleted} log entries`);
+      fetchLogs();
+    } catch (error) {
+      console.error("Failed to clear old logs:", error);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Error Logs</h1>
-        <button
-          type="button"
-          onClick={fetchLogs}
-          className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => clearOldLogs(7)}
+            className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-red-600"
+          >
+            Clear 7+ days
+          </button>
+          <button
+            type="button"
+            onClick={fetchLogs}
+            className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       <Card className="mb-6">
@@ -196,15 +235,27 @@ export default function AdminLogsPage() {
 
                   {expandedId === log.id && (
                     <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm flex-1">
+                          <div>
+                            <span className="font-medium text-gray-600">ID: </span>
+                            <span className="font-mono text-xs">{log.id}</span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-gray-600">Timestamp: </span>
+                            <span>{log.time}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteLog(log.id)}
+                          disabled={deleting === log.id}
+                          className="px-3 py-1 text-xs text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50 transition-colors"
+                        >
+                          {deleting === log.id ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
                       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                        <div>
-                          <span className="font-medium text-gray-600">ID: </span>
-                          <span className="font-mono text-xs">{log.id}</span>
-                        </div>
-                        <div>
-                          <span className="font-medium text-gray-600">Timestamp: </span>
-                          <span>{log.time}</span>
-                        </div>
                         {log.url && (
                           <div className="col-span-2">
                             <span className="font-medium text-gray-600">URL: </span>
