@@ -200,6 +200,39 @@ export const verificationTokens = sqliteTable("verification_tokens", {
   expires: integer("expires", { mode: "timestamp" }).notNull(),
 });
 
+// Event Schema.org Data table - stores fetched schema.org markup from ticket URLs
+export const eventSchemaOrg = sqliteTable("event_schema_org", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  eventId: text("event_id").notNull().unique().references(() => events.id, { onDelete: "cascade" }),
+  ticketUrl: text("ticket_url"),
+  rawJsonLd: text("raw_json_ld"), // Raw JSON-LD blob for audit/debugging
+  // Normalized schema.org fields
+  schemaName: text("schema_name"),
+  schemaDescription: text("schema_description"),
+  schemaStartDate: integer("schema_start_date", { mode: "timestamp" }),
+  schemaEndDate: integer("schema_end_date", { mode: "timestamp" }),
+  schemaVenueName: text("schema_venue_name"),
+  schemaVenueAddress: text("schema_venue_address"),
+  schemaVenueCity: text("schema_venue_city"),
+  schemaVenueState: text("schema_venue_state"),
+  schemaVenueLat: real("schema_venue_lat"),
+  schemaVenueLng: real("schema_venue_lng"),
+  schemaImageUrl: text("schema_image_url"),
+  schemaTicketUrl: text("schema_ticket_url"),
+  schemaPriceMin: real("schema_price_min"),
+  schemaPriceMax: real("schema_price_max"),
+  schemaEventStatus: text("schema_event_status"), // EventScheduled, EventCancelled, etc.
+  schemaOrganizerName: text("schema_organizer_name"),
+  schemaOrganizerUrl: text("schema_organizer_url"),
+  // Fetch status tracking
+  status: text("status", { enum: ["pending", "available", "not_found", "invalid", "error"] }).default("pending").notNull(),
+  lastFetchedAt: integer("last_fetched_at", { mode: "timestamp" }),
+  lastError: text("last_error"),
+  fetchCount: integer("fetch_count").default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   promoter: one(promoters, { fields: [users.id], references: [promoters.userId] }),
@@ -224,6 +257,11 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   venue: one(venues, { fields: [events.venueId], references: [venues.id] }),
   eventVendors: many(eventVendors),
   eventDays: many(eventDays),
+  schemaOrg: one(eventSchemaOrg, { fields: [events.id], references: [eventSchemaOrg.eventId] }),
+}));
+
+export const eventSchemaOrgRelations = relations(eventSchemaOrg, ({ one }) => ({
+  event: one(events, { fields: [eventSchemaOrg.eventId], references: [events.id] }),
 }));
 
 export const eventDaysRelations = relations(eventDays, ({ one }) => ({
@@ -282,3 +320,4 @@ export type EventDay = typeof eventDays.$inferSelect;
 export type UserFavorite = typeof userFavorites.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type ErrorLog = typeof errorLogs.$inferSelect;
+export type EventSchemaOrg = typeof eventSchemaOrg.$inferSelect;

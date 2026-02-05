@@ -93,6 +93,7 @@ export default function ImportUrlPage() {
   const [fetchedContent, setFetchedContent] = useState("");
   const [_pageTitle, setPageTitle] = useState("");
   const [_ogImage, setOgImage] = useState("");
+  const [fetchedJsonLd, setFetchedJsonLd] = useState<Record<string, unknown> | null>(null);
 
   // Multi-event extraction state
   const [extractedEvents, setExtractedEvents] = useState<ExtractedEvent[]>([]);
@@ -207,6 +208,7 @@ export default function ImportUrlPage() {
       setFetchedContent(data.content || "");
       setPageTitle(data.title || "");
       setOgImage(data.ogImage || "");
+      setFetchedJsonLd(data.jsonLd || null);
 
       setStep("extracting");
       await handleExtract(data.content || "", {
@@ -495,6 +497,7 @@ export default function ImportUrlPage() {
             venueOption: currentVenueOption,
             promoterId: selectedPromoterId,
             sourceUrl: url || null,
+            jsonLd: fetchedJsonLd, // Pass JSON-LD for schema.org storage
           }),
         });
 

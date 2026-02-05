@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
+import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
 
 export const runtime = "edge";
 
@@ -137,6 +138,12 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   const handleEventDaysChange = useCallback((days: EventDayInput[]) => {
     setEventDays(days);
+  }, []);
+
+  const handleSchemaOrgFieldsApplied = useCallback((appliedFields: string[]) => {
+    // Refresh the event data to show updated values
+    fetchEvent();
+    console.log("Applied schema.org fields:", appliedFields);
   }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -448,6 +455,14 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
           </form>
         </CardContent>
       </Card>
+
+      {/* Schema.org Data Panel */}
+      <div className="max-w-2xl">
+        <SchemaOrgPanel
+          eventId={id}
+          onFieldsApplied={handleSchemaOrgFieldsApplied}
+        />
+      </div>
     </div>
   );
 }

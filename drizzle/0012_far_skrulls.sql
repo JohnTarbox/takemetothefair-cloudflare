@@ -1,0 +1,32 @@
+CREATE TABLE `event_schema_org` (
+	`id` text PRIMARY KEY NOT NULL,
+	`event_id` text NOT NULL,
+	`ticket_url` text,
+	`raw_json_ld` text,
+	`schema_name` text,
+	`schema_description` text,
+	`schema_start_date` integer,
+	`schema_end_date` integer,
+	`schema_venue_name` text,
+	`schema_venue_address` text,
+	`schema_venue_city` text,
+	`schema_venue_state` text,
+	`schema_venue_lat` real,
+	`schema_venue_lng` real,
+	`schema_image_url` text,
+	`schema_ticket_url` text,
+	`schema_price_min` real,
+	`schema_price_max` real,
+	`schema_event_status` text,
+	`schema_organizer_name` text,
+	`schema_organizer_url` text,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`last_fetched_at` integer,
+	`last_error` text,
+	`fetch_count` integer DEFAULT 0,
+	`created_at` integer,
+	`updated_at` integer,
+	FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `event_schema_org_event_id_unique` ON `event_schema_org` (`event_id`);

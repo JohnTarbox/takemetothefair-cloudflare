@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters } from "@/lib/db/schema";
+import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
@@ -18,6 +19,7 @@ interface ImportRequest {
   venueOption: VenueOption;
   promoterId: string;
   sourceUrl?: string;
+  jsonLd?: Record<string, unknown>; // JSON-LD from the source page for schema.org storage
 }
 
 export async function POST(request: NextRequest) {
@@ -29,7 +31,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as ImportRequest;
-    const { event, venueOption, promoterId, sourceUrl } = body;
+    const { event, venueOption, promoterId, sourceUrl, jsonLd } = body;
 
     // Validate required fields
     if (!event.name) {
@@ -196,6 +198,48 @@ export async function POST(request: NextRequest) {
       syncEnabled: false,
       lastSyncedAt: new Date(),
     });
+
+    // Store schema.org data if JSON-LD was provided
+    if (jsonLd) {
+      try {
+        const parseResult = parseJsonLd(jsonLd);
+        const now = new Date();
+        const ticketUrl = event.ticketUrl || sourceUrl || null;
+
+        await db.insert(eventSchemaOrg).values({
+          id: crypto.randomUUID(),
+          eventId: newEventId,
+          ticketUrl,
+          rawJsonLd: parseResult.rawJsonLd,
+          schemaName: parseResult.data?.name || null,
+          schemaDescription: parseResult.data?.description || null,
+          schemaStartDate: parseResult.data?.startDate || null,
+          schemaEndDate: parseResult.data?.endDate || null,
+          schemaVenueName: parseResult.data?.venueName || null,
+          schemaVenueAddress: parseResult.data?.venueAddress || null,
+          schemaVenueCity: parseResult.data?.venueCity || null,
+          schemaVenueState: parseResult.data?.venueState || null,
+          schemaVenueLat: parseResult.data?.venueLat || null,
+          schemaVenueLng: parseResult.data?.venueLng || null,
+          schemaImageUrl: parseResult.data?.imageUrl || null,
+          schemaTicketUrl: parseResult.data?.ticketUrl || null,
+          schemaPriceMin: parseResult.data?.priceMin || null,
+          schemaPriceMax: parseResult.data?.priceMax || null,
+          schemaEventStatus: parseResult.data?.eventStatus || null,
+          schemaOrganizerName: parseResult.data?.organizerName || null,
+          schemaOrganizerUrl: parseResult.data?.organizerUrl || null,
+          status: parseResult.status,
+          lastFetchedAt: now,
+          lastError: parseResult.error || null,
+          fetchCount: 1,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (schemaError) {
+        // Non-blocking: event still created without schema.org data
+        console.error("Failed to store schema.org data:", schemaError);
+      }
+    }
 
     return NextResponse.json({
       success: true,
