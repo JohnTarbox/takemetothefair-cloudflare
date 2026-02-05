@@ -5,6 +5,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
 import { eq, count, gte, and } from "drizzle-orm";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
+import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -216,7 +217,7 @@ export default async function AdminDashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Recent Submissions */}
         <Card>
           <CardHeader>
@@ -255,6 +256,11 @@ export default async function AdminDashboard() {
 
         {/* Upcoming Events - Manage Vendors */}
         <EventVendorsPanel events={upcomingEvents} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Schema.org Sync */}
+        <SchemaOrgSyncButton />
       </div>
     </div>
   );
