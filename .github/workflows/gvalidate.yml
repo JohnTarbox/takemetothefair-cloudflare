@@ -1,0 +1,69 @@
+name: GValidate - Google Rich Results Test
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'  # Weekly on Sunday 3 AM UTC
+  workflow_dispatch:
+    inputs:
+      entity_type:
+        description: 'Entity type to validate'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - vendor
+          - event
+          - venue
+      limit:
+        description: 'Limit number of URLs (empty for all)'
+        required: false
+        type: string
+      fail_fast:
+        description: 'Stop on first error'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  validate:
+    name: Google Rich Results Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hours max for full validation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Run GValidate
+        run: |
+          ARGS=""
+          if [ "${{ inputs.entity_type }}" != "all" ] && [ -n "${{ inputs.entity_type }}" ]; then
+            ARGS="$ARGS --type=${{ inputs.entity_type }}"
+          fi
+          if [ -n "${{ inputs.limit }}" ]; then
+            ARGS="$ARGS --limit=${{ inputs.limit }}"
+          fi
+          if [ "${{ inputs.fail_fast }}" == "false" ]; then
+            ARGS="$ARGS --no-fail-fast"
+          fi
+          npm run gvalidate -- $ARGS
+        continue-on-error: true
+
+      - name: Upload validation reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gvalidate-reports
+          path: gvalidate-results/
+          retention-days: 30

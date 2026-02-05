@@ -26,7 +26,14 @@
     "test:coverage": "vitest --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:smoke": "PLAYWRIGHT_BASE_URL=https://meetmeatthefair.com playwright test e2e/smoke.spec.ts --project=chromium"
+    "test:smoke": "PLAYWRIGHT_BASE_URL=https://meetmeatthefair.com playwright test e2e/smoke.spec.ts --project=chromium",
+    "gvalidate": "npx tsx gvalidate/index.ts",
+    "gvalidate:all": "npx tsx gvalidate/index.ts --no-fail-fast",
+    "gvalidate:vendors": "npx tsx gvalidate/index.ts --type=vendor",
+    "gvalidate:events": "npx tsx gvalidate/index.ts --type=event",
+    "gvalidate:venues": "npx tsx gvalidate/index.ts --type=venue",
+    "gvalidate:quick": "npx tsx gvalidate/index.ts --limit=3",
+    "gvalidate:urls": "npx tsx gvalidate/index.ts --urls-only"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",
