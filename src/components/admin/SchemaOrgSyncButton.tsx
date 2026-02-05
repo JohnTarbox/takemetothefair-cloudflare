@@ -54,6 +54,7 @@ export function SchemaOrgSyncButton() {
   const [error, setError] = useState<string | null>(null);
   const [showSuccessTable, setShowSuccessTable] = useState(false);
   const [showFailedTable, setShowFailedTable] = useState(false);
+  const [selectedFailed, setSelectedFailed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchStats();
@@ -75,15 +76,18 @@ export function SchemaOrgSyncButton() {
 
   type SyncMode = "missing" | "existing" | "all";
 
-  const handleSync = async (mode: SyncMode) => {
+  const handleSync = async (mode: SyncMode, eventIds?: string[]) => {
     setSyncing(true);
     setError(null);
     setResult(null);
     setShowSuccessTable(false);
     setShowFailedTable(false);
+    setSelectedFailed(new Set());
 
     let totalToSync: number;
-    if (mode === "missing") {
+    if (eventIds && eventIds.length > 0) {
+      totalToSync = eventIds.length;
+    } else if (mode === "missing") {
       totalToSync = (stats?.eventsWithTicketUrl || 0) - (stats?.eventsWithSchemaOrg || 0);
     } else if (mode === "existing") {
       totalToSync = stats?.eventsWithSchemaOrg || 0;
@@ -112,8 +116,9 @@ export function SchemaOrgSyncButton() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            onlyMissing: mode === "missing",
-            onlyExisting: mode === "existing",
+            eventIds: eventIds,
+            onlyMissing: !eventIds && mode === "missing",
+            onlyExisting: !eventIds && mode === "existing",
             limit: BATCH_SIZE,
             offset,
           }),
@@ -312,24 +317,70 @@ export function SchemaOrgSyncButton() {
                       {result.failedEvents.length} events failed
                     </button>
                     {showFailedTable && (
-                      <div className="max-h-48 overflow-y-auto">
-                        <table className="w-full text-sm">
-                          <thead className="bg-gray-50 sticky top-0">
-                            <tr>
-                              <th className="text-left px-3 py-2 font-medium text-gray-700">Event</th>
-                              <th className="text-left px-3 py-2 font-medium text-gray-700">Error</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100">
-                            {result.failedEvents.map((event) => (
-                              <tr key={event.eventId} className="hover:bg-gray-50">
-                                <td className="px-3 py-2 text-gray-900">{event.eventName}</td>
-                                <td className="px-3 py-2 text-red-600 text-xs">{event.error || "Unknown error"}</td>
+                      <>
+                        <div className="max-h-48 overflow-y-auto">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 sticky top-0">
+                              <tr>
+                                <th className="px-3 py-2 w-8">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedFailed.size === result.failedEvents.length && result.failedEvents.length > 0}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setSelectedFailed(new Set(result.failedEvents.map(ev => ev.eventId)));
+                                      } else {
+                                        setSelectedFailed(new Set());
+                                      }
+                                    }}
+                                    className="rounded border-gray-300"
+                                  />
+                                </th>
+                                <th className="text-left px-3 py-2 font-medium text-gray-700">Event</th>
+                                <th className="text-left px-3 py-2 font-medium text-gray-700">Error</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {result.failedEvents.map((event) => (
+                                <tr key={event.eventId} className="hover:bg-gray-50">
+                                  <td className="px-3 py-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedFailed.has(event.eventId)}
+                                      onChange={(e) => {
+                                        const newSet = new Set(selectedFailed);
+                                        if (e.target.checked) {
+                                          newSet.add(event.eventId);
+                                        } else {
+                                          newSet.delete(event.eventId);
+                                        }
+                                        setSelectedFailed(newSet);
+                                      }}
+                                      className="rounded border-gray-300"
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2 text-gray-900">{event.eventName}</td>
+                                  <td className="px-3 py-2 text-red-600 text-xs">{event.error || "Unknown error"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {selectedFailed.size > 0 && (
+                          <div className="px-3 py-2 bg-red-50 border-t border-red-200">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleSync("all", Array.from(selectedFailed))}
+                              disabled={syncing}
+                            >
+                              <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+                              Retry {selectedFailed.size} Selected
+                            </Button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
