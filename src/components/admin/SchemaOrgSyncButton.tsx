@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { RefreshCw, Database, CheckCircle, AlertCircle } from "lucide-react";
+import { RefreshCw, Database, CheckCircle, AlertCircle, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 interface SyncStats {
   eventsWithTicketUrl: number;
@@ -38,6 +39,8 @@ interface AggregatedStats {
   success: number;
   failed: number;
   notFound: number;
+  successfulEvents: SyncResultItem[];
+  failedEvents: SyncResultItem[];
 }
 
 const BATCH_SIZE = 10;
@@ -49,6 +52,8 @@ export function SchemaOrgSyncButton() {
   const [progress, setProgress] = useState<AggregatedStats | null>(null);
   const [result, setResult] = useState<AggregatedStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showSuccessTable, setShowSuccessTable] = useState(false);
+  const [showFailedTable, setShowFailedTable] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -72,6 +77,8 @@ export function SchemaOrgSyncButton() {
     setSyncing(true);
     setError(null);
     setResult(null);
+    setShowSuccessTable(false);
+    setShowFailedTable(false);
 
     const totalToSync = onlyMissing
       ? (stats?.eventsWithTicketUrl || 0) - (stats?.eventsWithSchemaOrg || 0)
@@ -83,6 +90,8 @@ export function SchemaOrgSyncButton() {
       success: 0,
       failed: 0,
       notFound: 0,
+      successfulEvents: [],
+      failedEvents: [],
     };
 
     setProgress(aggregated);
@@ -111,6 +120,15 @@ export function SchemaOrgSyncButton() {
           aggregated.success += data.stats.success;
           aggregated.failed += data.stats.failed;
           aggregated.notFound += data.stats.notFound;
+
+          // Track successful and failed events
+          for (const item of data.results) {
+            if (item.status === "available") {
+              aggregated.successfulEvents.push(item);
+            } else if (item.status === "error") {
+              aggregated.failedEvents.push(item);
+            }
+          }
 
           setProgress({ ...aggregated });
 
@@ -206,20 +224,105 @@ export function SchemaOrgSyncButton() {
 
             {/* Result message */}
             {result && !syncing && (
-              <div className={`p-3 rounded-md text-sm flex items-start gap-2 ${
-                result.failed > 0 ? "bg-yellow-50 text-yellow-800" : "bg-green-50 text-green-800"
-              }`}>
-                {result.failed > 0 ? (
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                ) : (
-                  <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                )}
-                <div>
-                  <p className="font-medium">Sync complete</p>
-                  <p>
-                    {result.success} succeeded, {result.notFound} not found, {result.failed} failed
-                  </p>
+              <div className="space-y-3">
+                <div className={`p-3 rounded-md text-sm flex items-start gap-2 ${
+                  result.failed > 0 ? "bg-yellow-50 text-yellow-800" : "bg-green-50 text-green-800"
+                }`}>
+                  {result.failed > 0 ? (
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <p className="font-medium">Sync complete</p>
+                    <p>
+                      {result.success} succeeded, {result.notFound} not found, {result.failed} failed
+                    </p>
+                  </div>
                 </div>
+
+                {/* Successful events table */}
+                {result.successfulEvents.length > 0 && (
+                  <div className="border rounded-md overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowSuccessTable(!showSuccessTable)}
+                      className="w-full px-3 py-2 bg-green-50 text-green-800 text-sm font-medium flex items-center gap-2 hover:bg-green-100"
+                    >
+                      {showSuccessTable ? (
+                        <ChevronDown className="w-4 h-4" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4" />
+                      )}
+                      {result.successfulEvents.length} events with schema.org data
+                    </button>
+                    {showSuccessTable && (
+                      <div className="max-h-48 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-medium text-gray-700">Event</th>
+                              <th className="text-right px-3 py-2 font-medium text-gray-700 w-20">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {result.successfulEvents.map((event) => (
+                              <tr key={event.eventId} className="hover:bg-gray-50">
+                                <td className="px-3 py-2 text-gray-900">{event.eventName}</td>
+                                <td className="px-3 py-2 text-right">
+                                  <Link
+                                    href={`/admin/events/${event.eventId}/edit`}
+                                    className="text-blue-600 hover:text-blue-800 inline-flex items-center gap-1"
+                                  >
+                                    Edit <ExternalLink className="w-3 h-3" />
+                                  </Link>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Failed events table */}
+                {result.failedEvents.length > 0 && (
+                  <div className="border border-red-200 rounded-md overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowFailedTable(!showFailedTable)}
+                      className="w-full px-3 py-2 bg-red-50 text-red-800 text-sm font-medium flex items-center gap-2 hover:bg-red-100"
+                    >
+                      {showFailedTable ? (
+                        <ChevronDown className="w-4 h-4" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4" />
+                      )}
+                      {result.failedEvents.length} events failed
+                    </button>
+                    {showFailedTable && (
+                      <div className="max-h-48 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-medium text-gray-700">Event</th>
+                              <th className="text-left px-3 py-2 font-medium text-gray-700">Error</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {result.failedEvents.map((event) => (
+                              <tr key={event.eventId} className="hover:bg-gray-50">
+                                <td className="px-3 py-2 text-gray-900">{event.eventName}</td>
+                                <td className="px-3 py-2 text-red-600 text-xs">{event.error || "Unknown error"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
