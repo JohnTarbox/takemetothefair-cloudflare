@@ -88,20 +88,10 @@ export function VendorSchema({
         ? paymentMethods.join(", ")
         : undefined,
     sameAs: sameAs.length > 0 ? sameAs : undefined,
-    // Use hasOfferCatalog with product names as OfferCatalog items
-    // This avoids Product schema validation issues (requires offers/review/aggregateRating)
-    hasOfferCatalog:
-      products && products.length > 0
-        ? {
-            "@type": "OfferCatalog",
-            name: `${businessName} Products`,
-            itemListElement: products.map((p, index) => ({
-              "@type": "ListItem",
-              position: index + 1,
-              name: p,
-            })),
-          }
-        : undefined,
+    // Use knowsAbout for products/services (avoids Product schema validation issues)
+    // Product schema requires offers/review/aggregateRating which we don't have
+    knowsAbout:
+      products && products.length > 0 ? products : undefined,
   };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));
