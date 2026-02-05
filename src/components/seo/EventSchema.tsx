@@ -79,7 +79,16 @@ export function EventSchema({
               }
             : undefined,
         }
-      : undefined,
+      : {
+          // Fallback location when venue is not set - required by Google for Event rich results
+          "@type": "Place",
+          name: "Location to be announced",
+          address: {
+            "@type": "PostalAddress",
+            addressRegion: "ME",
+            addressCountry: "US",
+          },
+        },
     organizer: organizer
       ? {
           "@type": "Organization",
