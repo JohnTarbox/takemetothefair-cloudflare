@@ -73,16 +73,23 @@ export function SchemaOrgSyncButton() {
     }
   };
 
-  const handleSync = async (onlyMissing: boolean) => {
+  type SyncMode = "missing" | "existing" | "all";
+
+  const handleSync = async (mode: SyncMode) => {
     setSyncing(true);
     setError(null);
     setResult(null);
     setShowSuccessTable(false);
     setShowFailedTable(false);
 
-    const totalToSync = onlyMissing
-      ? (stats?.eventsWithTicketUrl || 0) - (stats?.eventsWithSchemaOrg || 0)
-      : (stats?.eventsWithTicketUrl || 0);
+    let totalToSync: number;
+    if (mode === "missing") {
+      totalToSync = (stats?.eventsWithTicketUrl || 0) - (stats?.eventsWithSchemaOrg || 0);
+    } else if (mode === "existing") {
+      totalToSync = stats?.eventsWithSchemaOrg || 0;
+    } else {
+      totalToSync = stats?.eventsWithTicketUrl || 0;
+    }
 
     const aggregated: AggregatedStats = {
       total: totalToSync,
@@ -98,15 +105,17 @@ export function SchemaOrgSyncButton() {
 
     try {
       let hasMore = true;
-      let batchNum = 0;
+      let offset = 0;
 
-      while (hasMore && batchNum < 100) { // Safety limit of 100 batches (1000 events)
+      while (hasMore) {
         const res = await fetch("/api/admin/schema-org/sync", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            onlyMissing,
+            onlyMissing: mode === "missing",
+            onlyExisting: mode === "existing",
             limit: BATCH_SIZE,
+            offset,
           }),
         });
 
@@ -132,13 +141,14 @@ export function SchemaOrgSyncButton() {
 
           setProgress({ ...aggregated });
 
+          // Increment offset for next batch
+          offset += data.stats.total;
+
           // If we got fewer than batch size, we're done
           if (data.stats.total < BATCH_SIZE) {
             hasMore = false;
           }
         }
-
-        batchNum++;
       }
 
       setResult(aggregated);
@@ -338,18 +348,30 @@ export function SchemaOrgSyncButton() {
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => handleSync(true)}
+                  onClick={() => handleSync("missing")}
                   disabled={syncing}
                 >
                   <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
                   {syncing ? "Syncing..." : `Sync ${missing} Missing`}
                 </Button>
               )}
+              {(stats?.eventsWithSchemaOrg || 0) > 0 && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleSync("existing")}
+                  disabled={syncing}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+                  {syncing ? "Syncing..." : `Refresh ${stats?.eventsWithSchemaOrg} Existing`}
+                </Button>
+              )}
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => handleSync(false)}
+                onClick={() => handleSync("all")}
                 disabled={syncing}
               >
                 <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />

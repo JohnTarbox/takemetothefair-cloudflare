@@ -11,7 +11,9 @@ export const runtime = "edge";
 interface SyncRequest {
   eventIds?: string[];
   onlyMissing?: boolean;
+  onlyExisting?: boolean;
   limit?: number;
+  offset?: number;
 }
 
 interface SyncResult {
@@ -36,7 +38,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json() as SyncRequest;
-    const { eventIds, onlyMissing = false, limit = 50 } = body;
+    const { eventIds, onlyMissing = false, onlyExisting = false, limit = 50, offset = 0 } = body;
 
     // Build query to find events to sync
     let eventsToSync;
@@ -56,6 +58,7 @@ export async function POST(request: NextRequest) {
           inArray(events.id, eventIds),
           isNotNull(events.ticketUrl)
         ))
+        .offset(offset)
         .limit(limit);
     } else if (onlyMissing) {
       // Only sync events without schema.org data
@@ -72,6 +75,24 @@ export async function POST(request: NextRequest) {
           isNotNull(events.ticketUrl),
           isNull(eventSchemaOrg.id)
         ))
+        .offset(offset)
+        .limit(limit);
+    } else if (onlyExisting) {
+      // Only sync events that already have schema.org data (status = available)
+      eventsToSync = await db
+        .select({
+          id: events.id,
+          name: events.name,
+          ticketUrl: events.ticketUrl,
+          schemaOrgId: eventSchemaOrg.id,
+        })
+        .from(events)
+        .innerJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
+        .where(and(
+          isNotNull(events.ticketUrl),
+          eq(eventSchemaOrg.status, "available")
+        ))
+        .offset(offset)
         .limit(limit);
     } else {
       // Sync all events with ticketUrl
@@ -85,6 +106,7 @@ export async function POST(request: NextRequest) {
         .from(events)
         .leftJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
         .where(isNotNull(events.ticketUrl))
+        .offset(offset)
         .limit(limit);
     }
 
