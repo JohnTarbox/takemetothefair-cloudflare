@@ -259,7 +259,7 @@ export default function AdminDuplicatesPage() {
         <CardContent className="py-4">
           <div className="flex flex-wrap items-center gap-4">
             {/* Entity Type Tabs */}
-            <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+            <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg">
               {ENTITY_TYPES.map((type) => (
                 <button
                   key={type.value}
@@ -481,7 +481,7 @@ export default function AdminDuplicatesPage() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)]">
               {mergeSuccess ? (
                 <div className="text-center py-12">
                   <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -501,7 +501,7 @@ export default function AdminDuplicatesPage() {
                     <h3 className="text-sm font-medium text-gray-700 mb-3">
                       Select the primary record to keep:
                     </h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {[selectedPair.entity1, selectedPair.entity2].map(
                         (entity) => {
                           const e = entity as Record<string, unknown>;
