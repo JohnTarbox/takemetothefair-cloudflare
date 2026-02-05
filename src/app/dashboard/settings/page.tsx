@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { getShortErrorMessage } from "@/lib/error-messages";
 
 export const runtime = "edge";
 
@@ -39,10 +40,10 @@ export default function SettingsPage() {
         await update({ name: formData.name });
         setMessage("Profile updated successfully");
       } else {
-        setMessage("Failed to update profile");
+        setMessage(getShortErrorMessage(res, "update your profile"));
       }
-    } catch {
-      setMessage("An error occurred");
+    } catch (err) {
+      setMessage(getShortErrorMessage(err, "update your profile"));
     } finally {
       setLoading(false);
     }

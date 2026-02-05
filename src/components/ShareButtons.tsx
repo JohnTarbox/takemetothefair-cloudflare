@@ -73,54 +73,71 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           e.stopPropagation();
           setIsOpen(!isOpen);
         }}
+        aria-label={`Share ${title}`}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
       >
-        <Share2 className="w-4 h-4" />
+        <Share2 className="w-4 h-4" aria-hidden="true" />
         Share
       </Button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+        <div
+          className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50"
+          role="menu"
+          aria-label="Share options"
+        >
           <button
             onClick={() => openShareWindow(shareLinks.twitter)}
             className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            role="menuitem"
+            aria-label="Share on Twitter"
           >
-            <Twitter className="w-4 h-4" />
+            <Twitter className="w-4 h-4" aria-hidden="true" />
             Twitter
           </button>
           <button
             onClick={() => openShareWindow(shareLinks.facebook)}
             className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            role="menuitem"
+            aria-label="Share on Facebook"
           >
-            <Facebook className="w-4 h-4" />
+            <Facebook className="w-4 h-4" aria-hidden="true" />
             Facebook
           </button>
           <button
             onClick={() => openShareWindow(shareLinks.linkedin)}
             className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            role="menuitem"
+            aria-label="Share on LinkedIn"
           >
-            <Linkedin className="w-4 h-4" />
+            <Linkedin className="w-4 h-4" aria-hidden="true" />
             LinkedIn
           </button>
           <a
             href={shareLinks.email}
             className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             onClick={() => setIsOpen(false)}
+            role="menuitem"
+            aria-label="Share via email"
           >
-            <Mail className="w-4 h-4" />
+            <Mail className="w-4 h-4" aria-hidden="true" />
             Email
           </a>
           <button
             onClick={copyToClipboard}
             className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            role="menuitem"
+            aria-label={copied ? "Link copied" : "Copy link to clipboard"}
           >
             {copied ? (
               <>
-                <Check className="w-4 h-4 text-green-600" />
+                <Check className="w-4 h-4 text-green-600" aria-hidden="true" />
                 <span className="text-green-600">Copied!</span>
               </>
             ) : (
               <>
-                <Link2 className="w-4 h-4" />
+                <Link2 className="w-4 h-4" aria-hidden="true" />
                 Copy Link
               </>
             )}

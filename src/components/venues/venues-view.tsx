@@ -80,12 +80,13 @@ export function VenuesView({
             <button
               onClick={downloadCSV}
               className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white transition-colors"
+              aria-label="Download venues as CSV"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4" aria-hidden="true" />
               Download CSV
             </button>
           )}
-          <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-white">
+          <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-white" role="group" aria-label="View mode">
             <button
               onClick={() => setViewMode("cards")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
@@ -93,8 +94,10 @@ export function VenuesView({
                   ? "bg-blue-600 text-white"
                   : "text-gray-600 hover:bg-gray-100"
               }`}
+              aria-pressed={viewMode === "cards"}
+              aria-label="Card view"
             >
-              <LayoutGrid className="w-4 h-4" />
+              <LayoutGrid className="w-4 h-4" aria-hidden="true" />
               Cards
             </button>
             <button
@@ -104,8 +107,10 @@ export function VenuesView({
                   ? "bg-blue-600 text-white"
                   : "text-gray-600 hover:bg-gray-100"
               }`}
+              aria-pressed={viewMode === "table"}
+              aria-label="Table view"
             >
-              <Table className="w-4 h-4" />
+              <Table className="w-4 h-4" aria-hidden="true" />
               Table
             </button>
           </div>

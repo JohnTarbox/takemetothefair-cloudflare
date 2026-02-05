@@ -33,10 +33,17 @@ export default function Error({
         <h1 className="text-2xl font-bold text-gray-900 mb-2">
           Something went wrong
         </h1>
-        <p className="text-gray-600 mb-8">
-          We&apos;re sorry, but something unexpected happened.
-          Please try again or return to the home page.
+        <p className="text-gray-600 mb-4">
+          We&apos;re sorry, but something unexpected happened while loading this page.
         </p>
+        <div className="text-sm text-gray-500 mb-8 space-y-1">
+          <p>You can try:</p>
+          <ul className="list-disc list-inside text-left max-w-xs mx-auto">
+            <li>Clicking &quot;Try Again&quot; to reload</li>
+            <li>Checking your internet connection</li>
+            <li>Going back to the home page</li>
+          </ul>
+        </div>
 
         {isAdmin && (
           <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-lg text-left">

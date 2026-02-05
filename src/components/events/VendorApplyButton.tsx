@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getErrorMessage } from "@/lib/error-messages";
 
 interface VendorApplyButtonProps {
   eventId: string;
@@ -30,12 +31,15 @@ export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps
 
       if (!res.ok) {
         const data = await res.json() as { error?: string };
-        throw new Error(data.error || "Failed to submit application");
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        throw res;
       }
 
       setSuccess(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit application");
+      setError(getErrorMessage(err, "submit your application"));
     } finally {
       setLoading(false);
     }

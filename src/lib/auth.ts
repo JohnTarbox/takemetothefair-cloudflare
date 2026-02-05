@@ -315,16 +315,33 @@ function initAuth() {
   return NextAuth(createAuthConfig());
 }
 
-export const handlers = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  GET: ((...args: any[]) => initAuth().handlers.GET(...args)),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  POST: ((...args: any[]) => initAuth().handlers.POST(...args)),
-} as ReturnType<typeof NextAuth>["handlers"];
+// Type definitions for NextAuth exports
+type NextAuthReturn = ReturnType<typeof NextAuth>;
+type HandlersType = NextAuthReturn["handlers"];
+type AuthType = NextAuthReturn["auth"];
+type SignInType = NextAuthReturn["signIn"];
+type SignOutType = NextAuthReturn["signOut"];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const auth = ((...args: any[]) => initAuth().auth(...args)) as ReturnType<typeof NextAuth>["auth"];
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const signIn = ((...args: any[]) => initAuth().signIn(...args)) as ReturnType<typeof NextAuth>["signIn"];
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const signOut = ((...args: any[]) => initAuth().signOut(...args)) as ReturnType<typeof NextAuth>["signOut"];
+// Typed route handlers - lazily initialize NextAuth on each request
+export const handlers: HandlersType = {
+  GET: (req) => initAuth().handlers.GET(req),
+  POST: (req) => initAuth().handlers.POST(req),
+};
+
+// Typed auth function with all overloads
+export const auth: AuthType = ((...args: Parameters<AuthType>) => {
+  const instance = initAuth();
+  return (instance.auth as (...args: Parameters<AuthType>) => ReturnType<AuthType>)(...args);
+}) as AuthType;
+
+// Typed signIn function
+export const signIn: SignInType = ((...args: Parameters<SignInType>) => {
+  const instance = initAuth();
+  return (instance.signIn as (...args: Parameters<SignInType>) => ReturnType<SignInType>)(...args);
+}) as SignInType;
+
+// Typed signOut function
+export const signOut: SignOutType = ((...args: Parameters<SignOutType>) => {
+  const instance = initAuth();
+  return (instance.signOut as (...args: Parameters<SignOutType>) => ReturnType<SignOutType>)(...args);
+}) as SignOutType;

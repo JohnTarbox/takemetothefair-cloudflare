@@ -24,9 +24,11 @@ interface VenueCardProps {
       events: number;
     };
   };
+  /** Set to true for above-the-fold images to enable priority loading */
+  priority?: boolean;
 }
 
-export function VenueCard({ venue }: VenueCardProps) {
+export function VenueCard({ venue, priority = false }: VenueCardProps) {
   const amenities = parseJsonArray(venue.amenities);
 
   // Build full address string
@@ -64,6 +66,7 @@ export function VenueCard({ venue }: VenueCardProps) {
               fill
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
+              priority={priority}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-gray-400">
