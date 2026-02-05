@@ -11,9 +11,18 @@ interface SyncStats {
   statusBreakdown: Record<string, number>;
 }
 
-interface SyncResult {
+interface SyncResultItem {
+  eventId: string;
+  eventName: string;
+  success: boolean;
+  status: string;
+  error?: string;
+}
+
+interface SyncResponse {
   success: boolean;
   message: string;
+  results: SyncResultItem[];
   stats: {
     total: number;
     success: number;
@@ -23,11 +32,22 @@ interface SyncResult {
   error?: string;
 }
 
+interface AggregatedStats {
+  total: number;
+  processed: number;
+  success: number;
+  failed: number;
+  notFound: number;
+}
+
+const BATCH_SIZE = 10;
+
 export function SchemaOrgSyncButton() {
   const [stats, setStats] = useState<SyncStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [result, setResult] = useState<SyncResult | null>(null);
+  const [progress, setProgress] = useState<AggregatedStats | null>(null);
+  const [result, setResult] = useState<AggregatedStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,23 +73,64 @@ export function SchemaOrgSyncButton() {
     setError(null);
     setResult(null);
 
-    try {
-      const res = await fetch("/api/admin/schema-org/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          onlyMissing,
-          limit: 100,
-        }),
-      });
+    const totalToSync = onlyMissing
+      ? (stats?.eventsWithTicketUrl || 0) - (stats?.eventsWithSchemaOrg || 0)
+      : (stats?.eventsWithTicketUrl || 0);
 
-      const data = await res.json() as SyncResult;
-      setResult(data);
+    const aggregated: AggregatedStats = {
+      total: totalToSync,
+      processed: 0,
+      success: 0,
+      failed: 0,
+      notFound: 0,
+    };
+
+    setProgress(aggregated);
+
+    try {
+      let hasMore = true;
+      let batchNum = 0;
+
+      while (hasMore && batchNum < 100) { // Safety limit of 100 batches (1000 events)
+        const res = await fetch("/api/admin/schema-org/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            onlyMissing,
+            limit: BATCH_SIZE,
+          }),
+        });
+
+        const data = await res.json() as SyncResponse;
+
+        if (!data.success || data.stats.total === 0) {
+          hasMore = false;
+        } else {
+          // Update aggregated stats
+          aggregated.processed += data.stats.total;
+          aggregated.success += data.stats.success;
+          aggregated.failed += data.stats.failed;
+          aggregated.notFound += data.stats.notFound;
+
+          setProgress({ ...aggregated });
+
+          // If we got fewer than batch size, we're done
+          if (data.stats.total < BATCH_SIZE) {
+            hasMore = false;
+          }
+        }
+
+        batchNum++;
+      }
+
+      setResult(aggregated);
+      setProgress(null);
 
       // Refresh stats after sync
       await fetchStats();
     } catch {
       setError("Failed to sync. Please try again.");
+      setProgress(null);
     } finally {
       setSyncing(false);
     }
@@ -81,6 +142,10 @@ export function SchemaOrgSyncButton() {
 
   const missing = stats
     ? stats.eventsWithTicketUrl - stats.eventsWithSchemaOrg
+    : 0;
+
+  const progressPercent = progress
+    ? Math.round((progress.processed / Math.max(progress.total, 1)) * 100)
     : 0;
 
   return (
@@ -107,19 +172,44 @@ export function SchemaOrgSyncButton() {
               <p>
                 <span className="font-medium">{stats?.eventsWithSchemaOrg || 0}</span> have schema.org data ({coverage}% coverage)
               </p>
-              {missing > 0 && (
+              {missing > 0 && !syncing && (
                 <p className="text-yellow-600">
                   <span className="font-medium">{missing}</span> events missing schema.org data
                 </p>
               )}
             </div>
 
+            {/* Progress indicator */}
+            {syncing && progress && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">
+                    Processing {progress.processed} of {progress.total} events...
+                  </span>
+                  <span className="font-medium text-gray-900">{progressPercent}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="flex gap-4 text-xs text-gray-500">
+                  <span className="text-green-600">{progress.success} succeeded</span>
+                  <span className="text-gray-500">{progress.notFound} not found</span>
+                  {progress.failed > 0 && (
+                    <span className="text-red-600">{progress.failed} failed</span>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Result message */}
-            {result && (
+            {result && !syncing && (
               <div className={`p-3 rounded-md text-sm flex items-start gap-2 ${
-                result.stats.failed > 0 ? "bg-yellow-50 text-yellow-800" : "bg-green-50 text-green-800"
+                result.failed > 0 ? "bg-yellow-50 text-yellow-800" : "bg-green-50 text-green-800"
               }`}>
-                {result.stats.failed > 0 ? (
+                {result.failed > 0 ? (
                   <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 ) : (
                   <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -127,7 +217,7 @@ export function SchemaOrgSyncButton() {
                 <div>
                   <p className="font-medium">Sync complete</p>
                   <p>
-                    {result.stats.success} succeeded, {result.stats.notFound} not found, {result.stats.failed} failed
+                    {result.success} succeeded, {result.notFound} not found, {result.failed} failed
                   </p>
                 </div>
               </div>
