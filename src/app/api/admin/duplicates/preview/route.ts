@@ -8,13 +8,15 @@ import { logError } from "@/lib/logger";
 export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  let db: ReturnType<typeof getCloudflareDb> | null = null;
 
-  const db = getCloudflareDb();
   try {
+    const session = await auth();
+    if (!session || session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    db = getCloudflareDb();
     const body: MergePreviewRequest = await request.json();
     const { type, primaryId, duplicateId } = body;
 
