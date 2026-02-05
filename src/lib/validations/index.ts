@@ -93,8 +93,8 @@ export const eventDaySchema = z.object({
   closed: z.boolean().optional().default(false),
 });
 
-// Event schemas
-export const eventCreateSchema = z.object({
+// Event schemas - base fields
+const eventBaseSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
   promoterId: z.string().min(1),
@@ -124,7 +124,58 @@ export const eventCreateSchema = z.object({
   eventDays: z.array(eventDaySchema).optional(),
 });
 
-export const eventUpdateSchema = eventCreateSchema.partial();
+// Event create schema with cross-field validation
+export const eventCreateSchema = eventBaseSchema
+  .refine(
+    (data) => {
+      if (data.startDate && data.endDate) {
+        return new Date(data.endDate) >= new Date(data.startDate);
+      }
+      return true;
+    },
+    {
+      message: "End date must be on or after start date",
+      path: ["endDate"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.ticketPriceMin != null && data.ticketPriceMax != null) {
+        return data.ticketPriceMax >= data.ticketPriceMin;
+      }
+      return true;
+    },
+    {
+      message: "Maximum ticket price must be greater than or equal to minimum price",
+      path: ["ticketPriceMax"],
+    }
+  );
+
+export const eventUpdateSchema = eventBaseSchema.partial()
+  .refine(
+    (data) => {
+      if (data.startDate && data.endDate) {
+        return new Date(data.endDate) >= new Date(data.startDate);
+      }
+      return true;
+    },
+    {
+      message: "End date must be on or after start date",
+      path: ["endDate"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.ticketPriceMin != null && data.ticketPriceMax != null) {
+        return data.ticketPriceMax >= data.ticketPriceMin;
+      }
+      return true;
+    },
+    {
+      message: "Maximum ticket price must be greater than or equal to minimum price",
+      path: ["ticketPriceMax"],
+    }
+  );
 
 // Event vendor schemas
 export const eventVendorCreateSchema = z.object({
@@ -210,7 +261,29 @@ export const promoterEventCreateSchema = z.object({
   ticketPriceMax: z.number().min(0).optional().nullable(),
   imageUrl: urlSchema,
   eventDays: z.array(eventDaySchema).optional(),
-});
+}).refine(
+  (data) => {
+    if (data.startDate && data.endDate) {
+      return new Date(data.endDate) >= new Date(data.startDate);
+    }
+    return true;
+  },
+  {
+    message: "End date must be on or after start date",
+    path: ["endDate"],
+  }
+).refine(
+  (data) => {
+    if (data.ticketPriceMin != null && data.ticketPriceMax != null) {
+      return data.ticketPriceMax >= data.ticketPriceMin;
+    }
+    return true;
+  },
+  {
+    message: "Maximum ticket price must be greater than or equal to minimum price",
+    path: ["ticketPriceMax"],
+  }
+);
 
 // User profile update
 export const userProfileUpdateSchema = z.object({

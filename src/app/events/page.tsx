@@ -10,7 +10,7 @@ import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
 export const runtime = "edge";
-export const revalidate = 60; // Cache for 1 minute
+export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {
   title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
@@ -56,7 +56,8 @@ async function getUserFavoriteIds(userId: string, type: "EVENT" | "VENUE" | "VEN
       .from(userFavorites)
       .where(and(eq(userFavorites.userId, userId), eq(userFavorites.favoritableType, type)));
     return favorites.map((f) => f.favoritableId);
-  } catch {
+  } catch (error) {
+    console.error("Failed to fetch user favorite IDs", { error, userId, type });
     return [];
   }
 }
@@ -71,7 +72,8 @@ async function getVendorIdForUser(userId: string): Promise<string | null> {
       .where(eq(vendors.userId, userId))
       .limit(1);
     return vendor?.id || null;
-  } catch {
+  } catch (error) {
+    console.error("Failed to fetch vendor ID for user", { error, userId });
     return null;
   }
 }
@@ -85,7 +87,8 @@ async function getVendorEventIds(vendorId: string): Promise<string[]> {
       .from(eventVendors)
       .where(eq(eventVendors.vendorId, vendorId));
     return results.map(r => r.eventId);
-  } catch {
+  } catch (error) {
+    console.error("Failed to fetch vendor event IDs", { error, vendorId });
     return [];
   }
 }
@@ -327,7 +330,8 @@ async function getCategories() {
       } catch {}
     });
     return Array.from(categories).sort();
-  } catch {
+  } catch (error) {
+    console.error("Failed to fetch event categories", { error });
     return [];
   }
 }
@@ -341,7 +345,8 @@ async function getStates() {
       .where(eq(venues.status, "ACTIVE"));
 
     return results.map((v) => v.state).sort();
-  } catch {
+  } catch (error) {
+    console.error("Failed to fetch venue states", { error });
     return [];
   }
 }

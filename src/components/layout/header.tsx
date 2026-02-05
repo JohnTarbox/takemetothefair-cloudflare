@@ -25,6 +25,13 @@ export function Header() {
 
   return (
     <header className="bg-white border-b border-gray-200">
+      {/* Skip navigation link for accessibility */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      >
+        Skip to main content
+      </a>
       <nav className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 justify-between items-center">
           <div className="flex items-center">
@@ -60,7 +67,7 @@ export function Header() {
                     {session.user.image ? (
                       <img
                         src={session.user.image}
-                        alt=""
+                        alt={`${session.user.name || "User"} profile picture`}
                         className="w-8 h-8 rounded-full"
                       />
                     ) : (

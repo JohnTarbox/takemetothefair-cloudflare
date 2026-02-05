@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
-import type { PageMetadata } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
+
+const extractRequestSchema = z.object({
+  content: z.string().min(1, "Content is required"),
+  url: z.string().url().optional(),
+  metadata: z.object({
+    title: z.string().optional(),
+    description: z.string().optional(),
+    ogImage: z.string().optional(),
+    jsonLd: z.record(z.unknown()).optional(),
+  }).optional(),
+});
 
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
@@ -16,18 +27,16 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { content, url, metadata } = body as {
-      content?: string;
-      url?: string;
-      metadata?: PageMetadata;
-    };
+    const validation = extractRequestSchema.safeParse(body);
 
-    if (!content || content.trim().length === 0) {
+    if (!validation.success) {
       return NextResponse.json(
-        { success: false, error: "Content is required" },
+        { success: false, error: validation.error.issues[0]?.message || "Validation failed" },
         { status: 400 }
       );
     }
+
+    const { content, url, metadata } = validation.data;
 
     const ai = getCloudflareAi();
 

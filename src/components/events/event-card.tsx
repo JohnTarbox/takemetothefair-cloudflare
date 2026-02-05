@@ -29,9 +29,11 @@ interface EventCardProps {
     promoter: Promoter | null;
     vendors?: VendorSummary[];
   };
+  /** Set to true for above-the-fold images to enable priority loading */
+  priority?: boolean;
 }
 
-export function EventCard({ event }: EventCardProps) {
+export function EventCard({ event, priority = false }: EventCardProps) {
   const categories = parseJsonArray(event.categories);
   const vendors = event.vendors || [];
 
@@ -42,10 +44,11 @@ export function EventCard({ event }: EventCardProps) {
           {event.imageUrl ? (
             <Image
               src={event.imageUrl}
-              alt={event.name}
+              alt={`Photo of ${event.name} event`}
               fill
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
+              priority={priority}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -132,7 +135,7 @@ export function EventCard({ event }: EventCardProps) {
                   {vendor.logoUrl ? (
                     <Image
                       src={vendor.logoUrl}
-                      alt={vendor.businessName}
+                      alt={`${vendor.businessName} logo`}
                       fill
                       sizes="48px"
                       className="object-cover"

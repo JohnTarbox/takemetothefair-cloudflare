@@ -50,7 +50,8 @@ async function getUserFavoriteIds(userId: string): Promise<string[]> {
       .from(userFavorites)
       .where(and(eq(userFavorites.userId, userId), eq(userFavorites.favoritableType, "VENDOR")));
     return favorites.map((f) => f.favoritableId);
-  } catch {
+  } catch (error) {
+    console.error("Failed to fetch user favorite vendor IDs", { error, userId });
     return [];
   }
 }

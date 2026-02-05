@@ -52,7 +52,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
               {vendor.logoUrl ? (
                 <Image
                   src={vendor.logoUrl}
-                  alt={vendor.businessName}
+                  alt={`${vendor.businessName} logo`}
                   fill
                   sizes="64px"
                   className="object-cover"
@@ -134,7 +134,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
                     <div className="aspect-video rounded-md overflow-hidden mb-2 relative">
                       <Image
                         src={event.imageUrl}
-                        alt={event.name}
+                        alt={`Photo of ${event.name} event`}
                         fill
                         sizes="(max-width: 640px) 100vw, 200px"
                         className="object-cover"

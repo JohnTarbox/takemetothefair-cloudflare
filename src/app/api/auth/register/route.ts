@@ -22,7 +22,7 @@ const registerSchema = z.object({
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
   try {
-    const body = await request.json() as Record<string, unknown>;
+    const body = await request.json();
     const validation = registerSchema.safeParse(body);
 
     if (!validation.success) {

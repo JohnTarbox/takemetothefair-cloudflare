@@ -60,7 +60,7 @@ export function VenueCard({ venue }: VenueCardProps) {
           {venue.imageUrl ? (
             <Image
               src={venue.imageUrl}
-              alt={venue.name}
+              alt={`Photo of ${venue.name} venue`}
               fill
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"

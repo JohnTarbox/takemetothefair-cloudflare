@@ -405,6 +405,91 @@ describe("eventCreateSchema", () => {
   });
 });
 
+describe("eventCreateSchema cross-field validation", () => {
+  const validEvent = {
+    name: "Summer Fair",
+    promoterId: "promo-123",
+  };
+
+  it("rejects endDate before startDate", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      startDate: "2025-06-17T10:00:00Z",
+      endDate: "2025-06-15T18:00:00Z",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some(i => i.path.includes("endDate"))).toBe(true);
+      expect(result.error.issues.some(i => i.message.includes("End date must be on or after start date"))).toBe(true);
+    }
+  });
+
+  it("accepts endDate equal to startDate", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      startDate: "2025-06-15T10:00:00Z",
+      endDate: "2025-06-15T18:00:00Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts endDate after startDate", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      startDate: "2025-06-15T10:00:00Z",
+      endDate: "2025-06-17T18:00:00Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts when only startDate is provided", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      startDate: "2025-06-15T10:00:00Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects ticketPriceMax less than ticketPriceMin", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      ticketPriceMin: 50,
+      ticketPriceMax: 10,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some(i => i.path.includes("ticketPriceMax"))).toBe(true);
+      expect(result.error.issues.some(i => i.message.includes("Maximum ticket price"))).toBe(true);
+    }
+  });
+
+  it("accepts ticketPriceMax equal to ticketPriceMin", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      ticketPriceMin: 25,
+      ticketPriceMax: 25,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts ticketPriceMax greater than ticketPriceMin", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      ticketPriceMin: 10,
+      ticketPriceMax: 50,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts when only ticketPriceMin is provided", () => {
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      ticketPriceMin: 10,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("eventUpdateSchema", () => {
   it("allows partial updates", () => {
     const result = eventUpdateSchema.safeParse({ name: "Updated Name" });
@@ -414,6 +499,22 @@ describe("eventUpdateSchema", () => {
   it("allows empty update", () => {
     const result = eventUpdateSchema.safeParse({});
     expect(result.success).toBe(true);
+  });
+
+  it("validates date order when both provided", () => {
+    const result = eventUpdateSchema.safeParse({
+      startDate: "2025-06-17T10:00:00Z",
+      endDate: "2025-06-15T18:00:00Z",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("validates ticket price order when both provided", () => {
+    const result = eventUpdateSchema.safeParse({
+      ticketPriceMin: 50,
+      ticketPriceMax: 10,
+    });
+    expect(result.success).toBe(false);
   });
 });
 
