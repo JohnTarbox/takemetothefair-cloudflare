@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
-import { eq, inArray, isNotNull, isNull, and, sql } from "drizzle-orm";
+import { eq, inArray, isNotNull, isNull, and, or, ne, sql } from "drizzle-orm";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
 
@@ -61,7 +61,8 @@ export async function POST(request: NextRequest) {
         .offset(offset)
         .limit(limit);
     } else if (onlyMissing) {
-      // Only sync events without schema.org data
+      // Only sync events without successful schema.org data
+      // (no record at all, or record with status != "available")
       eventsToSync = await db
         .select({
           id: events.id,
@@ -73,7 +74,10 @@ export async function POST(request: NextRequest) {
         .leftJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
         .where(and(
           isNotNull(events.ticketUrl),
-          isNull(eventSchemaOrg.id)
+          or(
+            isNull(eventSchemaOrg.id),
+            ne(eventSchemaOrg.status, "available")
+          )
         ))
         .offset(offset)
         .limit(limit);
