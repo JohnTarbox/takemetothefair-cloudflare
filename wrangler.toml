@@ -15,4 +15,4 @@ migrations_dir = "drizzle"
 # KV namespace for rate limiting
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "PLACEHOLDER_ID"  # Replace with actual namespace ID after running: wrangler kv:namespace create "RATE_LIMIT_KV"
+id = "b7aeca316e7a41108fd375be2e152cff"
