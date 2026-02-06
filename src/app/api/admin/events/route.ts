@@ -92,19 +92,24 @@ export async function POST(request: NextRequest) {
       sourceId: data.sourceId,
     });
 
-    // Insert event days if provided
+    // Insert event days if provided (batch to avoid SQLite variable limit)
     if (data.eventDays && data.eventDays.length > 0) {
-      await db.insert(eventDays).values(
-        data.eventDays.map((day) => ({
-          id: crypto.randomUUID(),
-          eventId,
-          date: day.date,
-          openTime: day.openTime,
-          closeTime: day.closeTime,
-          notes: day.notes || null,
-          closed: day.closed || false,
-        }))
-      );
+      const BATCH_SIZE = 100; // Safe batch size (7 vars per day × 100 = 700 < 999 limit)
+      const days = data.eventDays.map((day) => ({
+        id: crypto.randomUUID(),
+        eventId,
+        date: day.date,
+        openTime: day.openTime,
+        closeTime: day.closeTime,
+        notes: day.notes || null,
+        closed: day.closed || false,
+      }));
+
+      // Insert in batches to avoid "too many SQL variables" error
+      for (let i = 0; i < days.length; i += BATCH_SIZE) {
+        const batch = days.slice(i, i + BATCH_SIZE);
+        await db.insert(eventDays).values(batch);
+      }
     }
 
     const [newEvent] = await db

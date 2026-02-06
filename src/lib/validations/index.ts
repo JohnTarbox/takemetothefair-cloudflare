@@ -121,7 +121,7 @@ const eventBaseSchema = z.object({
   sourceName: z.string().optional().nullable(),
   sourceUrl: urlSchema,
   sourceId: z.string().optional().nullable(),
-  eventDays: z.array(eventDaySchema).optional(),
+  eventDays: z.array(eventDaySchema).max(100, "Maximum 100 days allowed for daily schedules").optional(),
 });
 
 // Event create schema with cross-field validation
@@ -260,7 +260,7 @@ export const promoterEventCreateSchema = z.object({
   ticketPriceMin: z.number().min(0).optional().nullable(),
   ticketPriceMax: z.number().min(0).optional().nullable(),
   imageUrl: urlSchema,
-  eventDays: z.array(eventDaySchema).optional(),
+  eventDays: z.array(eventDaySchema).max(100, "Maximum 100 days allowed for daily schedules").optional(),
 }).refine(
   (data) => {
     if (data.startDate && data.endDate) {

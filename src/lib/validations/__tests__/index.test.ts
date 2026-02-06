@@ -403,6 +403,49 @@ describe("eventCreateSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("accepts up to 100 eventDays", () => {
+    const eventDays = Array.from({ length: 100 }, (_, i) => ({
+      date: `2025-01-${String(i + 1).padStart(2, "0")}`,
+      openTime: "09:00",
+      closeTime: "17:00",
+    }));
+    // Need to use valid dates, so generate for multiple months
+    const validDays = Array.from({ length: 100 }, (_, i) => {
+      const date = new Date(2025, 0, i + 1); // Start from Jan 1, 2025
+      return {
+        date: date.toISOString().split("T")[0],
+        openTime: "09:00",
+        closeTime: "17:00",
+      };
+    });
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      eventDays: validDays,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects more than 100 eventDays", () => {
+    const eventDays = Array.from({ length: 101 }, (_, i) => {
+      const date = new Date(2025, 0, i + 1); // Start from Jan 1, 2025
+      return {
+        date: date.toISOString().split("T")[0],
+        openTime: "09:00",
+        closeTime: "17:00",
+      };
+    });
+    const result = eventCreateSchema.safeParse({
+      ...validEvent,
+      eventDays,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some(i =>
+        i.message.includes("Maximum 100 days") || i.message.includes("Array must contain at most 100")
+      )).toBe(true);
+    }
+  });
 });
 
 describe("eventCreateSchema cross-field validation", () => {

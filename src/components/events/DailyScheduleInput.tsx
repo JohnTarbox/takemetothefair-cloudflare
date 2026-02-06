@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Copy } from "lucide-react";
+import { Copy, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+// Maximum number of event days allowed (SQLite variable limit is 999, with 7 vars per day = ~142 max)
+const MAX_EVENT_DAYS = 100;
 
 export interface EventDayInput {
   date: string; // YYYY-MM-DD
@@ -31,7 +34,7 @@ function formatDateDisplay(dateStr: string): string {
   });
 }
 
-function getDatesInRange(start: string, end: string): string[] {
+function getDatesInRange(start: string, end: string): { dates: string[]; truncated: boolean } {
   const dates: string[] = [];
   const startDate = new Date(start + "T12:00:00");
   const endDate = new Date(end + "T12:00:00");
@@ -42,7 +45,12 @@ function getDatesInRange(start: string, end: string): string[] {
     current.setDate(current.getDate() + 1);
   }
 
-  return dates;
+  // Truncate if exceeds max
+  if (dates.length > MAX_EVENT_DAYS) {
+    return { dates: dates.slice(0, MAX_EVENT_DAYS), truncated: true };
+  }
+
+  return { dates, truncated: false };
 }
 
 export function DailyScheduleInput({
@@ -54,19 +62,22 @@ export function DailyScheduleInput({
 }: DailyScheduleInputProps) {
   const [enabled, setEnabled] = useState(initialDays.length > 0);
   const [days, setDays] = useState<EventDayInput[]>(initialDays);
+  const [showTruncationWarning, setShowTruncationWarning] = useState(false);
   // Track if we've synced async initialDays (for edit page where data loads after mount)
   const initialDaysSyncedRef = useRef(initialDays.length > 0);
 
   // Generate days when dates change or feature is enabled
   useEffect(() => {
     if (!enabled || !startDate || !endDate) {
+      setShowTruncationWarning(false);
       return;
     }
 
     // Parse dates from startDate/endDate (they might be datetime strings or date strings)
     const startStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
     const endStr = endDate.includes("T") ? endDate.split("T")[0] : endDate;
-    const dates = getDatesInRange(startStr, endStr);
+    const { dates, truncated } = getDatesInRange(startStr, endStr);
+    setShowTruncationWarning(truncated);
 
     // Only regenerate if we don't have matching days already
     const existingDates = new Set(days.map((d) => d.date));
@@ -273,6 +284,19 @@ export function DailyScheduleInput({
           Different hours on each day
         </Label>
       </div>
+
+      {showTruncationWarning && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium">Date range exceeds {MAX_EVENT_DAYS} days</p>
+            <p className="mt-1">
+              Daily schedules are limited to {MAX_EVENT_DAYS} days. Only the first {MAX_EVENT_DAYS} days
+              will have individual schedule entries. Consider reducing the date range or disabling daily schedules.
+            </p>
+          </div>
+        </div>
+      )}
 
       {enabled && days.length > 0 && (
         <div className="border rounded-lg overflow-hidden">
