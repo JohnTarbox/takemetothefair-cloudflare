@@ -64,6 +64,19 @@ async function main() {
   }).run();
   console.log("Created promoter: Fair Events Co.");
 
+  // Create system promoter for community suggestions
+  // This uses a stable ID so it can be referenced by the suggest-event feature
+  const communityPromoterId = "system-community-suggestions";
+  db.insert(schema.promoters).values({
+    id: communityPromoterId,
+    userId: null, // No user account - system promoter
+    companyName: "Community Suggestions",
+    slug: "community-suggestions",
+    description: "Events suggested by the community. These events are pending admin review.",
+    verified: false,
+  }).run();
+  console.log("Created promoter: Community Suggestions (system)");
+
   // Create vendor user
   const vendorPasswordHash = await hashPassword("vendor123");
   const vendorUserId = crypto.randomUUID();

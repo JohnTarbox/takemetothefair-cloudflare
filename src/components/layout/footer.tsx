@@ -8,6 +8,7 @@ export function Footer() {
       { name: "Events", href: "/events" },
       { name: "Venues", href: "/venues" },
       { name: "Vendors", href: "/vendors" },
+      { name: "Suggest an Event", href: "/suggest-event" },
     ],
     forBusiness: [
       { name: "For Promoters", href: "/for-promoters" },

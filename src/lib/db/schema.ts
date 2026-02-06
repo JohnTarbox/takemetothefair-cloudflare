@@ -89,6 +89,8 @@ export const events = sqliteTable("events", {
   sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
   syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(true),
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
+  // Suggester email for community-suggested events
+  suggesterEmail: text("suggester_email"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
