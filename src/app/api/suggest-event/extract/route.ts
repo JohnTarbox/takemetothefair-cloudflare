@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
 import { extractEventData } from "@/lib/url-import/ai-extractor";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "edge";
 
@@ -18,6 +19,12 @@ const extractRequestSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = await checkRateLimit(request, "suggest-event-extract");
+  if (!rateLimitResult.allowed) {
+    return rateLimitResponse(rateLimitResult);
+  }
+
   const db = getCloudflareDb();
 
   try {

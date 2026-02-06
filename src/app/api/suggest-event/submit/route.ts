@@ -6,6 +6,8 @@ import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 
 export const runtime = "edge";
 
@@ -29,9 +31,16 @@ const submitEventSchema = z.object({
   sourceUrl: z.string().url().optional(),
   suggesterEmail: z.string().email().optional().or(z.literal("")),
   jsonLd: z.record(z.string(), z.unknown()).optional(),
+  turnstileToken: z.string().optional(), // Turnstile verification token
 });
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = await checkRateLimit(request, "suggest-event-submit");
+  if (!rateLimitResult.allowed) {
+    return rateLimitResponse(rateLimitResult);
+  }
+
   const db = getCloudflareDb();
 
   try {
@@ -46,6 +55,23 @@ export async function POST(request: NextRequest) {
     }
 
     const data = validation.data;
+
+    // Verify Turnstile token for anonymous users
+    if (!rateLimitResult.isAuthenticated) {
+      const turnstileResult = await verifyTurnstileToken(
+        data.turnstileToken || "",
+        request
+      );
+      if (!turnstileResult.success) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: getTurnstileErrorMessage(turnstileResult.errorCodes),
+          },
+          { status: 400 }
+        );
+      }
+    }
 
     // Verify the community promoter exists
     const promoter = await db

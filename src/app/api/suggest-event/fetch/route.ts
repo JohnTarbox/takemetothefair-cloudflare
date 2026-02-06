@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "edge";
 
 const FETCH_TIMEOUT = 15000; // 15 seconds
 
 export async function GET(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = await checkRateLimit(request, "suggest-event-fetch");
+  if (!rateLimitResult.allowed) {
+    return rateLimitResponse(rateLimitResult);
+  }
+
   const db = getCloudflareDb();
 
   const url = request.nextUrl.searchParams.get("url");

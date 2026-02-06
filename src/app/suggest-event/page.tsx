@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import Script from "next/script";
 import {
   ArrowLeft,
   Link2,
@@ -48,6 +49,7 @@ interface FetchResponse {
   ogImage?: string;
   jsonLd?: Record<string, unknown>;
   error?: string;
+  retryAfter?: number;
 }
 
 interface ExtractResponse {
@@ -76,6 +78,28 @@ interface SubmitResponse {
   success: boolean;
   event?: { id: string; slug: string; name: string };
   error?: string;
+  retryAfter?: number;
+}
+
+// Turnstile widget types
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (container: string | HTMLElement, options: TurnstileOptions) => string;
+      reset: (widgetId: string) => void;
+      remove: (widgetId: string) => void;
+      getResponse: (widgetId: string) => string | undefined;
+    };
+  }
+}
+
+interface TurnstileOptions {
+  sitekey: string;
+  callback?: (token: string) => void;
+  "expired-callback"?: () => void;
+  "error-callback"?: (error: string) => void;
+  size?: "normal" | "compact" | "invisible";
+  theme?: "light" | "dark" | "auto";
 }
 
 interface MatchedVenue {
@@ -142,6 +166,60 @@ export default function SuggestEventPage() {
   // Success state
   const [createdEvent, setCreatedEvent] = useState<{ id: string; slug: string; name: string } | null>(null);
 
+  // Turnstile state
+  const [turnstileToken, setTurnstileToken] = useState<string>("");
+  const [turnstileReady, setTurnstileReady] = useState(false);
+  const turnstileWidgetId = useRef<string | null>(null);
+  const turnstileContainerRef = useRef<HTMLDivElement>(null);
+
+  // Get the Turnstile site key from environment
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+  // Initialize Turnstile widget
+  const initTurnstile = useCallback(() => {
+    if (!turnstileSiteKey || !window.turnstile || !turnstileContainerRef.current) {
+      return;
+    }
+
+    // Remove existing widget if any
+    if (turnstileWidgetId.current) {
+      try {
+        window.turnstile.remove(turnstileWidgetId.current);
+      } catch {
+        // Widget might already be removed
+      }
+    }
+
+    // Render invisible Turnstile widget
+    turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
+      sitekey: turnstileSiteKey,
+      size: "invisible",
+      callback: (token: string) => {
+        setTurnstileToken(token);
+      },
+      "expired-callback": () => {
+        setTurnstileToken("");
+      },
+      "error-callback": () => {
+        setTurnstileToken("");
+      },
+    });
+
+    setTurnstileReady(true);
+  }, [turnstileSiteKey]);
+
+  // Reset Turnstile after submission
+  const resetTurnstile = useCallback(() => {
+    if (window.turnstile && turnstileWidgetId.current) {
+      try {
+        window.turnstile.reset(turnstileWidgetId.current);
+      } catch {
+        // Widget might not exist
+      }
+    }
+    setTurnstileToken("");
+  }, []);
+
   // URL validation
   const isValidUrl = (urlString: string): boolean => {
     try {
@@ -181,7 +259,14 @@ export default function SuggestEventPage() {
       const data = (await res.json()) as FetchResponse;
 
       if (!data.success) {
-        setError(data.error || "Failed to fetch page");
+        // Handle rate limiting
+        if (res.status === 429) {
+          const retryAfter = data.retryAfter || 3600;
+          const minutes = Math.ceil(retryAfter / 60);
+          setError(`Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+        } else {
+          setError(data.error || "Failed to fetch page");
+        }
         setStep("url-input");
         return;
       }
@@ -340,13 +425,22 @@ export default function SuggestEventPage() {
           sourceUrl: url || undefined,
           suggesterEmail: suggesterEmail || undefined,
           jsonLd: fetchedJsonLd || undefined,
+          turnstileToken: turnstileToken || undefined,
         }),
       });
 
       const data = (await res.json()) as SubmitResponse;
 
       if (!data.success) {
-        setError(data.error || "Failed to submit event");
+        // Handle rate limiting
+        if (res.status === 429) {
+          const retryAfter = data.retryAfter || 3600;
+          const minutes = Math.ceil(retryAfter / 60);
+          setError(`Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+        } else {
+          setError(data.error || "Failed to submit event");
+        }
+        resetTurnstile();
         setStep("review");
         return;
       }
@@ -355,6 +449,7 @@ export default function SuggestEventPage() {
       setStep("success");
     } catch {
       setError("Failed to submit event. Please try again.");
+      resetTurnstile();
       setStep("review");
     }
   };
@@ -390,6 +485,7 @@ export default function SuggestEventPage() {
     setSuggesterEmail("");
     setCreatedEvent(null);
     setError("");
+    resetTurnstile();
   };
 
   // Confidence badge component
@@ -429,6 +525,18 @@ export default function SuggestEventPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
+      {/* Turnstile Script */}
+      {turnstileSiteKey && (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          strategy="afterInteractive"
+          onLoad={initTurnstile}
+        />
+      )}
+
+      {/* Invisible Turnstile widget container */}
+      <div ref={turnstileContainerRef} className="hidden" />
+
       {/* Header */}
       <div className="mb-6">
         <Link

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "edge";
 
@@ -53,6 +54,12 @@ function similarity(s1: string, s2: string): number {
 }
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = await checkRateLimit(request, "suggest-event-check-duplicate");
+  if (!rateLimitResult.allowed) {
+    return rateLimitResponse(rateLimitResult);
+  }
+
   try {
     const body = await request.json();
     const validation = checkDuplicateSchema.safeParse(body);
