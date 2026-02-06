@@ -17,6 +17,7 @@ const submitEventSchema = z.object({
   description: z.string().nullable().optional(),
   startDate: z.string().nullable().optional(),
   endDate: z.string().nullable().optional(),
+  venueId: z.string().uuid().nullable().optional(), // Link to existing venue if confirmed
   venueName: z.string().nullable().optional(),
   venueAddress: z.string().nullable().optional(),
   venueCity: z.string().nullable().optional(),
@@ -119,7 +120,7 @@ export async function POST(request: NextRequest) {
       slug: finalEventSlug,
       description,
       promoterId: COMMUNITY_PROMOTER_ID,
-      venueId: null, // Community suggestions don't auto-create venues
+      venueId: data.venueId || null, // Link to confirmed venue if provided
       startDate,
       endDate,
       datesConfirmed: startDate !== null,

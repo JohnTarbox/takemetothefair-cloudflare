@@ -34,6 +34,7 @@ type WizardStep =
   | "fetching"
   | "extracting"
   | "duplicate-check"
+  | "venue-match"
   | "review"
   | "submitting"
   | "success";
@@ -77,6 +78,24 @@ interface SubmitResponse {
   error?: string;
 }
 
+interface MatchedVenue {
+  id: string;
+  name: string;
+  slug: string;
+  city: string | null;
+  state: string | null;
+  address?: string | null;
+  confidence: number;
+}
+
+interface VenueMatchResponse {
+  success: boolean;
+  matchFound?: boolean;
+  bestMatch?: MatchedVenue;
+  alternatives?: MatchedVenue[];
+  error?: string;
+}
+
 export default function SuggestEventPage() {
   // Wizard state
   const [step, setStep] = useState<WizardStep>("url-input");
@@ -111,6 +130,11 @@ export default function SuggestEventPage() {
   // Duplicate check state
   const [duplicateEvent, setDuplicateEvent] = useState<DuplicateCheckResponse["existingEvent"] | null>(null);
   const [duplicateMatchType, setDuplicateMatchType] = useState<string | null>(null);
+
+  // Venue match state
+  const [matchedVenue, setMatchedVenue] = useState<MatchedVenue | null>(null);
+  const [alternativeVenues, setAlternativeVenues] = useState<MatchedVenue[]>([]);
+  const [confirmedVenueId, setConfirmedVenueId] = useState<string | null>(null);
 
   // User input state
   const [suggesterEmail, setSuggesterEmail] = useState("");
@@ -228,10 +252,10 @@ export default function SuggestEventPage() {
         setDuplicateMatchType(data.matchType || null);
         // Stay on duplicate-check step to show warning
       } else {
-        // No duplicate, proceed to review
+        // No duplicate, check for venue matches
         setDuplicateEvent(null);
         setDuplicateMatchType(null);
-        setStep("review");
+        await handleVenueMatch(eventData);
       }
     } catch {
       // Error checking duplicates - proceed to review
@@ -239,10 +263,61 @@ export default function SuggestEventPage() {
     }
   };
 
-  // Proceed despite duplicate warning
-  const proceedAnyway = () => {
-    setDuplicateEvent(null);
+  // Step: Check for venue matches
+  const handleVenueMatch = async (eventData: ExtractedEventData) => {
+    // Only check if we have a venue name
+    if (!eventData.venueName) {
+      setStep("review");
+      return;
+    }
+
+    setStep("venue-match");
+
+    try {
+      const res = await fetch("/api/suggest-event/match-venue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          venueName: eventData.venueName,
+          venueCity: eventData.venueCity || undefined,
+          venueState: eventData.venueState || undefined,
+        }),
+      });
+      const data = (await res.json()) as VenueMatchResponse;
+
+      if (data.matchFound && data.bestMatch) {
+        setMatchedVenue(data.bestMatch);
+        setAlternativeVenues(data.alternatives || []);
+        // Stay on venue-match step to show confirmation
+      } else {
+        // No venue match found, proceed to review
+        setMatchedVenue(null);
+        setAlternativeVenues([]);
+        setStep("review");
+      }
+    } catch {
+      // Error matching venue - proceed to review without venue link
+      setStep("review");
+    }
+  };
+
+  // Confirm the matched venue
+  const confirmVenue = (venueId: string) => {
+    setConfirmedVenueId(venueId);
     setStep("review");
+  };
+
+  // Skip venue linking
+  const skipVenueMatch = () => {
+    setConfirmedVenueId(null);
+    setMatchedVenue(null);
+    setStep("review");
+  };
+
+  // Proceed despite duplicate warning
+  const proceedAnyway = async () => {
+    setDuplicateEvent(null);
+    await handleVenueMatch(extractedData);
   };
 
   // Step: Submit event
@@ -261,6 +336,7 @@ export default function SuggestEventPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...extractedData,
+          venueId: confirmedVenueId || undefined,
           sourceUrl: url || undefined,
           suggesterEmail: suggesterEmail || undefined,
           jsonLd: fetchedJsonLd || undefined,
@@ -308,6 +384,9 @@ export default function SuggestEventPage() {
     setConfidence({});
     setDuplicateEvent(null);
     setDuplicateMatchType(null);
+    setMatchedVenue(null);
+    setAlternativeVenues([]);
+    setConfirmedVenueId(null);
     setSuggesterEmail("");
     setCreatedEvent(null);
     setError("");
@@ -552,6 +631,86 @@ export default function SuggestEventPage() {
         </Card>
       )}
 
+      {/* Step: Venue Match Confirmation */}
+      {step === "venue-match" && matchedVenue && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-blue-600">
+              <MapPin className="w-5 h-5" />
+              Venue Found in Database
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-gray-700">
+              We found a venue that matches &quot;{extractedData.venueName}&quot;. Would you like to link this event to it?
+            </p>
+
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="font-medium text-gray-900">{matchedVenue.name}</h4>
+              <p className="text-sm text-gray-600 mt-1">
+                <MapPin className="w-3 h-3 inline mr-1" />
+                {[matchedVenue.address, matchedVenue.city, matchedVenue.state]
+                  .filter(Boolean)
+                  .join(", ") || "Location details not available"}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Match confidence: {matchedVenue.confidence}%
+              </p>
+              <Link
+                href={`/venues/${matchedVenue.slug}`}
+                className="text-sm text-blue-600 hover:underline mt-2 inline-flex items-center"
+                target="_blank"
+              >
+                View venue page
+                <ExternalLink className="w-3 h-3 ml-1" />
+              </Link>
+            </div>
+
+            {alternativeVenues.length > 0 && (
+              <div className="mt-4">
+                <p className="text-sm text-gray-600 mb-2">Other possible matches:</p>
+                <div className="space-y-2">
+                  {alternativeVenues.map((venue) => (
+                    <button
+                      key={venue.id}
+                      onClick={() => confirmVenue(venue.id)}
+                      className="w-full text-left p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors"
+                    >
+                      <span className="font-medium text-gray-900">{venue.name}</span>
+                      <span className="text-sm text-gray-500 ml-2">
+                        {venue.city}, {venue.state} ({venue.confidence}%)
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-between pt-4 border-t">
+              <Button variant="outline" onClick={skipVenueMatch}>
+                Skip - Don&apos;t Link Venue
+              </Button>
+              <Button onClick={() => confirmVenue(matchedVenue.id)}>
+                <Check className="w-4 h-4 mr-1" />
+                Yes, Link This Venue
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step: Venue Match Loading (checking for matches) */}
+      {step === "venue-match" && !matchedVenue && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+            <h3 className="text-lg font-medium text-gray-900">
+              Checking for matching venues...
+            </h3>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Step: Review & Edit */}
       {step === "review" && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -660,6 +819,34 @@ export default function SuggestEventPage() {
                     <MapPin className="w-4 h-4" />
                     Location (optional)
                   </Label>
+
+                  {/* Show linked venue indicator */}
+                  {confirmedVenueId && matchedVenue && (
+                    <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-green-800">
+                          <Check className="w-4 h-4 inline mr-1" />
+                          Linked to: {matchedVenue.name}
+                        </p>
+                        <p className="text-xs text-green-600">
+                          {matchedVenue.city}, {matchedVenue.state}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setConfirmedVenueId(null);
+                          setMatchedVenue(null);
+                        }}
+                        className="text-green-700 hover:text-green-900"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                       <Label htmlFor="venueName">
