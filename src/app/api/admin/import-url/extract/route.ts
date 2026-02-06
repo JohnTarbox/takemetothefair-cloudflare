@@ -11,10 +11,10 @@ const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
   url: z.string().url().optional(),
   metadata: z.object({
-    title: z.string().optional(),
-    description: z.string().optional(),
-    ogImage: z.string().optional(),
-    jsonLd: z.record(z.unknown()).optional(),
+    title: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    ogImage: z.string().nullable().optional(),
+    jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
   }).optional(),
 });
 
