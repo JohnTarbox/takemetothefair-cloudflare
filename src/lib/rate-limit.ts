@@ -35,6 +35,28 @@ export const RATE_LIMITS = {
     authenticatedLimit: 60,
     windowMs: 60 * 60 * 1000,
   },
+  // Registration rate limiting - strict to prevent abuse
+  "auth-register": {
+    anonymousLimit: 5,
+    authenticatedLimit: 5, // Already logged in users shouldn't register
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  // Export endpoints - authenticated only, moderate limits
+  "export-events": {
+    anonymousLimit: 0, // Must be authenticated
+    authenticatedLimit: 10,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  "export-venues": {
+    anonymousLimit: 0, // Must be authenticated
+    authenticatedLimit: 10,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  "export-vendors": {
+    anonymousLimit: 0, // Must be authenticated
+    authenticatedLimit: 10,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;

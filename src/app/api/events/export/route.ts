@@ -5,10 +5,17 @@ import { eq, and, gte, like, or } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { sanitizeLikeInput } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 export const runtime = "edge";
 
 export async function GET(request: Request) {
+  // Rate limiting check
+  const rateLimitResult = await checkRateLimit(request, "export-events");
+  if (!rateLimitResult.allowed) {
+    return rateLimitResponse(rateLimitResult);
+  }
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

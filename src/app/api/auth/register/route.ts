@@ -6,6 +6,8 @@ import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 
 export const runtime = "edge";
 
@@ -17,9 +19,16 @@ const registerSchema = z.object({
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
   companyName: z.string().optional(),
   businessName: z.string().optional(),
+  turnstileToken: z.string().optional(), // Turnstile verification token
 });
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = await checkRateLimit(request, "auth-register");
+  if (!rateLimitResult.allowed) {
+    return rateLimitResponse(rateLimitResult);
+  }
+
   const db = getCloudflareDb();
   try {
     const body = await request.json();
@@ -33,8 +42,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, password, name, role, companyName, businessName } =
+    const { email, password, name, role, companyName, businessName, turnstileToken } =
       validation.data;
+
+    // Verify Turnstile token (required for all registration attempts)
+    const turnstileResult = await verifyTurnstileToken(
+      turnstileToken || "",
+      request
+    );
+    if (!turnstileResult.success) {
+      return NextResponse.json(
+        { error: getTurnstileErrorMessage(turnstileResult.errorCodes) },
+        { status: 400 }
+      );
+    }
 
     const existingUser = await db
       .select()

@@ -2,11 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
+import { checkAdminGeoRestriction } from "@/lib/geo-security";
 
 export const runtime = "edge";
 
 // POST - Restore database from SQL backup
 export async function POST(request: NextRequest) {
+  // Geo-restriction check for sensitive database operations
+  const geoResult = checkAdminGeoRestriction(request);
+  if (!geoResult.allowed) {
+    return NextResponse.json(
+      { error: "Access denied from your location" },
+      { status: 403 }
+    );
+  }
+
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
