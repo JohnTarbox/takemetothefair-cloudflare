@@ -43,6 +43,7 @@ interface FetchResponse {
   success: boolean;
   content?: string;
   title?: string;
+  description?: string;
   ogImage?: string;
   jsonLd?: Record<string, unknown>;
   error?: string;
@@ -167,6 +168,7 @@ export default function SuggestEventPage() {
       setStep("extracting");
       await handleExtract(data.content || "", {
         title: data.title,
+        description: data.description,
         ogImage: data.ogImage,
         jsonLd: data.jsonLd,
       });
@@ -179,7 +181,7 @@ export default function SuggestEventPage() {
   // Step: AI Extract
   const handleExtract = async (
     content: string,
-    metadata?: { title?: string; ogImage?: string; jsonLd?: Record<string, unknown> }
+    metadata?: { title?: string; description?: string; ogImage?: string; jsonLd?: Record<string, unknown> }
   ) => {
     try {
       const res = await fetch("/api/suggest-event/extract", {

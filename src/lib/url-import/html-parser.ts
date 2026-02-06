@@ -121,6 +121,33 @@ export function extractMetadata(html: string): PageMetadata {
     }
   }
 
+  // Extract meta description (often contains date/time info)
+  const descriptionMatch = html.match(
+    /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i
+  );
+  if (descriptionMatch) {
+    metadata.description = decodeHtmlEntities(descriptionMatch[1].trim());
+  }
+  // Also check for content before name
+  if (!metadata.description) {
+    const descriptionMatch2 = html.match(
+      /<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["'][^>]*>/i
+    );
+    if (descriptionMatch2) {
+      metadata.description = decodeHtmlEntities(descriptionMatch2[1].trim());
+    }
+  }
+
+  // Extract og:description as fallback
+  if (!metadata.description) {
+    const ogDescMatch = html.match(
+      /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["'][^>]*>/i
+    );
+    if (ogDescMatch) {
+      metadata.description = decodeHtmlEntities(ogDescMatch[1].trim());
+    }
+  }
+
   // Extract JSON-LD structured data
   const jsonLdMatches = html.matchAll(
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi

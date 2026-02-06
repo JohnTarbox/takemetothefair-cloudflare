@@ -59,6 +59,7 @@ export interface MultiExtractResult {
 
 export interface PageMetadata {
   title?: string;
+  description?: string;
   ogImage?: string;
   jsonLd?: Record<string, unknown>;
 }

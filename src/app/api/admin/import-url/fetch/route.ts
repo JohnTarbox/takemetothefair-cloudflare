@@ -145,6 +145,7 @@ export async function GET(request: NextRequest) {
       success: true,
       content,
       title: metadata.title || null,
+      description: metadata.description || null,
       ogImage: metadata.ogImage || null,
       jsonLd: metadata.jsonLd || null,
     });

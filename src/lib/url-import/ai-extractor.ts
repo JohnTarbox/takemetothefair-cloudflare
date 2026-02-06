@@ -57,17 +57,21 @@ Find and extract these fields. Use null for any field not found:
   "venueName": "venue or location name",
   "venueAddress": "street address",
   "venueCity": "city",
-  "venueState": "2-letter state code (Maine=ME, Massachusetts=MA)",
+  "venueState": "2-letter state code (Maine=ME, Massachusetts=MA, New Hampshire=NH)",
   "ticketUrl": "URL for tickets",
   "ticketPriceMin": number or null,
   "ticketPriceMax": number or null,
   "imageUrl": "image URL"
 }
 
-IMPORTANT: Convert dates to YYYY-MM-DD. Examples:
-- "February 01, 2026" = "2026-02-01"
-- "March 15-17, 2025" = startDate: "2025-03-15", endDate: "2025-03-17"
-- "January 15, 2025" = "2025-01-15"
+IMPORTANT PARSING RULES:
+1. Page titles often contain: "Event Name | Date Range | Venue" - parse these parts separately
+2. Convert ALL dates to YYYY-MM-DD format:
+   - "August 2-10, 2025" = startDate: "2025-08-02", endDate: "2025-08-10"
+   - "February 01, 2026" = "2026-02-01"
+   - "March 15-17, 2025" = startDate: "2025-03-15", endDate: "2025-03-17"
+3. Look for venue/location names like "Mount Sunapee Resort", "Fairgrounds", "Convention Center"
+4. Extract the event NAME only (not dates or venue) for the "name" field
 
 JSON response:`;
 
@@ -83,6 +87,15 @@ export async function extractEventData(
   let contextInfo = "";
   if (metadata.title) {
     contextInfo += `Page title: ${metadata.title}\n`;
+    // Hint about pipe-separated titles
+    if (metadata.title.includes("|")) {
+      contextInfo += `(Note: Title appears to have parts separated by "|" - parse each part)\n`;
+    }
+  }
+
+  // Include meta description (often contains dates/times)
+  if (metadata.description) {
+    contextInfo += `Page description: ${metadata.description}\n`;
   }
 
   // If we have JSON-LD structured data, include it for better extraction
@@ -137,6 +150,15 @@ export async function extractMultipleEvents(
   let contextInfo = "";
   if (metadata.title) {
     contextInfo += `Page title: ${metadata.title}\n`;
+    // Hint about pipe-separated titles
+    if (metadata.title.includes("|")) {
+      contextInfo += `(Note: Title appears to have parts separated by "|" - parse each part)\n`;
+    }
+  }
+
+  // Include meta description (often contains dates/times)
+  if (metadata.description) {
+    contextInfo += `Page description: ${metadata.description}\n`;
   }
 
   // If we have JSON-LD structured data, include it for better extraction
