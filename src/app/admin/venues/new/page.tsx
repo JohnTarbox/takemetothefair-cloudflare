@@ -38,6 +38,7 @@ export default function NewVenuePage() {
       latitude: formData.get("latitude") ? parseFloat(formData.get("latitude") as string) : null,
       longitude: formData.get("longitude") ? parseFloat(formData.get("longitude") as string) : null,
       capacity: formData.get("capacity") ? parseInt(formData.get("capacity") as string) : null,
+      amenities: [],
       contactEmail: formData.get("contactEmail") || null,
       contactPhone: formData.get("contactPhone") || null,
       website: formData.get("website") || null,

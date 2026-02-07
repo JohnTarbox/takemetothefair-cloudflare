@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       latitude: data.latitude,
       longitude: data.longitude,
       capacity: data.capacity,
-      amenities: JSON.stringify(data.amenities),
+      amenities: JSON.stringify(data.amenities ?? []),
       contactEmail: data.contactEmail,
       contactPhone: data.contactPhone,
       website: data.website,
