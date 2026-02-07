@@ -119,21 +119,20 @@ async function mergeVenues(
 ): Promise<MergeResponse> {
   const transferred: RelationshipCounts = { events: 0, favorites: 0 };
 
-  // Transfer events from duplicate to primary
-  const eventResult = await db
-    .update(events)
-    .set({ venueId: primaryId })
-    .where(eq(events.venueId, duplicateId));
-  transferred.events = eventResult.rowsAffected || 0;
+  // Batch 1: Transfer events and get existing favorites
+  const [eventResult, existingFavorites] = await db.batch([
+    db.update(events)
+      .set({ venueId: primaryId })
+      .where(eq(events.venueId, duplicateId)),
+    db.select({ userId: userFavorites.userId })
+      .from(userFavorites)
+      .where(and(
+        eq(userFavorites.favoritableType, "VENUE"),
+        eq(userFavorites.favoritableId, primaryId)
+      )),
+  ]);
+  transferred.events = (eventResult as { rowsAffected?: number }).rowsAffected || 0;
 
-  // Get existing favorites for primary venue
-  const existingFavorites = await db
-    .select({ userId: userFavorites.userId })
-    .from(userFavorites)
-    .where(and(
-      eq(userFavorites.favoritableType, "VENUE"),
-      eq(userFavorites.favoritableId, primaryId)
-    ));
   const existingUserIds = existingFavorites.map(f => f.userId);
 
   // Transfer favorites that don't already exist
@@ -146,7 +145,7 @@ async function mergeVenues(
         eq(userFavorites.favoritableId, duplicateId),
         notInArray(userFavorites.userId, existingUserIds)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
   } else {
     const favoriteResult = await db
       .update(userFavorites)
@@ -155,25 +154,29 @@ async function mergeVenues(
         eq(userFavorites.favoritableType, "VENUE"),
         eq(userFavorites.favoritableId, duplicateId)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
   }
 
-  // Delete remaining duplicate favorites
-  await db
-    .delete(userFavorites)
-    .where(and(
-      eq(userFavorites.favoritableType, "VENUE"),
-      eq(userFavorites.favoritableId, duplicateId)
-    ));
+  // Batch 2: Cleanup and final fetch
+  await db.batch([
+    db.delete(userFavorites)
+      .where(and(
+        eq(userFavorites.favoritableType, "VENUE"),
+        eq(userFavorites.favoritableId, duplicateId)
+      )),
+    db.delete(venues).where(eq(venues.id, duplicateId)),
+  ]);
 
-  // Delete duplicate venue
-  await db.delete(venues).where(eq(venues.id, duplicateId));
+  // Batch 3: Get merged entity data
+  const [mergedResults, countResults] = await db.batch([
+    db.select().from(venues).where(eq(venues.id, primaryId)),
+    db.select({ count: sql<number>`count(*)` })
+      .from(events)
+      .where(eq(events.venueId, primaryId)),
+  ]);
 
-  const [mergedEntity] = await db.select().from(venues).where(eq(venues.id, primaryId));
-  const [eventCount] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(events)
-    .where(eq(events.venueId, primaryId));
+  const mergedEntity = mergedResults[0];
+  const eventCount = countResults[0];
 
   return {
     success: true,
@@ -588,14 +591,27 @@ async function mergeEvents(
 ): Promise<MergeResponse> {
   const transferred: RelationshipCounts = { eventVendors: 0, favorites: 0 };
 
-  // Get vendors already assigned to primary event
-  const primaryVendors = await db
-    .select({ vendorId: eventVendors.vendorId })
-    .from(eventVendors)
-    .where(eq(eventVendors.eventId, primaryId));
-  const primaryVendorIds = primaryVendors.map(v => v.vendorId);
+  // Batch 1: Get all needed data in parallel
+  const [primaryVendors, existingFavorites, duplicateData] = await db.batch([
+    db.select({ vendorId: eventVendors.vendorId })
+      .from(eventVendors)
+      .where(eq(eventVendors.eventId, primaryId)),
+    db.select({ userId: userFavorites.userId })
+      .from(userFavorites)
+      .where(and(
+        eq(userFavorites.favoritableType, "EVENT"),
+        eq(userFavorites.favoritableId, primaryId)
+      )),
+    db.select({ viewCount: events.viewCount })
+      .from(events)
+      .where(eq(events.id, duplicateId)),
+  ]);
 
-  // Delete overlapping event_vendor records
+  const primaryVendorIds = primaryVendors.map(v => v.vendorId);
+  const existingUserIds = existingFavorites.map(f => f.userId);
+  const duplicate = duplicateData[0];
+
+  // Batch 2: Delete overlapping records and transfer non-overlapping ones
   if (primaryVendorIds.length > 0) {
     await db
       .delete(eventVendors)
@@ -610,14 +626,9 @@ async function mergeEvents(
     .update(eventVendors)
     .set({ eventId: primaryId })
     .where(eq(eventVendors.eventId, duplicateId));
-  transferred.eventVendors = eventVendorResult.rowsAffected || 0;
+  transferred.eventVendors = (eventVendorResult as { rowsAffected?: number }).rowsAffected || 0;
 
-  // Combine view counts
-  const [duplicate] = await db
-    .select({ viewCount: events.viewCount })
-    .from(events)
-    .where(eq(events.id, duplicateId));
-
+  // Combine view counts if duplicate exists
   if (duplicate) {
     await db
       .update(events)
@@ -625,17 +636,7 @@ async function mergeEvents(
       .where(eq(events.id, primaryId));
   }
 
-  // Get existing favorites
-  const existingFavorites = await db
-    .select({ userId: userFavorites.userId })
-    .from(userFavorites)
-    .where(and(
-      eq(userFavorites.favoritableType, "EVENT"),
-      eq(userFavorites.favoritableId, primaryId)
-    ));
-  const existingUserIds = existingFavorites.map(f => f.userId);
-
-  // Transfer favorites
+  // Transfer favorites (only those not already favorited by same user)
   if (existingUserIds.length > 0) {
     const favoriteResult = await db
       .update(userFavorites)
@@ -645,7 +646,7 @@ async function mergeEvents(
         eq(userFavorites.favoritableId, duplicateId),
         notInArray(userFavorites.userId, existingUserIds)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
   } else {
     const favoriteResult = await db
       .update(userFavorites)
@@ -654,27 +655,37 @@ async function mergeEvents(
         eq(userFavorites.favoritableType, "EVENT"),
         eq(userFavorites.favoritableId, duplicateId)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
   }
 
-  // Delete remaining duplicate favorites
-  await db
-    .delete(userFavorites)
-    .where(and(
-      eq(userFavorites.favoritableType, "EVENT"),
-      eq(userFavorites.favoritableId, duplicateId)
-    ));
+  // Batch 3: Cleanup and final fetch
+  await db.batch([
+    db.delete(userFavorites)
+      .where(and(
+        eq(userFavorites.favoritableType, "EVENT"),
+        eq(userFavorites.favoritableId, duplicateId)
+      )),
+    db.delete(events).where(eq(events.id, duplicateId)),
+  ]);
 
-  // Delete duplicate event
-  await db.delete(events).where(eq(events.id, duplicateId));
+  // Batch 4: Get merged entity data
+  const [mergedResults, venueResults, promoterResults, countResults] = await db.batch([
+    db.select().from(events).where(eq(events.id, primaryId)),
+    db.select({ name: venues.name }).from(venues).where(
+      sql`${venues.id} = (SELECT venue_id FROM events WHERE id = ${primaryId})`
+    ),
+    db.select({ companyName: promoters.companyName }).from(promoters).where(
+      sql`${promoters.id} = (SELECT promoter_id FROM events WHERE id = ${primaryId})`
+    ),
+    db.select({ count: sql<number>`count(*)` })
+      .from(eventVendors)
+      .where(eq(eventVendors.eventId, primaryId)),
+  ]);
 
-  const [mergedEntity] = await db.select().from(events).where(eq(events.id, primaryId));
-  const [primaryVenue] = await db.select({ name: venues.name }).from(venues).where(eq(venues.id, mergedEntity.venueId));
-  const [primaryPromoter] = await db.select({ companyName: promoters.companyName }).from(promoters).where(eq(promoters.id, mergedEntity.promoterId));
-  const [eventVendorCount] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(eventVendors)
-    .where(eq(eventVendors.eventId, primaryId));
+  const mergedEntity = mergedResults[0];
+  const primaryVenue = venueResults[0];
+  const primaryPromoter = promoterResults[0];
+  const eventVendorCount = countResults[0];
 
   return {
     success: true,
