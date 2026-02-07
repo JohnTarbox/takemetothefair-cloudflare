@@ -19,6 +19,10 @@ Return a JSON array where each event has these fields (use null for fields not f
     "description": "brief description (max 300 chars)",
     "startDate": "YYYY-MM-DD format",
     "endDate": "YYYY-MM-DD format",
+    "startTime": "HH:MM (24-hour) or null - opening time",
+    "endTime": "HH:MM (24-hour) or null - closing time",
+    "hoursVaryByDay": true/false - whether hours differ on different days,
+    "hoursNotes": "any notes about hours or per-day variations (e.g., 'Fri 5-9pm, Sat-Sun 10am-6pm')",
     "venueName": "venue or location name",
     "venueAddress": "street address",
     "venueCity": "city",
@@ -34,9 +38,11 @@ IMPORTANT RULES:
 1. Find ALL events on the page - there may be 1, 5, 10, or more events
 2. Each event listing should be a separate object in the array
 3. Convert ALL dates to YYYY-MM-DD format
-4. If the page lists multiple dates for different events, create separate entries
-5. If only ONE event exists, still return it as an array with one element
-6. Look for event listings, schedules, calendars, or multiple date entries
+4. Convert ALL times to HH:MM 24-hour format (10am = 10:00, 6pm = 18:00)
+5. If the page lists multiple dates for different events, create separate entries
+6. If only ONE event exists, still return it as an array with one element
+7. Look for event listings, schedules, calendars, or multiple date entries
+8. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
 
 JSON array response:`;
 
@@ -54,6 +60,10 @@ Find and extract these fields. Use null for any field not found:
   "description": "event description (max 500 chars)",
   "startDate": "YYYY-MM-DD format (e.g., February 01, 2026 = 2026-02-01)",
   "endDate": "YYYY-MM-DD format",
+  "startTime": "HH:MM (24-hour) or null - opening time (e.g., 10am = 10:00, 6pm = 18:00)",
+  "endTime": "HH:MM (24-hour) or null - closing time",
+  "hoursVaryByDay": true/false - whether hours differ on different days,
+  "hoursNotes": "any notes about hours or per-day variations (e.g., 'Fri 5-9pm, Sat-Sun 10am-6pm')",
   "venueName": "venue or location name",
   "venueAddress": "street address",
   "venueCity": "city",
@@ -70,8 +80,10 @@ IMPORTANT PARSING RULES:
    - "August 2-10, 2025" = startDate: "2025-08-02", endDate: "2025-08-10"
    - "February 01, 2026" = "2026-02-01"
    - "March 15-17, 2025" = startDate: "2025-03-15", endDate: "2025-03-17"
-3. Look for venue/location names like "Mount Sunapee Resort", "Fairgrounds", "Convention Center"
-4. Extract the event NAME only (not dates or venue) for the "name" field
+3. Convert ALL times to HH:MM 24-hour format (10am = 10:00, 6pm = 18:00)
+4. Look for venue/location names like "Mount Sunapee Resort", "Fairgrounds", "Convention Center"
+5. Extract the event NAME only (not dates or venue) for the "name" field
+6. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
 
 JSON response:`;
 
@@ -258,13 +270,33 @@ function sanitizeEventData(
   index: number,
   metadata: PageMetadata
 ): ExtractedEvent {
+  // Get the raw start/end dates (may contain time)
+  const rawStartDate = item.startDate || item.start_date || item.date;
+  const rawEndDate = item.endDate || item.end_date;
+
+  // Try to extract times from datetime strings if not explicitly provided
+  let startTime = sanitizeTime(item.startTime || item.start_time);
+  let endTime = sanitizeTime(item.endTime || item.end_time);
+
+  // Fall back to extracting time from ISO datetime if not found
+  if (!startTime && rawStartDate) {
+    startTime = extractTimeFromDatetime(rawStartDate);
+  }
+  if (!endTime && rawEndDate) {
+    endTime = extractTimeFromDatetime(rawEndDate);
+  }
+
   const event: ExtractedEvent = {
     _extractId: `event-${index}-${Date.now()}`,
     _selected: true, // Default to selected
     name: sanitizeString(item.name || item.title),
     description: sanitizeString(item.description, 500),
-    startDate: sanitizeDate(item.startDate || item.start_date || item.date),
-    endDate: sanitizeDate(item.endDate || item.end_date),
+    startDate: sanitizeDate(rawStartDate),
+    endDate: sanitizeDate(rawEndDate),
+    startTime,
+    endTime,
+    hoursVaryByDay: item.hoursVaryByDay === true || item.hours_vary_by_day === true,
+    hoursNotes: sanitizeString(item.hoursNotes || item.hours_notes, 500),
     venueName: sanitizeString(item.venueName || item.venue_name || item.venue || item.location),
     venueAddress: sanitizeString(item.venueAddress || item.venue_address || item.address),
     venueCity: sanitizeString(item.venueCity || item.venue_city || item.city),
@@ -308,6 +340,10 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     description: null,
     startDate: null,
     endDate: null,
+    startTime: null,
+    endTime: null,
+    hoursVaryByDay: false,
+    hoursNotes: null,
     venueName: null,
     venueAddress: null,
     venueCity: null,
@@ -323,8 +359,15 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     const ld = metadata.jsonLd;
     if (ld.name) event.name = String(ld.name);
     if (ld.description) event.description = sanitizeString(String(ld.description), 500);
-    if (ld.startDate) event.startDate = sanitizeDate(String(ld.startDate));
-    if (ld.endDate) event.endDate = sanitizeDate(String(ld.endDate));
+    if (ld.startDate) {
+      event.startDate = sanitizeDate(String(ld.startDate));
+      // Try to extract time from JSON-LD datetime
+      event.startTime = extractTimeFromDatetime(ld.startDate);
+    }
+    if (ld.endDate) {
+      event.endDate = sanitizeDate(String(ld.endDate));
+      event.endTime = extractTimeFromDatetime(ld.endDate);
+    }
 
     const location = ld.location as Record<string, unknown> | undefined;
     if (location?.name) event.venueName = String(location.name);
@@ -376,6 +419,10 @@ function parseAiResponse(
     description: null,
     startDate: null,
     endDate: null,
+    startTime: null,
+    endTime: null,
+    hoursVaryByDay: false,
+    hoursNotes: null,
     venueName: null,
     venueAddress: null,
     venueCity: null,
@@ -405,12 +452,28 @@ function parseAiResponse(
 
     const parsed = JSON.parse(jsonMatch[0]);
 
+    // Try to extract times from datetime strings if not explicitly provided
+    let startTime = sanitizeTime(parsed.startTime);
+    let endTime = sanitizeTime(parsed.endTime);
+
+    // Fall back to extracting time from ISO datetime if not found
+    if (!startTime && parsed.startDate) {
+      startTime = extractTimeFromDatetime(parsed.startDate);
+    }
+    if (!endTime && parsed.endDate) {
+      endTime = extractTimeFromDatetime(parsed.endDate);
+    }
+
     // Validate and sanitize each field
     const extracted: ExtractedEventData = {
       name: sanitizeString(parsed.name),
       description: sanitizeString(parsed.description, 500),
       startDate: sanitizeDate(parsed.startDate),
       endDate: sanitizeDate(parsed.endDate),
+      startTime,
+      endTime,
+      hoursVaryByDay: parsed.hoursVaryByDay === true,
+      hoursNotes: sanitizeString(parsed.hoursNotes, 500),
       venueName: sanitizeString(parsed.venueName),
       venueAddress: sanitizeString(parsed.venueAddress),
       venueCity: sanitizeString(parsed.venueCity),
@@ -464,6 +527,14 @@ function fallbackFromMetadata(
 
     if (!data.endDate && ld.endDate) {
       data.endDate = sanitizeDate(String(ld.endDate));
+    }
+
+    // Extract times from JSON-LD datetime if not already set
+    if (!data.startTime && ld.startDate) {
+      data.startTime = extractTimeFromDatetime(ld.startDate);
+    }
+    if (!data.endTime && ld.endDate) {
+      data.endTime = extractTimeFromDatetime(ld.endDate);
     }
 
     // Location from JSON-LD
@@ -751,6 +822,70 @@ function sanitizePrice(value: unknown): number | null {
   if (match) {
     const num = parseFloat(match[0]);
     return !isNaN(num) && num >= 0 ? num : null;
+  }
+
+  return null;
+}
+
+/**
+ * Sanitize time value to HH:MM 24-hour format
+ */
+function sanitizeTime(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+  if (str === "" || str.toLowerCase() === "null" || str.toLowerCase() === "tbd") return null;
+
+  // Already in HH:MM format
+  if (/^\d{1,2}:\d{2}$/.test(str)) {
+    const [hours, minutes] = str.split(":").map(Number);
+    if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+    }
+  }
+
+  // Handle 12-hour format like "10am", "6pm", "10:30am", "6:30 PM"
+  const ampmMatch = str.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)$/i);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1], 10);
+    const minutes = ampmMatch[2] ? parseInt(ampmMatch[2], 10) : 0;
+    const isPM = ampmMatch[3].toLowerCase() === "pm";
+
+    if (hours >= 1 && hours <= 12 && minutes >= 0 && minutes <= 59) {
+      if (isPM && hours !== 12) hours += 12;
+      if (!isPM && hours === 12) hours = 0;
+      return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+    }
+  }
+
+  // Try to extract time from ISO datetime string (2026-02-01T10:00:00)
+  const isoMatch = str.match(/T(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    const hours = parseInt(isoMatch[1], 10);
+    const minutes = parseInt(isoMatch[2], 10);
+    if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extract time from an ISO datetime string if present
+ */
+function extractTimeFromDatetime(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim();
+
+  // Check for ISO datetime format with time component
+  const isoMatch = str.match(/^\d{4}-\d{2}-\d{2}T(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    const hours = parseInt(isoMatch[1], 10);
+    const minutes = parseInt(isoMatch[2], 10);
+    // Only return if it's not midnight (which is often a default placeholder)
+    if ((hours !== 0 || minutes !== 0) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+    }
   }
 
   return null;

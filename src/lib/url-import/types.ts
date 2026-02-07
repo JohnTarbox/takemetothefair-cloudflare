@@ -3,6 +3,10 @@ export interface ExtractedEventData {
   description: string | null;
   startDate: string | null;
   endDate: string | null;
+  startTime: string | null; // "HH:MM" 24-hour format
+  endTime: string | null; // "HH:MM" 24-hour format
+  hoursVaryByDay: boolean; // AI detected varying hours
+  hoursNotes: string | null; // Free text (e.g., "Fri 5-9pm, Sat-Sun 10am-6pm")
   venueName: string | null;
   venueAddress: string | null;
   venueCity: string | null;

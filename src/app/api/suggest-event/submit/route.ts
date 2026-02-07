@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -14,11 +14,23 @@ export const runtime = "edge";
 // The stable ID for the Community Suggestions promoter
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
+const eventDaySchema = z.object({
+  date: z.string(), // YYYY-MM-DD
+  openTime: z.string(), // HH:MM
+  closeTime: z.string(), // HH:MM
+  notes: z.string().optional(),
+  closed: z.boolean().optional(),
+});
+
 const submitEventSchema = z.object({
   name: z.string().min(1, "Event name is required"),
   description: z.string().nullable().optional(),
   startDate: z.string().nullable().optional(),
   endDate: z.string().nullable().optional(),
+  startTime: z.string().nullable().optional(), // HH:MM format
+  endTime: z.string().nullable().optional(), // HH:MM format
+  hoursVaryByDay: z.boolean().optional(),
+  hoursNotes: z.string().nullable().optional(),
   venueId: z.string().uuid().nullable().optional(), // Link to existing venue if confirmed
   venueName: z.string().nullable().optional(),
   venueAddress: z.string().nullable().optional(),
@@ -32,6 +44,7 @@ const submitEventSchema = z.object({
   suggesterEmail: z.string().email().optional().or(z.literal("")),
   jsonLd: z.record(z.string(), z.unknown()).optional(),
   turnstileToken: z.string().optional(), // Turnstile verification token
+  eventDays: z.array(eventDaySchema).optional(), // Per-day schedule
 });
 
 export async function POST(request: NextRequest) {
@@ -164,6 +177,21 @@ export async function POST(request: NextRequest) {
       lastSyncedAt: new Date(),
       suggesterEmail: data.suggesterEmail || null,
     });
+
+    // Insert event days if provided
+    if (data.eventDays && data.eventDays.length > 0) {
+      await db.insert(eventDays).values(
+        data.eventDays.map((day) => ({
+          id: crypto.randomUUID(),
+          eventId: newEventId,
+          date: day.date,
+          openTime: day.openTime,
+          closeTime: day.closeTime,
+          notes: day.notes || null,
+          closed: day.closed || false,
+        }))
+      );
+    }
 
     // Store schema.org data if JSON-LD was provided
     if (data.jsonLd) {

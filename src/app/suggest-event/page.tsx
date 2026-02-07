@@ -18,11 +18,13 @@ import {
   Sparkles,
   Mail,
   AlertTriangle,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import type {
   ExtractedEventData,
   FieldConfidence,
@@ -140,6 +142,10 @@ export default function SuggestEventPage() {
     description: null,
     startDate: null,
     endDate: null,
+    startTime: null,
+    endTime: null,
+    hoursVaryByDay: false,
+    hoursNotes: null,
     venueName: null,
     venueAddress: null,
     venueCity: null,
@@ -150,6 +156,7 @@ export default function SuggestEventPage() {
     imageUrl: null,
   });
   const [confidence, setConfidence] = useState<FieldConfidence>({});
+  const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
 
   // Duplicate check state
   const [duplicateEvent, setDuplicateEvent] = useState<DuplicateCheckResponse["existingEvent"] | null>(null);
@@ -426,6 +433,7 @@ export default function SuggestEventPage() {
           suggesterEmail: suggesterEmail || undefined,
           jsonLd: fetchedJsonLd || undefined,
           turnstileToken: turnstileToken || undefined,
+          eventDays: eventDays.length > 0 ? eventDays : undefined,
         }),
       });
 
@@ -467,6 +475,10 @@ export default function SuggestEventPage() {
       description: null,
       startDate: null,
       endDate: null,
+      startTime: null,
+      endTime: null,
+      hoursVaryByDay: false,
+      hoursNotes: null,
       venueName: null,
       venueAddress: null,
       venueCity: null,
@@ -477,6 +489,7 @@ export default function SuggestEventPage() {
       imageUrl: null,
     });
     setConfidence({});
+    setEventDays([]);
     setDuplicateEvent(null);
     setDuplicateMatchType(null);
     setMatchedVenue(null);
@@ -882,44 +895,77 @@ export default function SuggestEventPage() {
                   />
                 </div>
 
-                {/* Dates */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="startDate">
-                      Start Date
-                      <ConfidenceBadge field="startDate" />
-                    </Label>
-                    <Input
-                      id="startDate"
-                      type="date"
-                      value={extractedData.startDate?.substring(0, 10) || ""}
-                      onChange={(e) =>
-                        setExtractedData({
-                          ...extractedData,
-                          startDate: e.target.value || null,
-                        })
-                      }
-                      className="mt-1"
-                    />
+                {/* Dates & Times */}
+                <div className="border-t pt-4 mt-4">
+                  <Label className="flex items-center gap-2 mb-3">
+                    <Calendar className="w-4 h-4" />
+                    Dates & Times
+                  </Label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="startDate">
+                        Start Date
+                        <ConfidenceBadge field="startDate" />
+                      </Label>
+                      <Input
+                        id="startDate"
+                        type="date"
+                        value={extractedData.startDate?.substring(0, 10) || ""}
+                        onChange={(e) =>
+                          setExtractedData({
+                            ...extractedData,
+                            startDate: e.target.value || null,
+                          })
+                        }
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="endDate">
+                        End Date
+                        <ConfidenceBadge field="endDate" />
+                      </Label>
+                      <Input
+                        id="endDate"
+                        type="date"
+                        value={extractedData.endDate?.substring(0, 10) || ""}
+                        onChange={(e) =>
+                          setExtractedData({
+                            ...extractedData,
+                            endDate: e.target.value || null,
+                          })
+                        }
+                        className="mt-1"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label htmlFor="endDate">
-                      End Date
-                      <ConfidenceBadge field="endDate" />
-                    </Label>
-                    <Input
-                      id="endDate"
-                      type="date"
-                      value={extractedData.endDate?.substring(0, 10) || ""}
-                      onChange={(e) =>
-                        setExtractedData({
-                          ...extractedData,
-                          endDate: e.target.value || null,
-                        })
-                      }
-                      className="mt-1"
-                    />
-                  </div>
+
+                  {/* Event Hours */}
+                  {extractedData.startDate && (
+                    <div className="mt-4">
+                      <Label className="flex items-center gap-2 mb-3">
+                        <Clock className="w-4 h-4" />
+                        Event Hours (optional)
+                      </Label>
+
+                      {/* Show AI-detected hours notes if present */}
+                      {extractedData.hoursNotes && (
+                        <div className="mb-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                          <p className="text-sm text-purple-800">
+                            <Sparkles className="w-3 h-3 inline mr-1" />
+                            AI detected: {extractedData.hoursNotes}
+                          </p>
+                        </div>
+                      )}
+
+                      <DailyScheduleInput
+                        startDate={extractedData.startDate}
+                        endDate={extractedData.endDate || extractedData.startDate}
+                        initialDays={eventDays}
+                        onChange={setEventDays}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Venue Info */}
