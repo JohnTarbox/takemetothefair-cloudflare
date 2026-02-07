@@ -81,6 +81,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(newVenue, { status: 201 });
   } catch (error) {
     await logError(db, { message: "Failed to create venue", error, source: "api/admin/venues", request });
+
+    // Provide more specific error messages
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes("UNIQUE constraint failed")) {
+      return NextResponse.json({ error: "A venue with this name already exists" }, { status: 409 });
+    }
+
     return NextResponse.json({ error: "Failed to create venue" }, { status: 500 });
   }
 }
