@@ -962,6 +962,7 @@ export default function SuggestEventPage() {
                         startDate={extractedData.startDate}
                         endDate={extractedData.endDate || extractedData.startDate}
                         initialDays={eventDays}
+                        initialEnabled={extractedData.hoursVaryByDay}
                         onChange={setEventDays}
                       />
                     </div>

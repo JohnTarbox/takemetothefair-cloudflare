@@ -21,6 +21,7 @@ interface DailyScheduleInputProps {
   startDate: string | null;
   endDate: string | null;
   initialDays?: EventDayInput[];
+  initialEnabled?: boolean; // For pre-setting "Different hours on each day" toggle
   onChange: (days: EventDayInput[]) => void;
   disabled?: boolean;
 }
@@ -57,14 +58,26 @@ export function DailyScheduleInput({
   startDate,
   endDate,
   initialDays = [],
+  initialEnabled,
   onChange,
   disabled = false,
 }: DailyScheduleInputProps) {
-  const [enabled, setEnabled] = useState(initialDays.length > 0);
+  // Use initialEnabled if provided, otherwise fall back to checking if initialDays has data
+  const [enabled, setEnabled] = useState(initialEnabled ?? initialDays.length > 0);
   const [days, setDays] = useState<EventDayInput[]>(initialDays);
   const [showTruncationWarning, setShowTruncationWarning] = useState(false);
   // Track if we've synced async initialDays (for edit page where data loads after mount)
   const initialDaysSyncedRef = useRef(initialDays.length > 0);
+  // Track if we've synced initialEnabled (for when AI extraction sets hoursVaryByDay)
+  const initialEnabledSyncedRef = useRef(initialEnabled ?? false);
+
+  // Sync enabled state when initialEnabled changes (e.g., after AI extraction)
+  useEffect(() => {
+    if (initialEnabled !== undefined && initialEnabled !== initialEnabledSyncedRef.current) {
+      initialEnabledSyncedRef.current = initialEnabled;
+      setEnabled(initialEnabled);
+    }
+  }, [initialEnabled]);
 
   // Generate days when dates change or feature is enabled
   useEffect(() => {
