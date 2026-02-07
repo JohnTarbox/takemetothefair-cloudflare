@@ -59,16 +59,33 @@ export function levenshteinDistance(a: string, b: string): number {
 /**
  * Calculate normalized Levenshtein similarity (0-1)
  * 1 = identical, 0 = completely different
+ *
+ * @param threshold Optional threshold for early exit optimization.
+ *   If provided, returns 0 early when strings are too different in length
+ *   to possibly exceed the threshold (avoids expensive O(m×n) calculation).
  */
-export function levenshteinSimilarity(a: string, b: string): number {
+export function levenshteinSimilarity(a: string, b: string, threshold?: number): number {
   const normalizedA = normalizeString(a);
   const normalizedB = normalizeString(b);
 
   if (normalizedA === normalizedB) return 1;
   if (normalizedA.length === 0 || normalizedB.length === 0) return 0;
 
-  const distance = levenshteinDistance(normalizedA, normalizedB);
   const maxLength = Math.max(normalizedA.length, normalizedB.length);
+  const minLength = Math.min(normalizedA.length, normalizedB.length);
+  const lengthDiff = maxLength - minLength;
+
+  // Early exit: if length difference alone makes similarity impossible
+  // The minimum possible Levenshtein distance is the length difference
+  // So maximum possible similarity is 1 - lengthDiff/maxLength
+  if (threshold !== undefined) {
+    const maxPossibleSimilarity = 1 - lengthDiff / maxLength;
+    if (maxPossibleSimilarity < threshold) {
+      return 0;
+    }
+  }
+
+  const distance = levenshteinDistance(normalizedA, normalizedB);
 
   return 1 - distance / maxLength;
 }
@@ -111,16 +128,33 @@ export function tokenJaccardSimilarity(a: string, b: string): number {
  * Calculate combined similarity score
  * Weighted average of Levenshtein and Jaccard similarities
  * @param levenshteinWeight Weight for Levenshtein (default 0.6)
+ * @param threshold Optional threshold for early exit optimization
  */
 export function combinedSimilarity(
   a: string,
   b: string,
-  levenshteinWeight: number = 0.6
+  levenshteinWeight: number = 0.6,
+  threshold?: number
 ): number {
-  const levSim = levenshteinSimilarity(a, b);
+  // Calculate minimum Levenshtein similarity needed to possibly exceed threshold
+  // combined = levSim * weight + jacSim * (1-weight)
+  // Even with perfect Jaccard (1.0), we need: levSim * weight + (1-weight) >= threshold
+  // So: levSim >= (threshold - (1-weight)) / weight
+  const jaccardWeight = 1 - levenshteinWeight;
+  const minLevSim = threshold !== undefined
+    ? Math.max(0, (threshold - jaccardWeight) / levenshteinWeight)
+    : undefined;
+
+  const levSim = levenshteinSimilarity(a, b, minLevSim);
+
+  // Early exit if Levenshtein is too low (returned 0 due to length difference)
+  if (minLevSim !== undefined && levSim < minLevSim) {
+    return 0;
+  }
+
   const jacSim = tokenJaccardSimilarity(a, b);
 
-  return levSim * levenshteinWeight + jacSim * (1 - levenshteinWeight);
+  return levSim * levenshteinWeight + jacSim * jaccardWeight;
 }
 
 /**
@@ -148,7 +182,7 @@ export function findDuplicatePairs<T extends { id: string }>(
       } else {
         const str1 = getComparisonString(entities[i]);
         const str2 = getComparisonString(entities[j]);
-        similarity = combinedSimilarity(str1, str2);
+        similarity = combinedSimilarity(str1, str2, 0.6, threshold);
       }
 
       if (similarity >= threshold) {

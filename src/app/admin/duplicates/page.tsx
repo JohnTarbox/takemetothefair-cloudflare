@@ -119,21 +119,35 @@ export default function AdminDuplicatesPage() {
       const res = await fetch(
         `/api/admin/duplicates?type=${entityType}&threshold=${threshold}`
       );
-      let data;
+
+      // Handle 503 timeout from Cloudflare before trying to parse JSON
+      if (res.status === 503) {
+        throw new Error(
+          `The search timed out while comparing ${entityType}. ` +
+          `Try increasing the similarity threshold (e.g., 80% or 90%) to reduce the number of comparisons.`
+        );
+      }
+
+      let data: { duplicates?: DuplicatePair[]; totalEntities?: number; error?: string };
       try {
         data = await res.json();
       } catch {
-        throw new Error(`Server returned invalid response (status ${res.status})`);
+        throw new Error(
+          `Server returned an invalid response (status ${res.status}). ` +
+          `This may indicate a timeout or server error.`
+        );
       }
+
       if (!res.ok) {
         throw new Error(data.error || "Failed to fetch duplicates");
       }
+
       setDuplicates(data.duplicates || []);
       setTotalEntities(data.totalEntities || 0);
     } catch (err) {
       console.error("Failed to fetch duplicates:", err);
       const message = err instanceof Error ? err.message : "Failed to fetch duplicates";
-      setError(`${message}. Please try again.`);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -221,7 +235,7 @@ export default function AdminDuplicatesPage() {
         }),
       });
 
-      const data = await res.json();
+      const data: { error?: string } = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Failed to merge");
       }

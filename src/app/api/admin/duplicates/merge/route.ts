@@ -9,6 +9,7 @@ export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
   let db: ReturnType<typeof getCloudflareDb> | null = null;
+  let body: MergeRequest | null = null;
 
   try {
     const session = await auth();
@@ -17,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     db = getCloudflareDb();
-    const body: MergeRequest = await request.json();
+    body = await request.json() as MergeRequest;
     const { type, primaryId, duplicateId } = body;
 
     if (!type || !["venues", "events", "vendors", "promoters"].includes(type)) {
@@ -50,7 +51,18 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    await logError(db, { message: "Failed to execute merge", error, source: "api/admin/duplicates/merge", request });
+    await logError(db, {
+      message: "Failed to execute merge",
+      error,
+      source: "api/admin/duplicates/merge",
+      request,
+      context: {
+        entityType: body?.type,
+        primaryId: body?.primaryId,
+        duplicateId: body?.duplicateId,
+      },
+      statusCode: 500,
+    });
     const message = error instanceof Error ? error.message : "Failed to execute merge";
     return NextResponse.json({ error: message }, { status: 500 });
   }

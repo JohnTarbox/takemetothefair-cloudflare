@@ -202,11 +202,29 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    await logError(db, { message: "Failed to find duplicates", error, source: "api/admin/duplicates", request });
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const isTimeout = error instanceof Error &&
+      (error.message.includes("time") || error.message.includes("CPU"));
+
+    await logError(db, {
+      message: "Failed to find duplicates",
+      error,
+      source: "api/admin/duplicates",
+      request,
+      context: {
+        entityType: type,
+        threshold,
+        isTimeout,
+      },
+      statusCode: isTimeout ? 503 : 500,
+    });
+
+    const userMessage = isTimeout
+      ? `The duplicate search timed out while processing ${type}. Try increasing the similarity threshold to reduce comparisons.`
+      : error instanceof Error ? error.message : "Unknown error";
+
     return NextResponse.json(
-      { error: `Failed to find duplicates: ${message}` },
-      { status: 500 }
+      { error: userMessage, isTimeout },
+      { status: isTimeout ? 503 : 500 }
     );
   }
 }
