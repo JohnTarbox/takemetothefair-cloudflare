@@ -51,6 +51,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(preview);
   } catch (error) {
+    const isTimeout = error instanceof Error &&
+      (error.message.includes("time") || error.message.includes("CPU") || error.message.includes("exceeded"));
+
     await logError(db, {
       message: "Failed to generate merge preview",
       error,
@@ -60,10 +63,18 @@ export async function POST(request: NextRequest) {
         entityType: body?.type,
         primaryId: body?.primaryId,
         duplicateId: body?.duplicateId,
+        isTimeout,
       },
-      statusCode: 500,
+      statusCode: isTimeout ? 503 : 500,
     });
-    const message = error instanceof Error ? error.message : "Failed to generate merge preview";
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    const userMessage = isTimeout
+      ? "The preview timed out. Please try again."
+      : error instanceof Error ? error.message : "Failed to generate merge preview";
+
+    return NextResponse.json(
+      { error: userMessage, isTimeout },
+      { status: isTimeout ? 503 : 500 }
+    );
   }
 }

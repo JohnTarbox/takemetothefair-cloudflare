@@ -235,7 +235,22 @@ export default function AdminDuplicatesPage() {
         }),
       });
 
-      const data: { error?: string } = await res.json();
+      // Handle 503 timeout from Cloudflare before trying to parse JSON
+      if (res.status === 503) {
+        throw new Error(
+          "The merge operation timed out. This can happen with records that have many relationships. Please try again."
+        );
+      }
+
+      let data: { error?: string };
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          `Server returned an invalid response (status ${res.status}). The merge may have partially completed - please refresh and verify.`
+        );
+      }
+
       if (!res.ok) {
         throw new Error(data.error || "Failed to merge");
       }
@@ -249,7 +264,8 @@ export default function AdminDuplicatesPage() {
       }, 1500);
     } catch (err) {
       console.error("Failed to merge:", err);
-      setError("Failed to merge records. Please try again.");
+      const message = err instanceof Error ? err.message : "Failed to merge records";
+      setError(message);
     } finally {
       setMerging(false);
     }
