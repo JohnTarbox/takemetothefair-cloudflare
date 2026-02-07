@@ -1,5 +1,19 @@
 import { vi } from "vitest";
 
+// Mock server-only (required by @cloudflare/next-on-pages)
+vi.mock("server-only", () => ({}));
+
+// Mock @cloudflare/next-on-pages
+vi.mock("@cloudflare/next-on-pages", () => ({
+  getRequestContext: vi.fn(() => ({
+    env: {
+      DB: {},
+      AI: {},
+      RATE_LIMIT_KV: {},
+    },
+  })),
+}));
+
 // Mock Next.js navigation
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -30,6 +44,7 @@ vi.mock("@/lib/cloudflare", () => ({
     delete: vi.fn().mockReturnThis(),
     update: vi.fn().mockReturnThis(),
     set: vi.fn().mockReturnThis(),
+    batch: vi.fn().mockResolvedValue([]),
     query: {
       users: { findFirst: vi.fn() },
       events: { findFirst: vi.fn(), findMany: vi.fn() },
@@ -38,6 +53,9 @@ vi.mock("@/lib/cloudflare", () => ({
       promoters: { findFirst: vi.fn(), findMany: vi.fn() },
     },
   })),
+  getCloudflareEnv: vi.fn(() => ({})),
+  getCloudflareAi: vi.fn(() => ({})),
+  getCloudflareRateLimitKv: vi.fn(() => null),
 }));
 
 // Mock crypto.subtle for tests (not available in jsdom by default)

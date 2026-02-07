@@ -201,32 +201,31 @@ describe("executeMerge", () => {
       const updateResults = { rowsAffected: 3 };
       const primaryVenue = { id: "primary-id", name: "Primary Venue" };
 
-      let selectCallCount = 0;
+      let batchCallCount = 0;
 
       const db = {
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockImplementation(() => {
-              selectCallCount++;
-              // First select: existing favorites
-              if (selectCallCount === 1) return Promise.resolve([{ userId: "user-1" }]);
-              // Second select: merged entity
-              if (selectCallCount === 2) return Promise.resolve([primaryVenue]);
-              // Third select: event count
-              return Promise.resolve([{ count: 5 }]);
-            }),
+            where: vi.fn().mockResolvedValue([primaryVenue]),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
           set: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockImplementation(() => {
-              return Promise.resolve(updateResults);
-            }),
+            where: vi.fn().mockResolvedValue(updateResults),
           })),
         })),
         delete: vi.fn().mockImplementation(() => ({
           where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
         })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          // First batch: transfer events + get favorites
+          if (batchCallCount === 1) return Promise.resolve([updateResults, [{ userId: "user-1" }]]);
+          // Second batch: transfer/delete favorites
+          if (batchCallCount === 2) return Promise.resolve([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+          // Third batch: get merged entity + count
+          return Promise.resolve([[primaryVenue], [{ count: 5 }]]);
+        }),
       } as unknown;
 
       const result = await executeMerge(db as never, "venues", "primary-id", "duplicate-id");
@@ -242,21 +241,12 @@ describe("executeMerge", () => {
       const primaryEvent = { id: "primary-id", name: "Primary Event", viewCount: 100, venueId: "v1", promoterId: "p1" };
       const duplicateEvent = { id: "duplicate-id", viewCount: 50 };
 
-      let selectCallCount = 0;
+      let batchCallCount = 0;
 
       const db = {
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockImplementation(() => {
-              selectCallCount++;
-              if (selectCallCount === 1) return Promise.resolve([{ vendorId: "vendor-1" }]); // primary vendors
-              if (selectCallCount === 2) return Promise.resolve([duplicateEvent]); // duplicate event
-              if (selectCallCount === 3) return Promise.resolve([{ userId: "user-1" }]); // existing favorites
-              if (selectCallCount === 4) return Promise.resolve([primaryEvent]); // merged entity
-              if (selectCallCount === 5) return Promise.resolve([{ name: "Venue" }]); // venue
-              if (selectCallCount === 6) return Promise.resolve([{ companyName: "Promoter" }]); // promoter
-              return Promise.resolve([{ count: 5 }]); // event vendor count
-            }),
+            where: vi.fn().mockResolvedValue([primaryEvent]),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
@@ -267,6 +257,29 @@ describe("executeMerge", () => {
         delete: vi.fn().mockImplementation(() => ({
           where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
         })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          // First batch: get primary vendors, existing favorites, duplicate data
+          if (batchCallCount === 1) return Promise.resolve([
+            [{ vendorId: "vendor-1" }],
+            [{ userId: "user-1" }],
+            [duplicateEvent],
+          ]);
+          // Second batch: transfer vendors, update view count, transfer/delete favorites
+          if (batchCallCount === 2) return Promise.resolve([
+            { rowsAffected: 1 },
+            { rowsAffected: 1 },
+            { rowsAffected: 1 },
+            { rowsAffected: 1 },
+          ]);
+          // Third batch: get merged entity, venue, promoter, count
+          return Promise.resolve([
+            [primaryEvent],
+            [{ name: "Venue" }],
+            [{ companyName: "Promoter" }],
+            [{ count: 5 }],
+          ]);
+        }),
       } as unknown;
 
       const result = await executeMerge(db as never, "events", "primary-id", "duplicate-id");
@@ -350,20 +363,12 @@ describe("merge operation edge cases", () => {
   it("handles merge when no favorites exist", async () => {
     const primaryVenue = { id: "primary-id", name: "Primary Venue" };
 
-    let selectCallCount = 0;
+    let batchCallCount = 0;
 
     const db = {
       select: vi.fn().mockImplementation(() => ({
         from: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockImplementation(() => {
-            selectCallCount++;
-            // First select: existing favorites - empty
-            if (selectCallCount === 1) return Promise.resolve([]);
-            // Second select: merged entity
-            if (selectCallCount === 2) return Promise.resolve([primaryVenue]);
-            // Third select: event count
-            return Promise.resolve([{ count: 0 }]);
-          }),
+          where: vi.fn().mockResolvedValue([primaryVenue]),
         })),
       })),
       update: vi.fn().mockImplementation(() => ({
@@ -374,6 +379,15 @@ describe("merge operation edge cases", () => {
       delete: vi.fn().mockImplementation(() => ({
         where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
       })),
+      batch: vi.fn().mockImplementation(() => {
+        batchCallCount++;
+        // First batch: transfer events + get favorites (empty)
+        if (batchCallCount === 1) return Promise.resolve([{ rowsAffected: 0 }, []]);
+        // Second batch: no favorites to transfer
+        if (batchCallCount === 2) return Promise.resolve([]);
+        // Third batch: get merged entity + count
+        return Promise.resolve([[primaryVenue], [{ count: 0 }]]);
+      }),
     } as unknown;
 
     const result = await executeMerge(db as never, "venues", "primary-id", "duplicate-id");
