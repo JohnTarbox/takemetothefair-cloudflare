@@ -12,6 +12,35 @@ interface VenueSchemaProps {
   capacity?: number | null;
   telephone?: string | null;
   amenities?: string[];
+  googleRating?: number | null;
+  googleRatingCount?: number | null;
+  openingHours?: string | null;
+  accessibility?: string[];
+  website?: string | null;
+}
+
+interface OpeningHoursSpec {
+  "@type": "OpeningHoursSpecification";
+  dayOfWeek: string | string[];
+  opens: string;
+  closes: string;
+}
+
+function parseOpeningHours(hoursString: string): OpeningHoursSpec[] | undefined {
+  try {
+    const parsed = JSON.parse(hoursString);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => ({
+        "@type": "OpeningHoursSpecification" as const,
+        dayOfWeek: item.dayOfWeek || item.day,
+        opens: item.opens || item.open,
+        closes: item.closes || item.close,
+      })).filter(spec => spec.dayOfWeek && spec.opens && spec.closes);
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function VenueSchema({
@@ -28,6 +57,11 @@ export function VenueSchema({
   capacity,
   telephone,
   amenities,
+  googleRating,
+  googleRatingCount,
+  openingHours,
+  accessibility,
+  website,
 }: VenueSchemaProps) {
   const schema = {
     "@context": "https://schema.org",
@@ -66,6 +100,22 @@ export function VenueSchema({
             value: true,
           }))
         : undefined,
+    aggregateRating:
+      googleRating && googleRatingCount
+        ? {
+            "@type": "AggregateRating",
+            ratingValue: googleRating,
+            reviewCount: googleRatingCount,
+            bestRating: 5,
+            worstRating: 1,
+          }
+        : undefined,
+    openingHoursSpecification: openingHours
+      ? parseOpeningHours(openingHours)
+      : undefined,
+    accessibilityFeature:
+      accessibility && accessibility.length > 0 ? accessibility : undefined,
+    sameAs: website ? [website] : undefined,
   };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));

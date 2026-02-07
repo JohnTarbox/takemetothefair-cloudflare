@@ -1,3 +1,15 @@
+interface EventDay {
+  date: string;
+  openTime: string;
+  closeTime: string;
+  notes?: string | null;
+  closed?: boolean | null;
+  // Allow additional DB fields
+  id?: string;
+  eventId?: string;
+  createdAt?: Date | null;
+}
+
 interface EventSchemaProps {
   name: string;
   description?: string;
@@ -22,6 +34,26 @@ interface EventSchemaProps {
   ticketPriceMax?: number | null;
   ticketUrl?: string | null;
   categories?: string[];
+  datesConfirmed?: boolean | null;
+  eventDays?: EventDay[];
+}
+
+function getEventType(categories?: string[]): string {
+  if (!categories?.length) return "Event";
+  const cats = categories.map((c) => c.toLowerCase());
+  if (cats.some((c) => c.includes("fair") || c.includes("festival")))
+    return "Festival";
+  if (
+    cats.some(
+      (c) => c.includes("sale") || c.includes("market") || c.includes("flea")
+    )
+  )
+    return "SaleEvent";
+  if (cats.some((c) => c.includes("food") || c.includes("tasting")))
+    return "FoodEvent";
+  if (cats.some((c) => c.includes("craft") || c.includes("exhibit")))
+    return "ExhibitionEvent";
+  return "Event";
 }
 
 export function EventSchema({
@@ -37,20 +69,70 @@ export function EventSchema({
   ticketPriceMax,
   ticketUrl,
   categories,
+  datesConfirmed,
+  eventDays,
 }: EventSchemaProps) {
   // Calculate isAccessibleForFree based on ticket price
   const isAccessibleForFree = ticketPriceMin === 0 || ticketPriceMin === null || ticketPriceMin === undefined;
 
+  const location = venue
+    ? {
+        "@type": "Place",
+        name: venue.name,
+        address: {
+          "@type": "PostalAddress",
+          streetAddress: venue.address || undefined,
+          addressLocality: venue.city || undefined,
+          addressRegion: venue.state || undefined,
+          postalCode: venue.zip || undefined,
+          addressCountry: "US",
+        },
+        geo:
+          venue.latitude && venue.longitude
+            ? {
+                "@type": "GeoCoordinates",
+                latitude: venue.latitude,
+                longitude: venue.longitude,
+              }
+            : undefined,
+      }
+    : {
+        "@type": "Place",
+        name: "Location to be announced",
+        address: {
+          "@type": "PostalAddress",
+          addressRegion: "ME",
+          addressCountry: "US",
+        },
+      };
+
+  const subEvents =
+    eventDays && eventDays.length > 0
+      ? eventDays
+          .filter((d) => !d.closed)
+          .map((day, i) => ({
+            "@type": "Event",
+            name: `${name} - Day ${i + 1}`,
+            startDate: `${day.date}T${day.openTime}:00`,
+            endDate: `${day.date}T${day.closeTime}:00`,
+            description: day.notes || undefined,
+            location,
+          }))
+      : undefined;
+
   const schema = {
     "@context": "https://schema.org",
-    "@type": "Event",
+    "@type": getEventType(categories),
     name,
     description: description || `${name} - a fair and community event.`,
     startDate: new Date(startDate).toISOString(),
     endDate: new Date(endDate).toISOString(),
     image: imageUrl || "https://meetmeatthefair.com/og-image.png",
     url,
-    eventStatus: "https://schema.org/EventScheduled",
+    eventStatus:
+      datesConfirmed === false
+        ? "https://schema.org/EventPostponed"
+        : "https://schema.org/EventScheduled",
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
     isAccessibleForFree,
     about: categories && categories.length > 0
@@ -59,36 +141,8 @@ export function EventSchema({
           name: category,
         }))
       : undefined,
-    location: venue
-      ? {
-          "@type": "Place",
-          name: venue.name,
-          address: {
-            "@type": "PostalAddress",
-            streetAddress: venue.address || undefined,
-            addressLocality: venue.city || undefined,
-            addressRegion: venue.state || undefined,
-            postalCode: venue.zip || undefined,
-            addressCountry: "US",
-          },
-          geo: venue.latitude && venue.longitude
-            ? {
-                "@type": "GeoCoordinates",
-                latitude: venue.latitude,
-                longitude: venue.longitude,
-              }
-            : undefined,
-        }
-      : {
-          // Fallback location when venue is not set - required by Google for Event rich results
-          "@type": "Place",
-          name: "Location to be announced",
-          address: {
-            "@type": "PostalAddress",
-            addressRegion: "ME",
-            addressCountry: "US",
-          },
-        },
+    location,
+    subEvent: subEvents,
     organizer: organizer
       ? {
           "@type": "Organization",

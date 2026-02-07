@@ -234,6 +234,8 @@ export default async function EventDetailPage({ params }: Props) {
         ticketPriceMax={event.ticketPriceMax}
         ticketUrl={event.ticketUrl}
         categories={parseJsonArray(event.categories)}
+        datesConfirmed={event.datesConfirmed}
+        eventDays={event.eventDays}
       />
       <BreadcrumbSchema
         items={[
