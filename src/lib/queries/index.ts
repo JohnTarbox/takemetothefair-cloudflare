@@ -2,7 +2,7 @@
  * Reusable query helpers to eliminate N+1 queries and reduce code duplication
  */
 
-import { eq, count, and, gte } from "drizzle-orm";
+import { eq, count, and, gte, ne, isNotNull } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -316,4 +316,37 @@ export async function countFavorites(
     );
 
   return result?.count || 0;
+}
+
+/**
+ * Find a venue by Google Place ID (for duplicate checking)
+ * Returns the existing venue if found, null otherwise
+ * @param excludeVenueId - Optional venue ID to exclude from the search (for update scenarios)
+ */
+export async function findVenueByGooglePlaceId(
+  db: Database,
+  googlePlaceId: string,
+  excludeVenueId?: string
+): Promise<{ id: string; name: string; city: string; state: string } | null> {
+  const conditions = [
+    eq(venues.googlePlaceId, googlePlaceId),
+    isNotNull(venues.googlePlaceId),
+  ];
+
+  if (excludeVenueId) {
+    conditions.push(ne(venues.id, excludeVenueId));
+  }
+
+  const [existing] = await db
+    .select({
+      id: venues.id,
+      name: venues.name,
+      city: venues.city,
+      state: venues.state,
+    })
+    .from(venues)
+    .where(and(...conditions))
+    .limit(1);
+
+  return existing || null;
 }

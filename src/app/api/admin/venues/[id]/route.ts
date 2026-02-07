@@ -6,6 +6,7 @@ import { eq, desc, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { findVenueByGooglePlaceId } from "@/lib/queries";
 
 export const runtime = "edge";
 
@@ -84,6 +85,25 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Venue not found" }, { status: 404 });
     }
 
+    // Check for duplicate Google Place ID (exclude current venue)
+    if (data.googlePlaceId) {
+      const existingVenue = await findVenueByGooglePlaceId(db, data.googlePlaceId, id);
+      if (existingVenue) {
+        return NextResponse.json(
+          {
+            error: `Another venue already uses this Google Place ID: "${existingVenue.name}" in ${existingVenue.city}, ${existingVenue.state}`,
+            existingVenue: {
+              id: existingVenue.id,
+              name: existingVenue.name,
+              city: existingVenue.city,
+              state: existingVenue.state,
+            },
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.name) {
       updateData.name = data.name;
@@ -143,8 +163,20 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     return NextResponse.json(updatedVenue);
   } catch (error) {
     await logError(db, { message: "Failed to update venue", error, source: "api/admin/venues/[id]", request });
-    const message = error instanceof Error ? error.message : "Failed to update venue";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Handle unique constraint violations
+    if (errorMessage.includes("UNIQUE constraint failed")) {
+      if (errorMessage.includes("google_place_id")) {
+        return NextResponse.json(
+          { error: "A venue with this Google Place ID already exists" },
+          { status: 409 }
+        );
+      }
+      return NextResponse.json({ error: "A venue with this name already exists" }, { status: 409 });
+    }
+
+    return NextResponse.json({ error: "Failed to update venue" }, { status: 500 });
   }
 }
 

@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
-import { getVenuesWithEventCounts } from "@/lib/queries";
+import { getVenuesWithEventCounts, findVenueByGooglePlaceId } from "@/lib/queries";
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
@@ -42,6 +42,25 @@ export async function POST(request: NextRequest) {
 
   const db = getCloudflareDb();
   try {
+    // Check for duplicate Google Place ID
+    if (data.googlePlaceId) {
+      const existingVenue = await findVenueByGooglePlaceId(db, data.googlePlaceId);
+      if (existingVenue) {
+        return NextResponse.json(
+          {
+            error: `Another venue already uses this Google Place ID: "${existingVenue.name}" in ${existingVenue.city}, ${existingVenue.state}`,
+            existingVenue: {
+              id: existingVenue.id,
+              name: existingVenue.name,
+              city: existingVenue.city,
+              state: existingVenue.state,
+            },
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const venueId = crypto.randomUUID();
 
     await db.insert(venues).values({
@@ -85,6 +104,12 @@ export async function POST(request: NextRequest) {
     // Provide more specific error messages
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (errorMessage.includes("UNIQUE constraint failed")) {
+      if (errorMessage.includes("google_place_id")) {
+        return NextResponse.json(
+          { error: "A venue with this Google Place ID already exists" },
+          { status: 409 }
+        );
+      }
       return NextResponse.json({ error: "A venue with this name already exists" }, { status: 409 });
     }
 
