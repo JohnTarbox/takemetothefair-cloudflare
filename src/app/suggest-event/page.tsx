@@ -848,12 +848,13 @@ export default function SuggestEventPage() {
               <CardContent className="space-y-4">
                 {/* Event Name */}
                 <div>
-                  <Label htmlFor="name">
+                  <Label htmlFor="eventName">
                     Event Name *
                     <ConfidenceBadge field="name" />
                   </Label>
                   <Input
-                    id="name"
+                    id="eventName"
+                    autoComplete="off"
                     value={extractedData.name || ""}
                     onChange={(e) =>
                       setExtractedData({ ...extractedData, name: e.target.value })
