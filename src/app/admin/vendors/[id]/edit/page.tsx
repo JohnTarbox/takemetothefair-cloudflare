@@ -22,6 +22,7 @@ interface Vendor {
   website: string | null;
   verified: boolean;
   commercial: boolean;
+  canSelfConfirm: boolean;
   // Contact Information
   contactName: string | null;
   contactEmail: string | null;
@@ -50,6 +51,7 @@ export default function EditVendorPage() {
     website: "",
     verified: false,
     commercial: false,
+    canSelfConfirm: false,
     // Contact Information
     contactName: "",
     contactEmail: "",
@@ -94,6 +96,7 @@ export default function EditVendorPage() {
           website: data.website || "",
           verified: data.verified,
           commercial: data.commercial,
+          canSelfConfirm: data.canSelfConfirm ?? false,
           // Contact Information
           contactName: data.contactName || "",
           contactEmail: data.contactEmail || "",
@@ -403,6 +406,21 @@ export default function EditVendorPage() {
                   className="rounded border-gray-300"
                 />
                 <Label htmlFor="commercial">Commercial Vendor</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="canSelfConfirm"
+                  checked={formData.canSelfConfirm}
+                  onChange={(e) =>
+                    setFormData({ ...formData, canSelfConfirm: e.target.checked })
+                  }
+                  className="rounded border-gray-300"
+                />
+                <div>
+                  <Label htmlFor="canSelfConfirm">Can Self-Confirm Events</Label>
+                  <p className="text-xs text-gray-500">Vendor can confirm participation without admin approval</p>
+                </div>
               </div>
             </div>
 

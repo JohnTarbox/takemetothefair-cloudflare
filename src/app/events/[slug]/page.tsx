@@ -519,7 +519,11 @@ export default async function EventDetailPage({ params }: Props) {
                     </p>
                   </div>
                 ) : (
-                  <VendorApplyButton eventId={event.id} eventName={event.name} />
+                  <VendorApplyButton
+                    eventId={event.id}
+                    eventName={event.name}
+                    canSelfConfirm={vendorInfo.vendor.canSelfConfirm ?? false}
+                  />
                 )}
               </CardContent>
             </Card>

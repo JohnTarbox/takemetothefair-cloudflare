@@ -66,6 +66,7 @@ export const vendorCreateSchema = z.object({
   logoUrl: urlSchema,
   verified: z.boolean().optional().default(false),
   commercial: z.boolean().optional().default(false),
+  canSelfConfirm: z.boolean().optional().default(false),
   // Contact Information
   contactName: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
   contactEmail: emailSchema,

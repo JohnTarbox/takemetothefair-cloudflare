@@ -111,15 +111,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "You have already applied to this event" }, { status: 400 });
     }
 
-    // Create the application
+    // Create the application — self-confirm vendors get auto-approved
     const applicationId = crypto.randomUUID();
+    const autoApprove = vendor.canSelfConfirm ?? false;
     await db.insert(eventVendors).values({
       id: applicationId,
       eventId: eventId as string,
       vendorId: vendor.id,
       boothInfo: boothInfo as string | undefined,
-      status: "PENDING",
+      status: autoApprove ? "APPROVED" : "PENDING",
       applied: true,
+      accepted: autoApprove ? true : false,
     });
 
     const newApplication = await db

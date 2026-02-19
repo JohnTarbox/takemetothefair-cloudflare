@@ -57,6 +57,7 @@ export async function POST(request: NextRequest) {
       logoUrl: data.logoUrl,
       verified: data.verified,
       commercial: data.commercial,
+      canSelfConfirm: data.canSelfConfirm,
       // Contact Information
       contactName: data.contactName,
       contactEmail: data.contactEmail,

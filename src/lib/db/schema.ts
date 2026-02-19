@@ -109,6 +109,7 @@ export const vendors = sqliteTable("vendors", {
   logoUrl: text("logo_url"),
   verified: integer("verified", { mode: "boolean" }).default(false),
   commercial: integer("commercial", { mode: "boolean" }).default(false),
+  canSelfConfirm: integer("can_self_confirm", { mode: "boolean" }).default(false),
   // Contact Information
   contactName: text("contact_name"),
   contactEmail: text("contact_email"),

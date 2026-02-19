@@ -117,6 +117,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
     if (data.verified !== undefined) updateData.verified = data.verified;
     if (data.commercial !== undefined) updateData.commercial = data.commercial;
+    if (data.canSelfConfirm !== undefined) updateData.canSelfConfirm = data.canSelfConfirm;
     // Contact Information
     if (data.contactName !== undefined) updateData.contactName = data.contactName;
     if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;

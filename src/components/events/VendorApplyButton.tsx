@@ -9,13 +9,15 @@ import { getErrorMessage } from "@/lib/error-messages";
 interface VendorApplyButtonProps {
   eventId: string;
   eventName: string;
+  canSelfConfirm?: boolean;
 }
 
-export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps) {
+export function VendorApplyButton({ eventId, eventName, canSelfConfirm }: VendorApplyButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const [wasAutoApproved, setWasAutoApproved] = useState(false);
   const [boothInfo, setBoothInfo] = useState("");
 
   const handleApply = async () => {
@@ -37,6 +39,8 @@ export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps
         throw res;
       }
 
+      const result = await res.json() as { status?: string };
+      setWasAutoApproved(result.status === "APPROVED");
       setSuccess(true);
     } catch (err) {
       setError(getErrorMessage(err, "submit your application"));
@@ -48,9 +52,13 @@ export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps
   if (success) {
     return (
       <div className="text-center">
-        <p className="text-green-600 font-medium">Application Submitted!</p>
+        <p className="text-green-600 font-medium">
+          {wasAutoApproved ? "Confirmed!" : "Application Submitted!"}
+        </p>
         <p className="text-sm text-gray-500 mt-1">
-          We&apos;ll notify you when your application is reviewed.
+          {wasAutoApproved
+            ? "You're confirmed to participate in this event."
+            : "We\u0027ll notify you when your application is reviewed."}
         </p>
       </div>
     );
@@ -59,7 +67,7 @@ export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps
   if (!isOpen) {
     return (
       <Button className="w-full" onClick={() => setIsOpen(true)}>
-        Apply as Vendor
+        {canSelfConfirm ? "Confirm Participation" : "Apply as Vendor"}
       </Button>
     );
   }
@@ -67,7 +75,9 @@ export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-600">
-        Apply to participate as a vendor at <strong>{eventName}</strong>
+        {canSelfConfirm
+          ? <>Confirm your participation as a vendor at <strong>{eventName}</strong></>
+          : <>Apply to participate as a vendor at <strong>{eventName}</strong></>}
       </p>
 
       <div>
@@ -88,7 +98,9 @@ export function VendorApplyButton({ eventId, eventName }: VendorApplyButtonProps
 
       <div className="flex gap-2">
         <Button className="flex-1" onClick={handleApply} disabled={loading}>
-          {loading ? "Submitting..." : "Submit Application"}
+          {loading
+            ? (canSelfConfirm ? "Confirming..." : "Submitting...")
+            : (canSelfConfirm ? "Confirm" : "Submit Application")}
         </Button>
         <Button variant="outline" onClick={() => setIsOpen(false)}>
           Cancel

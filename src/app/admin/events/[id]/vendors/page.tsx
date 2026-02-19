@@ -18,6 +18,7 @@ interface Vendor {
   vendorType: string | null;
   logoUrl: string | null;
   commercial: boolean;
+  canSelfConfirm: boolean;
 }
 
 interface EventVendor {
@@ -529,6 +530,9 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                           </Link>
                           {ev.vendor.commercial && (
                             <Badge variant="default">Commercial</Badge>
+                          )}
+                          {ev.vendor.canSelfConfirm && (
+                            <Badge variant="success">Self-Confirm</Badge>
                           )}
                         </div>
                         {ev.vendor.vendorType && (

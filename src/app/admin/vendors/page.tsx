@@ -22,6 +22,7 @@ interface Vendor {
   vendorType: string | null;
   verified: boolean;
   commercial: boolean;
+  canSelfConfirm: boolean;
   user: { email: string; name: string | null } | null;
   _count: { events: number };
 }
@@ -74,6 +75,7 @@ export default function AdminVendorsPage() {
     events: (v) => v._count.events,
     verified: (v) => v.verified,
     commercial: (v) => v.commercial,
+    canSelfConfirm: (v) => v.canSelfConfirm,
   });
 
   if (loading) {
@@ -142,6 +144,12 @@ export default function AdminVendorsPage() {
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
+                  <SortableHeader
+                    column="canSelfConfirm"
+                    label="Self-Confirm"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
@@ -177,6 +185,11 @@ export default function AdminVendorsPage() {
                         <Badge variant="default">Commercial</Badge>
                       ) : (
                         <Badge variant="outline">Non-Commercial</Badge>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      {vendor.canSelfConfirm && (
+                        <Badge variant="success">Self-Confirm</Badge>
                       )}
                     </td>
                     <td className="py-3 px-4">
