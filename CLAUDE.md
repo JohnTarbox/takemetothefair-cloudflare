@@ -11,6 +11,24 @@ Always load these skills when working on this project:
 - `/drizzle-orm-d1` - Drizzle ORM with D1, schema definitions, queries
 - `/nextjs` - Next.js App Router, Server Components, caching
 
+## Cloudflare MCP Server
+
+This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search()` to discover API endpoints and `execute()` to call them.
+
+### Resource IDs (for MCP queries)
+- **Account**: Use `search("list accounts")` to discover
+- **D1 Database**: `d449e416-3814-48a6-b9e8-b676333b2cdc` (name: `takemetothefair-db`)
+- **KV Namespace**: `b7aeca316e7a41108fd375be2e152cff` (binding: `RATE_LIMIT_KV`)
+- **Pages Project**: `takemetothefair`
+- **Domain**: `meetmeatthefair.com`
+- **AI Model**: `@cf/meta/llama-3.1-8b-instruct`
+
+### Safety Rules
+- Prefer `SELECT` queries over mutations when inspecting D1 data
+- Never run `DELETE`, `DROP`, or destructive DNS changes without explicit user confirmation
+- Always confirm before write operations that affect production resources
+- `execute()` is not pre-approved — each call prompts for confirmation
+
 ## Build & Development Commands
 
 ```bash
