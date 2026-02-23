@@ -4,6 +4,10 @@ interface CloudflareEnv {
   DB: D1Database;
   AI: Ai;
   GOOGLE_MAPS_API_KEY?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  FACEBOOK_CLIENT_ID?: string;
+  FACEBOOK_CLIENT_SECRET?: string;
 }
 
 declare global {
@@ -14,6 +18,8 @@ declare global {
       AUTH_SECRET: string;
       GOOGLE_CLIENT_ID?: string;
       GOOGLE_CLIENT_SECRET?: string;
+      FACEBOOK_CLIENT_ID?: string;
+      FACEBOOK_CLIENT_SECRET?: string;
     }
   }
 }

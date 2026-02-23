@@ -3,6 +3,7 @@ import type { JWT } from "next-auth/jwt";
 import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
+import Facebook from "next-auth/providers/facebook";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
@@ -188,6 +189,13 @@ function createAuthConfig(): NextAuthConfig {
     }),
   ];
 
+  const facebookClientId = getRuntimeEnv("FACEBOOK_CLIENT_ID");
+  const facebookClientSecret = getRuntimeEnv("FACEBOOK_CLIENT_SECRET");
+
+  if (facebookClientId && facebookClientSecret) {
+    providers.unshift(Facebook({ clientId: facebookClientId, clientSecret: facebookClientSecret }));
+  }
+
   if (googleClientId && googleClientSecret) {
     providers.unshift(Google({ clientId: googleClientId, clientSecret: googleClientSecret }));
   }
@@ -201,16 +209,20 @@ function createAuthConfig(): NextAuthConfig {
     providers,
     callbacks: {
       async signIn({ user, account, profile }) {
-        if (account?.provider !== "google" || !profile?.email) {
+        // Only handle OAuth providers; let credentials pass through
+        if (account?.type !== "oidc" && account?.type !== "oauth") {
+          return true;
+        }
+        if (!profile?.email) {
           return true;
         }
 
         const db = getCloudflareDb();
 
-        // Check if this Google account is already linked
+        // Check if this OAuth account is already linked
         const existingAccount = await db.query.accounts.findFirst({
           where: and(
-            eq(schema.accounts.provider, "google"),
+            eq(schema.accounts.provider, account.provider),
             eq(schema.accounts.providerAccountId, account.providerAccountId),
           ),
         });
@@ -237,6 +249,11 @@ function createAuthConfig(): NextAuthConfig {
           return "/login?error=OAuthAccountNotLinked";
         }
 
+        // Extract profile image (Google uses "picture", Facebook uses "image")
+        const profileImage = (profile.picture as string)
+          ?? (profile.image as string)
+          ?? null;
+
         if (!existingUser) {
           // Create new user
           const userId = crypto.randomUUID();
@@ -244,14 +261,14 @@ function createAuthConfig(): NextAuthConfig {
             id: userId,
             email: profile.email,
             name: profile.name ?? null,
-            image: profile.picture as string ?? null,
+            image: profileImage,
             role: "USER",
             emailVerified: new Date(),
           });
           await db.insert(schema.accounts).values({
             userId,
             type: "oauth",
-            provider: "google",
+            provider: account.provider,
             providerAccountId: account.providerAccountId,
             accessToken: account.access_token ?? null,
             refreshToken: account.refresh_token ?? null,
@@ -267,7 +284,7 @@ function createAuthConfig(): NextAuthConfig {
           await db.insert(schema.accounts).values({
             userId: existingUser.id,
             type: "oauth",
-            provider: "google",
+            provider: account.provider,
             providerAccountId: account.providerAccountId,
             accessToken: account.access_token ?? null,
             refreshToken: account.refresh_token ?? null,
