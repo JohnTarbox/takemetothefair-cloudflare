@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { events, eventDays, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -198,6 +198,46 @@ export async function POST(request: NextRequest) {
       syncEnabled: false,
       lastSyncedAt: new Date(),
     });
+
+    // Insert eventDays rows if we have time data and a date range
+    if (event.startTime && startDate) {
+      const rangeEnd = endDate || startDate;
+      const days: Array<{
+        id: string;
+        eventId: string;
+        date: string;
+        openTime: string;
+        closeTime: string;
+        notes: string | null;
+        closed: boolean;
+      }> = [];
+
+      // Generate one row per day in the date range
+      const current = new Date(startDate);
+      const last = new Date(rangeEnd);
+      let isFirst = true;
+      while (current <= last) {
+        const dateStr = current.toISOString().substring(0, 10);
+        days.push({
+          id: crypto.randomUUID(),
+          eventId: newEventId,
+          date: dateStr,
+          openTime: event.startTime,
+          closeTime: event.endTime || event.startTime,
+          notes: isFirst && event.hoursNotes ? event.hoursNotes : null,
+          closed: false,
+        });
+        isFirst = false;
+        current.setDate(current.getDate() + 1);
+      }
+
+      // Batch insert to avoid SQLite variable limit (7 vars per row × 100 = 700 < 999)
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < days.length; i += BATCH_SIZE) {
+        const batch = days.slice(i, i + BATCH_SIZE);
+        await db.insert(eventDays).values(batch);
+      }
+    }
 
     // Store schema.org data if JSON-LD was provided
     if (jsonLd) {

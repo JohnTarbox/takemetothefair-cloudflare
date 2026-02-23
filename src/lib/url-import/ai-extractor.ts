@@ -16,7 +16,7 @@ Return a JSON array where each event has these fields (use null for fields not f
 [
   {
     "name": "event title/name",
-    "description": "brief description (max 300 chars)",
+    "description": "brief description (max 500 chars)",
     "startDate": "YYYY-MM-DD format",
     "endDate": "YYYY-MM-DD format",
     "startTime": "HH:MM (24-hour) or null - opening time",
@@ -43,6 +43,9 @@ IMPORTANT RULES:
 6. If only ONE event exists, still return it as an array with one element
 7. Look for event listings, schedules, calendars, or multiple date entries
 8. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
+
+EXAMPLE - if the page says "Springfield County Fair, June 12-15, 2025, Springfield Fairgrounds, 10am-8pm, $5-$10":
+[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null}]
 
 JSON array response:`;
 
@@ -85,6 +88,9 @@ IMPORTANT PARSING RULES:
 5. Extract the event NAME only (not dates or venue) for the "name" field
 6. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
 
+EXAMPLE - if the page says "Blue Hill Fair, Sept 4-7, 2025, Blue Hill Fairgrounds, Blue Hill ME, gates open 8am, closes 10pm":
+{"name":"Blue Hill Fair","description":"Annual fair in Blue Hill, Maine","startDate":"2025-09-04","endDate":"2025-09-07","startTime":"08:00","endTime":"22:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Blue Hill Fairgrounds","venueAddress":null,"venueCity":"Blue Hill","venueState":"ME","ticketUrl":null,"ticketPriceMin":null,"ticketPriceMax":null,"imageUrl":null}
+
 JSON response:`;
 
 /**
@@ -115,9 +121,9 @@ export async function extractEventData(
     contextInfo += `Structured data (JSON-LD):\n${JSON.stringify(metadata.jsonLd, null, 2)}\n\n`;
   }
 
-  // Truncate content if too long (keep first 15KB to stay within context limits)
-  const truncatedContent = content.length > 15000
-    ? content.substring(0, 15000) + "\n[Content truncated...]"
+  // Truncate content if too long (keep first 20KB to match multi-event)
+  const truncatedContent = content.length > 20000
+    ? content.substring(0, 20000) + "\n[Content truncated...]"
     : content;
 
   const userPrompt = buildUserPrompt(truncatedContent, contextInfo);
