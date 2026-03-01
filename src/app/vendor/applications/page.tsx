@@ -9,16 +9,10 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
+import { STATUS_BADGE_VARIANTS, STATUS_LABELS } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
-
-
-const statusColors: Record<string, "default" | "success" | "warning" | "danger"> = {
-  PENDING: "warning",
-  APPROVED: "success",
-  REJECTED: "danger",
-};
 
 async function getApplications(userId: string) {
   const db = getCloudflareDb();
@@ -115,18 +109,9 @@ export default async function VendorApplicationsPage() {
                       >
                         {app.event.name}
                       </Link>
-                      <Badge variant={statusColors[app.status]}>
-                        {app.status}
+                      <Badge variant={STATUS_BADGE_VARIANTS[app.status as keyof typeof STATUS_BADGE_VARIANTS] ?? "default"}>
+                        {STATUS_LABELS[app.status as keyof typeof STATUS_LABELS] ?? app.status}
                       </Badge>
-                      {app.interested && (
-                        <Badge variant="default">Interested</Badge>
-                      )}
-                      {app.applied && (
-                        <Badge variant="default">Applied</Badge>
-                      )}
-                      {app.accepted && (
-                        <Badge variant="success">Accepted</Badge>
-                      )}
                     </div>
                     <div className="mt-2 space-y-1 text-sm text-gray-600">
                       <div className="flex items-center gap-2">

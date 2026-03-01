@@ -231,7 +231,7 @@ async function main() {
     eventId: event1Id,
     vendorId: vendorId,
     boothInfo: "Booth A-15, Arts & Crafts Section",
-    status: "APPROVED",
+    status: "CONFIRMED",
   }).run();
 
   db.insert(schema.eventVendors).values({
@@ -239,7 +239,7 @@ async function main() {
     eventId: event2Id,
     vendorId: vendorId,
     boothInfo: "Main Pavilion, Booth 42",
-    status: "APPROVED",
+    status: "CONFIRMED",
   }).run();
 
   sqlite.close();

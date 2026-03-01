@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
 import { eq, count, gte, and } from "drizzle-orm";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
@@ -31,7 +32,7 @@ async function getStats() {
       db.select({ count: count() }).from(vendors),
       db.select({ count: count() }).from(promoters),
       db.select({ count: count() }).from(users),
-      db.select({ count: count() }).from(eventVendors).where(eq(eventVendors.status, "APPROVED")),
+      db.select({ count: count() }).from(eventVendors).where(isPublicVendorStatus()),
     ]);
 
     return {
@@ -117,7 +118,7 @@ async function getUpcomingEventsWithVendorCounts() {
         count: count(),
       })
       .from(eventVendors)
-      .where(eq(eventVendors.status, "APPROVED"))
+      .where(isPublicVendorStatus())
       .groupBy(eventVendors.eventId);
 
     const countMap = new Map(vendorCounts.map(vc => [vc.eventId, vc.count]));

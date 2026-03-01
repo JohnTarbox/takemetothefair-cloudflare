@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events } from "@/lib/db/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
         .where(
           and(
             inArray(eventVendors.vendorId, vendorIds),
-            eq(eventVendors.status, "APPROVED"),
+            isPublicVendorStatus(),
             eq(events.status, "APPROVED"),
             gte(events.endDate, new Date())
           )

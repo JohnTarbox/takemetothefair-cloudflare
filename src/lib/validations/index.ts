@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { VALIDATION, EVENT_STATUS, VENUE_STATUS, EVENT_VENDOR_STATUS } from "@/lib/constants";
+import { VALIDATION, EVENT_STATUS, VENUE_STATUS, EVENT_VENDOR_STATUS, PAYMENT_STATUS } from "@/lib/constants";
 
 // Common field schemas
 const nameSchema = z.string().min(VALIDATION.NAME_MIN_LENGTH).max(VALIDATION.NAME_MAX_LENGTH);
@@ -191,46 +191,49 @@ export const eventUpdateSchema = eventBaseSchema.partial()
     }
   );
 
+// Event vendor status enum (shared across schemas)
+const eventVendorStatusEnum = z.enum([
+  EVENT_VENDOR_STATUS.INVITED,
+  EVENT_VENDOR_STATUS.INTERESTED,
+  EVENT_VENDOR_STATUS.APPLIED,
+  EVENT_VENDOR_STATUS.WAITLISTED,
+  EVENT_VENDOR_STATUS.APPROVED,
+  EVENT_VENDOR_STATUS.CONFIRMED,
+  EVENT_VENDOR_STATUS.REJECTED,
+  EVENT_VENDOR_STATUS.WITHDRAWN,
+  EVENT_VENDOR_STATUS.CANCELLED,
+]);
+
+const paymentStatusEnum = z.enum([
+  PAYMENT_STATUS.NOT_REQUIRED,
+  PAYMENT_STATUS.PENDING,
+  PAYMENT_STATUS.PAID,
+  PAYMENT_STATUS.REFUNDED,
+  PAYMENT_STATUS.OVERDUE,
+]);
+
 // Event vendor schemas
 export const eventVendorCreateSchema = z.object({
   eventId: z.string().uuid(),
   vendorId: z.string().uuid(),
   boothInfo: z.string().max(500).optional().nullable(),
-  status: z.enum([
-    EVENT_VENDOR_STATUS.PENDING,
-    EVENT_VENDOR_STATUS.APPROVED,
-    EVENT_VENDOR_STATUS.REJECTED,
-  ]).optional().default(EVENT_VENDOR_STATUS.PENDING),
-  interested: z.boolean().optional(),
-  applied: z.boolean().optional(),
-  accepted: z.boolean().optional(),
+  status: eventVendorStatusEnum.optional().default(EVENT_VENDOR_STATUS.APPLIED),
+  paymentStatus: paymentStatusEnum.optional().default(PAYMENT_STATUS.NOT_REQUIRED),
 });
 
 // Schema for adding vendor to event (eventId comes from URL params)
 export const eventVendorAddSchema = z.object({
   vendorId: z.string().uuid(),
   boothInfo: z.string().max(500).optional().nullable(),
-  status: z.enum([
-    EVENT_VENDOR_STATUS.PENDING,
-    EVENT_VENDOR_STATUS.APPROVED,
-    EVENT_VENDOR_STATUS.REJECTED,
-  ]).optional().default(EVENT_VENDOR_STATUS.APPROVED),
-  interested: z.boolean().optional(),
-  applied: z.boolean().optional(),
-  accepted: z.boolean().optional(),
+  status: eventVendorStatusEnum.optional().default(EVENT_VENDOR_STATUS.CONFIRMED),
+  paymentStatus: paymentStatusEnum.optional().default(PAYMENT_STATUS.NOT_REQUIRED),
 });
 
 export const eventVendorUpdateSchema = z.object({
   eventVendorId: z.string().uuid(),
   boothInfo: z.string().max(500).optional().nullable(),
-  status: z.enum([
-    EVENT_VENDOR_STATUS.PENDING,
-    EVENT_VENDOR_STATUS.APPROVED,
-    EVENT_VENDOR_STATUS.REJECTED,
-  ]).optional(),
-  interested: z.boolean().optional(),
-  applied: z.boolean().optional(),
-  accepted: z.boolean().optional(),
+  status: eventVendorStatusEnum.optional(),
+  paymentStatus: paymentStatusEnum.optional(),
 });
 
 // User schemas

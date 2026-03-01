@@ -2,12 +2,14 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Store, Trash2, CheckCircle, XCircle, Clock, Search, Users } from "lucide-react";
+import { ArrowLeft, Plus, Store, Trash2, Search, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EVENT_VENDOR_STATUS } from "@/lib/constants";
+import { STATUS_LABELS, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 
 export const runtime = "edge";
 
@@ -26,10 +28,8 @@ interface EventVendor {
   eventId: string;
   vendorId: string;
   status: string;
+  paymentStatus: string;
   boothInfo: string | null;
-  interested: boolean | null;
-  applied: boolean | null;
-  accepted: boolean | null;
   vendor: Vendor;
 }
 
@@ -97,7 +97,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           vendorId: selectedVendorId,
-          status: "APPROVED",
+          status: "CONFIRMED",
           boothInfo: boothInfo || undefined,
         }),
       });
@@ -136,7 +136,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             vendorId,
-            status: "APPROVED",
+            status: "CONFIRMED",
           }),
         });
 
@@ -191,24 +191,6 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
     }
   };
 
-  const handleUpdateFlag = async (eventVendorId: string, flag: "interested" | "applied" | "accepted", value: boolean) => {
-    try {
-      const res = await fetch(`/api/admin/events/${id}/vendors`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ eventVendorId, [flag]: value }),
-      });
-
-      if (!res.ok) throw new Error("Failed to update flag");
-
-      setEventVendors(eventVendors.map((ev) =>
-        ev.id === eventVendorId ? { ...ev, [flag]: value } : ev
-      ));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update flag");
-    }
-  };
-
   const toggleVendorSelection = (vendorId: string) => {
     const newSelected = new Set(selectedVendorIds);
     if (newSelected.has(vendorId)) {
@@ -240,17 +222,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
     v.vendorType?.toLowerCase().includes(bulkSearchQuery.toLowerCase())
   );
 
-  const statusColors: Record<string, "success" | "warning" | "danger"> = {
-    APPROVED: "success",
-    PENDING: "warning",
-    REJECTED: "danger",
-  };
-
-  const statusIcons: Record<string, typeof CheckCircle> = {
-    APPROVED: CheckCircle,
-    PENDING: Clock,
-    REJECTED: XCircle,
-  };
+  const allStatuses = Object.values(EVENT_VENDOR_STATUS);
 
   if (loading) {
     return (
@@ -501,9 +473,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
             </div>
           ) : (
             <div className="space-y-4">
-              {eventVendors.map((ev) => {
-                const StatusIcon = statusIcons[ev.status] || Clock;
-                return (
+              {eventVendors.map((ev) => (
                   <div
                     key={ev.id}
                     className="flex items-center justify-between p-4 border rounded-lg"
@@ -541,35 +511,6 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                         {ev.boothInfo && (
                           <p className="text-sm text-gray-500">Booth: {ev.boothInfo}</p>
                         )}
-                        <div className="flex items-center gap-3 mt-2">
-                          <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
-                            <input
-                              type="checkbox"
-                              checked={ev.interested ?? false}
-                              onChange={(e) => handleUpdateFlag(ev.id, "interested", e.target.checked)}
-                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            Interested
-                          </label>
-                          <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
-                            <input
-                              type="checkbox"
-                              checked={ev.applied ?? false}
-                              onChange={(e) => handleUpdateFlag(ev.id, "applied", e.target.checked)}
-                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            Applied
-                          </label>
-                          <label className="inline-flex items-center gap-1.5 text-sm text-gray-600">
-                            <input
-                              type="checkbox"
-                              checked={ev.accepted ?? false}
-                              onChange={(e) => handleUpdateFlag(ev.id, "accepted", e.target.checked)}
-                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            Accepted
-                          </label>
-                        </div>
                       </div>
                     </div>
 
@@ -579,13 +520,14 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                         onChange={(e) => handleUpdateStatus(ev.id, e.target.value)}
                         className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                       >
-                        <option value="PENDING">Pending</option>
-                        <option value="APPROVED">Approved</option>
-                        <option value="REJECTED">Rejected</option>
+                        {allStatuses.map((s) => (
+                          <option key={s} value={s}>
+                            {STATUS_LABELS[s as keyof typeof STATUS_LABELS] ?? s}
+                          </option>
+                        ))}
                       </select>
-                      <Badge variant={statusColors[ev.status]}>
-                        <StatusIcon className="w-3 h-3 mr-1" />
-                        {ev.status}
+                      <Badge variant={STATUS_BADGE_VARIANTS[ev.status as keyof typeof STATUS_BADGE_VARIANTS] ?? "default"}>
+                        {STATUS_LABELS[ev.status as keyof typeof STATUS_LABELS] ?? ev.status}
                       </Badge>
                       <Button
                         variant="outline"
@@ -597,8 +539,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                       </Button>
                     </div>
                   </div>
-                );
-              })}
+                ))}
             </div>
           )}
         </CardContent>

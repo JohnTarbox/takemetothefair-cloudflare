@@ -589,7 +589,7 @@ describe("eventVendorCreateSchema", () => {
   });
 
   it("validates status enum", () => {
-    const statuses = ["PENDING", "APPROVED", "REJECTED"];
+    const statuses = ["INVITED", "INTERESTED", "APPLIED", "WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"];
     for (const status of statuses) {
       expect(eventVendorCreateSchema.safeParse({
         ...validEventVendor,
@@ -600,13 +600,17 @@ describe("eventVendorCreateSchema", () => {
       ...validEventVendor,
       status: "INVALID",
     }).success).toBe(false);
+    expect(eventVendorCreateSchema.safeParse({
+      ...validEventVendor,
+      status: "PENDING",
+    }).success).toBe(false);
   });
 
-  it("defaults status to PENDING", () => {
+  it("defaults status to APPLIED", () => {
     const result = eventVendorCreateSchema.safeParse(validEventVendor);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.status).toBe("PENDING");
+      expect(result.data.status).toBe("APPLIED");
     }
   });
 
@@ -620,13 +624,13 @@ describe("eventVendorCreateSchema", () => {
 });
 
 describe("eventVendorAddSchema", () => {
-  it("defaults status to APPROVED", () => {
+  it("defaults status to CONFIRMED", () => {
     const result = eventVendorAddSchema.safeParse({
       vendorId: "550e8400-e29b-41d4-a716-446655440000",
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.status).toBe("APPROVED");
+      expect(result.data.status).toBe("CONFIRMED");
     }
   });
 });

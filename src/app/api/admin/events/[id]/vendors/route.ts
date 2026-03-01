@@ -4,6 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { eventVendorAddSchema, eventVendorUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { isValidTransition } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -85,9 +86,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       vendorId: data.vendorId,
       status: data.status,
       boothInfo: data.boothInfo,
-      interested: data.interested,
-      applied: data.applied,
-      accepted: data.accepted,
+      paymentStatus: data.paymentStatus,
     });
 
     const [newEventVendor] = await db
@@ -128,11 +127,32 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
 
     const updateData: Record<string, unknown> = {};
-    if (data.status) updateData.status = data.status;
     if (data.boothInfo !== undefined) updateData.boothInfo = data.boothInfo;
-    if (data.interested !== undefined) updateData.interested = data.interested;
-    if (data.applied !== undefined) updateData.applied = data.applied;
-    if (data.accepted !== undefined) updateData.accepted = data.accepted;
+    if (data.paymentStatus !== undefined) updateData.paymentStatus = data.paymentStatus;
+
+    // Validate status transition if changing status
+    if (data.status) {
+      const [current] = await db
+        .select({ status: eventVendors.status })
+        .from(eventVendors)
+        .where(and(
+          eq(eventVendors.id, data.eventVendorId),
+          eq(eventVendors.eventId, id)
+        ))
+        .limit(1);
+
+      if (!current) {
+        return NextResponse.json({ error: "Event vendor not found" }, { status: 404 });
+      }
+
+      if (!isValidTransition(current.status, data.status)) {
+        return NextResponse.json({
+          error: `Cannot transition from ${current.status} to ${data.status}`,
+        }, { status: 400 });
+      }
+
+      updateData.status = data.status;
+    }
 
     await db
       .update(eventVendors)

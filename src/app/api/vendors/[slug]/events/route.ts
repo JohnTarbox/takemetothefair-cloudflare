@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -50,7 +51,7 @@ export async function GET(
       .where(
         and(
           eq(eventVendors.vendorId, vendor.id),
-          eq(eventVendors.status, "APPROVED"),
+          isPublicVendorStatus(),
           eq(events.status, "APPROVED")
         )
       );

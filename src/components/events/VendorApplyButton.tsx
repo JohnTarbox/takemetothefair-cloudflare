@@ -40,7 +40,7 @@ export function VendorApplyButton({ eventId, eventName, canSelfConfirm }: Vendor
       }
 
       const result = await res.json() as { status?: string };
-      setWasAutoApproved(result.status === "APPROVED");
+      setWasAutoApproved(result.status === "CONFIRMED");
       setSuccess(true);
     } catch (err) {
       setError(getErrorMessage(err, "submit your application"));

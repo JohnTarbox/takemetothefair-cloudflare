@@ -33,11 +33,32 @@ export const USER_ROLE = {
   USER: "USER",
 } as const;
 
-// Event vendor statuses
+// Event vendor statuses (application lifecycle)
 export const EVENT_VENDOR_STATUS = {
-  PENDING: "PENDING",
+  INVITED: "INVITED",
+  INTERESTED: "INTERESTED",
+  APPLIED: "APPLIED",
+  WAITLISTED: "WAITLISTED",
   APPROVED: "APPROVED",
+  CONFIRMED: "CONFIRMED",
   REJECTED: "REJECTED",
+  WITHDRAWN: "WITHDRAWN",
+  CANCELLED: "CANCELLED",
+} as const;
+
+// Statuses visible on public pages
+export const PUBLIC_VENDOR_STATUSES = [
+  EVENT_VENDOR_STATUS.APPROVED,
+  EVENT_VENDOR_STATUS.CONFIRMED,
+] as const;
+
+// Payment statuses (orthogonal to application status)
+export const PAYMENT_STATUS = {
+  NOT_REQUIRED: "NOT_REQUIRED",
+  PENDING: "PENDING",
+  PAID: "PAID",
+  REFUNDED: "REFUNDED",
+  OVERDUE: "OVERDUE",
 } as const;
 
 // Favoritable types
@@ -75,4 +96,5 @@ export type EventStatus = (typeof EVENT_STATUS)[keyof typeof EVENT_STATUS];
 export type VenueStatus = (typeof VENUE_STATUS)[keyof typeof VENUE_STATUS];
 export type UserRole = (typeof USER_ROLE)[keyof typeof USER_ROLE];
 export type EventVendorStatus = (typeof EVENT_VENDOR_STATUS)[keyof typeof EVENT_VENDOR_STATUS];
+export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
 export type FavoritableType = (typeof FAVORITABLE_TYPE)[keyof typeof FAVORITABLE_TYPE];

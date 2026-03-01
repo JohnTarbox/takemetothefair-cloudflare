@@ -20,6 +20,7 @@ import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/ut
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, users, eventDays } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
@@ -113,7 +114,7 @@ async function getEvent(slug: string) {
       .select()
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(and(eq(eventVendors.eventId, eventData.events.id), eq(eventVendors.status, "APPROVED")));
+      .where(and(eq(eventVendors.eventId, eventData.events.id), isPublicVendorStatus()));
 
     // Get event days (per-day schedule)
     const eventDayResults = await db
@@ -501,16 +502,22 @@ export default async function EventDetailPage({ params }: Props) {
                 {vendorInfo.existingApplication ? (
                   <div className="text-center">
                     <Badge variant={
-                      vendorInfo.existingApplication.status === "APPROVED" ? "success" :
-                      vendorInfo.existingApplication.status === "REJECTED" ? "danger" :
+                      vendorInfo.existingApplication.status === "CONFIRMED" || vendorInfo.existingApplication.status === "APPROVED" ? "success" :
+                      vendorInfo.existingApplication.status === "REJECTED" || vendorInfo.existingApplication.status === "CANCELLED" ? "danger" :
                       "warning"
                     }>
                       Application {vendorInfo.existingApplication.status}
                     </Badge>
                     <p className="text-sm text-gray-500 mt-2">
-                      {vendorInfo.existingApplication.status === "PENDING" && "Your application is being reviewed."}
-                      {vendorInfo.existingApplication.status === "APPROVED" && "You're confirmed to participate!"}
+                      {vendorInfo.existingApplication.status === "APPLIED" && "Your application is being reviewed."}
+                      {vendorInfo.existingApplication.status === "WAITLISTED" && "You're on the waitlist."}
+                      {vendorInfo.existingApplication.status === "APPROVED" && "You've been approved!"}
+                      {vendorInfo.existingApplication.status === "CONFIRMED" && "You're confirmed to participate!"}
                       {vendorInfo.existingApplication.status === "REJECTED" && "Your application was not accepted."}
+                      {vendorInfo.existingApplication.status === "WITHDRAWN" && "You withdrew your application."}
+                      {vendorInfo.existingApplication.status === "CANCELLED" && "Your participation was cancelled."}
+                      {vendorInfo.existingApplication.status === "INTERESTED" && "You've expressed interest."}
+                      {vendorInfo.existingApplication.status === "INVITED" && "You've been invited to participate!"}
                     </p>
                   </div>
                 ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (

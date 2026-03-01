@@ -9,6 +9,7 @@ import { formatDateRange } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -51,7 +52,7 @@ async function getVendor(slug: string) {
       .where(
         and(
           eq(eventVendors.vendorId, vendor.vendors.id),
-          eq(eventVendors.status, "APPROVED")
+          isPublicVendorStatus()
         )
       );
 

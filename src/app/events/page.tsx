@@ -5,6 +5,7 @@ import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, userFavorites } from "@/lib/db/schema";
 import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
+import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
@@ -256,7 +257,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
           .where(
             and(
               inArray(eventVendors.eventId, batch),
-              eq(eventVendors.status, "APPROVED")
+              isPublicVendorStatus()
             )
           );
         allEventVendors.push(...batchResults);

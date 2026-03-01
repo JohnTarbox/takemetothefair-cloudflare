@@ -92,6 +92,13 @@
       "when": 1770313493487,
       "tag": "0012_far_skrulls",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1772531200000,
+      "tag": "0019_refactor_event_vendor_status",
+      "breakpoints": true
     }
   ]
 }
