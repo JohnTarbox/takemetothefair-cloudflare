@@ -23,6 +23,7 @@ Return a JSON array where each event has these fields (use null for fields not f
     "endTime": "HH:MM (24-hour) or null - closing time",
     "hoursVaryByDay": true/false - whether hours differ on different days,
     "hoursNotes": "any notes about hours or per-day variations (e.g., 'Fri 5-9pm, Sat-Sun 10am-6pm')",
+    "specificDates": ["YYYY-MM-DD", ...] or null - if the event runs on scattered/non-consecutive dates (e.g., "first Friday of each month", specific scattered dates), list each date here instead of using startDate/endDate,
     "venueName": "venue or location name",
     "venueAddress": "street address",
     "venueCity": "city",
@@ -43,6 +44,7 @@ IMPORTANT RULES:
 6. If only ONE event exists, still return it as an array with one element
 7. Look for event listings, schedules, calendars, or multiple date entries
 8. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
+9. If an event runs on scattered/non-consecutive dates (e.g., "June 5, July 3, August 7" or "first Friday of each month"), put them in specificDates instead of startDate/endDate
 
 EXAMPLE - if the page says "Springfield County Fair, June 12-15, 2025, Springfield Fairgrounds, 10am-8pm, $5-$10":
 [{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null}]
@@ -67,6 +69,7 @@ Find and extract these fields. Use null for any field not found:
   "endTime": "HH:MM (24-hour) or null - closing time",
   "hoursVaryByDay": true/false - whether hours differ on different days,
   "hoursNotes": "any notes about hours or per-day variations (e.g., 'Fri 5-9pm, Sat-Sun 10am-6pm')",
+  "specificDates": ["YYYY-MM-DD", ...] or null - if the event runs on scattered/non-consecutive dates, list each date here instead of using startDate/endDate,
   "venueName": "venue or location name",
   "venueAddress": "street address",
   "venueCity": "city",
@@ -87,6 +90,7 @@ IMPORTANT PARSING RULES:
 4. Look for venue/location names like "Mount Sunapee Resort", "Fairgrounds", "Convention Center"
 5. Extract the event NAME only (not dates or venue) for the "name" field
 6. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
+7. If the event runs on scattered/non-consecutive dates (e.g., "June 5, July 3, August 7"), put them in specificDates instead of startDate/endDate
 
 EXAMPLE - if the page says "Blue Hill Fair, Sept 4-7, 2025, Blue Hill Fairgrounds, Blue Hill ME, gates open 8am, closes 10pm":
 {"name":"Blue Hill Fair","description":"Annual fair in Blue Hill, Maine","startDate":"2025-09-04","endDate":"2025-09-07","startTime":"08:00","endTime":"22:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Blue Hill Fairgrounds","venueAddress":null,"venueCity":"Blue Hill","venueState":"ME","ticketUrl":null,"ticketPriceMin":null,"ticketPriceMax":null,"imageUrl":null}
@@ -292,6 +296,16 @@ function sanitizeEventData(
     endTime = extractTimeFromDatetime(rawEndDate);
   }
 
+  // Parse specificDates array
+  const rawSpecificDates = item.specificDates || item.specific_dates;
+  let specificDates: string[] | null = null;
+  if (Array.isArray(rawSpecificDates) && rawSpecificDates.length > 0) {
+    specificDates = rawSpecificDates
+      .map((d: unknown) => sanitizeDate(d))
+      .filter((d): d is string => d !== null);
+    if (specificDates.length === 0) specificDates = null;
+  }
+
   const event: ExtractedEvent = {
     _extractId: `event-${index}-${Date.now()}`,
     _selected: true, // Default to selected
@@ -303,6 +317,7 @@ function sanitizeEventData(
     endTime,
     hoursVaryByDay: item.hoursVaryByDay === true || item.hours_vary_by_day === true,
     hoursNotes: sanitizeString(item.hoursNotes || item.hours_notes, 500),
+    specificDates,
     venueName: sanitizeString(item.venueName || item.venue_name || item.venue || item.location),
     venueAddress: sanitizeString(item.venueAddress || item.venue_address || item.address),
     venueCity: sanitizeString(item.venueCity || item.venue_city || item.city),
@@ -350,6 +365,7 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     endTime: null,
     hoursVaryByDay: false,
     hoursNotes: null,
+    specificDates: null,
     venueName: null,
     venueAddress: null,
     venueCity: null,
@@ -429,6 +445,7 @@ function parseAiResponse(
     endTime: null,
     hoursVaryByDay: false,
     hoursNotes: null,
+    specificDates: null,
     venueName: null,
     venueAddress: null,
     venueCity: null,
@@ -470,6 +487,16 @@ function parseAiResponse(
       endTime = extractTimeFromDatetime(parsed.endDate);
     }
 
+    // Parse specificDates array
+    let specificDates: string[] | null = null;
+    const rawSpecificDates = parsed.specificDates || parsed.specific_dates;
+    if (Array.isArray(rawSpecificDates) && rawSpecificDates.length > 0) {
+      specificDates = rawSpecificDates
+        .map((d: unknown) => sanitizeDate(d))
+        .filter((d): d is string => d !== null);
+      if (specificDates.length === 0) specificDates = null;
+    }
+
     // Validate and sanitize each field
     const extracted: ExtractedEventData = {
       name: sanitizeString(parsed.name),
@@ -480,6 +507,7 @@ function parseAiResponse(
       endTime,
       hoursVaryByDay: parsed.hoursVaryByDay === true,
       hoursNotes: sanitizeString(parsed.hoursNotes, 500),
+      specificDates,
       venueName: sanitizeString(parsed.venueName),
       venueAddress: sanitizeString(parsed.venueAddress),
       venueCity: sanitizeString(parsed.venueCity),

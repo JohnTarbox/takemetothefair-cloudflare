@@ -76,6 +76,15 @@ export function formatDateRange(start: Date | string | null | undefined, end: Da
   return `${formatDate(startDate)} - ${formatDate(endDate)}`;
 }
 
+export function formatDiscontinuousDates(days: { date: string }[]): string {
+  if (!days?.length) return "TBD";
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  if (sorted.length === 1) return formatDate(new Date(sorted[0].date + "T12:00:00"));
+  const first = new Date(sorted[0].date + "T12:00:00");
+  const last = new Date(sorted[sorted.length - 1].date + "T12:00:00");
+  return `${formatDate(first)} — ${formatDate(last)} (${sorted.length} dates)`;
+}
+
 export function formatPrice(min?: number | null, max?: number | null): string {
   if (!min && !max) return "Free";
   if (min === max || !max) return `$${min}`;

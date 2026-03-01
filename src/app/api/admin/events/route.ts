@@ -68,6 +68,15 @@ export async function POST(request: NextRequest) {
       ));
     const slug = findUniqueSlug(baseSlug, existing.map((r) => r.slug));
 
+    // Auto-compute startDate/endDate from eventDays when discontinuous
+    let startDate = data.startDate ? new Date(data.startDate) : null;
+    let endDate = data.endDate ? new Date(data.endDate) : null;
+    if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
+      const sorted = data.eventDays.map(d => d.date).sort();
+      startDate = new Date(sorted[0] + "T00:00:00");
+      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
+    }
+
     await db.insert(events).values({
       id: eventId,
       name: data.name,
@@ -75,9 +84,10 @@ export async function POST(request: NextRequest) {
       description: data.description,
       venueId: data.venueId,
       promoterId: data.promoterId,
-      startDate: data.startDate ? new Date(data.startDate) : null,
-      endDate: data.endDate ? new Date(data.endDate) : null,
+      startDate,
+      endDate,
       datesConfirmed: data.datesConfirmed,
+      discontinuousDates: data.discontinuousDates || false,
       categories: JSON.stringify(data.categories),
       tags: JSON.stringify(data.tags),
       ticketUrl: data.ticketUrl,

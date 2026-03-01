@@ -82,8 +82,9 @@ export async function POST(request: NextRequest) {
       name,
       description,
       venueId,
-      startDate,
-      endDate,
+      startDate: rawStartDate,
+      endDate: rawEndDate,
+      discontinuousDates: isDiscontinuous,
       categories,
       tags,
       ticketUrl,
@@ -92,6 +93,15 @@ export async function POST(request: NextRequest) {
       imageUrl,
       eventDays: eventDaysInput,
     } = validation.data;
+
+    // Auto-compute startDate/endDate from eventDays when discontinuous
+    let startDate = rawStartDate;
+    let endDate = rawEndDate;
+    if (isDiscontinuous && eventDaysInput && eventDaysInput.length > 0) {
+      const sorted = eventDaysInput.map(d => d.date).sort();
+      startDate = new Date(sorted[0] + "T00:00:00").toISOString();
+      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+    }
 
     const baseSlug = createSlug(name);
 
@@ -120,8 +130,9 @@ export async function POST(request: NextRequest) {
       description,
       venueId: venueId || null,
       promoterId: promoter.id,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      startDate: startDate ? new Date(startDate) : null,
+      endDate: endDate ? new Date(endDate) : null,
+      discontinuousDates: isDiscontinuous || false,
       categories: JSON.stringify(categories || []),
       tags: JSON.stringify(tags || []),
       ticketUrl,

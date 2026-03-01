@@ -134,6 +134,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       updateData.endDate = data.endDate ? new Date(data.endDate) : null;
     }
     if (data.datesConfirmed !== undefined) updateData.datesConfirmed = data.datesConfirmed;
+    if (data.discontinuousDates !== undefined) updateData.discontinuousDates = data.discontinuousDates;
+
+    // Auto-compute startDate/endDate from eventDays when discontinuous
+    if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
+      const sorted = data.eventDays.map(d => d.date).sort();
+      updateData.startDate = new Date(sorted[0] + "T00:00:00");
+      updateData.endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
+    }
+
     if (data.categories) updateData.categories = JSON.stringify(data.categories);
     if (data.tags) updateData.tags = JSON.stringify(data.tags);
     if (data.ticketUrl !== undefined) updateData.ticketUrl = data.ticketUrl;

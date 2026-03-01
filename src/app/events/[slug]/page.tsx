@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { formatDateRange, formatPrice } from "@/lib/utils";
+import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, users, eventDays } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
@@ -383,7 +383,9 @@ export default async function EventDetailPage({ params }: Props) {
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <p className="font-medium text-gray-900">
-                      {formatDateRange(event.startDate, event.endDate)}
+                      {event.discontinuousDates && event.eventDays?.length
+                        ? formatDiscontinuousDates(event.eventDays)
+                        : formatDateRange(event.startDate, event.endDate)}
                     </p>
                     <AddToCalendar
                       title={event.name}
@@ -397,7 +399,7 @@ export default async function EventDetailPage({ params }: Props) {
                     />
                   </div>
                   {event.eventDays && event.eventDays.length > 0 ? (
-                    <DailyScheduleDisplay days={event.eventDays} className="mt-2" />
+                    <DailyScheduleDisplay days={event.eventDays} discontinuousDates={event.discontinuousDates ?? false} className="mt-2" />
                   ) : event.startDate ? (
                     <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                       <Clock className="w-4 h-4" />

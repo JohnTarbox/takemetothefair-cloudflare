@@ -21,6 +21,7 @@ export default function CreateEventPage() {
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [discontinuousDates, setDiscontinuousDates] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -73,10 +74,18 @@ export default function CreateEventPage() {
     setLoading(true);
 
     try {
-      const startDateTime = new Date(
-        `${formData.startDate}T${formData.startTime}`
-      );
-      const endDateTime = new Date(`${formData.endDate}T${formData.endTime}`);
+      // Auto-compute dates from eventDays when discontinuous
+      let startDateISO: string;
+      let endDateISO: string;
+
+      if (discontinuousDates && eventDays.length > 0) {
+        const sorted = eventDays.map(d => d.date).sort();
+        startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
+        endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+      } else {
+        startDateISO = new Date(`${formData.startDate}T${formData.startTime}`).toISOString();
+        endDateISO = new Date(`${formData.endDate}T${formData.endTime}`).toISOString();
+      }
 
       const res = await fetch("/api/promoter/events", {
         method: "POST",
@@ -85,8 +94,9 @@ export default function CreateEventPage() {
           name: formData.name,
           description: formData.description,
           venueId: formData.venueId || null,
-          startDate: startDateTime.toISOString(),
-          endDate: endDateTime.toISOString(),
+          startDate: startDateISO,
+          endDate: endDateISO,
+          discontinuousDates,
           categories: formData.categories
             .split(",")
             .map((c) => c.trim())
@@ -190,48 +200,67 @@ export default function CreateEventPage() {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Start Date"
-                type="date"
-                name="startDate"
-                value={formData.startDate}
-                onChange={handleChange}
-                required
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                id="discontinuousDates"
+                type="checkbox"
+                checked={discontinuousDates}
+                onChange={(e) => setDiscontinuousDates(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300"
               />
-              <Input
-                label="Start Time"
-                type="time"
-                name="startTime"
-                value={formData.startTime}
-                onChange={handleChange}
-                required
-              />
+              <label htmlFor="discontinuousDates" className="text-sm font-normal text-gray-700">
+                Non-contiguous dates (specific dates that aren&apos;t consecutive)
+              </label>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="End Date"
-                type="date"
-                name="endDate"
-                value={formData.endDate}
-                onChange={handleChange}
-                required
-              />
-              <Input
-                label="End Time"
-                type="time"
-                name="endTime"
-                value={formData.endTime}
-                onChange={handleChange}
-                required
-              />
-            </div>
+            {!discontinuousDates && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <Input
+                    label="Start Date"
+                    type="date"
+                    name="startDate"
+                    value={formData.startDate}
+                    onChange={handleChange}
+                    required
+                  />
+                  <Input
+                    label="Start Time"
+                    type="time"
+                    name="startTime"
+                    value={formData.startTime}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <Input
+                    label="End Date"
+                    type="date"
+                    name="endDate"
+                    value={formData.endDate}
+                    onChange={handleChange}
+                    required
+                  />
+                  <Input
+                    label="End Time"
+                    type="time"
+                    name="endTime"
+                    value={formData.endTime}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+              </>
+            )}
 
             <DailyScheduleInput
               startDate={startDateTimeStr}
               endDate={endDateTimeStr}
               initialDays={[]}
+              discontinuousDates={discontinuousDates}
+              onDiscontinuousChange={setDiscontinuousDates}
               onChange={handleEventDaysChange}
               disabled={loading}
             />

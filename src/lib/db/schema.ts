@@ -89,6 +89,8 @@ export const events = sqliteTable("events", {
   sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
   syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(true),
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
+  // Discontinuous dates: when true, eventDays hold arbitrary (non-contiguous) dates
+  discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),
   // Suggester email for community-suggested events
   suggesterEmail: text("suggester_email"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),

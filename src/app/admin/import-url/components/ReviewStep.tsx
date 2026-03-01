@@ -5,6 +5,8 @@ import {
   DollarSign,
   ChevronRight,
   ChevronLeft,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -227,6 +229,59 @@ export function ReviewStep({
                     onUpdateData({ hoursNotes: e.target.value || null })
                   }
                 />
+              </div>
+            )}
+
+            {/* Specific (Non-contiguous) Dates */}
+            {extractedData.specificDates && extractedData.specificDates.length > 0 && (
+              <div className="border-t pt-4 mt-4">
+                <Label className="flex items-center gap-2 mb-3 text-sm font-medium">
+                  Non-contiguous Dates ({extractedData.specificDates.length} dates detected)
+                </Label>
+                <div className="space-y-2">
+                  {extractedData.specificDates.map((date, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <Input
+                        type="date"
+                        value={date}
+                        onChange={(e) => {
+                          const updated = [...(extractedData.specificDates || [])];
+                          updated[index] = e.target.value;
+                          onUpdateData({ specificDates: updated.sort() });
+                        }}
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const updated = (extractedData.specificDates || []).filter((_, i) => i !== index);
+                          onUpdateData({ specificDates: updated.length > 0 ? updated : null });
+                        }}
+                        className="text-gray-400 hover:text-red-600 p-1 h-8 w-8"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const dates = extractedData.specificDates || [];
+                      const lastDate = dates.length > 0 ? dates[dates.length - 1] : new Date().toISOString().substring(0, 10);
+                      const next = new Date(lastDate + "T12:00:00");
+                      next.setDate(next.getDate() + 7);
+                      onUpdateData({ specificDates: [...dates, next.toISOString().substring(0, 10)].sort() });
+                    }}
+                    className="text-xs"
+                  >
+                    <Plus className="w-3 h-3 mr-1" />
+                    Add Date
+                  </Button>
+                </div>
               </div>
             )}
 

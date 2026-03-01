@@ -159,18 +159,27 @@ export async function POST(request: NextRequest) {
       finalEventSlug = `${eventSlug}-${slugSuffix}`;
     }
 
+    // Determine if this is a discontinuous (specific dates) event
+    const hasSpecificDates = event.specificDates && event.specificDates.length > 0;
+
     // Parse dates
     let startDate: Date | null = null;
     let endDate: Date | null = null;
 
-    if (event.startDate) {
-      startDate = new Date(event.startDate);
-      if (isNaN(startDate.getTime())) startDate = null;
-    }
-
-    if (event.endDate) {
-      endDate = new Date(event.endDate);
-      if (isNaN(endDate.getTime())) endDate = null;
+    if (hasSpecificDates) {
+      // Auto-compute from specificDates
+      const sorted = [...event.specificDates!].sort();
+      startDate = new Date(sorted[0] + "T00:00:00");
+      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
+    } else {
+      if (event.startDate) {
+        startDate = new Date(event.startDate);
+        if (isNaN(startDate.getTime())) startDate = null;
+      }
+      if (event.endDate) {
+        endDate = new Date(event.endDate);
+        if (isNaN(endDate.getTime())) endDate = null;
+      }
     }
 
     // Create the event
@@ -185,6 +194,7 @@ export async function POST(request: NextRequest) {
       startDate,
       endDate,
       datesConfirmed: event.datesConfirmed ?? (startDate !== null),
+      discontinuousDates: hasSpecificDates || false,
       categories: JSON.stringify(["Event"]),
       tags: JSON.stringify(["imported", "url-import"]),
       ticketUrl: event.ticketUrl || sourceUrl || null,
@@ -199,8 +209,26 @@ export async function POST(request: NextRequest) {
       lastSyncedAt: new Date(),
     });
 
-    // Insert eventDays rows if we have time data and a date range
-    if (event.startTime && startDate) {
+    // Insert eventDays rows
+    if (hasSpecificDates) {
+      // Discontinuous: create eventDays from specificDates
+      const days = event.specificDates!.map((dateStr, idx) => ({
+        id: crypto.randomUUID(),
+        eventId: newEventId,
+        date: dateStr,
+        openTime: event.startTime || "10:00",
+        closeTime: event.endTime || "18:00",
+        notes: idx === 0 && event.hoursNotes ? event.hoursNotes : null,
+        closed: false,
+      }));
+
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < days.length; i += BATCH_SIZE) {
+        const batch = days.slice(i, i + BATCH_SIZE);
+        await db.insert(eventDays).values(batch);
+      }
+    } else if (event.startTime && startDate) {
+      // Contiguous: generate one row per day in the date range
       const rangeEnd = endDate || startDate;
       const days: Array<{
         id: string;
@@ -212,7 +240,6 @@ export async function POST(request: NextRequest) {
         closed: boolean;
       }> = [];
 
-      // Generate one row per day in the date range
       const current = new Date(startDate);
       const last = new Date(rangeEnd);
       let isFirst = true;

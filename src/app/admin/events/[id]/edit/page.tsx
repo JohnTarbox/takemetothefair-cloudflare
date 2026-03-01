@@ -44,6 +44,7 @@ interface Event {
   startDate: string | null;
   endDate: string | null;
   datesConfirmed: boolean;
+  discontinuousDates?: boolean;
   ticketUrl: string | null;
   ticketPriceMin: number | null;
   ticketPriceMax: number | null;
@@ -64,6 +65,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [venues, setVenues] = useState<Venue[]>([]);
   const [promoters, setPromoters] = useState<Promoter[]>([]);
   const [datesTBD, setDatesTBD] = useState(false);
+  const [discontinuousDates, setDiscontinuousDates] = useState(false);
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
@@ -81,6 +83,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       const data = await res.json() as Event;
       setEvent(data);
       setDatesTBD(!data.startDate || !data.datesConfirmed);
+      setDiscontinuousDates(data.discontinuousDates ?? false);
       if (data.startDate) {
         setStartDate(formatDateForInput(data.startDate));
       }
@@ -153,9 +156,18 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
     const formData = new FormData(e.currentTarget);
 
-    // Use controlled state values for dates
-    const startDateISO = datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
-    const endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
+    // Auto-compute dates from eventDays when discontinuous
+    let startDateISO: string | null;
+    let endDateISO: string | null;
+
+    if (discontinuousDates && eventDays.length > 0) {
+      const sorted = eventDays.map(d => d.date).sort();
+      startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
+      endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+    } else {
+      startDateISO = datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
+      endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
+    }
 
     const data = {
       name: formData.get("name"),
@@ -164,6 +176,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       startDate: startDateISO,
       endDate: endDateISO,
       datesConfirmed: !datesTBD,
+      discontinuousDates,
       ticketUrl: formData.get("ticketUrl") || null,
       ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
       ticketPriceMax: formData.get("ticketPriceMax") ? parseFloat(formData.get("ticketPriceMax") as string) : null,
@@ -296,60 +309,81 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    id="datesTBD"
-                    type="checkbox"
-                    checked={datesTBD}
-                    onChange={(e) => setDatesTBD(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300"
-                  />
-                  <Label htmlFor="datesTBD" className="font-normal">
-                    Dates to be determined (TBD)
-                  </Label>
-                </div>
-                {!datesTBD && (
-                  <>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="startDate">Start Date *</Label>
-                        <Input
-                          id="startDate"
-                          name="startDate"
-                          type="date"
-                          required={!datesTBD}
-                          value={startDate}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setStartDate(val);
-                            if (!endDate || endDate < val) {
-                              setEndDate(val);
-                            }
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="endDate">End Date *</Label>
-                        <Input
-                          id="endDate"
-                          name="endDate"
-                          type="date"
-                          required={!datesTBD}
-                          min={startDate || undefined}
-                          value={endDate}
-                          onChange={(e) => setEndDate(e.target.value)}
-                        />
-                      </div>
-                    </div>
-
-                    <DailyScheduleInput
-                      startDate={startDate}
-                      endDate={endDate}
-                      initialDays={eventDays}
-                      onChange={handleEventDaysChange}
-                      disabled={saving}
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="datesTBD"
+                      type="checkbox"
+                      checked={datesTBD}
+                      onChange={(e) => {
+                        setDatesTBD(e.target.checked);
+                        if (e.target.checked) setDiscontinuousDates(false);
+                      }}
+                      className="h-4 w-4 rounded border-gray-300"
                     />
-                  </>
+                    <Label htmlFor="datesTBD" className="font-normal">
+                      Dates TBD
+                    </Label>
+                  </div>
+                  {!datesTBD && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="discontinuousDates"
+                        type="checkbox"
+                        checked={discontinuousDates}
+                        onChange={(e) => setDiscontinuousDates(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      <Label htmlFor="discontinuousDates" className="font-normal">
+                        Non-contiguous dates
+                      </Label>
+                    </div>
+                  )}
+                </div>
+                {!datesTBD && !discontinuousDates && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="startDate">Start Date *</Label>
+                      <Input
+                        id="startDate"
+                        name="startDate"
+                        type="date"
+                        required={!datesTBD && !discontinuousDates}
+                        value={startDate}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setStartDate(val);
+                          if (!endDate || endDate < val) {
+                            setEndDate(val);
+                          }
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="endDate">End Date *</Label>
+                      <Input
+                        id="endDate"
+                        name="endDate"
+                        type="date"
+                        required={!datesTBD && !discontinuousDates}
+                        min={startDate || undefined}
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {!datesTBD && (
+                  <DailyScheduleInput
+                    startDate={startDate}
+                    endDate={endDate}
+                    initialDays={eventDays}
+                    discontinuousDates={discontinuousDates}
+                    onDiscontinuousChange={setDiscontinuousDates}
+                    onChange={handleEventDaysChange}
+                    disabled={saving}
+                  />
                 )}
               </div>
 

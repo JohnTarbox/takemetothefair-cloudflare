@@ -3,6 +3,7 @@ import type { EventDay } from "@/types";
 
 interface DailyScheduleDisplayProps {
   days: EventDay[];
+  discontinuousDates?: boolean;
   className?: string;
 }
 
@@ -32,7 +33,7 @@ function allSameHours(days: EventDay[]): boolean {
   );
 }
 
-export function DailyScheduleDisplay({ days, className = "" }: DailyScheduleDisplayProps) {
+export function DailyScheduleDisplay({ days, discontinuousDates = false, className = "" }: DailyScheduleDisplayProps) {
   if (!days || days.length === 0) {
     return null;
   }
@@ -41,8 +42,9 @@ export function DailyScheduleDisplay({ days, className = "" }: DailyScheduleDisp
   const sortedDays = [...days].sort((a, b) => a.date.localeCompare(b.date));
   const openDays = sortedDays.filter((d) => !d.closed);
 
-  // If all days have the same hours, show simplified display
-  if (allSameHours(sortedDays) && openDays.length > 0) {
+  // For discontinuous events, always show per-day listing (users need to see which dates)
+  // For contiguous events with same hours, show simplified display
+  if (!discontinuousDates && allSameHours(sortedDays) && openDays.length > 0) {
     const first = openDays[0];
     return (
       <div className={className}>

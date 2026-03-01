@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Copy, AlertTriangle } from "lucide-react";
+import { Copy, AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +22,8 @@ interface DailyScheduleInputProps {
   endDate: string | null;
   initialDays?: EventDayInput[];
   initialEnabled?: boolean; // For pre-setting "Different hours on each day" toggle
+  discontinuousDates?: boolean;
+  onDiscontinuousChange?: (value: boolean) => void;
   onChange: (days: EventDayInput[]) => void;
   disabled?: boolean;
 }
@@ -59,6 +61,8 @@ export function DailyScheduleInput({
   endDate,
   initialDays = [],
   initialEnabled,
+  discontinuousDates = false,
+  onDiscontinuousChange,
   onChange,
   disabled = false,
 }: DailyScheduleInputProps) {
@@ -79,8 +83,18 @@ export function DailyScheduleInput({
     }
   }, [initialEnabled]);
 
-  // Generate days when dates change or feature is enabled
+  // Sync initialDays when they arrive asynchronously (e.g., edit page loads)
   useEffect(() => {
+    if (discontinuousDates && initialDays.length > 0 && !initialDaysSyncedRef.current) {
+      initialDaysSyncedRef.current = true;
+      setDays(initialDays);
+      onChange(initialDays);
+    }
+  }, [discontinuousDates, initialDays, onChange]);
+
+  // Generate days when dates change or feature is enabled (contiguous mode only)
+  useEffect(() => {
+    if (discontinuousDates) return; // Skip range generation in discontinuous mode
     if (!enabled || !startDate || !endDate) {
       setShowTruncationWarning(false);
       return;
@@ -116,10 +130,11 @@ export function DailyScheduleInput({
       });
       setDays(newDays);
     }
-  }, [enabled, startDate, endDate, days]);
+  }, [enabled, startDate, endDate, days, discontinuousDates]);
 
   // Notify parent of changes (multi-day only - single-day handles its own onChange)
   const isSingleDay =
+    !discontinuousDates &&
     startDate &&
     endDate &&
     new Date(startDate).toDateString() === new Date(endDate).toDateString();
@@ -128,12 +143,18 @@ export function DailyScheduleInput({
     // Skip for single-day events - they handle onChange directly
     if (isSingleDay) return;
 
+    // In discontinuous mode, always report days
+    if (discontinuousDates) {
+      onChange(days);
+      return;
+    }
+
     if (enabled) {
       onChange(days);
     } else {
       onChange([]);
     }
-  }, [enabled, days, onChange, isSingleDay]);
+  }, [enabled, days, onChange, isSingleDay, discontinuousDates]);
 
   const handleToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setEnabled(e.target.checked);
@@ -162,14 +183,55 @@ export function DailyScheduleInput({
     );
   }, [days]);
 
+  // Discontinuous mode: add a new date row
+  const handleAddDate = useCallback(() => {
+    if (days.length >= MAX_EVENT_DAYS) return;
+    // Default to tomorrow or the day after the last date
+    let defaultDate = new Date();
+    defaultDate.setDate(defaultDate.getDate() + 1);
+    if (days.length > 0) {
+      const lastDate = new Date(days[days.length - 1].date + "T12:00:00");
+      lastDate.setDate(lastDate.getDate() + 1);
+      defaultDate = lastDate;
+    }
+    const dateStr = defaultDate.toISOString().split("T")[0];
+    setDays((prev) => {
+      const updated = [...prev, {
+        date: dateStr,
+        openTime: prev.length > 0 ? prev[0].openTime : "10:00",
+        closeTime: prev.length > 0 ? prev[0].closeTime : "18:00",
+        notes: "",
+        closed: false,
+      }];
+      // Sort chronologically
+      return updated.sort((a, b) => a.date.localeCompare(b.date));
+    });
+  }, [days]);
+
+  // Discontinuous mode: remove a date row
+  const handleRemoveDate = useCallback((index: number) => {
+    setDays((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Discontinuous mode: change a date value (re-sort after)
+  const handleDateValueChange = useCallback((index: number, newDate: string) => {
+    setDays((prev) => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], date: newDate };
+      return updated.sort((a, b) => a.date.localeCompare(b.date));
+    });
+  }, []);
+
   // Check if multi-day event
   const isMultiDay =
+    !discontinuousDates &&
     startDate &&
     endDate &&
     new Date(startDate).toDateString() !== new Date(endDate).toDateString();
 
   // Single-day event: initialize days and notify parent
   useEffect(() => {
+    if (discontinuousDates) return;
     if (!isSingleDay || !startDate) return;
 
     const dateStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
@@ -205,9 +267,133 @@ export function DailyScheduleInput({
       setDays([newDay]);
       onChange([newDay]);
     }
-  }, [isSingleDay, startDate, initialDays, days, onChange]);
+  }, [isSingleDay, startDate, initialDays, days, onChange, discontinuousDates]);
 
-  // Single-day event: show simplified hours input
+  // ── Discontinuous dates mode ──────────────────────────────────────
+  if (discontinuousDates) {
+    return (
+      <div className="space-y-4">
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
+            <span className="text-sm font-medium text-gray-700">
+              Event Dates ({days.length} of {MAX_EVENT_DAYS})
+            </span>
+            <div className="flex items-center gap-2">
+              {days.length >= 2 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCopyFirstToAll}
+                  disabled={disabled}
+                  className="text-xs"
+                >
+                  <Copy className="w-3 h-3 mr-1" />
+                  Copy first hours to all
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAddDate}
+                disabled={disabled || days.length >= MAX_EVENT_DAYS}
+                className="text-xs"
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                Add Date
+              </Button>
+            </div>
+          </div>
+
+          {days.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-gray-500">
+              No dates added yet. Click &quot;Add Date&quot; to add specific dates for this event.
+            </div>
+          ) : (
+            <div className="divide-y">
+              {days.map((day, index) => (
+                <div
+                  key={`${day.date}-${index}`}
+                  className={`px-4 py-3 grid grid-cols-[160px_auto_1fr_32px] gap-3 items-center ${
+                    day.closed ? "bg-gray-50" : ""
+                  }`}
+                >
+                  <div>
+                    <Input
+                      type="date"
+                      value={day.date}
+                      onChange={(e) => handleDateValueChange(index, e.target.value)}
+                      disabled={disabled}
+                      className="text-sm"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={day.closed}
+                        onChange={(e) => handleDayChange(index, "closed", e.target.checked)}
+                        disabled={disabled}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      <span className="text-gray-600">Closed</span>
+                    </label>
+
+                    {!day.closed && (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="time"
+                          value={day.openTime}
+                          onChange={(e) => handleDayChange(index, "openTime", e.target.value)}
+                          disabled={disabled}
+                          className="w-28"
+                        />
+                        <span className="text-gray-500">to</span>
+                        <Input
+                          type="time"
+                          value={day.closeTime}
+                          onChange={(e) => handleDayChange(index, "closeTime", e.target.value)}
+                          disabled={disabled}
+                          className="w-28"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="text"
+                      value={day.notes}
+                      onChange={(e) => handleDayChange(index, "notes", e.target.value)}
+                      placeholder="Notes"
+                      disabled={disabled || day.closed}
+                      className="flex-1"
+                      maxLength={200}
+                    />
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRemoveDate(index)}
+                    disabled={disabled}
+                    className="text-gray-400 hover:text-red-600 p-1 h-8 w-8"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Single-day event: show simplified hours input ─────────────────
   if (isSingleDay && startDate) {
     const dateStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
     const singleDay = days.length > 0 ? days[0] : {
@@ -276,12 +462,12 @@ export function DailyScheduleInput({
     );
   }
 
-  // No dates selected yet
+  // No dates selected yet (and not discontinuous)
   if (!isMultiDay) {
     return null;
   }
 
-  // Multi-day event: show toggle + daily schedule grid
+  // ── Multi-day event: show toggle + daily schedule grid ────────────
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">

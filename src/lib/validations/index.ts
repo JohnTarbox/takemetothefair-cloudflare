@@ -103,6 +103,7 @@ const eventBaseSchema = z.object({
   startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   datesConfirmed: z.boolean().optional().default(true),
+  discontinuousDates: z.boolean().optional().default(false),
   recurrenceRule: z.string().optional().nullable(),
   categories: z.array(z.string()).optional().default([]),
   tags: z.array(z.string()).optional().default([]),
@@ -149,6 +150,18 @@ export const eventCreateSchema = eventBaseSchema
     {
       message: "Maximum ticket price must be greater than or equal to minimum price",
       path: ["ticketPriceMax"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.discontinuousDates) {
+        return data.eventDays && data.eventDays.length >= 1;
+      }
+      return true;
+    },
+    {
+      message: "Discontinuous date events must have at least one date",
+      path: ["eventDays"],
     }
   );
 
@@ -253,8 +266,9 @@ export const promoterEventCreateSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
   venueId: z.string().min(1).optional().nullable(),
-  startDate: z.string().min(1),
-  endDate: z.string().min(1),
+  startDate: z.string().min(1).optional().nullable(),
+  endDate: z.string().min(1).optional().nullable(),
+  discontinuousDates: z.boolean().optional().default(false),
   categories: z.array(z.string()).optional().default([]),
   tags: z.array(z.string()).optional().default([]),
   ticketUrl: urlSchema,
@@ -283,6 +297,17 @@ export const promoterEventCreateSchema = z.object({
   {
     message: "Maximum ticket price must be greater than or equal to minimum price",
     path: ["ticketPriceMax"],
+  }
+).refine(
+  (data) => {
+    if (data.discontinuousDates) {
+      return data.eventDays && data.eventDays.length >= 1;
+    }
+    return true;
+  },
+  {
+    message: "Discontinuous date events must have at least one date",
+    path: ["eventDays"],
   }
 );
 
