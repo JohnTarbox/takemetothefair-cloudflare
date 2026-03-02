@@ -600,6 +600,8 @@ export default async function EventsPage({
           url: `https://meetmeatthefair.com/events/${e.slug}`,
           image: e.imageUrl,
         }))}
+        asCollectionPage
+        pageUrl="https://meetmeatthefair.com/events"
       />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Browse Events</h1>

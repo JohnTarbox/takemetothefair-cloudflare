@@ -1,6 +1,7 @@
 import { Calendar, Users, MapPin, Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -12,6 +13,12 @@ export const metadata: Metadata = {
 export default function AboutPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        type="AboutPage"
+        name="About Us | Meet Me at the Fair"
+        description="Learn about Meet Me at the Fair - your community calendar for fairs, festivals, and local events."
+        url="https://meetmeatthefair.com/about"
+      />
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           About Meet Me at the Fair

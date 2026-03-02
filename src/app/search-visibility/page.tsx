@@ -11,6 +11,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -23,6 +24,11 @@ export const metadata: Metadata = {
 export default function SearchVisibilityPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        name="Search Visibility | Meet Me at the Fair"
+        description="Learn how Meet Me at the Fair helps your events, venues, and vendor profiles appear in Google search results with rich event cards and business information."
+        url="https://meetmeatthefair.com/search-visibility"
+      />
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           Get Found in Google Search

@@ -202,6 +202,8 @@ export default async function VenuesPage({
           url: `https://meetmeatthefair.com/venues/${v.slug}`,
           image: v.imageUrl,
         }))}
+        asCollectionPage
+        pageUrl="https://meetmeatthefair.com/venues"
       />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Venues</h1>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -10,6 +11,11 @@ export const metadata: Metadata = {
 export default function PrivacyPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        name="Privacy Policy | Meet Me at the Fair"
+        description="Privacy policy for Meet Me at the Fair - how we collect, use, and protect your personal information."
+        url="https://meetmeatthefair.com/privacy"
+      />
       <h1 className="text-4xl font-bold text-gray-900 mb-8">
         Privacy Policy
       </h1>

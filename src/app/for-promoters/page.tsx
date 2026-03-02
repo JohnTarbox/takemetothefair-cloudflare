@@ -1,6 +1,7 @@
 import { CalendarPlus, Users, Megaphone, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -12,6 +13,11 @@ export const metadata: Metadata = {
 export default function ForPromotersPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        name="For Promoters | Meet Me at the Fair"
+        description="List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair."
+        url="https://meetmeatthefair.com/for-promoters"
+      />
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           For Promoters

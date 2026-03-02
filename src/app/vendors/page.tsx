@@ -243,6 +243,8 @@ export default async function VendorsPage({
           url: `https://meetmeatthefair.com/vendors/${v.slug}`,
           image: v.logoUrl,
         }))}
+        asCollectionPage
+        pageUrl="https://meetmeatthefair.com/vendors"
       />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Vendor Directory</h1>

@@ -10,6 +10,11 @@ interface EventDay {
   createdAt?: Date | null;
 }
 
+interface EventVendor {
+  name: string;
+  url: string;
+}
+
 interface EventSchemaProps {
   name: string;
   description?: string;
@@ -36,6 +41,7 @@ interface EventSchemaProps {
   categories?: string[];
   datesConfirmed?: boolean | null;
   eventDays?: EventDay[];
+  vendors?: EventVendor[];
 }
 
 function getEventType(categories?: string[]): string {
@@ -71,6 +77,7 @@ export function EventSchema({
   categories,
   datesConfirmed,
   eventDays,
+  vendors,
 }: EventSchemaProps) {
   // Calculate isAccessibleForFree based on ticket price
   const isAccessibleForFree = ticketPriceMin === 0 || ticketPriceMin === null || ticketPriceMin === undefined;
@@ -154,24 +161,31 @@ export function EventSchema({
           name: "Meet Me at the Fair",
           url: "https://meetmeatthefair.com",
         },
-    performer: {
-      "@type": "PerformingGroup",
-      name: "Various Vendors & Exhibitors",
-    },
+    performer: vendors && vendors.length > 0
+      ? vendors.map((v) => ({
+          "@type": "Organization",
+          name: v.name,
+          url: v.url,
+        }))
+      : undefined,
     offers: ticketPriceMin !== null && ticketPriceMin !== undefined
-      ? {
-          "@type": "Offer",
-          url: ticketUrl || url,
-          price: ticketPriceMin,
-          priceCurrency: "USD",
-          availability: "https://schema.org/InStock",
-          validFrom: new Date().toISOString(),
-          ...(ticketPriceMax !== null &&
-            ticketPriceMax !== undefined &&
-            ticketPriceMax !== ticketPriceMin && {
-              highPrice: ticketPriceMax,
-            }),
-        }
+      ? ticketPriceMax !== null && ticketPriceMax !== undefined && ticketPriceMax !== ticketPriceMin
+        ? {
+            "@type": "AggregateOffer",
+            url: ticketUrl || url,
+            lowPrice: ticketPriceMin,
+            highPrice: ticketPriceMax,
+            priceCurrency: "USD",
+            availability: "https://schema.org/InStock",
+          }
+        : {
+            "@type": "Offer",
+            url: ticketUrl || url,
+            price: ticketPriceMin,
+            priceCurrency: "USD",
+            availability: "https://schema.org/InStock",
+            validFrom: new Date().toISOString(),
+          }
       : {
           "@type": "Offer",
           url: ticketUrl || url,

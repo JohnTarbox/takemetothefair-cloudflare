@@ -1,6 +1,7 @@
 import { Search, UserCircle, ClipboardList, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -12,6 +13,11 @@ export const metadata: Metadata = {
 export default function ForVendorsPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        name="For Vendors | Meet Me at the Fair"
+        description="Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair."
+        url="https://meetmeatthefair.com/for-vendors"
+      />
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           For Vendors

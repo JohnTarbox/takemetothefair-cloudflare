@@ -17,6 +17,14 @@ function getSchemaType(vendorType?: string | null): string {
   return "LocalBusiness";
 }
 
+function getPriceRange(vendorType?: string | null): string {
+  if (!vendorType) return "$-$$";
+  const type = vendorType.toLowerCase();
+  if (type.includes("food") || type.includes("bakery") || type.includes("cafe")) return "$";
+  if (type.includes("craft") || type.includes("artisan") || type.includes("handmade") || type.includes("jewelry")) return "$$";
+  return "$-$$";
+}
+
 interface VendorSchemaProps {
   businessName: string;
   description?: string | null;
@@ -88,10 +96,27 @@ export function VendorSchema({
         ? paymentMethods.join(", ")
         : undefined,
     sameAs: sameAs.length > 0 ? sameAs : undefined,
-    // Use knowsAbout for products/services (avoids Product schema validation issues)
-    // Product schema requires offers/review/aggregateRating which we don't have
-    knowsAbout:
-      products && products.length > 0 ? products : undefined,
+    priceRange: getPriceRange(vendorType),
+    hasOfferCatalog:
+      products && products.length > 0
+        ? {
+            "@type": "OfferCatalog",
+            name: "Products & Services",
+            itemListElement: products.map((p) => ({
+              "@type": "Offer",
+              itemOffered: {
+                "@type": "Product",
+                name: p,
+              },
+            })),
+          }
+        : undefined,
+    areaServed: state
+      ? {
+          "@type": "State",
+          name: state,
+        }
+      : undefined,
   };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));

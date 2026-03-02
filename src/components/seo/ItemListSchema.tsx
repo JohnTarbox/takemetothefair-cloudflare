@@ -11,13 +11,14 @@ interface ItemListSchemaProps {
   description?: string;
   items: Array<{ name: string; url: string; image?: string | null }>;
   order?: ItemListOrder;
+  asCollectionPage?: boolean;
+  pageUrl?: string;
 }
 
-export function ItemListSchema({ name, description, items, order = "ascending" }: ItemListSchemaProps) {
+export function ItemListSchema({ name, description, items, order = "ascending", asCollectionPage, pageUrl }: ItemListSchemaProps) {
   const capped = items.slice(0, 30);
 
-  const schema = {
-    "@context": "https://schema.org",
+  const itemList = {
     "@type": "ItemList",
     name,
     description: description || undefined,
@@ -31,6 +32,20 @@ export function ItemListSchema({ name, description, items, order = "ascending" }
       image: item.image || undefined,
     })),
   };
+
+  const schema = asCollectionPage
+    ? {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        name,
+        description: description || undefined,
+        url: pageUrl || undefined,
+        mainEntity: itemList,
+      }
+    : {
+        "@context": "https://schema.org",
+        ...itemList,
+      };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));
 

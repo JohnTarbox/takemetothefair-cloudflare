@@ -2,6 +2,7 @@ import { Mail, MessageSquare } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { FAQSchema } from "@/components/seo/FAQSchema";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -32,6 +33,12 @@ const faqItems = [
 export default function ContactPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        type="ContactPage"
+        name="Contact Us | Meet Me at the Fair"
+        description="Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more."
+        url="https://meetmeatthefair.com/contact"
+      />
       <FAQSchema items={faqItems} />
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">

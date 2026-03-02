@@ -237,6 +237,10 @@ export default async function EventDetailPage({ params }: Props) {
         categories={parseJsonArray(event.categories)}
         datesConfirmed={event.datesConfirmed}
         eventDays={event.eventDays}
+        vendors={event.eventVendors.slice(0, 10).map(({ vendor }) => ({
+          name: vendor.businessName,
+          url: `https://meetmeatthefair.com/vendors/${vendor.slug}`,
+        }))}
       />
       <BreadcrumbSchema
         items={[

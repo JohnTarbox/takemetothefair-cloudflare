@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
 
@@ -10,6 +11,11 @@ export const metadata: Metadata = {
 export default function TermsPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <WebPageSchema
+        name="Terms of Service | Meet Me at the Fair"
+        description="Terms of service for Meet Me at the Fair - rules and guidelines for using our platform."
+        url="https://meetmeatthefair.com/terms"
+      />
       <h1 className="text-4xl font-bold text-gray-900 mb-8">
         Terms of Service
       </h1>

@@ -1,3 +1,10 @@
+interface UpcomingEvent {
+  name: string;
+  url: string;
+  startDate: Date;
+  endDate: Date;
+}
+
 interface VenueSchemaProps {
   name: string;
   description?: string | null;
@@ -17,6 +24,7 @@ interface VenueSchemaProps {
   openingHours?: string | null;
   accessibility?: string[];
   website?: string | null;
+  upcomingEvents?: UpcomingEvent[];
 }
 
 interface OpeningHoursSpec {
@@ -62,6 +70,7 @@ export function VenueSchema({
   openingHours,
   accessibility,
   website,
+  upcomingEvents,
 }: VenueSchemaProps) {
   const schema = {
     "@context": "https://schema.org",
@@ -116,6 +125,16 @@ export function VenueSchema({
     accessibilityFeature:
       accessibility && accessibility.length > 0 ? accessibility : undefined,
     sameAs: website ? [website] : undefined,
+    event:
+      upcomingEvents && upcomingEvents.length > 0
+        ? upcomingEvents.map((e) => ({
+            "@type": "Event",
+            name: e.name,
+            url: e.url,
+            startDate: new Date(e.startDate).toISOString(),
+            endDate: new Date(e.endDate).toISOString(),
+          }))
+        : undefined,
   };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));
