@@ -4,11 +4,15 @@ async function loginAsAdmin(page: Page) {
   await page.goto("/login");
   await page.fill('input[type="email"]', "admin@takemetothefair.com");
   await page.fill('input[type="password"]', "admin123");
-  await page.click('button[type="submit"]');
-  // Wait for redirect away from login
-  await page.waitForURL((url) => !url.pathname.includes("/login"), {
-    timeout: 15000,
-  });
+  // Wait for the auth API response rather than the login page's client-side redirect
+  await Promise.all([
+    page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/auth/callback/credentials") &&
+        resp.status() === 200
+    ),
+    page.click('button[type="submit"]'),
+  ]);
 }
 
 async function enableManualPaste(page: Page) {
@@ -22,7 +26,10 @@ test.describe("Import URL Page - Authenticated", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto("/admin/import-url");
-    await page.waitForLoadState("networkidle");
+    // Wait for the page heading instead of networkidle (which can stall under load)
+    await expect(
+      page.getByRole("heading", { name: "Import from URL" })
+    ).toBeVisible({ timeout: 15000 });
   });
 
   test("page loads with correct heading and step indicator", async ({
@@ -121,15 +128,23 @@ test.describe("Import URL Page - Authenticated", () => {
   test("shows loading step with cancel button when fetching", async ({
     page,
   }) => {
+    // Intercept the fetch API to create a reliable, controlled loading state
+    // instead of depending on external httpbin.org which can be unreliable
+    await page.route("**/api/admin/import-url/fetch**", async (route) => {
+      // Hold the request open so the loading state stays visible
+      await new Promise((resolve) => setTimeout(resolve, 30000));
+      await route.abort();
+    });
+
     const urlInput = page.locator('input[type="url"]');
-    await urlInput.fill("https://httpbin.org/delay/10");
+    await urlInput.fill("https://example.com/some-event-page");
 
     const fetchButton = page.getByRole("button", { name: /Fetch Page/i });
     await fetchButton.click();
 
     // Should show fetching state
     await expect(page.getByText(/Fetching page content/i)).toBeVisible({
-      timeout: 5000,
+      timeout: 15000,
     });
 
     // Should show cancel button

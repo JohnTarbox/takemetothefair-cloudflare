@@ -1,17 +1,26 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Single-Day Event Creation", () => {
+  // All tests require login + admin page compilation, which can exceed 30s under load
+  test.describe.configure({ timeout: 60000 });
+
   test.beforeEach(async ({ page }) => {
     // Login as admin
     await page.goto("/login");
     await page.locator('input[type="email"]').fill("admin@takemetothefair.com");
     await page.locator('input[type="password"]').fill("admin123");
-    await page.locator('button[type="submit"]').click();
 
-    // Wait for redirect away from login (more robust than checking DOM elements)
-    await page.waitForURL((url) => !url.pathname.includes("/login"), {
-      timeout: 15000,
-    });
+    // Wait for the auth API response rather than the login page's client-side redirect,
+    // which can stall when the dev server is under load from parallel test workers.
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/auth/callback/credentials") &&
+          resp.status() === 200
+      ),
+      page.locator('button[type="submit"]').click(),
+    ]);
+    // Session cookie is now set — each test navigates to its own page.
   });
 
   test("shows event hours input for single-day event", async ({ page }) => {
@@ -97,8 +106,6 @@ test.describe("Single-Day Event Creation", () => {
   });
 
   test("can create and edit single-day event with custom times", async ({ page }) => {
-    // This test does login + form fill + API creation + redirect + edit page load
-    test.setTimeout(60000);
     await page.goto("/admin/events/new");
 
     // Wait for the form to load
@@ -114,7 +121,7 @@ test.describe("Single-Day Event Creation", () => {
     await page.waitForFunction(
       (selector) => document.querySelector(selector)?.querySelectorAll("option").length >= 2,
       "#promoterId",
-      { timeout: 10000 }
+      { timeout: 15000 }
     );
     await promoterSelect.selectOption({ index: 1 });
 
