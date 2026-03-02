@@ -7,7 +7,7 @@ interface GeocodeResult {
   placeId: string;
 }
 
-interface PlaceLookupResult {
+export interface PlaceLookupResult {
   name: string | null;
   phone: string | null;
   website: string | null;
@@ -32,6 +32,13 @@ interface PlaceLookupResult {
   outdoorSeating: boolean | null;
 }
 
+export interface AutocompleteSuggestion {
+  placeId: string;
+  mainText: string;
+  secondaryText: string;
+  fullText: string;
+}
+
 interface GeocodingResponse {
   status: string;
   results: Array<{
@@ -45,31 +52,122 @@ interface GeocodingResponse {
   }>;
 }
 
-interface PlacesSearchResponse {
-  places?: Array<{
-    id: string;
-    displayName?: { text: string };
-    formattedAddress?: string;
-    location?: { latitude: number; longitude: number };
-    nationalPhoneNumber?: string;
-    websiteUri?: string;
-    googleMapsUri?: string;
-    photos?: Array<{ name: string }>;
-    addressComponents?: Array<{
-      longText: string;
-      shortText: string;
-      types: string[];
-    }>;
-    regularOpeningHours?: unknown;
-    rating?: number;
-    userRatingCount?: number;
-    types?: string[];
-    accessibilityOptions?: unknown;
-    parkingOptions?: unknown;
-    editorialSummary?: { text: string };
-    businessStatus?: string;
-    outdoorSeating?: boolean;
+// Shared shape for a single place object from the Places API (New)
+interface PlaceObject {
+  id: string;
+  displayName?: { text: string };
+  formattedAddress?: string;
+  location?: { latitude: number; longitude: number };
+  nationalPhoneNumber?: string;
+  websiteUri?: string;
+  googleMapsUri?: string;
+  photos?: Array<{ name: string }>;
+  addressComponents?: Array<{
+    longText: string;
+    shortText: string;
+    types: string[];
   }>;
+  regularOpeningHours?: unknown;
+  rating?: number;
+  userRatingCount?: number;
+  types?: string[];
+  accessibilityOptions?: unknown;
+  parkingOptions?: unknown;
+  editorialSummary?: { text: string };
+  businessStatus?: string;
+  outdoorSeating?: boolean;
+}
+
+interface PlacesSearchResponse {
+  places?: PlaceObject[];
+}
+
+interface AutocompleteResponse {
+  suggestions?: Array<{
+    placePrediction?: {
+      placeId: string;
+      text?: { text: string };
+      structuredFormat?: {
+        mainText?: { text: string };
+        secondaryText?: { text: string };
+      };
+    };
+  }>;
+}
+
+// Field mask shared between getPlaceById and lookupPlace
+const PLACE_FIELD_MASK =
+  "id,displayName,formattedAddress,location,nationalPhoneNumber,websiteUri,googleMapsUri,addressComponents,photos,regularOpeningHours,rating,userRatingCount,types,accessibilityOptions,parkingOptions,editorialSummary,businessStatus,outdoorSeating";
+
+const SEARCH_FIELD_MASK = PLACE_FIELD_MASK.split(",")
+  .map((f) => `places.${f}`)
+  .join(",");
+
+/**
+ * Parse a PlaceObject from the Google Places API (New) into our PlaceLookupResult.
+ * Shared by lookupPlace and getPlaceById to avoid duplication.
+ */
+async function parsePlaceObject(
+  place: PlaceObject,
+  apiKey: string
+): Promise<PlaceLookupResult> {
+  const getComponent = (type: string) =>
+    place.addressComponents?.find((c) => c.types.includes(type));
+  const streetNumber = getComponent("street_number")?.longText || "";
+  const route = getComponent("route")?.longText || "";
+  const streetAddress = [streetNumber, route].filter(Boolean).join(" ") || null;
+  const cityComponent = getComponent("locality")?.longText || null;
+  const stateComponent =
+    getComponent("administrative_area_level_1")?.shortText || null;
+  const zipComponent = getComponent("postal_code");
+
+  // Fetch photo URL if available
+  let photoUrl: string | null = null;
+  if (place.photos?.length) {
+    try {
+      const photoName = place.photos[0].name;
+      const photoRes = await fetch(
+        `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${apiKey}&skipHttpRedirect=true`
+      );
+      if (photoRes.ok) {
+        const photoData = (await photoRes.json()) as { photoUri?: string };
+        photoUrl = photoData.photoUri || null;
+      }
+    } catch {
+      // Photo fetch failed, continue without it
+    }
+  }
+
+  return {
+    name: place.displayName?.text || null,
+    phone: place.nationalPhoneNumber || null,
+    website: place.websiteUri || null,
+    lat: place.location?.latitude ?? null,
+    lng: place.location?.longitude ?? null,
+    address: streetAddress,
+    city: cityComponent,
+    state: stateComponent,
+    zip: zipComponent?.shortText || null,
+    formattedAddress: place.formattedAddress || null,
+    photoUrl,
+    googlePlaceId: place.id || null,
+    googleMapsUrl: place.googleMapsUri || null,
+    openingHours: place.regularOpeningHours
+      ? JSON.stringify(place.regularOpeningHours)
+      : null,
+    googleRating: place.rating ?? null,
+    googleRatingCount: place.userRatingCount ?? null,
+    googleTypes: place.types ? JSON.stringify(place.types) : null,
+    accessibility: place.accessibilityOptions
+      ? JSON.stringify(place.accessibilityOptions)
+      : null,
+    parking: place.parkingOptions
+      ? JSON.stringify(place.parkingOptions)
+      : null,
+    description: place.editorialSummary?.text || null,
+    businessStatus: place.businessStatus || null,
+    outdoorSeating: place.outdoorSeating ?? null,
+  };
 }
 
 export async function geocodeAddress(
@@ -125,8 +223,7 @@ export async function lookupPlace(
   const headers = {
     "Content-Type": "application/json",
     "X-Goog-Api-Key": apiKey,
-    "X-Goog-FieldMask":
-      "places.id,places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.addressComponents,places.photos,places.regularOpeningHours,places.rating,places.userRatingCount,places.types,places.accessibilityOptions,places.parkingOptions,places.editorialSummary,places.businessStatus,places.outdoorSeating",
+    "X-Goog-FieldMask": SEARCH_FIELD_MASK,
   };
 
   const buildBody = (query: string) => {
@@ -168,57 +265,159 @@ export async function lookupPlace(
 
     if (!data.places?.length) return null;
 
-    const place = data.places[0];
-    const getComponent = (type: string) =>
-      place.addressComponents?.find((c) => c.types.includes(type));
-    const streetNumber = getComponent("street_number")?.longText || "";
-    const route = getComponent("route")?.longText || "";
-    const streetAddress = [streetNumber, route].filter(Boolean).join(" ") || null;
-    const cityComponent = getComponent("locality")?.longText || null;
-    const stateComponent = getComponent("administrative_area_level_1")?.shortText || null;
-    const zipComponent = getComponent("postal_code");
+    return parsePlaceObject(data.places[0], apiKey);
+  } catch {
+    return null;
+  }
+}
 
-    // Fetch photo URL if available
-    let photoUrl: string | null = null;
-    if (place.photos?.length) {
-      try {
-        const photoName = place.photos[0].name;
-        const photoRes = await fetch(
-          `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${apiKey}&skipHttpRedirect=true`
-        );
-        if (photoRes.ok) {
-          const photoData = (await photoRes.json()) as { photoUri?: string };
-          photoUrl = photoData.photoUri || null;
-        }
-      } catch {
-        // Photo fetch failed, continue without it
+/**
+ * Autocomplete place names using the Places API (New) autocomplete endpoint.
+ * Returns lightweight suggestions suitable for typeahead UI.
+ */
+export async function autocompletePlace(
+  input: string,
+  apiKey: string
+): Promise<AutocompleteSuggestion[]> {
+  const url = "https://places.googleapis.com/v1/places:autocomplete";
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+      },
+      body: JSON.stringify({ input }),
+    });
+
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as AutocompleteResponse;
+    if (!data.suggestions?.length) return [];
+
+    return data.suggestions
+      .filter((s) => s.placePrediction?.placeId)
+      .map((s) => {
+        const p = s.placePrediction!;
+        return {
+          placeId: p.placeId,
+          mainText: p.structuredFormat?.mainText?.text || p.text?.text || "",
+          secondaryText: p.structuredFormat?.secondaryText?.text || "",
+          fullText: p.text?.text || "",
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch full place details by placeId using the Places API (New).
+ */
+export async function getPlaceById(
+  placeId: string,
+  apiKey: string
+): Promise<PlaceLookupResult | null> {
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": PLACE_FIELD_MASK,
+      },
+    });
+
+    if (!res.ok) return null;
+
+    const place = (await res.json()) as PlaceObject;
+    if (!place.id) return null;
+
+    return parsePlaceObject(place, apiKey);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a Google Maps URL (including short links like maps.app.goo.gl)
+ * to a PlaceLookupResult by following redirects and extracting place info.
+ */
+export async function resolveGoogleMapsUrl(
+  url: string,
+  apiKey: string
+): Promise<PlaceLookupResult | null> {
+  try {
+    // Follow redirects to get the final URL
+    let finalUrl = url;
+    if (
+      url.includes("maps.app.goo.gl") ||
+      url.includes("goo.gl/maps")
+    ) {
+      const res = await fetch(url, { redirect: "follow" });
+      finalUrl = res.url;
+    }
+
+    // Try to extract placeId from the URL
+    // Pattern: /place/.../@.../data=...!1s<placeId>  or  ?ftid=<placeId>
+    const placeIdPatterns = [
+      /[!?&]ftid=(0x[a-f0-9]+:0x[a-f0-9]+)/i,
+      /data=.*!1s(0x[a-f0-9]+:0x[a-f0-9]+)/i,
+      /place_id[=:]([A-Za-z0-9_-]+)/i,
+    ];
+
+    for (const pattern of placeIdPatterns) {
+      const match = finalUrl.match(pattern);
+      if (match?.[1]) {
+        const result = await getPlaceById(match[1], apiKey);
+        if (result) return result;
       }
     }
 
-    return {
-      name: place.displayName?.text || null,
-      phone: place.nationalPhoneNumber || null,
-      website: place.websiteUri || null,
-      lat: place.location?.latitude ?? null,
-      lng: place.location?.longitude ?? null,
-      address: streetAddress,
-      city: cityComponent,
-      state: stateComponent,
-      zip: zipComponent?.shortText || null,
-      formattedAddress: place.formattedAddress || null,
-      photoUrl,
-      googlePlaceId: place.id || null,
-      googleMapsUrl: place.googleMapsUri || null,
-      openingHours: place.regularOpeningHours ? JSON.stringify(place.regularOpeningHours) : null,
-      googleRating: place.rating ?? null,
-      googleRatingCount: place.userRatingCount ?? null,
-      googleTypes: place.types ? JSON.stringify(place.types) : null,
-      accessibility: place.accessibilityOptions ? JSON.stringify(place.accessibilityOptions) : null,
-      parking: place.parkingOptions ? JSON.stringify(place.parkingOptions) : null,
-      description: place.editorialSummary?.text || null,
-      businessStatus: place.businessStatus || null,
-      outdoorSeating: place.outdoorSeating ?? null,
-    };
+    // Try to extract place name and coordinates from the URL
+    // Pattern: /place/Place+Name/@lat,lng,...
+    const placeNameMatch = finalUrl.match(
+      /\/place\/([^/@]+)\/@(-?[\d.]+),(-?[\d.]+)/
+    );
+    if (placeNameMatch) {
+      const placeName = decodeURIComponent(placeNameMatch[1]).replace(
+        /\+/g,
+        " "
+      );
+      const lat = parseFloat(placeNameMatch[2]);
+      const lng = parseFloat(placeNameMatch[3]);
+      return lookupPlace(placeName, "", "", apiKey, { lat, lng });
+    }
+
+    // Try just coordinates pattern: /@lat,lng
+    const coordMatch = finalUrl.match(
+      /\/@(-?[\d.]+),(-?[\d.]+)/
+    );
+
+    // Try to extract a search query: /search/query
+    const searchMatch = finalUrl.match(/\/search\/([^/@?]+)/);
+    if (searchMatch) {
+      const query = decodeURIComponent(searchMatch[1]).replace(/\+/g, " ");
+      const lat = coordMatch ? parseFloat(coordMatch[1]) : undefined;
+      const lng = coordMatch ? parseFloat(coordMatch[2]) : undefined;
+      return lookupPlace(query, "", "", apiKey, {
+        lat,
+        lng,
+      });
+    }
+
+    // Last resort: extract any place name from /place/Name
+    const simplePlaceMatch = finalUrl.match(/\/place\/([^/@?]+)/);
+    if (simplePlaceMatch) {
+      const placeName = decodeURIComponent(simplePlaceMatch[1]).replace(
+        /\+/g,
+        " "
+      );
+      return lookupPlace(placeName, "", "", apiKey);
+    }
+
+    return null;
   } catch {
     return null;
   }

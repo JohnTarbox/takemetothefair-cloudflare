@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
+import { VenueComboSearch } from "@/components/venue-combo-search";
 
 export const runtime = "edge";
 
@@ -14,6 +15,7 @@ interface Venue {
   name: string;
   city: string;
   state: string;
+  googlePlaceId: string | null;
 }
 
 export default function CreateEventPage() {
@@ -181,24 +183,18 @@ export default function CreateEventPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Venue (optional)
-              </label>
-              <select
-                name="venueId"
-                value={formData.venueId}
-                onChange={handleChange}
-                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="">No venue selected</option>
-                {venues.map((venue) => (
-                  <option key={venue.id} value={venue.id}>
-                    {venue.name} - {venue.city}, {venue.state}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <VenueComboSearch
+              venues={venues}
+              selectedVenueId={formData.venueId}
+              onVenueSelect={(venueId) => {
+                setFormData((prev) => ({ ...prev, venueId }));
+                // If a new venue was created, re-fetch venue list
+                if (venueId && !venues.find((v) => v.id === venueId)) {
+                  fetchVenues();
+                }
+              }}
+              disabled={loading}
+            />
 
             <div className="flex items-center gap-2 mb-2">
               <input

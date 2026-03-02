@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { GooglePlaceSearch } from "@/components/google-place-search";
+import type { PlaceLookupResult } from "@/lib/google-maps";
 
 export const runtime = "edge";
 
@@ -39,6 +41,7 @@ export default function VendorProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [showGoogleLookup, setShowGoogleLookup] = useState(false);
   const [formData, setFormData] = useState({
     businessName: "",
     description: "",
@@ -119,6 +122,21 @@ export default function VendorProfilePage() {
       ...prev,
       [e.target.name]: e.target.value,
     }));
+  };
+
+  const handleGooglePlaceSelect = (place: PlaceLookupResult) => {
+    setFormData((prev) => ({
+      ...prev,
+      address: place.address || place.formattedAddress || prev.address,
+      city: place.city || prev.city,
+      state: place.state || prev.state,
+      zip: place.zip || prev.zip,
+      website: place.website || prev.website,
+      contactPhone: place.phone || prev.contactPhone,
+      description: place.description || prev.description,
+    }));
+    setShowGoogleLookup(false);
+    setMessage("Address auto-filled from Google. Review and save changes.");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -298,7 +316,27 @@ export default function VendorProfilePage() {
 
             {/* Physical Address Section */}
             <div className="border-t pt-6 mt-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Physical Address</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-medium text-gray-900">Physical Address</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleLookup(!showGoogleLookup)}
+                  className="text-sm text-blue-600 hover:text-blue-800"
+                >
+                  {showGoogleLookup ? "Hide" : "Find my business on Google"}
+                </button>
+              </div>
+              {showGoogleLookup && (
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-700 mb-2">
+                    Search for your business to auto-fill address and contact info
+                  </p>
+                  <GooglePlaceSearch
+                    onPlaceSelect={handleGooglePlaceSelect}
+                    placeholder="Search for your business name..."
+                  />
+                </div>
+              )}
               <div className="space-y-4">
                 <Input
                   label="Street Address"

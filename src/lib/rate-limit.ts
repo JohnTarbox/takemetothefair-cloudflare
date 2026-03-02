@@ -57,6 +57,22 @@ export const RATE_LIMITS = {
     authenticatedLimit: 10,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // Google Places API proxies - authenticated only, moderate limits
+  "google-autocomplete": {
+    anonymousLimit: 0,
+    authenticatedLimit: 100,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  "google-place-details": {
+    anonymousLimit: 0,
+    authenticatedLimit: 60,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  "google-url-resolve": {
+    anonymousLimit: 0,
+    authenticatedLimit: 30,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
