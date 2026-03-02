@@ -360,11 +360,45 @@ export async function resolveGoogleMapsUrl(
       finalUrl = res.url;
     }
 
-    // Handle share.google links that redirect to Google Search with a q= param
+    // Handle share.google links that redirect to Google Search with kgmid + q params
     // e.g. https://www.google.com/search?...&q=Place+Name&kgmid=/g/xxx
+    // The kgmid uniquely identifies the specific location, but the Places API
+    // doesn't accept it directly. We fetch Google Maps with the kgmid to extract
+    // the exact coordinates from the embedded static map URL, then use those
+    // coordinates as a location bias to disambiguate the generic query.
     if (finalUrl.includes("google.com/search") || finalUrl.includes("google.com/share.google")) {
       const parsed = new URL(finalUrl);
       const query = parsed.searchParams.get("q");
+      const kgmid = parsed.searchParams.get("kgmid");
+
+      if (query && kgmid) {
+        // Fetch Google Maps page with kgmid to extract precise coordinates
+        try {
+          const mapsRes = await fetch(
+            `https://www.google.com/maps?kgmid=${encodeURIComponent(kgmid)}&q=${encodeURIComponent(query)}`,
+            {
+              headers: { "User-Agent": "Mozilla/5.0" },
+              redirect: "follow",
+            }
+          );
+          if (mapsRes.ok) {
+            const mapsHtml = await mapsRes.text();
+            // Google Maps embeds coordinates in static map URLs: center=LAT%2CLNG
+            const centerMatch = mapsHtml.match(
+              /center=(-?\d+\.\d+)%2C(-?\d+\.\d+)/
+            );
+            if (centerMatch) {
+              const lat = parseFloat(centerMatch[1]);
+              const lng = parseFloat(centerMatch[2]);
+              return lookupPlace(query, "", "", apiKey, { lat, lng });
+            }
+          }
+        } catch {
+          // Fall through to generic query lookup
+        }
+      }
+
+      // Fallback: use just the query without location bias
       if (query) {
         return lookupPlace(query, "", "", apiKey);
       }
