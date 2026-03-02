@@ -1,5 +1,15 @@
 // Google Maps Geocoding and Places API (server-side fetch, edge-compatible)
 
+/**
+ * Result type for resolveGoogleMapsUrl that can indicate partial matches.
+ * When a share.google link can't determine the exact location, suggestedQuery
+ * is set so the client can prompt the user to search by name.
+ */
+export interface ResolveResult {
+  place: PlaceLookupResult | null;
+  suggestedQuery?: string;
+}
+
 interface GeocodeResult {
   lat: number;
   lng: number;
@@ -347,7 +357,7 @@ export async function getPlaceById(
 export async function resolveGoogleMapsUrl(
   url: string,
   apiKey: string
-): Promise<PlaceLookupResult | null> {
+): Promise<ResolveResult> {
   try {
     // Follow redirects to get the final URL
     let finalUrl = url;
@@ -358,49 +368,42 @@ export async function resolveGoogleMapsUrl(
     ) {
       const res = await fetch(url, { redirect: "follow" });
       finalUrl = res.url;
+
+      // Google may block datacenter IPs with 429 → redirect to google.com/sorry.
+      // The sorry page's "continue" param contains the original target URL.
+      if (finalUrl.includes("google.com/sorry")) {
+        try {
+          const sorryUrl = new URL(finalUrl);
+          const continueUrl = sorryUrl.searchParams.get("continue");
+          if (continueUrl) {
+            finalUrl = decodeURIComponent(continueUrl);
+          }
+        } catch {
+          // couldn't parse sorry URL, continue with what we have
+        }
+      }
     }
 
     // Handle share.google links that redirect to Google Search with kgmid + q params
     // e.g. https://www.google.com/search?...&q=Place+Name&kgmid=/g/xxx
-    // The kgmid uniquely identifies the specific location, but the Places API
-    // doesn't accept it directly. We fetch Google Maps with the kgmid to extract
-    // the exact coordinates from the embedded static map URL, then use those
-    // coordinates as a location bias to disambiguate the generic query.
+    // The kgmid uniquely identifies a specific location, but Google's APIs don't
+    // accept it directly. Server-side resolution via Maps page scraping is unreliable:
+    // Google either blocks datacenter IPs (429) or returns the data center's location
+    // coordinates instead of the venue's. We return the query name so the client can
+    // prompt the user to search by name (which uses the Places Autocomplete API).
     if (finalUrl.includes("google.com/search") || finalUrl.includes("google.com/share.google")) {
       const parsed = new URL(finalUrl);
       const query = parsed.searchParams.get("q");
       const kgmid = parsed.searchParams.get("kgmid");
 
       if (query && kgmid) {
-        // Fetch Google Maps page with kgmid to extract precise coordinates
-        try {
-          const mapsRes = await fetch(
-            `https://www.google.com/maps?kgmid=${encodeURIComponent(kgmid)}&q=${encodeURIComponent(query)}`,
-            {
-              headers: { "User-Agent": "Mozilla/5.0" },
-              redirect: "follow",
-            }
-          );
-          if (mapsRes.ok) {
-            const mapsHtml = await mapsRes.text();
-            // Google Maps embeds coordinates in static map URLs: center=LAT%2CLNG
-            const centerMatch = mapsHtml.match(
-              /center=(-?\d+\.\d+)%2C(-?\d+\.\d+)/
-            );
-            if (centerMatch) {
-              const lat = parseFloat(centerMatch[1]);
-              const lng = parseFloat(centerMatch[2]);
-              return lookupPlace(query, "", "", apiKey, { lat, lng });
-            }
-          }
-        } catch {
-          // Fall through to generic query lookup
-        }
+        return { place: null, suggestedQuery: query };
       }
 
-      // Fallback: use just the query without location bias
+      // Non-kgmid search URLs: use just the query
       if (query) {
-        return lookupPlace(query, "", "", apiKey);
+        const place = await lookupPlace(query, "", "", apiKey);
+        return { place };
       }
     }
 
@@ -415,8 +418,8 @@ export async function resolveGoogleMapsUrl(
     for (const pattern of placeIdPatterns) {
       const match = finalUrl.match(pattern);
       if (match?.[1]) {
-        const result = await getPlaceById(match[1], apiKey);
-        if (result) return result;
+        const place = await getPlaceById(match[1], apiKey);
+        if (place) return { place };
       }
     }
 
@@ -432,7 +435,8 @@ export async function resolveGoogleMapsUrl(
       );
       const lat = parseFloat(placeNameMatch[2]);
       const lng = parseFloat(placeNameMatch[3]);
-      return lookupPlace(placeName, "", "", apiKey, { lat, lng });
+      const place = await lookupPlace(placeName, "", "", apiKey, { lat, lng });
+      return { place };
     }
 
     // Try just coordinates pattern: /@lat,lng
@@ -446,10 +450,8 @@ export async function resolveGoogleMapsUrl(
       const query = decodeURIComponent(searchMatch[1]).replace(/\+/g, " ");
       const lat = coordMatch ? parseFloat(coordMatch[1]) : undefined;
       const lng = coordMatch ? parseFloat(coordMatch[2]) : undefined;
-      return lookupPlace(query, "", "", apiKey, {
-        lat,
-        lng,
-      });
+      const place = await lookupPlace(query, "", "", apiKey, { lat, lng });
+      return { place };
     }
 
     // Last resort: extract any place name from /place/Name
@@ -459,11 +461,12 @@ export async function resolveGoogleMapsUrl(
         /\+/g,
         " "
       );
-      return lookupPlace(placeName, "", "", apiKey);
+      const place = await lookupPlace(placeName, "", "", apiKey);
+      return { place };
     }
 
-    return null;
+    return { place: null };
   } catch {
-    return null;
+    return { place: null };
   }
 }

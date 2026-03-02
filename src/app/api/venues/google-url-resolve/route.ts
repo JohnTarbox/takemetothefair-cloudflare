@@ -56,13 +56,26 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await resolveGoogleMapsUrl(url, apiKey);
-  if (!result) {
+  const { place, suggestedQuery } = await resolveGoogleMapsUrl(url, apiKey);
+
+  // share.google link where exact location couldn't be determined
+  if (!place && suggestedQuery) {
+    return NextResponse.json(
+      {
+        error:
+          "Could not determine exact location from this share link. Please search by name instead.",
+        suggestedQuery,
+      },
+      { status: 422 }
+    );
+  }
+
+  if (!place) {
     return NextResponse.json(
       { error: "Could not resolve venue from this URL" },
       { status: 404 }
     );
   }
 
-  return NextResponse.json(result);
+  return NextResponse.json(place);
 }

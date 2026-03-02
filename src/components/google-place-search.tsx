@@ -126,7 +126,20 @@ export function GooglePlaceSearch({
         body: JSON.stringify({ url }),
       });
       if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
+        const data = (await res.json()) as {
+          error?: string;
+          suggestedQuery?: string;
+        };
+        // 422 = share link couldn't determine exact location, suggest search
+        if (res.status === 422 && data.suggestedQuery) {
+          setUrlValue("");
+          setQuery(data.suggestedQuery);
+          inputRef.current?.focus();
+          setError(
+            "Could not determine exact location from share link. Please select the correct venue from the search results above."
+          );
+          return;
+        }
         throw new Error(data.error || "Failed to resolve URL");
       }
       const place = (await res.json()) as PlaceLookupResult;
