@@ -1,28 +1,20 @@
 import { test, expect } from "@playwright/test";
+import { gotoAndWaitForHeading } from "./helpers";
 
 test.describe("Vendors Page", () => {
   test("loads the vendors page", async ({ page }) => {
-    await page.goto("/vendors");
-
-    // Check page has loaded
-    await expect(page.locator("h1")).toBeVisible();
+    await gotoAndWaitForHeading(page, "/vendors", "Vendor Directory");
   });
 
   test("displays search functionality", async ({ page }) => {
-    await page.goto("/vendors");
+    await gotoAndWaitForHeading(page, "/vendors", "Vendor Directory");
 
-    // Look for search input
     const searchInput = page.locator('input[type="search"], input[name="query"], input[placeholder*="search" i]');
-    if (await searchInput.isVisible()) {
-      await expect(searchInput).toBeVisible();
-    }
+    await expect(searchInput).toBeVisible();
   });
 
   test("displays vendor cards or list", async ({ page }) => {
-    await page.goto("/vendors");
-
-    // Wait for page to load
-    await page.waitForLoadState("networkidle");
+    await gotoAndWaitForHeading(page, "/vendors", "Vendor Directory");
 
     // Check for vendor content (seeded data) or empty state
     const hasVendors = await page.locator('text=/Artisan Crafts/i').isVisible().catch(() => false);
@@ -33,13 +25,11 @@ test.describe("Vendors Page", () => {
   });
 
   test("can filter by vendor type", async ({ page }) => {
-    await page.goto("/vendors");
+    await gotoAndWaitForHeading(page, "/vendors", "Vendor Directory");
 
-    // Look for type filter
-    const typeFilter = page.locator('select[name="type"], button:has-text("Type")').first();
-    if (await typeFilter.isVisible()) {
-      await expect(typeFilter).toBeVisible();
-    }
+    // Type filter is a sidebar section with clickable type items
+    await expect(page.getByText("Filter by Type")).toBeVisible();
+    await expect(page.getByText("All Types")).toBeVisible();
   });
 });
 
@@ -50,10 +40,9 @@ test.describe("Vendors Page - Navigation", () => {
     const vendorsLink = page
       .locator('header a[href="/vendors"], nav a[href="/vendors"]')
       .first();
-    if (await vendorsLink.isVisible()) {
-      await vendorsLink.click();
-      await expect(page).toHaveURL(/\/vendors/, { timeout: 15000 });
-    }
+    await expect(vendorsLink).toBeVisible();
+    await vendorsLink.click();
+    await expect(page).toHaveURL(/\/vendors/, { timeout: 15000 });
   });
 });
 
@@ -62,8 +51,6 @@ test.describe("Vendors Page - Mobile", () => {
 
   test("is responsive on mobile", async ({ page }) => {
     await page.goto("/vendors");
-
-    // Page should still load on mobile
     await expect(page.locator("h1")).toBeVisible();
   });
 });

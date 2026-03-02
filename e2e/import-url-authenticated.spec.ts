@@ -1,20 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
 
-async function loginAsAdmin(page: Page) {
-  await page.goto("/login");
-  await page.fill('input[type="email"]', "admin@takemetothefair.com");
-  await page.fill('input[type="password"]', "admin123");
-  // Wait for the auth API response rather than the login page's client-side redirect
-  await Promise.all([
-    page.waitForResponse(
-      (resp) =>
-        resp.url().includes("/api/auth/callback/credentials") &&
-        resp.status() === 200
-    ),
-    page.click('button[type="submit"]'),
-  ]);
-}
-
 async function enableManualPaste(page: Page) {
   // The checkbox label wraps the input, so click the label text
   await page.locator("text=paste content").click();
@@ -22,9 +7,9 @@ async function enableManualPaste(page: Page) {
   await expect(page.locator("textarea")).toBeVisible({ timeout: 5000 });
 }
 
+// These tests run in the chromium-authenticated project with storageState
 test.describe("Import URL Page - Authenticated", () => {
   test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
     await page.goto("/admin/import-url");
     // Wait for the page heading instead of networkidle (which can stall under load)
     await expect(

@@ -3,20 +3,17 @@ import { test, expect } from "@playwright/test";
 test.describe("Home Page", () => {
   test("loads successfully", async ({ page }) => {
     await page.goto("/");
-
-    // Check page has loaded with some content
     await expect(page).toHaveTitle(/.+/);
   });
 
   test("displays main navigation", async ({ page }) => {
     await page.goto("/");
 
-    // Check for navigation links
+    // At least one navigation link should be visible
     const eventsLink = page.locator('nav a[href="/events"], header a[href="/events"]').first();
     const venuesLink = page.locator('nav a[href="/venues"], header a[href="/venues"]').first();
     const vendorsLink = page.locator('nav a[href="/vendors"], header a[href="/vendors"]').first();
 
-    // At least one navigation option should be visible
     const hasNavigation =
       (await eventsLink.isVisible().catch(() => false)) ||
       (await venuesLink.isVisible().catch(() => false)) ||
@@ -28,26 +25,15 @@ test.describe("Home Page", () => {
   test("displays login link for unauthenticated users", async ({ page }) => {
     await page.goto("/");
 
-    // Look for login link
     const loginLink = page.locator('a[href="/login"]').first();
-    if (await loginLink.isVisible()) {
-      await expect(loginLink).toBeVisible();
-    }
+    await expect(loginLink).toBeVisible();
   });
 
   test("displays hero section or featured content", async ({ page }) => {
     await page.goto("/");
 
-    // Wait for page to fully load
-    await page.waitForLoadState("networkidle");
-
-    // Check for hero, featured section, or main heading
-    const hasHeroContent =
-      (await page.locator('[class*="hero"]').first().isVisible().catch(() => false)) ||
-      (await page.locator('h1').first().isVisible().catch(() => false)) ||
-      (await page.locator('[class*="featured"]').first().isVisible().catch(() => false));
-
-    expect(hasHeroContent).toBeTruthy();
+    // Wait for h1 to render instead of networkidle
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 15000 });
   });
 });
 
@@ -56,19 +42,17 @@ test.describe("Home Page - Mobile", () => {
 
   test("is responsive on mobile", async ({ page }) => {
     await page.goto("/");
-
-    // Page should load on mobile
     await expect(page).toHaveTitle(/.+/);
   });
 
   test("displays mobile menu or hamburger", async ({ page }) => {
     await page.goto("/");
 
-    // Check for mobile menu button
-    const menuButton = page.locator('button[aria-label*="menu" i], button[class*="menu"], button:has([class*="hamburger"])').first();
-    if (await menuButton.isVisible()) {
-      await expect(menuButton).toBeVisible();
-    }
+    // Wait for page to load
+    await expect(page).toHaveTitle(/.+/);
+
+    const menuButton = page.locator('button[aria-label*="menu" i]').first();
+    await expect(menuButton).toBeVisible();
   });
 });
 
@@ -77,10 +61,7 @@ test.describe("Navigation - Site-wide", () => {
     await page.goto("/");
 
     const footer = page.locator("footer");
-    if (await footer.isVisible()) {
-      // Footer should be visible on main page
-      await expect(footer).toBeVisible();
-    }
+    await expect(footer).toBeVisible();
   });
 
   test("can navigate between main sections", async ({ page }) => {
@@ -90,19 +71,16 @@ test.describe("Navigation - Site-wide", () => {
     const eventsLink = page
       .locator('header a[href="/events"], nav a[href="/events"]')
       .first();
-    if (await eventsLink.isVisible()) {
-      await eventsLink.click();
-      await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
-      await page.waitForLoadState("domcontentloaded");
+    await expect(eventsLink).toBeVisible();
+    await eventsLink.click();
+    await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
 
-      // Navigate back home
-      const homeLink = page
-        .locator('header a[href="/"], nav a[href="/"]')
-        .first();
-      if (await homeLink.isVisible()) {
-        await homeLink.click();
-        await expect(page).toHaveURL(/\/$/);
-      }
-    }
+    // Navigate back home
+    const homeLink = page
+      .locator('header a[href="/"], nav a[href="/"]')
+      .first();
+    await expect(homeLink).toBeVisible();
+    await homeLink.click();
+    await expect(page).toHaveURL(/\/$/);
   });
 });

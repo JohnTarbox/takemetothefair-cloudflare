@@ -10,6 +10,7 @@
 /coverage
 /playwright-report/
 /test-results/
+/.auth/
 
 # next.js
 /.next/

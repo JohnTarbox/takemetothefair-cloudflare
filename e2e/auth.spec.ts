@@ -40,11 +40,10 @@ test.describe("Login Page", () => {
     await page.goto("/login");
 
     const registerLink = page.getByRole("link", { name: "Sign up" });
-    if (await registerLink.isVisible()) {
-      await registerLink.click();
-      // Dev server may need to compile /register on first visit
-      await expect(page).toHaveURL("/register", { timeout: 15000 });
-    }
+    await expect(registerLink).toBeVisible();
+    await registerLink.click();
+    // Dev server may need to compile /register on first visit
+    await expect(page).toHaveURL("/register", { timeout: 15000 });
   });
 
   test("shows error for invalid credentials", async ({ page }) => {
@@ -52,16 +51,19 @@ test.describe("Login Page", () => {
 
     await page.locator('input[type="email"]').fill("invalid@example.com");
     await page.locator('input[type="password"]').fill("wrongpassword");
-    await page.locator('button[type="submit"]').click();
 
-    // Wait for error message or redirect back to login
-    await page.waitForTimeout(2000);
+    // Wait for the auth response before checking the page state
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes("/api/auth/callback/credentials"),
+        { timeout: 15000 }
+      ),
+      page.locator('button[type="submit"]').click(),
+    ]);
 
-    // Should still be on login page or show error
-    const url = page.url();
-    const hasError = await page.locator('[class*="error"], [role="alert"], text=/invalid|error/i').isVisible().catch(() => false);
-
-    expect(url.includes("login") || hasError).toBeTruthy();
+    // Should show error or stay on login page
+    await expect(page.locator('input[type="email"]')).toBeVisible({ timeout: 10000 });
+    expect(page.url()).toMatch(/login|error/);
   });
 
   test("requires email field", async ({ page }) => {

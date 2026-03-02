@@ -15,7 +15,6 @@ test.describe("Keyboard Navigation - Skip Link", () => {
     await page.keyboard.press("Enter");
 
     // Focus should now be on main content or within it
-    await page.waitForTimeout(100);
     const mainContent = page.locator("#main-content");
     await expect(mainContent).toBeVisible();
   });
@@ -92,51 +91,45 @@ test.describe("Keyboard Navigation - Form Inputs", () => {
 
     // Fill email
     await page.locator('input[type="email"]').fill("test@example.com");
-
     // Fill password
     await page.locator('input[type="password"]').fill("testpassword");
 
-    // Press Enter to submit
+    // Press Enter to submit — expect it to fail with invalid credentials
     await page.keyboard.press("Enter");
 
-    // Form should attempt to submit (we expect it to fail due to invalid credentials)
-    await page.waitForTimeout(1000);
-
-    // Should either show error or redirect
-    const url = page.url();
-    expect(url.includes("login") || url.includes("error")).toBe(true);
+    // Should still be on login-related page after failed submission
+    await expect(page.locator('input[type="email"]')).toBeVisible({ timeout: 10000 });
+    expect(page.url()).toMatch(/login|error/);
   });
 });
 
 test.describe("Keyboard Navigation - Interactive Elements", () => {
   test("view toggle buttons are keyboard accessible", async ({ page }) => {
-    await page.goto("/events");
+    await page.goto("/venues");
 
-    // Find and focus a view toggle button
+    // Find and focus a view toggle button (venues page has card/table view toggle)
     const viewButton = page.locator('button[aria-pressed]').first();
+    await expect(viewButton).toBeVisible({ timeout: 15000 });
+    await viewButton.focus();
+    await expect(viewButton).toBeFocused();
 
-    if (await viewButton.isVisible()) {
-      await viewButton.focus();
-      await expect(viewButton).toBeFocused();
+    // Can activate with Enter
+    await page.keyboard.press("Enter");
 
-      // Can activate with Enter
-      await page.keyboard.press("Enter");
-
-      // Can also activate with Space
-      await page.keyboard.press("Space");
-    }
+    // Can also activate with Space
+    await page.keyboard.press("Space");
   });
 
   test("favorite button is keyboard accessible", async ({ page }) => {
-    await page.goto("/events");
+    await page.goto("/venues");
 
-    // Look for a favorite button
+    // Wait for venue cards to load (they contain favorite buttons)
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 15000 });
+
     const favoriteButton = page.locator('button[title*="favorite"]').first();
-
-    if (await favoriteButton.isVisible()) {
-      await favoriteButton.focus();
-      await expect(favoriteButton).toBeFocused();
-    }
+    await expect(favoriteButton).toBeVisible({ timeout: 10000 });
+    await favoriteButton.focus();
+    await expect(favoriteButton).toBeFocused();
   });
 });
 
@@ -148,10 +141,8 @@ test.describe("Accessibility - Focus Visibility", () => {
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
 
-    // Get the focused element
-    const focusedElement = page.locator(":focus");
-
     // The focused element should exist
+    const focusedElement = page.locator(":focus");
     await expect(focusedElement).toBeVisible();
   });
 
@@ -163,7 +154,6 @@ test.describe("Accessibility - Focus Visibility", () => {
     await submitButton.focus();
 
     // Check that it has a focus-related CSS applied
-    // (Tailwind uses ring utilities for focus)
     await expect(submitButton).toBeFocused();
   });
 });
@@ -180,8 +170,8 @@ test.describe("Accessibility - Screen Reader", () => {
   test("images have alt text", async ({ page }) => {
     await page.goto("/events");
 
-    // Wait for content to load
-    await page.waitForTimeout(1000);
+    // Wait for page content to render
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 15000 });
 
     // Find images and check for alt text
     const images = page.locator("img");
@@ -202,8 +192,6 @@ test.describe("Accessibility - Screen Reader", () => {
     const links = page.locator("a:visible");
     const count = await links.count();
 
-    // Just verify we can find and inspect links - this is a basic sanity check
-    // Full accessibility auditing would use dedicated tools like axe-core
     expect(count).toBeGreaterThan(0);
 
     // Check that the page has navigation links
@@ -220,9 +208,6 @@ test.describe("Accessibility - Color and Contrast", () => {
     // Submit empty form to trigger validation
     await page.locator('button[type="submit"]').click();
 
-    // Wait for any error indication
-    await page.waitForTimeout(500);
-
     // The page should still be functional after triggering validation
     const emailInput = page.locator('input[type="email"]');
     await expect(emailInput).toBeVisible();
@@ -235,19 +220,20 @@ test.describe("Accessibility - Responsive", () => {
   test("mobile menu is keyboard accessible", async ({ page }) => {
     await page.goto("/events");
 
-    // Look for mobile menu button
-    const menuButton = page.locator('button[aria-label*="menu"], button[aria-label*="Menu"]');
+    // Wait for page to load
+    await expect(page.locator("h1").first()).toBeVisible({ timeout: 15000 });
 
-    if (await menuButton.isVisible()) {
-      await menuButton.focus();
-      await expect(menuButton).toBeFocused();
+    // Look for mobile menu button (aria-label="Open menu")
+    const menuButton = page.locator('button[aria-label*="menu" i]');
+    await expect(menuButton).toBeVisible();
+    await menuButton.focus();
+    await expect(menuButton).toBeFocused();
 
-      // Can activate with keyboard
-      await page.keyboard.press("Enter");
+    // Can activate with keyboard
+    await page.keyboard.press("Enter");
 
-      // Menu should open
-      await page.waitForTimeout(300);
-    }
+    // Menu should open — wait for mobile menu's link (has "block" class, desktop links don't)
+    await expect(page.locator('a.block[href="/events"]')).toBeVisible({ timeout: 5000 });
   });
 
   test("content is accessible on mobile", async ({ page }) => {

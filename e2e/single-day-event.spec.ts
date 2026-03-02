@@ -1,27 +1,9 @@
 import { test, expect } from "@playwright/test";
 
+// These tests run in the chromium-authenticated project with storageState
 test.describe("Single-Day Event Creation", () => {
-  // All tests require login + admin page compilation, which can exceed 30s under load
+  // Admin page compilation can exceed 30s under load
   test.describe.configure({ timeout: 60000 });
-
-  test.beforeEach(async ({ page }) => {
-    // Login as admin
-    await page.goto("/login");
-    await page.locator('input[type="email"]').fill("admin@takemetothefair.com");
-    await page.locator('input[type="password"]').fill("admin123");
-
-    // Wait for the auth API response rather than the login page's client-side redirect,
-    // which can stall when the dev server is under load from parallel test workers.
-    await Promise.all([
-      page.waitForResponse(
-        (resp) =>
-          resp.url().includes("/api/auth/callback/credentials") &&
-          resp.status() === 200
-      ),
-      page.locator('button[type="submit"]').click(),
-    ]);
-    // Session cookie is now set — each test navigates to its own page.
-  });
 
   test("shows event hours input for single-day event", async ({ page }) => {
     await page.goto("/admin/events/new");
@@ -149,8 +131,8 @@ test.describe("Single-Day Event Creation", () => {
     await closeTimeInput.fill("21:00");
     await closeTimeInput.blur();
 
-    // Small wait for state to propagate
-    await page.waitForTimeout(500);
+    // Verify state propagated before submitting
+    await expect(closeTimeInput).toHaveValue("21:00");
 
     // Submit the form
     await page.locator('button[type="submit"]').click();
@@ -191,9 +173,6 @@ test.describe("Single-Day Event Creation", () => {
 
     // Wait for Event Hours section and for async data to load
     await expect(page.getByText("Event Hours")).toBeVisible();
-
-    // Wait a bit for async eventDays data to load and sync
-    await page.waitForTimeout(2000);
 
     // Verify the saved times are loaded (with longer timeout for async load)
     await expect(page.locator("#singleDayOpenTime")).toHaveValue("09:00", { timeout: 5000 });

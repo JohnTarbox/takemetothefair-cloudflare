@@ -1,31 +1,23 @@
 import { test, expect } from "@playwright/test";
+import { gotoAndWaitForHeading } from "./helpers";
 
 test.describe("Events Page", () => {
   test("loads the events page", async ({ page }) => {
-    await page.goto("/events");
-
-    // Check page has loaded
-    await expect(page.locator("h1")).toBeVisible();
+    await gotoAndWaitForHeading(page, "/events", "Browse Events");
   });
 
   test("displays search functionality", async ({ page }) => {
-    await page.goto("/events");
+    await gotoAndWaitForHeading(page, "/events", "Browse Events");
 
-    // Look for search input
     const searchInput = page.locator('input[type="search"], input[name="query"], input[placeholder*="search" i]');
-    if (await searchInput.isVisible()) {
-      await expect(searchInput).toBeVisible();
-    }
+    await expect(searchInput).toBeVisible();
   });
 
   test("displays event cards or list", async ({ page }) => {
-    await page.goto("/events");
+    await gotoAndWaitForHeading(page, "/events", "Browse Events");
 
-    // Wait for page to load
-    await page.waitForLoadState("networkidle");
-
-    // Check for event content or empty state
-    const hasEvents = await page.locator('[class*="event"], [class*="card"]').first().isVisible().catch(() => false);
+    // Check for event count indicator or empty state
+    const hasEvents = await page.locator('text=/\\d+ events?/i').first().isVisible().catch(() => false);
     const hasEmptyState = await page.locator('text=/no events/i').isVisible().catch(() => false);
 
     expect(hasEvents || hasEmptyState).toBeTruthy();
@@ -39,10 +31,9 @@ test.describe("Events Page - Navigation", () => {
     const eventsLink = page
       .locator('header a[href="/events"], nav a[href="/events"]')
       .first();
-    if (await eventsLink.isVisible()) {
-      await eventsLink.click();
-      await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
-    }
+    await expect(eventsLink).toBeVisible();
+    await eventsLink.click();
+    await expect(page).toHaveURL(/\/events/, { timeout: 15000 });
   });
 });
 
@@ -51,8 +42,6 @@ test.describe("Events Page - Mobile", () => {
 
   test("is responsive on mobile", async ({ page }) => {
     await page.goto("/events");
-
-    // Page should still load on mobile
     await expect(page.locator("h1")).toBeVisible();
   });
 });

@@ -1,28 +1,20 @@
 import { test, expect } from "@playwright/test";
+import { gotoAndWaitForHeading } from "./helpers";
 
 test.describe("Venues Page", () => {
   test("loads the venues page", async ({ page }) => {
-    await page.goto("/venues");
-
-    // Check page has loaded
-    await expect(page.locator("h1")).toBeVisible();
+    await gotoAndWaitForHeading(page, "/venues", "Venues");
   });
 
   test("displays search functionality", async ({ page }) => {
-    await page.goto("/venues");
+    await gotoAndWaitForHeading(page, "/venues", "Venues");
 
-    // Look for search input
     const searchInput = page.locator('input[type="search"], input[name="query"], input[placeholder*="search" i]');
-    if (await searchInput.isVisible()) {
-      await expect(searchInput).toBeVisible();
-    }
+    await expect(searchInput).toBeVisible();
   });
 
   test("displays venue cards or list", async ({ page }) => {
-    await page.goto("/venues");
-
-    // Wait for page to load
-    await page.waitForLoadState("networkidle");
+    await gotoAndWaitForHeading(page, "/venues", "Venues");
 
     // Check for venue content (seeded data) or empty state
     const hasVenues = await page.locator('text=/County Fairgrounds/i').isVisible().catch(() => false);
@@ -33,13 +25,11 @@ test.describe("Venues Page", () => {
   });
 
   test("can filter by state", async ({ page }) => {
-    await page.goto("/venues");
+    await gotoAndWaitForHeading(page, "/venues", "Venues");
 
-    // Look for state filter
-    const stateFilter = page.locator('select[name="state"], button:has-text("State")').first();
-    if (await stateFilter.isVisible()) {
-      await expect(stateFilter).toBeVisible();
-    }
+    // State filter is a sidebar section with clickable state items
+    await expect(page.getByText("Filter by State")).toBeVisible();
+    await expect(page.getByText("All States")).toBeVisible();
   });
 });
 
@@ -50,10 +40,9 @@ test.describe("Venues Page - Navigation", () => {
     const venuesLink = page
       .locator('header a[href="/venues"], nav a[href="/venues"]')
       .first();
-    if (await venuesLink.isVisible()) {
-      await venuesLink.click();
-      await expect(page).toHaveURL(/\/venues/, { timeout: 15000 });
-    }
+    await expect(venuesLink).toBeVisible();
+    await venuesLink.click();
+    await expect(page).toHaveURL(/\/venues/, { timeout: 15000 });
   });
 });
 
@@ -62,8 +51,6 @@ test.describe("Venues Page - Mobile", () => {
 
   test("is responsive on mobile", async ({ page }) => {
     await page.goto("/venues");
-
-    // Page should still load on mobile
     await expect(page.locator("h1")).toBeVisible();
   });
 });
