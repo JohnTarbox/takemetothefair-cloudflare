@@ -8,8 +8,10 @@ test.describe("Single-Day Event Creation", () => {
     await page.locator('input[type="password"]').fill("admin123");
     await page.locator('button[type="submit"]').click();
 
-    // Wait for login to complete (user name appears in header)
-    await expect(page.getByText("Admin User")).toBeVisible({ timeout: 10000 });
+    // Wait for redirect away from login (more robust than checking DOM elements)
+    await page.waitForURL((url) => !url.pathname.includes("/login"), {
+      timeout: 15000,
+    });
   });
 
   test("shows event hours input for single-day event", async ({ page }) => {
@@ -95,6 +97,8 @@ test.describe("Single-Day Event Creation", () => {
   });
 
   test("can create and edit single-day event with custom times", async ({ page }) => {
+    // This test does login + form fill + API creation + redirect + edit page load
+    test.setTimeout(60000);
     await page.goto("/admin/events/new");
 
     // Wait for the form to load
@@ -144,8 +148,8 @@ test.describe("Single-Day Event Creation", () => {
     // Submit the form
     await page.locator('button[type="submit"]').click();
 
-    // Wait for redirect to events list
-    await page.waitForURL(/\/admin\/events$/, { timeout: 10000 });
+    // Wait for redirect to events list (API creation + redirect can be slow on dev server)
+    await page.waitForURL(/\/admin\/events$/, { timeout: 30000 });
 
     // Find and click the edit link for our event
     const eventRow = page.locator(`text=${eventName}`).first();

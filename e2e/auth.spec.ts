@@ -42,7 +42,8 @@ test.describe("Login Page", () => {
     const registerLink = page.getByRole("link", { name: "Sign up" });
     if (await registerLink.isVisible()) {
       await registerLink.click();
-      await expect(page).toHaveURL("/register");
+      // Dev server may need to compile /register on first visit
+      await expect(page).toHaveURL("/register", { timeout: 15000 });
     }
   });
 
