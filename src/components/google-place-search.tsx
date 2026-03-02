@@ -238,7 +238,8 @@ export function GooglePlaceSearch({
                 if (
                   text.includes("google.com/maps") ||
                   text.includes("maps.app.goo.gl") ||
-                  text.includes("goo.gl/maps")
+                  text.includes("goo.gl/maps") ||
+                  text.includes("share.google")
                 ) {
                   setUrlValue(text);
                   // Trigger resolve after state update

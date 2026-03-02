@@ -32,12 +32,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // Validate it looks like a Google Maps URL
+  // Validate it looks like a Google Maps or share URL
   const validDomains = [
     "google.com/maps",
     "maps.google.com",
     "maps.app.goo.gl",
     "goo.gl/maps",
+    "share.google",
   ];
   if (!validDomains.some((d) => url.includes(d))) {
     return NextResponse.json(

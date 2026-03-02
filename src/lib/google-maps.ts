@@ -353,10 +353,21 @@ export async function resolveGoogleMapsUrl(
     let finalUrl = url;
     if (
       url.includes("maps.app.goo.gl") ||
-      url.includes("goo.gl/maps")
+      url.includes("goo.gl/maps") ||
+      url.includes("share.google")
     ) {
       const res = await fetch(url, { redirect: "follow" });
       finalUrl = res.url;
+    }
+
+    // Handle share.google links that redirect to Google Search with a q= param
+    // e.g. https://www.google.com/search?...&q=Place+Name&kgmid=/g/xxx
+    if (finalUrl.includes("google.com/search") || finalUrl.includes("google.com/share.google")) {
+      const parsed = new URL(finalUrl);
+      const query = parsed.searchParams.get("q");
+      if (query) {
+        return lookupPlace(query, "", "", apiKey);
+      }
     }
 
     // Try to extract placeId from the URL
