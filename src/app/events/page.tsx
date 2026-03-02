@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors, userFavorites } from "@/lib/db/schema";
+import { events, venues, promoters, eventVendors, vendors, userFavorites, eventDays } from "@/lib/db/schema";
 import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { auth } from "@/lib/auth";
@@ -272,6 +272,30 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
       vendorsByEvent.set(ev.eventId, existing);
     }
 
+    // For calendar view, fetch eventDays for discontinuous events
+    const daysByEvent = new Map<string, string[]>();
+    if (isCalendarView) {
+      const discontinuousIds = results
+        .filter(r => r.events.discontinuousDates)
+        .map(r => r.events.id);
+
+      if (discontinuousIds.length > 0) {
+        const BATCH_SIZE = 50;
+        for (let i = 0; i < discontinuousIds.length; i += BATCH_SIZE) {
+          const batch = discontinuousIds.slice(i, i + BATCH_SIZE);
+          const dayResults = await db
+            .select({ eventId: eventDays.eventId, date: eventDays.date })
+            .from(eventDays)
+            .where(inArray(eventDays.eventId, batch));
+          for (const row of dayResults) {
+            const existing = daysByEvent.get(row.eventId) || [];
+            existing.push(row.date);
+            daysByEvent.set(row.eventId, existing);
+          }
+        }
+      }
+    }
+
     // Combine events with their vendors
     const eventsWithVendors = results.map(r => ({
       ...r.events,
@@ -284,6 +308,10 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
         logoUrl: ev.logoUrl,
         vendorType: ev.vendorType,
       })),
+      // Include specific dates for discontinuous events (calendar view)
+      ...(r.events.discontinuousDates && daysByEvent.has(r.events.id)
+        ? { eventDayDates: daysByEvent.get(r.events.id) }
+        : {}),
     }));
 
     // Count total

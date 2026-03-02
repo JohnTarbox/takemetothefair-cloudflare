@@ -27,6 +27,7 @@ type EventWithRelations = Event & {
   venue: Venue | null;
   promoter: Promoter | null;
   vendors?: VendorSummary[];
+  eventDayDates?: string[]; // "YYYY-MM-DD" dates for discontinuous events
 };
 
 interface EventsViewProps {
@@ -183,6 +184,12 @@ function formatShortMonth(date: Date): string {
 
 function getEventsForDate(events: EventWithRelations[], date: Date): EventWithRelations[] {
   return events.filter((event) => {
+    // For discontinuous events, check against actual specific dates
+    if (event.discontinuousDates && event.eventDayDates?.length) {
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      return event.eventDayDates.includes(dateStr);
+    }
+    // For continuous events, use date range
     const startDate = event.startDate ? new Date(event.startDate) : null;
     const endDate = event.endDate ? new Date(event.endDate) : startDate;
     return isDateInRange(date, startDate, endDate);
