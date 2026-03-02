@@ -439,6 +439,18 @@ export async function resolveGoogleMapsUrl(
       return { place };
     }
 
+    // Try directions URL: /dir//Destination/@lat,lng or /dir/Origin/Destination/@lat,lng
+    const dirMatch = finalUrl.match(
+      /\/dir\/[^/]*\/([^/@]+)(?:\/@(-?[\d.]+),(-?[\d.]+))?/
+    );
+    if (dirMatch) {
+      const destination = decodeURIComponent(dirMatch[1]).replace(/\+/g, " ");
+      const lat = dirMatch[2] ? parseFloat(dirMatch[2]) : undefined;
+      const lng = dirMatch[3] ? parseFloat(dirMatch[3]) : undefined;
+      const place = await lookupPlace(destination, "", "", apiKey, { lat, lng });
+      return { place };
+    }
+
     // Try just coordinates pattern: /@lat,lng
     const coordMatch = finalUrl.match(
       /\/@(-?[\d.]+),(-?[\d.]+)/
