@@ -40,11 +40,16 @@ body {
     display: none !important;
   }
 
-  /* Full-width calendar */
+  /* Full-width calendar, collapse layout height */
   main {
     padding: 0 !important;
     margin: 0 !important;
     max-width: 100% !important;
+    flex: none !important;
+  }
+
+  body {
+    min-height: 0 !important;
   }
 
   /* Clean print rendering */

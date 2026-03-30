@@ -615,7 +615,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden print:border-0 print:rounded-none">
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden print:border-0 print:rounded-none print:overflow-visible">
       {/* Print-only title */}
       <div className="hidden print:block print:px-2 print:py-1 px-4 py-3 border-b border-gray-200">
         <h1 className="text-xl font-bold text-gray-900">Events Calendar — {getTitle()}</h1>
