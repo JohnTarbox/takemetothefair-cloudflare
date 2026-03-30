@@ -27,6 +27,12 @@ body {
 }
 
 @media print {
+  /* Landscape orientation with tight margins */
+  @page {
+    size: landscape;
+    margin: 0.4cm;
+  }
+
   /* Hide non-calendar elements */
   nav,
   footer,
@@ -46,26 +52,20 @@ body {
     box-shadow: none !important;
   }
 
-  /* Show full event names (no truncation) */
+  /* Keep event names truncated so cells stay compact */
   .truncate {
-    overflow: visible !important;
-    text-overflow: unset !important;
-    white-space: normal !important;
+    white-space: nowrap !important;
+  }
+
+  /* Remove min-height on calendar cells — let content size them */
+  .min-h-\[100px\] {
+    min-height: 0 !important;
   }
 
   /* Ensure colored backgrounds print */
   .bg-blue-500, .bg-green-500, .bg-purple-500, .bg-pink-500,
-  .bg-indigo-500, .bg-teal-500, .bg-orange-500, .bg-cyan-500 {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  .bg-blue-600 {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  .bg-blue-100 {
+  .bg-indigo-500, .bg-teal-500, .bg-orange-500, .bg-cyan-500,
+  .bg-blue-600, .bg-blue-100, .bg-gray-50 {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -73,10 +73,5 @@ body {
   /* Ensure borders are visible */
   .border-gray-200 {
     border-color: #e5e7eb !important;
-  }
-
-  /* Compact calendar cells to fit one page */
-  .min-h-\[100px\] {
-    min-height: 70px !important;
   }
 }

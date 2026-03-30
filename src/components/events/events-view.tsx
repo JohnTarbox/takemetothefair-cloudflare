@@ -373,7 +373,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
     for (let day = 1; day <= daysInMonth; day++) {
       calendarDays.push(day);
     }
-    while (calendarDays.length < 42) {
+    while (calendarDays.length % 7 !== 0) {
       calendarDays.push(null);
     }
 
@@ -397,22 +397,23 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
             return (
               <div
                 key={index}
-                className={`min-h-[100px] border-b border-r border-gray-200 ${
+                className={`min-h-[100px] print:min-h-0 border-b border-r border-gray-200 ${
                   index % 7 === 0 ? "border-l-0" : ""
                 } ${!isCurrentMonth ? "bg-gray-50" : "bg-white"}`}
               >
                 {day !== null && (
-                  <div className="p-1">
-                    <div className="flex justify-center mb-1">
+                  <div className="p-1 print:p-px">
+                    <div className="flex justify-center mb-1 print:mb-0">
                       <span
-                        className={`inline-flex items-center justify-center w-7 h-7 text-sm ${
+                        className={`inline-flex items-center justify-center w-7 h-7 print:w-4 print:h-4 text-sm print:text-[0.6rem] ${
                           isToday ? "bg-blue-600 text-white rounded-full font-semibold" : "text-gray-700"
                         }`}
                       >
                         {day}
                       </span>
                     </div>
-                    <div className="space-y-0.5">
+                    {/* Screen: capped at 3 events */}
+                    <div className="space-y-0.5 print:hidden">
                       {dayEvents.slice(0, 3).map((event) => (
                         <Link
                           key={event.id}
@@ -431,6 +432,19 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                           +{dayEvents.length - 3} more
                         </button>
                       )}
+                    </div>
+                    {/* Print: show all events */}
+                    <div className="hidden print:block space-y-0">
+                      {dayEvents.map((event) => (
+                        <Link
+                          key={event.id}
+                          href={`/events/${event.slug}`}
+                          className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id)}`}
+                          title={event.name}
+                        >
+                          {event.name}
+                        </Link>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -601,9 +615,9 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden print:border-0">
+    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden print:border-0 print:rounded-none">
       {/* Print-only title */}
-      <div className="hidden print:block px-4 py-3 border-b border-gray-200">
+      <div className="hidden print:block print:px-2 print:py-1 px-4 py-3 border-b border-gray-200">
         <h1 className="text-xl font-bold text-gray-900">Events Calendar — {getTitle()}</h1>
       </div>
       {/* Calendar Header */}

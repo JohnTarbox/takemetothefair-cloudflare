@@ -591,7 +591,7 @@ export default async function EventsPage({
   const totalPages = Math.ceil(total / limit);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 print:max-w-none print:px-0 print:py-0">
       <ItemListSchema
         name="Upcoming Fairs & Festivals"
         description="Browse upcoming fairs, festivals, and community events"
@@ -603,15 +603,15 @@ export default async function EventsPage({
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/events"
       />
-      <div className="mb-8">
+      <div className="mb-8 print:hidden">
         <h1 className="text-3xl font-bold text-gray-900">Browse Events</h1>
         <p className="mt-2 text-gray-600">
           Discover upcoming fairs, festivals, and community events
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        <aside className="lg:col-span-1">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 print:block">
+        <aside className="lg:col-span-1 print:hidden">
           <Suspense fallback={<div className="animate-pulse bg-gray-200 h-64 rounded-lg" />}>
             <EventsFilter
               categories={categories}
