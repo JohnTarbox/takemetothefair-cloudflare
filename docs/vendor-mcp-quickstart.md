@@ -78,7 +78,7 @@ You can have up to 5 active tokens. To revoke a token, click the trash icon next
 2. Click **Add Connector**.
 3. Enter:
    - **Name:** Meet Me at the Fair
-   - **URL:** `https://meetmeatthefair-mcp.<your-account>.workers.dev/mcp`
+   - **URL:** `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`
    - **Authentication:** Bearer Token
    - **Token:** Paste the `mmatf_...` token you copied earlier
 4. Click **Save** or **Connect**.
