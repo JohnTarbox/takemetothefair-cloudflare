@@ -69,6 +69,58 @@ export default {
     const authHeader = request.headers.get("Authorization");
     const auth = await authenticateToken(db, authHeader);
 
+    // Always-available diagnostic tool
+    server.tool(
+      "whoami",
+      "Check your authentication status and see which tools are available for your role.",
+      {},
+      async () => {
+        if (!auth) {
+          const hasHeader = !!authHeader;
+          const headerPrefix = authHeader?.slice(0, 10) || "(none)";
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                authenticated: false,
+                reason: !hasHeader
+                  ? "No Authorization header received. Make sure your connector is configured with a Bearer token."
+                  : `Authorization header received (starts with "${headerPrefix}...") but token validation failed. The token may be revoked or invalid. Generate a new one at /dashboard/settings.`,
+                tools: "public only (search_events, get_event_details, list_event_vendors, search_vendors, search_venues)",
+              }, null, 2),
+            }],
+          };
+        }
+
+        const roleTools: Record<string, string[]> = {
+          USER: ["get_my_favorites", "toggle_favorite"],
+          VENDOR: ["get_my_vendor_profile", "update_vendor_profile", "list_my_applications", "apply_to_event", "withdraw_application", "suggest_event"],
+          PROMOTER: ["list_my_events", "get_event_applications"],
+          ADMIN: ["list_all_events", "update_event_status", "list_event_vendors_admin", "update_vendor_status"],
+        };
+
+        const available = ["public tools (5)"];
+        available.push("user tools (2)");
+        if (auth.role === "VENDOR" || auth.role === "ADMIN") available.push("vendor tools (6)");
+        if (auth.role === "PROMOTER" || auth.role === "ADMIN") available.push("promoter tools (2)");
+        if (auth.role === "ADMIN") available.push("admin tools (4)");
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              authenticated: true,
+              userId: auth.userId,
+              role: auth.role,
+              vendorId: auth.vendorId || null,
+              promoterId: auth.promoterId || null,
+              toolSets: available,
+            }, null, 2),
+          }],
+        };
+      },
+    );
+
     if (auth) {
       registerUserTools(server, db, auth);
 
