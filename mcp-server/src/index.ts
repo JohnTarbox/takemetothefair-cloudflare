@@ -18,7 +18,7 @@ import type { UserProps } from "./oauth/utils.js";
 interface Env {
   DB: D1Database;
   OAUTH_KV: KVNamespace;
-  MeetMeAtTheFairMCP: DurableObjectNamespace;
+  MCP_OBJECT: DurableObjectNamespace;
 }
 
 // ---------------------------------------------------------------------------

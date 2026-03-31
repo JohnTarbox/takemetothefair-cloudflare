@@ -14,7 +14,7 @@ id = "80685c98cb744582bb528587d20e647a"
 
 [durable_objects]
 bindings = [
-  { name = "MeetMeAtTheFairMCP", class_name = "MeetMeAtTheFairMCP" }
+  { name = "MCP_OBJECT", class_name = "MeetMeAtTheFairMCP" }
 ]
 
 [[migrations]]
