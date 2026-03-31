@@ -6,6 +6,7 @@ import {
   parseJsonArray,
   formatDateRange,
   formatPrice,
+  escapeLike,
   PUBLIC_EVENT_STATUSES,
   PUBLIC_VENDOR_STATUSES,
   jsonContent,
@@ -31,7 +32,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       ];
 
       if (params.query) {
-        conditions.push(like(events.name, `%${params.query}%`));
+        conditions.push(like(events.name, `%${escapeLike(params.query)}%`));
       }
 
       if (params.start_after) {
@@ -125,7 +126,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
-        .where(eq(events.slug, slug))
+        .where(and(eq(events.slug, slug), inArray(events.status, [...PUBLIC_EVENT_STATUSES])))
         .limit(1);
 
       if (rows.length === 0) {
@@ -195,7 +196,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const eventRows = await db
         .select({ id: events.id, name: events.name })
         .from(events)
-        .where(eq(events.slug, params.event_slug))
+        .where(and(eq(events.slug, params.event_slug), inArray(events.status, [...PUBLIC_EVENT_STATUSES])))
         .limit(1);
 
       if (eventRows.length === 0) {
@@ -255,10 +256,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [];
 
       if (params.query) {
-        conditions.push(like(vendors.businessName, `%${params.query}%`));
+        conditions.push(like(vendors.businessName, `%${escapeLike(params.query)}%`));
       }
       if (params.type) {
-        conditions.push(like(vendors.vendorType, `%${params.type}%`));
+        conditions.push(like(vendors.vendorType, `%${escapeLike(params.type)}%`));
       }
 
       const rows = await db
@@ -302,10 +303,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [eq(venues.status, "ACTIVE")];
 
       if (params.query) {
-        conditions.push(like(venues.name, `%${params.query}%`));
+        conditions.push(like(venues.name, `%${escapeLike(params.query)}%`));
       }
       if (params.city) {
-        conditions.push(like(venues.city, `%${params.city}%`));
+        conditions.push(like(venues.city, `%${escapeLike(params.city)}%`));
       }
       if (params.state) {
         conditions.push(eq(venues.state, params.state.toUpperCase()));

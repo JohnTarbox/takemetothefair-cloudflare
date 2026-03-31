@@ -43,6 +43,12 @@ export function formatPrice(min?: number | null, max?: number | null): string {
   return `$${min} – $${max}`;
 }
 
+/** Strip LIKE wildcards from user input to prevent wildcard injection.
+ *  Drizzle's like() doesn't support ESCAPE clauses, so we remove them. */
+export function escapeLike(s: string): string {
+  return s.replace(/[%_]/g, "");
+}
+
 /** Statuses visible to the public for events */
 export const PUBLIC_EVENT_STATUSES = ["APPROVED", "TENTATIVE"] as const;
 

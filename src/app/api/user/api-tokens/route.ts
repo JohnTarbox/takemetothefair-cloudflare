@@ -111,10 +111,18 @@ export async function DELETE(request: NextRequest) {
 
   const db = getCloudflareDb();
 
-  // Ensure the token belongs to this user
-  const result = await db
-    .delete(apiTokens)
-    .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, session.user.id)));
+  // Verify the token exists and belongs to this user before deleting
+  const existing = await db
+    .select({ id: apiTokens.id })
+    .from(apiTokens)
+    .where(and(eq(apiTokens.id, tokenId), eq(apiTokens.userId, session.user.id)))
+    .limit(1);
+
+  if (existing.length === 0) {
+    return NextResponse.json({ error: "Token not found" }, { status: 404 });
+  }
+
+  await db.delete(apiTokens).where(eq(apiTokens.id, tokenId));
 
   return NextResponse.json({ deleted: true });
 }

@@ -172,7 +172,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
 
       const event = eventRows[0];
 
-      if (event.status !== "APPROVED") {
+      if (event.status !== "APPROVED" && event.status !== "TENTATIVE") {
         return {
           content: [{ type: "text", text: "This event is not currently accepting vendor applications." }],
           isError: true,
@@ -297,6 +297,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
       venue_name: z.string().optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
       venue_state: z.string().optional().describe("Venue state (2-letter code)"),
+      ticket_url: z.string().optional().describe("URL to purchase tickets"),
       source_url: z.string().optional().describe("URL with more information about the event"),
     },
     async (params) => {
@@ -370,7 +371,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
         datesConfirmed: startDate !== null,
         categories: JSON.stringify(["Event"]),
         tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
-        ticketUrl: params.source_url || null,
+        ticketUrl: params.ticket_url || null,
         status: "TENTATIVE",
         sourceName: "vendor-submission",
         sourceUrl: params.source_url || null,
