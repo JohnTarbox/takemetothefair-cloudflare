@@ -363,11 +363,86 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
       }
 
       // Build description
-      let description = params.description || `${params.name} - suggested via MCP`;
-      if (params.venue_name || params.venue_city) {
-        const parts = [params.venue_name, params.venue_city, params.venue_state].filter(Boolean);
-        if (parts.length > 0 && !description.includes(parts[0]!)) {
-          description += `\n\nLocation: ${parts.join(", ")}`;
+      const description = params.description || `${params.name} - suggested via MCP`;
+
+      // ── Venue matching / creation ──────────────────────────────────
+      let venueId: string | null = null;
+      let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
+
+      if (params.venue_name) {
+        const venueSlug = params.venue_name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "");
+        const venueCity = (params.venue_city || "").toLowerCase().trim();
+        const venueState = (params.venue_state || "").toUpperCase().trim();
+
+        // Search for existing venue by slug (same pattern as scraper import)
+        const existingVenues = await db
+          .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
+          .from(venues)
+          .where(eq(venues.slug, venueSlug));
+
+        let matched = false;
+
+        if (existingVenues.length > 0 && venueCity) {
+          // Match by slug + city
+          const cityMatch = existingVenues.find(
+            (v) => v.city.toLowerCase().trim() === venueCity,
+          );
+          if (cityMatch) {
+            venueId = cityMatch.id;
+            venueResult = { matched: true, venueId: cityMatch.id, name: cityMatch.name };
+            matched = true;
+          }
+        } else if (existingVenues.length > 0 && !venueCity && venueState) {
+          // No city — try state match
+          const stateMatch = existingVenues.find(
+            (v) => v.state.toUpperCase().trim() === venueState,
+          );
+          if (stateMatch) {
+            venueId = stateMatch.id;
+            venueResult = { matched: true, venueId: stateMatch.id, name: stateMatch.name };
+            matched = true;
+          }
+        } else if (existingVenues.length > 0) {
+          // No city or state — use first match
+          venueId = existingVenues[0].id;
+          venueResult = { matched: true, venueId: existingVenues[0].id, name: existingVenues[0].name };
+          matched = true;
+        }
+
+        if (!matched) {
+          // Create new venue — generate unique slug
+          let finalVenueSlug = venueSlug;
+          if (existingVenues.length > 0) {
+            finalVenueSlug = venueCity
+              ? `${venueSlug}-${venueCity.replace(/[^a-z0-9]+/g, "-")}`
+              : `${venueSlug}-${crypto.randomUUID().substring(0, 8)}`;
+          }
+          // Ensure slug uniqueness
+          const slugCheck = await db
+            .select({ id: venues.id })
+            .from(venues)
+            .where(eq(venues.slug, finalVenueSlug))
+            .limit(1);
+          if (slugCheck.length > 0) {
+            finalVenueSlug = `${finalVenueSlug}-${crypto.randomUUID().substring(0, 8)}`;
+          }
+
+          const newVenueId = crypto.randomUUID();
+          await db.insert(venues).values({
+            id: newVenueId,
+            name: params.venue_name,
+            slug: finalVenueSlug,
+            address: "",
+            city: params.venue_city || "",
+            state: params.venue_state || "",
+            zip: "",
+            status: "ACTIVE",
+          });
+          venueId = newVenueId;
+          venueResult = { matched: false, venueId: newVenueId, name: params.venue_name };
         }
       }
 
@@ -378,6 +453,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         slug: finalSlug,
         description,
         promoterId: COMMUNITY_PROMOTER_ID,
+        venueId,
         startDate,
         endDate,
         datesConfirmed: startDate !== null,
@@ -400,6 +476,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
           jsonContent({
             created: true,
             event: { id: eventId, slug: finalSlug, name: params.name, status: "TENTATIVE" },
+            venue: venueResult,
           }),
         ],
       };
