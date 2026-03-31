@@ -1,6 +1,6 @@
 # Admin Quickstart: Connect Claude to Meet Me at the Fair
 
-This guide walks you through verifying your admin account, generating an API token, and connecting Claude so it can manage events, review vendor applications, and handle all platform administration on your behalf.
+This guide walks you through verifying your admin account and connecting Claude so it can manage events, review vendor applications, and handle all platform administration on your behalf.
 
 ---
 
@@ -16,20 +16,7 @@ If your role shows User, Vendor, or Promoter, contact the platform owner to have
 
 ---
 
-## Part 2: Generate an API Token
-
-Claude needs an API token to act on your behalf. Tokens are created from your account settings.
-
-1. Go to [meetmeatthefair.com/dashboard/settings](https://meetmeatthefair.com/dashboard/settings).
-2. Scroll down to the **API Tokens** section.
-3. Enter a name for the token (e.g., `Claude`) and click **Generate**.
-4. **Copy the token immediately.** It starts with `mmatf_` and will only be displayed once. If you lose it, you'll need to revoke it and create a new one.
-
-You can have up to 5 active tokens. To revoke a token, click the trash icon next to it in the token list.
-
----
-
-## Part 3: Connect Claude
+## Part 2: Connect Claude
 
 ### In Claude Desktop (Cowork)
 
@@ -38,11 +25,14 @@ You can have up to 5 active tokens. To revoke a token, click the trash icon next
 3. Enter:
    - **Name:** Meet Me at the Fair
    - **URL:** `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`
-   - **Authentication:** Bearer Token
-   - **Token:** Paste the `mmatf_...` token you copied earlier
 4. Click **Save** or **Connect**.
 
-Claude will discover the available tools automatically. You should see it confirm the connection with tools like `list_all_events`, `update_event_status`, `search_events`, etc.
+Claude will open a browser window to sign you in:
+
+5. Enter your **Meet Me at the Fair email and password** in the login form.
+6. Click **Sign In & Authorize**.
+
+The browser will close and Claude will confirm the connection. You should see tools like `list_all_events`, `update_event_status`, `search_events`, etc.
 
 ### Verify the Connection
 
@@ -60,7 +50,7 @@ Claude should call `list_event_vendors_admin` and show the full list of vendors 
 
 ---
 
-## Part 4: What You Can Ask Claude to Do
+## Part 3: What You Can Ask Claude to Do
 
 As an admin, Claude has access to **all 19 tools** on the platform — the full superset of public, user, vendor, promoter, and admin capabilities.
 
@@ -136,11 +126,14 @@ You also have full vendor capabilities:
 
 ## Troubleshooting
 
-**"Unauthorized" errors from Claude:**
-Your API token may be expired or revoked. Go to [/dashboard/settings](https://meetmeatthefair.com/dashboard/settings), revoke the old token, generate a new one, and update it in Claude's connector settings.
+**Login page doesn't appear when connecting:**
+Make sure the connector URL is exactly `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`. If Claude doesn't open a browser window, try removing and re-adding the connector.
+
+**"Invalid email or password" on the login page:**
+Use the same email and password you use to log in at [meetmeatthefair.com](https://meetmeatthefair.com). Social login (Google/Facebook) accounts don't have passwords — you'll need to set one first or contact the platform owner.
 
 **Admin tools not showing up:**
-Claude only sees admin tools when your account has the **Admin** role. If you're seeing a limited set of tools (just browsing and favorites), your account role may not be set to Admin. Check [/dashboard/settings](https://meetmeatthefair.com/dashboard/settings) to verify your role, or contact the platform owner.
+Claude only sees admin tools when your account has the **Admin** role. Ask Claude to run the `whoami` tool to check your role. If it shows a different role, contact the platform owner.
 
 **Claude can't find an event you know exists:**
 The public `search_events` tool only returns events with **Approved** or **Tentative** status. Use `list_all_events` instead — it searches across all statuses including Draft, Pending, Rejected, and Cancelled.
@@ -148,5 +141,5 @@ The public `search_events` tool only returns events with **Approved** or **Tenta
 **"Invalid transition" error when updating vendor status:**
 Vendor application statuses follow a lifecycle with valid transitions. For example, you can't move a vendor directly from CONFIRMED to APPLIED. Claude will tell you which transitions are allowed from the current status.
 
-**Claude shows fewer tools than expected:**
-The MCP server registers tools based on your account role. Admin accounts get all 19 tools. If you see fewer, the API token may be associated with a non-admin account. Generate a new token from an account with the Admin role.
+**Connection stopped working:**
+OAuth tokens expire periodically. Remove the connector in Claude's settings and add it again — you'll be prompted to sign in again.

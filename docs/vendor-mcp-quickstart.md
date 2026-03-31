@@ -57,20 +57,7 @@ If you can see all of these and your profile loads with the business name you en
 
 ---
 
-## Part 2: Generate an API Token
-
-Claude needs an API token to act on your behalf. Tokens are created from your account settings.
-
-1. Go to [meetmeatthefair.com/dashboard/settings](https://meetmeatthefair.com/dashboard/settings).
-2. Scroll down to the **API Tokens** section.
-3. Enter a name for the token (e.g., `Claude`) and click **Generate**.
-4. **Copy the token immediately.** It starts with `mmatf_` and will only be displayed once. If you lose it, you'll need to revoke it and create a new one.
-
-You can have up to 5 active tokens. To revoke a token, click the trash icon next to it in the token list.
-
----
-
-## Part 3: Connect Claude
+## Part 2: Connect Claude
 
 ### In Claude Desktop (Cowork)
 
@@ -79,11 +66,14 @@ You can have up to 5 active tokens. To revoke a token, click the trash icon next
 3. Enter:
    - **Name:** Meet Me at the Fair
    - **URL:** `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`
-   - **Authentication:** Bearer Token
-   - **Token:** Paste the `mmatf_...` token you copied earlier
 4. Click **Save** or **Connect**.
 
-Claude will discover the available tools automatically. You should see it confirm the connection with tools like `search_events`, `apply_to_event`, `list_my_applications`, etc.
+Claude will open a browser window to sign you in:
+
+5. Enter your **Meet Me at the Fair email and password**.
+6. Click **Sign In & Authorize**.
+
+The browser will close and Claude will confirm the connection with tools like `search_events`, `apply_to_event`, `list_my_applications`, etc.
 
 ### Verify the Connection
 
@@ -101,7 +91,7 @@ Claude should call `list_my_applications` and show your current applications and
 
 ---
 
-## Part 4: What You Can Ask Claude to Do
+## Part 3: What You Can Ask Claude to Do
 
 Once connected, Claude has access to these tools through your account:
 
@@ -144,8 +134,11 @@ Once connected, Claude has access to these tools through your account:
 
 ## Troubleshooting
 
-**"Unauthorized" errors from Claude:**
-Your API token may be expired or revoked. Go to [/dashboard/settings](https://meetmeatthefair.com/dashboard/settings), revoke the old token, generate a new one, and update it in Claude's connector settings.
+**Login page doesn't appear when connecting:**
+Make sure the connector URL is exactly `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`. If Claude doesn't open a browser window, try removing and re-adding the connector.
+
+**"Invalid email or password" on the login page:**
+Use the same email and password you use to log in at [meetmeatthefair.com](https://meetmeatthefair.com). If you signed up with Google or Facebook, you don't have a password set — contact support or set a password through the site first.
 
 **Claude can't find an event you know exists:**
 The search tool only returns events with **Approved** or **Tentative** status. Draft, Pending, or Cancelled events don't appear in search results.
@@ -157,4 +150,7 @@ This means your user account exists but doesn't have a vendor profile linked. Go
 Some events restrict participation to non-commercial vendors. If your profile is marked as commercial, you won't be able to apply to those events.
 
 **Claude shows fewer tools than expected:**
-The tools Claude sees depend on your account role. Vendor tools only appear for users with the Vendor role. If you're logged in as a regular User, you'll only see the public browsing tools and favorites.
+The tools Claude sees depend on your account role. Vendor tools only appear for users with the Vendor role. Ask Claude to run the `whoami` tool to check. If you're logged in as a regular User, you'll only see the public browsing tools and favorites.
+
+**Connection stopped working:**
+OAuth tokens expire periodically. Remove the connector in Claude's settings and add it again — you'll be prompted to sign in again.
