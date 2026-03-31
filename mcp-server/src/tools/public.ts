@@ -43,6 +43,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
         conditions.push(lte(events.startDate, new Date(params.start_before)));
       }
 
+      // Push state filter into SQL — venue is already joined
+      if (params.state) {
+        conditions.push(eq(venues.state, params.state.toUpperCase()));
+      }
+
+      const limit = params.limit ?? 20;
+
+      // Over-fetch when category post-filter is needed (categories are JSON strings)
+      const sqlLimit = params.category ? limit * 5 : limit;
+
       let query = db
         .select({
           id: events.id,
@@ -62,21 +72,19 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .where(and(...conditions))
-        .limit(params.limit ?? 20);
+        .limit(sqlLimit);
 
       const rows = await query;
 
-      // Post-filter by category/state (since these are on joined tables or JSON)
+      // Post-filter by category (stored as JSON, can't filter in SQL)
       let results = rows;
       if (params.category) {
         const cat = params.category.toLowerCase();
-        results = results.filter((r) =>
-          parseJsonArray(r.categories).some((c) => c.toLowerCase().includes(cat)),
-        );
-      }
-      if (params.state) {
-        const st = params.state.toUpperCase();
-        results = results.filter((r) => r.venueState?.toUpperCase() === st);
+        results = results
+          .filter((r) =>
+            parseJsonArray(r.categories).some((c) => c.toLowerCase().includes(cat)),
+          )
+          .slice(0, limit);
       }
 
       const output = results.map((r) => ({
