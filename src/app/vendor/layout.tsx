@@ -1,11 +1,13 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Store, FileText, Settings } from "lucide-react";
+import { Store, FileText, Settings, CalendarPlus, Send } from "lucide-react";
 import { auth } from "@/lib/auth";
 
 const vendorNav = [
   { name: "My Profile", href: "/vendor/profile", icon: Store },
   { name: "Applications", href: "/vendor/applications", icon: FileText },
+  { name: "Suggest Event", href: "/vendor/suggest-event", icon: CalendarPlus },
+  { name: "My Submissions", href: "/vendor/submissions", icon: Send },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 

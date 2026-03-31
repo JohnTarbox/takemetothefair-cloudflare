@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
-import { eq, and, gte } from "drizzle-orm";
+import { and, gte, eq } from "drizzle-orm";
+import { isPublicEventStatus } from "@/lib/event-status";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -20,7 +21,7 @@ async function getFeaturedEvents() {
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(
         and(
-          eq(events.status, "APPROVED"),
+          isPublicEventStatus(),
           eq(events.featured, true),
           gte(events.endDate, new Date())
         )
@@ -48,7 +49,7 @@ async function getUpcomingEvents() {
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(
         and(
-          eq(events.status, "APPROVED"),
+          isPublicEventStatus(),
           gte(events.endDate, new Date())
         )
       )

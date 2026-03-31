@@ -3,6 +3,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -52,7 +53,7 @@ export async function GET(
         and(
           eq(eventVendors.vendorId, vendor.id),
           isPublicVendorStatus(),
-          eq(events.status, "APPROVED")
+          isPublicEventStatus()
         )
       );
 

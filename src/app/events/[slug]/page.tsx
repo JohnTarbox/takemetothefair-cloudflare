@@ -21,6 +21,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, users, eventDays } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
@@ -95,7 +96,7 @@ async function getEvent(slug: string) {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(eq(events.slug, slug), eq(events.status, "APPROVED")))
+      .where(and(eq(events.slug, slug), isPublicEventStatus()))
       .limit(1);
 
     if (eventResults.length === 0) return null;
@@ -249,6 +250,13 @@ export default async function EventDetailPage({ params }: Props) {
           { name: event.name, url: `https://meetmeatthefair.com/events/${event.slug}` },
         ]}
       />
+      {event.status === "TENTATIVE" && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm text-amber-800">
+            <strong>Tentative Event</strong> — This event has not yet been verified by our team. Details may be incomplete or inaccurate.
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
           {event.imageUrl && (
@@ -272,6 +280,9 @@ export default async function EventDetailPage({ params }: Props) {
                 <div>
                   <div className="flex flex-wrap gap-2 mb-3">
                     {event.featured && <Badge variant="warning">Featured</Badge>}
+                    {event.status === "TENTATIVE" && (
+                      <Badge variant="info">Tentative — Unverified</Badge>
+                    )}
                     {categories.map((cat) => (
                       <Badge key={cat}>{cat}</Badge>
                     ))}

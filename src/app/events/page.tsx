@@ -6,6 +6,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, userFavorites, eventDays } from "@/lib/db/schema";
 import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
@@ -107,7 +108,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
 
     // Build conditions
     const conditions = [
-      eq(events.status, "APPROVED"),
+      isPublicEventStatus(),
     ];
 
     // Date filtering logic:
@@ -349,7 +350,7 @@ async function getCategories() {
     const results = await db
       .select({ categories: events.categories })
       .from(events)
-      .where(eq(events.status, "APPROVED"));
+      .where(isPublicEventStatus());
 
     const categories = new Set<string>();
     results.forEach((e) => {

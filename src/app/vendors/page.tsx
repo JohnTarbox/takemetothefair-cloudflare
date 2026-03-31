@@ -5,6 +5,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, userFavorites } from "@/lib/db/schema";
 import { eq, and, gte, isNotNull, inArray } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
@@ -128,7 +129,7 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
         and(
           inArray(eventVendors.vendorId, vendorIds),
           isPublicVendorStatus(),
-          eq(events.status, "APPROVED"),
+          isPublicEventStatus(),
           gte(events.endDate, new Date())
         )
       );

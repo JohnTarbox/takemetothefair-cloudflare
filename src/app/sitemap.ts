@@ -2,6 +2,7 @@ import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { isPublicEventStatus } from "@/lib/event-status";
 
 export const runtime = "edge";
 
@@ -91,7 +92,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const eventResults = await db
       .select({ slug: events.slug, updatedAt: events.updatedAt })
       .from(events)
-      .where(eq(events.status, "APPROVED"));
+      .where(isPublicEventStatus());
 
     const eventPages: MetadataRoute.Sitemap = eventResults.map((event) => ({
       url: `${baseUrl}/events/${event.slug}`,

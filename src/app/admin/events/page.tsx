@@ -31,6 +31,7 @@ interface Event {
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",
   PENDING: "warning",
+  TENTATIVE: "info",
   APPROVED: "success",
   REJECTED: "danger",
   CANCELLED: "default",

@@ -48,11 +48,13 @@ export function findUniqueSlug(baseSlug: string, existingSlugs: (string | null)[
 
 export function formatDate(date: Date | string): string {
   const d = new Date(date);
+  // Use UTC to avoid timezone shift (event dates are stored as midnight UTC)
   return d.toLocaleDateString("en-US", {
     weekday: "short",
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -69,7 +71,8 @@ export function formatDateRange(start: Date | string | null | undefined, end: Da
     return "TBD";
   }
 
-  if (startDate.toDateString() === endDate.toDateString()) {
+  // Use UTC for comparison (event dates are midnight UTC)
+  if (startDate.toLocaleDateString("en-US", { timeZone: "UTC" }) === endDate.toLocaleDateString("en-US", { timeZone: "UTC" })) {
     return formatDate(startDate);
   }
 

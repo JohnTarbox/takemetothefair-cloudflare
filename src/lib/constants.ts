@@ -14,10 +14,17 @@ export const PAGINATION = {
 export const EVENT_STATUS = {
   DRAFT: "DRAFT",
   PENDING: "PENDING",
+  TENTATIVE: "TENTATIVE",
   APPROVED: "APPROVED",
   REJECTED: "REJECTED",
   CANCELLED: "CANCELLED",
 } as const;
+
+// Statuses visible on public pages
+export const PUBLIC_EVENT_STATUSES = [
+  EVENT_STATUS.APPROVED,
+  EVENT_STATUS.TENTATIVE,
+] as const;
 
 // Venue statuses
 export const VENUE_STATUS = {

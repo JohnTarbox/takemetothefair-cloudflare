@@ -55,11 +55,18 @@ export function EventCard({ event, priority = false }: EventCardProps) {
               <Calendar className="w-12 h-12" />
             </div>
           )}
-          {event.featured && (
-            <Badge variant="warning" className="absolute top-3 left-3">
-              Featured
-            </Badge>
-          )}
+          <div className="absolute top-3 left-3 flex gap-1">
+            {event.featured && (
+              <Badge variant="warning">
+                Featured
+              </Badge>
+            )}
+            {event.status === "TENTATIVE" && (
+              <Badge variant="info">
+                Tentative
+              </Badge>
+            )}
+          </div>
           <FavoriteButton
             type="EVENT"
             id={event.id}

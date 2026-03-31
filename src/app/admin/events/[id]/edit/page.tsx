@@ -442,6 +442,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                 >
                   <option value="DRAFT">Draft</option>
                   <option value="PENDING">Pending</option>
+                  <option value="TENTATIVE">Tentative</option>
                   <option value="APPROVED">Approved</option>
                   <option value="REJECTED">Rejected</option>
                   <option value="CANCELLED">Cancelled</option>

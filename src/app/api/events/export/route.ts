@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { eq, and, gte, like, or } from "drizzle-orm";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { sanitizeLikeInput } from "@/lib/utils";
 import { logError } from "@/lib/logger";
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
     const includePast = searchParams.get("includePast");
 
     // Build conditions (same as the events page)
-    const conditions = [eq(events.status, "APPROVED")];
+    const conditions = [isPublicEventStatus()];
 
     if (includePast !== "true") {
       conditions.push(gte(events.endDate, new Date()));

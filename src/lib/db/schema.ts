@@ -81,7 +81,7 @@ export const events = sqliteTable("events", {
   imageUrl: text("image_url"),
   featured: integer("featured", { mode: "boolean" }).default(false),
   commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(true),
-  status: text("status", { enum: ["DRAFT", "PENDING", "APPROVED", "REJECTED", "CANCELLED"] }).default("DRAFT").notNull(),
+  status: text("status", { enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"] }).default("DRAFT").notNull(),
   viewCount: integer("view_count").default(0),
   // External source tracking for synced events
   sourceName: text("source_name"), // e.g., "mainefairs.net"
@@ -93,6 +93,8 @@ export const events = sqliteTable("events", {
   discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),
   // Suggester email for community-suggested events
   suggesterEmail: text("suggester_email"),
+  // Tracks who submitted the event (vendor, community user, etc.)
+  submittedByUserId: text("submitted_by_user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
@@ -236,6 +238,16 @@ export const eventSchemaOrg = sqliteTable("event_schema_org", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
+// API Tokens table — for MCP server / external API authentication
+export const apiTokens = sqliteTable("api_tokens", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull().unique(),
+  name: text("name").notNull().default("Default"),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   promoter: one(promoters, { fields: [users.id], references: [promoters.userId] }),
@@ -244,6 +256,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   notifications: many(notifications),
   accounts: many(accounts),
   sessions: many(sessions),
+  apiTokens: many(apiTokens),
 }));
 
 export const venuesRelations = relations(venues, ({ many }) => ({
@@ -297,6 +310,10 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
 
+export const apiTokensRelations = relations(apiTokens, ({ one }) => ({
+  user: one(users, { fields: [apiTokens.userId], references: [users.id] }),
+}));
+
 // Error Logs table
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
@@ -324,3 +341,4 @@ export type UserFavorite = typeof userFavorites.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type ErrorLog = typeof errorLogs.$inferSelect;
 export type EventSchemaOrg = typeof eventSchemaOrg.$inferSelect;
+export type ApiToken = typeof apiTokens.$inferSelect;

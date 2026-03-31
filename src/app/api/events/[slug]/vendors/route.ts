@@ -3,6 +3,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -19,7 +20,7 @@ export async function GET(
     const eventResults = await db
       .select({ id: events.id, name: events.name, slug: events.slug })
       .from(events)
-      .where(and(eq(events.slug, slug), eq(events.status, "APPROVED")))
+      .where(and(eq(events.slug, slug), isPublicEventStatus()))
       .limit(1);
 
     if (eventResults.length === 0) {

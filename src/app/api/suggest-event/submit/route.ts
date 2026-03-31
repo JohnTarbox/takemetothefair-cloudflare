@@ -8,6 +8,7 @@ import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
+import { auth } from "@/lib/auth";
 
 export const runtime = "edge";
 
@@ -45,6 +46,8 @@ const submitEventSchema = z.object({
   jsonLd: z.record(z.string(), z.unknown()).optional(),
   turnstileToken: z.string().optional(), // Turnstile verification token
   eventDays: z.array(eventDaySchema).optional(), // Per-day schedule
+  submittedByUserId: z.string().optional(), // User who submitted (auto-filled for authenticated users)
+  source: z.enum(["community", "vendor"]).optional(), // Submission source
 });
 
 export async function POST(request: NextRequest) {
@@ -68,6 +71,12 @@ export async function POST(request: NextRequest) {
     }
 
     const data = validation.data;
+
+    // Check auth for authenticated submissions
+    const session = await auth();
+    if (session?.user?.id && !data.submittedByUserId) {
+      data.submittedByUserId = session.user.id;
+    }
 
     // Verify Turnstile token for anonymous users
     if (!rateLimitResult.isAuthenticated) {
@@ -151,7 +160,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create the event with PENDING status
+    // Determine status: vendor submissions get TENTATIVE (publicly visible), others get PENDING
+    const eventStatus = data.source === "vendor" ? "TENTATIVE" : "PENDING";
+    const tagList = data.source === "vendor"
+      ? ["community-suggestion", "vendor-submission"]
+      : ["community-suggestion"];
+
+    // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
       id: newEventId,
@@ -164,18 +179,19 @@ export async function POST(request: NextRequest) {
       endDate,
       datesConfirmed: startDate !== null,
       categories: JSON.stringify(["Event"]),
-      tags: JSON.stringify(["community-suggestion"]),
+      tags: JSON.stringify(tagList),
       ticketUrl: data.ticketUrl || data.sourceUrl || null,
       ticketPriceMin: data.ticketPriceMin ?? null,
       ticketPriceMax: data.ticketPriceMax ?? null,
       imageUrl: data.imageUrl || null,
-      status: "PENDING",
-      sourceName: "community-suggestion",
+      status: eventStatus,
+      sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,
       syncEnabled: false,
       lastSyncedAt: new Date(),
       suggesterEmail: data.suggesterEmail || null,
+      submittedByUserId: data.submittedByUserId || null,
     });
 
     // Insert event days if provided

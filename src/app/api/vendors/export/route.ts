@@ -3,6 +3,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events } from "@/lib/db/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -75,7 +76,7 @@ export async function GET(request: Request) {
           and(
             inArray(eventVendors.vendorId, vendorIds),
             isPublicVendorStatus(),
-            eq(events.status, "APPROVED"),
+            isPublicEventStatus(),
             gte(events.endDate, new Date())
           )
         );

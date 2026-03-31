@@ -50,13 +50,20 @@ function getCalendarPeriodSummary(
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
 
+  // Helper: compare event dates (UTC midnight) against local calendar boundaries.
+  // Extract UTC date from event timestamps so US timezones don't shift days backward.
+  const eventDateOnly = (d: Date | string | number) => {
+    const dt = new Date(d);
+    return new Date(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+  };
+
   switch (viewType) {
     case "month": {
       const monthStart = new Date(year, month, 1);
       const monthEnd = new Date(year, month + 1, 0);
       const filtered = events.filter((e) => {
-        const start = e.startDate ? new Date(e.startDate) : null;
-        const end = e.endDate ? new Date(e.endDate) : start;
+        const start = e.startDate ? eventDateOnly(e.startDate) : null;
+        const end = e.endDate ? eventDateOnly(e.endDate) : start;
         if (!start) return false;
         return start <= monthEnd && (end || start) >= monthStart;
       });
@@ -68,8 +75,8 @@ function getCalendarPeriodSummary(
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekEnd.getDate() + 6);
       const filtered = events.filter((e) => {
-        const start = e.startDate ? new Date(e.startDate) : null;
-        const end = e.endDate ? new Date(e.endDate) : start;
+        const start = e.startDate ? eventDateOnly(e.startDate) : null;
+        const end = e.endDate ? eventDateOnly(e.endDate) : start;
         if (!start) return false;
         return start <= weekEnd && (end || start) >= weekStart;
       });
@@ -89,8 +96,8 @@ function getCalendarPeriodSummary(
       const yearStart = new Date(year, 0, 1);
       const yearEnd = new Date(year, 11, 31);
       const filtered = events.filter((e) => {
-        const start = e.startDate ? new Date(e.startDate) : null;
-        const end = e.endDate ? new Date(e.endDate) : start;
+        const start = e.startDate ? eventDateOnly(e.startDate) : null;
+        const end = e.endDate ? eventDateOnly(e.endDate) : start;
         if (!start) return false;
         return start <= yearEnd && (end || start) >= yearStart;
       });
@@ -99,9 +106,9 @@ function getCalendarPeriodSummary(
     case "schedule": {
       const viewStart = new Date(year, month, 1);
       const filtered = events.filter((e) => {
-        const start = e.startDate ? new Date(e.startDate) : null;
+        const start = e.startDate ? eventDateOnly(e.startDate) : null;
         if (!start) return false;
-        return start >= viewStart || (e.endDate && new Date(e.endDate) >= viewStart);
+        return start >= viewStart || (e.endDate && eventDateOnly(e.endDate) >= viewStart);
       });
       return { count: filtered.length, label: "on calendar" };
     }
@@ -125,13 +132,20 @@ function isSameDay(date1: Date, date2: Date): boolean {
   );
 }
 
+// Extract a date-only value from a UTC-midnight timestamp (event dates).
+// Event dates are stored as midnight UTC; using local getDate() in US timezones
+// shifts them to the previous calendar day. UTC methods avoid this.
+function utcDateOnly(d: Date): Date {
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
 function isDateInRange(date: Date, startDate: Date | null, endDate: Date | null): boolean {
   if (!startDate) return false;
+  // Calendar grid dates are local — extract local date
   const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const startOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-  const endOnly = endDate
-    ? new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
-    : startOnly;
+  // Event dates are midnight UTC — extract UTC date
+  const startOnly = utcDateOnly(startDate);
+  const endOnly = endDate ? utcDateOnly(endDate) : startOnly;
   return dateOnly >= startOnly && dateOnly <= endOnly;
 }
 
@@ -324,27 +338,28 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
         {/* Week day headers */}
         <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
           {days.map((day, i) => (
-            <div key={i} className="py-2 text-center border-r border-gray-200 last:border-r-0">
-              <div className="text-xs text-gray-500 uppercase">{weekDays[i]}</div>
-              <div className={`text-lg font-semibold ${isSameDay(day, today) ? "bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}>
+            <div key={i} className="py-2 print:py-1 text-center border-r border-gray-200 last:border-r-0">
+              <div className="text-xs print:text-[0.6rem] text-gray-500 uppercase">{weekDays[i]}</div>
+              <div className={`text-lg print:text-sm font-semibold ${isSameDay(day, today) ? "bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}>
                 {day.getDate()}
               </div>
             </div>
           ))}
         </div>
         {/* Week grid */}
-        <div className="grid grid-cols-7 min-h-[400px]">
+        <div className="grid grid-cols-7 min-h-[400px] print:min-h-0">
           {days.map((day, i) => {
             const dayEvents = getEventsForDate(events, day);
             return (
-              <div key={i} className="border-r border-gray-200 last:border-r-0 p-1">
-                <div className="space-y-1">
+              <div key={i} className="border-r border-gray-200 last:border-r-0 p-1 print:p-px">
+                {/* Screen: capped at 5 events */}
+                <div className="space-y-1 print:hidden">
                   {dayEvents.slice(0, 5).map((event) => (
                     <Link
                       key={event.id}
                       href={`/events/${event.slug}`}
-                      className={`block px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity`}
-                      title={event.name}
+                      className={`block px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                      title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
                     >
                       {event.name}
                     </Link>
@@ -352,6 +367,19 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                   {dayEvents.length > 5 && (
                     <div className="text-xs text-gray-500 px-1.5">+{dayEvents.length - 5} more</div>
                   )}
+                </div>
+                {/* Print: show all events */}
+                <div className="hidden print:block space-y-0">
+                  {dayEvents.map((event) => (
+                    <Link
+                      key={event.id}
+                      href={`/events/${event.slug}`}
+                      className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id)}`}
+                      title={event.name}
+                    >
+                      {event.name}
+                    </Link>
+                  ))}
                 </div>
               </div>
             );
@@ -418,8 +446,8 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                         <Link
                           key={event.id}
                           href={`/events/${event.slug}`}
-                          className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity`}
-                          title={event.name}
+                          className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                          title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
                         >
                           {event.name}
                         </Link>
@@ -467,8 +495,8 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
           const daysInMonth = getDaysInMonth(year, monthIndex);
           const firstDay = getFirstDayOfMonth(year, monthIndex);
           const monthEvents = events.filter((event) => {
-            const startDate = event.startDate ? new Date(event.startDate) : null;
-            const endDate = event.endDate ? new Date(event.endDate) : startDate;
+            const startDate = event.startDate ? utcDateOnly(new Date(event.startDate)) : null;
+            const endDate = event.endDate ? utcDateOnly(new Date(event.endDate)) : startDate;
             if (!startDate) return false;
             const monthStart = new Date(year, monthIndex, 1);
             const monthEnd = new Date(year, monthIndex + 1, 0);
@@ -529,10 +557,10 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
     // Get events for the current month and beyond, sorted by date
     const scheduleEvents = events
       .filter((event) => {
-        const startDate = event.startDate ? new Date(event.startDate) : null;
+        const startDate = event.startDate ? utcDateOnly(new Date(event.startDate)) : null;
         if (!startDate) return false;
         const viewStart = new Date(year, month, 1);
-        return startDate >= viewStart || (event.endDate && new Date(event.endDate) >= viewStart);
+        return startDate >= viewStart || (event.endDate && utcDateOnly(new Date(event.endDate)) >= viewStart);
       })
       .sort((a, b) => {
         const aDate = a.startDate ? new Date(a.startDate).getTime() : Infinity;
@@ -540,11 +568,11 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
         return aDate - bDate;
       });
 
-    // Group events by date
+    // Group events by date (use UTC to get correct calendar day)
     const groupedEvents: { [key: string]: EventWithRelations[] } = {};
     scheduleEvents.forEach((event) => {
       if (event.startDate) {
-        const dateKey = new Date(event.startDate).toDateString();
+        const dateKey = utcDateOnly(new Date(event.startDate)).toDateString();
         if (!groupedEvents[dateKey]) {
           groupedEvents[dateKey] = [];
         }
@@ -931,6 +959,11 @@ export function EventsView({
                       {event.featured && (
                         <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
                           Featured
+                        </span>
+                      )}
+                      {event.status === "TENTATIVE" && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                          Tentative
                         </span>
                       )}
                     </td>

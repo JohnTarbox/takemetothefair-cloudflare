@@ -9,6 +9,7 @@ import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -49,7 +50,7 @@ async function getVenue(slug: string) {
       .where(
         and(
           eq(events.venueId, venue.id),
-          eq(events.status, "APPROVED"),
+          isPublicEventStatus(),
           gte(events.endDate, new Date())
         )
       )
