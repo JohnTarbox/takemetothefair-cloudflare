@@ -6,6 +6,7 @@ import { registerPublicTools } from "./tools/public.js";
 import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
+import { registerAdminTools } from "./tools/admin.js";
 
 interface Env {
   DB: D1Database;
@@ -77,6 +78,10 @@ export default {
 
       if (auth.role === "PROMOTER" || auth.role === "ADMIN") {
         registerPromoterTools(server, db, auth);
+      }
+
+      if (auth.role === "ADMIN") {
+        registerAdminTools(server, db, auth);
       }
     }
 

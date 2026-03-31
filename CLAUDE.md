@@ -23,6 +23,14 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 - **Domain**: `meetmeatthefair.com`
 - **AI Model**: `@cf/meta/llama-3.1-8b-instruct`
 
+## Cloudflare Account
+
+**This project uses the `jtarboxme@gmail.com` Cloudflare account ONLY.**
+- Account Name: `John Tarbox - Account`
+- Account ID: `e6011e48b7014ef83c77e3c767dac6cf`
+- **Never use the APRS Foundation account** (`john.tarbox@aprsfoundation.org`)
+- Before any wrangler command that touches Cloudflare (deploy, d1 migrations, etc.), verify with `npx wrangler whoami`
+
 ### Safety Rules
 - Prefer `SELECT` queries over mutations when inspecting D1 data
 - Never run `DELETE`, `DROP`, or destructive DNS changes without explicit user confirmation
