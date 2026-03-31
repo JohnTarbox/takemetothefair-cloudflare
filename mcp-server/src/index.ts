@@ -49,7 +49,9 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
           };
         }
         const toolSets = ["public tools (5)", "user tools (2)"];
-        if (props.role === "VENDOR" || props.role === "ADMIN") toolSets.push("vendor tools (6)");
+        if (props.role === "VENDOR" || props.role === "ADMIN") {
+          toolSets.push(props.vendorId ? "vendor tools (6)" : "vendor tools (1 — suggest_event only, no vendor profile)");
+        }
         if (props.role === "PROMOTER" || props.role === "ADMIN") toolSets.push("promoter tools (2)");
         if (props.role === "ADMIN") toolSets.push("admin tools (4)");
         return {
@@ -81,6 +83,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       registerUserTools(this.server, db, auth);
 
       if (auth.role === "VENDOR" || auth.role === "ADMIN") {
+        console.log(`[INIT] Registering vendor tools for role=${auth.role} vendorId=${auth.vendorId || "none"}`);
         registerVendorTools(this.server, db, auth);
       }
       if (auth.role === "PROMOTER" || auth.role === "ADMIN") {
@@ -183,6 +186,16 @@ export default {
     const url = new URL(request.url);
     const authHeader = request.headers.get("Authorization");
 
+    // Log all requests for debugging
+    console.log(`[MCP] ${request.method} ${url.pathname} auth=${authHeader ? "yes" : "no"}`);
+
+    // Root URL health check — Claude.ai probes this before starting OAuth
+    if (url.pathname === "/" && request.method === "GET") {
+      return new Response(JSON.stringify({ name: "MeetMeAtTheFair", version: "1.0.0" }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler
     if (url.pathname === "/mcp" && authHeader?.includes("mmatf_")) {
       return handleLegacyMcpRequest(request, env);
@@ -190,9 +203,11 @@ export default {
 
     // Everything else goes through the OAuth provider
     try {
-      return await oauthProvider.fetch(request, env, ctx);
+      const response = await oauthProvider.fetch(request, env, ctx);
+      console.log(`[MCP] ${url.pathname} → ${response.status}`);
+      return response;
     } catch (err: any) {
-      console.error("OAuthProvider error:", err?.message, err?.stack);
+      console.error("[MCP] OAuthProvider error:", err?.message, err?.stack);
       return new Response(JSON.stringify({ error: err?.message || "Internal error" }), {
         status: 500,
         headers: { "Content-Type": "application/json" },

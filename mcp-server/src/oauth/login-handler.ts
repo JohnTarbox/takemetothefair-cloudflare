@@ -11,11 +11,26 @@ interface Env {
 const app = new Hono<{ Bindings: Env }>();
 
 // ---------------------------------------------------------------------------
+// GET / — server info (Claude.ai probes this first)
+// ---------------------------------------------------------------------------
+app.get("/", async (c) => {
+  console.log("[LOGIN] GET /");
+  return c.json({
+    name: "MeetMeAtTheFair",
+    version: "1.0.0",
+    description: "Meet Me at the Fair MCP Server",
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /authorize — render login form
 // ---------------------------------------------------------------------------
 app.get("/authorize", async (c) => {
+  console.log("[LOGIN] GET /authorize", c.req.url);
   const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
+  console.log("[LOGIN] Parsed auth request:", JSON.stringify({ clientId: oauthReqInfo.clientId, redirectUri: oauthReqInfo.redirectUri, scope: oauthReqInfo.scope }));
   if (!oauthReqInfo.clientId) {
+    console.log("[LOGIN] No client_id in auth request");
     return c.text("Invalid authorization request", 400);
   }
 
@@ -31,6 +46,7 @@ app.get("/authorize", async (c) => {
 // POST /authorize — validate credentials, complete OAuth flow
 // ---------------------------------------------------------------------------
 app.post("/authorize", async (c) => {
+  console.log("[LOGIN] POST /authorize");
   const formData = await c.req.raw.formData();
 
   // CSRF validation
@@ -69,6 +85,8 @@ app.post("/authorize", async (c) => {
   // Build user props for the OAuth token
   const props = await resolveUserProps(db, user);
 
+  console.log("[LOGIN] Credentials valid for", user.email, "role:", user.role);
+
   // Complete the OAuth authorization — generates an auth code and redirects
   const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
     request: oauthReqInfo,
@@ -77,6 +95,7 @@ app.post("/authorize", async (c) => {
     props,
   });
 
+  console.log("[LOGIN] Redirecting to:", redirectTo.slice(0, 100) + "...");
   return new Response(null, {
     status: 302,
     headers: {

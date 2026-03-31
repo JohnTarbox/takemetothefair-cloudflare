@@ -14,7 +14,14 @@ import type { AuthContext } from "../auth.js";
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
 export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext) {
-  if (!auth.vendorId) return; // No vendor profile — skip registration
+  // suggest_event only needs userId, not a vendor profile — register it first
+  console.log(`[VENDOR-TOOLS] Registering suggest_event for userId=${auth.userId} role=${auth.role} vendorId=${auth.vendorId || "none"}`);
+  registerSuggestEvent(server, db, auth);
+
+  if (!auth.vendorId) {
+    console.log(`[VENDOR-TOOLS] No vendorId — skipping profile/application tools`);
+    return;
+  }
 
   const vendorId = auth.vendorId;
 
@@ -285,7 +292,12 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
     },
   );
 
-  // ── suggest_event ──────────────────────────────────────────────
+}
+
+// ---------------------------------------------------------------------------
+// suggest_event — registered separately since it only needs userId, not vendorId
+// ---------------------------------------------------------------------------
+function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
   server.tool(
     "suggest_event",
     "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status.",
