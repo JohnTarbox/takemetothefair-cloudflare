@@ -175,6 +175,221 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext)
     },
   );
 
+  // ── update_event ───────────────────────────────────────────────
+  server.tool(
+    "update_event",
+    "Update event fields (name, description, dates, venue, ticket info, source info, image, etc.). Does NOT change status — use update_event_status for that. Admin only.",
+    {
+      event_id: z.string().describe("Event ID"),
+      name: z.string().optional().describe("Event name (also regenerates slug)"),
+      description: z.string().optional().describe("Event description"),
+      start_date: z.string().optional().describe("Start date as ISO 8601 string"),
+      end_date: z.string().optional().describe("End date as ISO 8601 string"),
+      dates_confirmed: z.boolean().optional().describe("Whether dates are confirmed"),
+      venue_id: z.string().optional().describe("Venue ID (FK to venues table)"),
+      categories: z.array(z.string()).optional().describe("Category list, e.g. ['Craft Fair','Market']"),
+      tags: z.array(z.string()).optional().describe("Tag list, e.g. ['family-friendly','outdoor']"),
+      ticket_url: z.string().optional().describe("URL to buy tickets"),
+      ticket_price_min: z.number().optional().describe("Minimum ticket price"),
+      ticket_price_max: z.number().optional().describe("Maximum ticket price"),
+      image_url: z.string().optional().describe("Event image URL"),
+      featured: z.boolean().optional().describe("Whether the event is featured"),
+      commercial_vendors_allowed: z.boolean().optional().describe("Whether commercial vendors are allowed"),
+      source_url: z.string().optional().describe("Original source URL"),
+      source_id: z.string().optional().describe("ID in the source system"),
+      source_name: z.string().optional().describe("Name of the source (e.g. 'facebook', 'eventbrite')"),
+      recurrence_rule: z.string().optional().describe("iCal RRULE recurrence string"),
+      discontinuous_dates: z.boolean().optional().describe("Whether the event has non-consecutive dates"),
+      sync_enabled: z.boolean().optional().describe("Whether automated sync is enabled"),
+    },
+    async (params) => {
+      // Field mapping: snake_case param → camelCase Drizzle column + optional transform
+      const fieldMap: Array<{
+        param: string;
+        column: string;
+        transform?: (v: any) => unknown;
+      }> = [
+        { param: "description", column: "description" },
+        { param: "venue_id", column: "venueId" },
+        { param: "dates_confirmed", column: "datesConfirmed" },
+        { param: "ticket_url", column: "ticketUrl" },
+        { param: "ticket_price_min", column: "ticketPriceMin" },
+        { param: "ticket_price_max", column: "ticketPriceMax" },
+        { param: "image_url", column: "imageUrl" },
+        { param: "featured", column: "featured" },
+        { param: "commercial_vendors_allowed", column: "commercialVendorsAllowed" },
+        { param: "source_url", column: "sourceUrl" },
+        { param: "source_id", column: "sourceId" },
+        { param: "source_name", column: "sourceName" },
+        { param: "recurrence_rule", column: "recurrenceRule" },
+        { param: "discontinuous_dates", column: "discontinuousDates" },
+        { param: "sync_enabled", column: "syncEnabled" },
+        {
+          param: "categories",
+          column: "categories",
+          transform: (v: string[]) => JSON.stringify(v),
+        },
+        {
+          param: "tags",
+          column: "tags",
+          transform: (v: string[]) => JSON.stringify(v),
+        },
+        {
+          param: "start_date",
+          column: "startDate",
+          transform: (v: string) => {
+            const d = new Date(v);
+            return isNaN(d.getTime()) ? undefined : d;
+          },
+        },
+        {
+          param: "end_date",
+          column: "endDate",
+          transform: (v: string) => {
+            const d = new Date(v);
+            return isNaN(d.getTime()) ? undefined : d;
+          },
+        },
+      ];
+
+      const updates: Record<string, unknown> = {};
+      const requestedFields: string[] = [];
+
+      for (const { param, column, transform } of fieldMap) {
+        const value = (params as Record<string, unknown>)[param];
+        if (value !== undefined) {
+          const transformed = transform ? transform(value) : value;
+          if (transformed !== undefined) {
+            updates[column] = transformed;
+            requestedFields.push(param);
+          }
+        }
+      }
+
+      // Handle name separately (triggers slug regeneration)
+      if (params.name !== undefined) {
+        updates.name = params.name;
+        requestedFields.push("name");
+      }
+
+      if (requestedFields.length === 0) {
+        return {
+          content: [{ type: "text", text: "No fields provided to update. Supply at least one optional field." }],
+          isError: true,
+        };
+      }
+
+      // Validate date ordering if both are being set
+      if (updates.startDate && updates.endDate) {
+        if ((updates.startDate as Date) > (updates.endDate as Date)) {
+          return {
+            content: [{ type: "text", text: "start_date must be before or equal to end_date." }],
+            isError: true,
+          };
+        }
+      }
+
+      // Validate venue FK exists if provided
+      if (params.venue_id) {
+        const venueRows = await db
+          .select({ id: venues.id })
+          .from(venues)
+          .where(eq(venues.id, params.venue_id))
+          .limit(1);
+        if (venueRows.length === 0) {
+          return {
+            content: [{ type: "text", text: `Venue not found: ${params.venue_id}` }],
+            isError: true,
+          };
+        }
+      }
+
+      // Fetch current event
+      const eventRows = await db
+        .select()
+        .from(events)
+        .where(eq(events.id, params.event_id))
+        .limit(1);
+
+      if (eventRows.length === 0) {
+        return {
+          content: [{ type: "text", text: "Event not found." }],
+          isError: true,
+        };
+      }
+
+      const event = eventRows[0];
+
+      // If name changed, regenerate slug with collision check
+      if (params.name !== undefined) {
+        const baseSlug = params.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "");
+        let finalSlug = baseSlug;
+        let suffix = 0;
+        while (true) {
+          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const existing = await db
+            .select({ id: events.id })
+            .from(events)
+            .where(eq(events.slug, candidate))
+            .limit(1);
+          if (existing.length === 0 || existing[0].id === event.id) {
+            finalSlug = candidate;
+            break;
+          }
+          suffix++;
+        }
+        updates.slug = finalSlug;
+      }
+
+      // Always set updatedAt
+      updates.updatedAt = new Date();
+
+      // Capture previous values for confirmation
+      const previousValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        if (field === "name") {
+          previousValues.name = event.name;
+          previousValues.slug = event.slug;
+          continue;
+        }
+        const mapping = fieldMap.find((f) => f.param === field);
+        if (mapping) {
+          previousValues[field] = (event as Record<string, unknown>)[mapping.column];
+        }
+      }
+
+      // Execute update
+      await db
+        .update(events)
+        .set(updates)
+        .where(eq(events.id, event.id));
+
+      // Build new values for confirmation
+      const newValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        newValues[field] = (params as Record<string, unknown>)[field];
+      }
+      if (params.name !== undefined && updates.slug) {
+        newValues.slug = updates.slug;
+      }
+
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            event: { id: event.id, name: updates.name ?? event.name },
+            fieldsUpdated: requestedFields,
+            previousValues,
+            newValues,
+          }),
+        ],
+      };
+    },
+  );
+
   // ── list_event_vendors_admin ───────────────────────────────────
   server.tool(
     "list_event_vendors_admin",

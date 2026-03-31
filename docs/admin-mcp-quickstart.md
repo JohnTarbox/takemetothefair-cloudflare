@@ -32,7 +32,7 @@ Claude will open a browser window to sign you in:
 5. Enter your **Meet Me at the Fair email and password** in the login form.
 6. Click **Sign In & Authorize**.
 
-The browser will close and Claude will confirm the connection. You should see tools like `list_all_events`, `update_event_status`, `search_events`, etc.
+The browser will close and Claude will confirm the connection. You should see tools like `list_all_events`, `update_event_status`, `update_event`, `search_events`, etc.
 
 ### Verify the Connection
 
@@ -52,7 +52,7 @@ Claude should call `list_event_vendors_admin` and show the full list of vendors 
 
 ## Part 3: What You Can Ask Claude to Do
 
-As an admin, Claude has access to **all 19 tools** on the platform — the full superset of public, user, vendor, promoter, and admin capabilities.
+As an admin, Claude has access to **all 20 tools** on the platform — the full superset of public, user, vendor, promoter, and admin capabilities.
 
 ### Event Administration (Admin Only)
 
@@ -64,6 +64,8 @@ These tools are exclusive to admin accounts:
 | "Search all events with 'fair' in the name" | Searches events by name across all statuses |
 | "Approve the Augusta Boat Show" | Changes an event's status (e.g., PENDING → APPROVED) |
 | "Reject this event and set it to cancelled" | Updates an event to any valid status |
+| "Update the source URL for the Willows Highlands events" | Edits event fields like source URL, description, image, dates, ticket info, etc. |
+| "Change the description for the Augusta Boat Show" | Updates any event's content fields |
 | "Show all vendor applications for the Fryeburg Fair" | Lists every vendor application with full status and payment details |
 | "Filter to just the applied vendors" | Filters vendor applications by status (APPLIED, APPROVED, CONFIRMED, etc.) |
 | "Approve this vendor's application" | Changes a vendor's application status with transition validation |
@@ -72,6 +74,7 @@ These tools are exclusive to admin accounts:
 **Admin tools:**
 - `list_all_events` — Browse/search all events regardless of promoter ownership
 - `update_event_status` — Approve, reject, or change any event's status
+- `update_event` — Edit event fields (name, description, dates, venue, source URL, image, ticket info, categories, tags, etc.)
 - `list_event_vendors_admin` — List all vendors for any event with full status details
 - `update_vendor_status` — Change a vendor's application status or payment status
 
