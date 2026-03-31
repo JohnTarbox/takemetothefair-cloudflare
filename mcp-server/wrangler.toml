@@ -7,3 +7,16 @@ compatibility_flags = ["nodejs_compat"]
 binding = "DB"
 database_name = "takemetothefair-db"
 database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "80685c98cb744582bb528587d20e647a"
+
+[durable_objects]
+bindings = [
+  { name = "MeetMeAtTheFairMCP", class_name = "MeetMeAtTheFairMCP" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MeetMeAtTheFairMCP"]

@@ -4,13 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "vercel-build": "next build",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.3.3",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "agents": "^0.8.7",
     "drizzle-orm": "^0.38.3",
+    "hono": "^4.12.9",
     "zod": "^4.3.6"
   },
   "devDependencies": {
