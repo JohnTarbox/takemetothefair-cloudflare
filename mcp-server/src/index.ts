@@ -11,6 +11,22 @@ interface Env {
   DB: D1Database;
 }
 
+const ALLOWED_ORIGINS = [
+  "https://meetmeatthefair.com",
+  "https://www.meetmeatthefair.com",
+  "http://localhost:3000",
+];
+
+function getCorsOrigin(request: Request): string {
+  const origin = request.headers.get("Origin") || "";
+  // MCP clients (Claude Desktop) don't send Origin headers — allow those through.
+  // For browser requests, only allow known origins.
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    return origin || ALLOWED_ORIGINS[0];
+  }
+  return ALLOWED_ORIGINS[0];
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -23,11 +39,13 @@ export default {
       });
     }
 
+    const corsOrigin = getCorsOrigin(request);
+
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Origin": corsOrigin,
           "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
           "Access-Control-Expose-Headers": "mcp-session-id",
@@ -73,7 +91,7 @@ export default {
 
     // Add CORS headers
     const corsHeaders = new Headers(response.headers);
-    corsHeaders.set("Access-Control-Allow-Origin", "*");
+    corsHeaders.set("Access-Control-Allow-Origin", corsOrigin);
     corsHeaders.set("Access-Control-Expose-Headers", "mcp-session-id");
 
     return new Response(response.body, {
