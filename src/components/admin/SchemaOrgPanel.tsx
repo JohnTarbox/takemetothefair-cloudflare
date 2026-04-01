@@ -209,20 +209,20 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
 
   const getStatusBadge = () => {
     if (!schemaOrg) {
-      return <Badge variant="secondary">Not Fetched</Badge>;
+      return <Badge variant="default">Not Fetched</Badge>;
     }
 
     switch (schemaOrg.status) {
       case "available":
         return <Badge variant="success">Available</Badge>;
       case "not_found":
-        return <Badge variant="secondary">Not Found</Badge>;
+        return <Badge variant="default">Not Found</Badge>;
       case "invalid":
         return <Badge variant="warning">Invalid</Badge>;
       case "error":
-        return <Badge variant="destructive">Error</Badge>;
+        return <Badge variant="danger">Error</Badge>;
       default:
-        return <Badge variant="secondary">Pending</Badge>;
+        return <Badge variant="default">Pending</Badge>;
     }
   };
 

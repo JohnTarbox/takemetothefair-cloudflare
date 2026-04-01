@@ -52,7 +52,7 @@ export default function DatabaseManagementPage() {
     try {
       const res = await fetch("/api/admin/database/stats");
       if (!res.ok) throw new Error("Failed to fetch stats");
-      const data = await res.json();
+      const data: DbStats = await res.json();
       setStats(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load database stats");
@@ -69,7 +69,7 @@ export default function DatabaseManagementPage() {
     try {
       const res = await fetch("/api/admin/database/backup");
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json() as { error?: string };
         throw new Error(data.error || "Backup failed");
       }
 
@@ -122,15 +122,19 @@ export default function DatabaseManagementPage() {
         body: formData,
       });
 
-      const data = await res.json();
+      const data = await res.json() as {
+        error?: string;
+        message?: string;
+        details?: { tablesCreated: number; rowsInserted: number; totalErrors: number };
+      };
 
       if (!res.ok) {
         throw new Error(data.error || "Restore failed");
       }
 
       setSuccess(
-        `${data.message} Tables: ${data.details.tablesCreated}, Rows: ${data.details.rowsInserted}${
-          data.details.totalErrors > 0 ? `, Errors: ${data.details.totalErrors}` : ""
+        `${data.message} Tables: ${data.details?.tablesCreated}, Rows: ${data.details?.rowsInserted}${
+          (data.details?.totalErrors ?? 0) > 0 ? `, Errors: ${data.details?.totalErrors}` : ""
         }`
       );
       setShowRestoreDialog(false);

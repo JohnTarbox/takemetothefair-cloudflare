@@ -44,7 +44,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
       try {
         const response = await fetch(`/api/favorites?type=${type}`);
         if (response.ok) {
-          const data = await response.json();
+          const data = await response.json() as any;
           const favorited = data.favorites.some(
             (fav: { favoritableId: string }) => fav.favoritableId === id
           );

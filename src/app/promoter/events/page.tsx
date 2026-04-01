@@ -142,7 +142,7 @@ export default async function PromoterEventsPage() {
                     <div className="mt-1 flex items-center gap-4 text-sm text-gray-500">
                       <span>{event.venue.name}</span>
                       <span className="flex items-center gap-1">
-                        {formatDate(event.startDate)}
+                        {formatDate(event.startDate!)}
                         <AddToCalendar
                           title={event.name}
                           description={event.description || undefined}

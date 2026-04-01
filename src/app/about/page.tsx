@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Calendar, Users, MapPin, Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
@@ -112,12 +113,12 @@ export default function AboutPage() {
           your event with the world, we&apos;re here to help.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
-          <a
+          <Link
             href="/events"
             className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
           >
             Browse Events
-          </a>
+          </Link>
           <a
             href="/contact"
             className="inline-flex items-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"

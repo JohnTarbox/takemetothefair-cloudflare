@@ -51,7 +51,7 @@ function RegisterForm() {
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string>("");
-  const [turnstileReady, setTurnstileReady] = useState(false);
+  const [_turnstileReady, setTurnstileReady] = useState(false);
   const turnstileWidgetId = useRef<string | null>(null);
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
 

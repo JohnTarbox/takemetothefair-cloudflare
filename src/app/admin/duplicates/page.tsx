@@ -130,7 +130,7 @@ export default function AdminDuplicatesPage() {
 
       let data: { duplicates?: DuplicatePair[]; totalEntities?: number; error?: string };
       try {
-        data = await res.json();
+        data = await res.json() as any;
       } catch {
         throw new Error(
           `Server returned an invalid response (status ${res.status}). ` +
@@ -196,7 +196,7 @@ export default function AdminDuplicatesPage() {
         throw new Error("Failed to generate preview");
       }
 
-      const data: MergePreviewResponse = await res.json();
+      const data: MergePreviewResponse = await res.json() as MergePreviewResponse;
       setPreview(data);
     } catch (err) {
       console.error("Failed to generate preview:", err);
@@ -244,7 +244,7 @@ export default function AdminDuplicatesPage() {
 
       let data: { error?: string };
       try {
-        data = await res.json();
+        data = await res.json() as any;
       } catch {
         throw new Error(
           `Server returned an invalid response (status ${res.status}). The merge may have partially completed - please refresh and verify.`

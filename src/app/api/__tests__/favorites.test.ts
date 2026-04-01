@@ -25,7 +25,7 @@ vi.mock("@/lib/cloudflare", () => ({
 import { GET, POST, DELETE } from "../favorites/route";
 import { auth } from "@/lib/auth";
 
-const mockAuth = vi.mocked(auth);
+const mockAuth = auth as any;
 
 describe("GET /api/favorites", () => {
   beforeEach(() => {
@@ -37,7 +37,7 @@ describe("GET /api/favorites", () => {
 
     const request = new NextRequest("http://localhost:3000/api/favorites");
     const response = await GET(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(200);
     expect(data.favorites).toEqual([]);
@@ -74,7 +74,7 @@ describe("POST /api/favorites", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(401);
     expect(data.error).toBe("Unauthorized");
@@ -92,7 +92,7 @@ describe("POST /api/favorites", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("type:");
@@ -129,7 +129,7 @@ describe("POST /api/favorites", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(200);
     expect(data.favorited).toBe(true);
@@ -149,7 +149,7 @@ describe("POST /api/favorites", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(200);
     expect(data.favorited).toBe(true);
@@ -171,7 +171,7 @@ describe("DELETE /api/favorites", () => {
     );
 
     const response = await DELETE(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(401);
     expect(data.error).toBe("Unauthorized");
@@ -207,7 +207,7 @@ describe("DELETE /api/favorites", () => {
     );
 
     const response = await DELETE(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(200);
     expect(data.favorited).toBe(false);

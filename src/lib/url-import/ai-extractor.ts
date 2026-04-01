@@ -135,7 +135,7 @@ export async function extractEventData(
   // Call Workers AI with Llama 3.1 8B using messages format for better instruction following
   console.log("[AI Extractor] Calling Workers AI, content length:", truncatedContent.length);
 
-  const response = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
+  const response = await ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt }
@@ -151,7 +151,7 @@ export async function extractEventData(
   console.log("[AI Extractor] Raw AI response:", responseText.substring(0, 1500));
 
   // Parse the response
-  const extracted = parseAiResponse(response, metadata);
+  const extracted = parseAiResponse(response as AiTextGenerationOutput, metadata);
   const confidence = calculateConfidence(extracted, metadata);
 
   console.log("[AI Extractor] Parsed extraction:", JSON.stringify(extracted, null, 2));
@@ -198,7 +198,7 @@ export async function extractMultipleEvents(
   // Call Workers AI with Llama 3.1 8B using messages format
   console.log("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);
 
-  const response = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
+  const response = await ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
     messages: [
       { role: "system", content: MULTI_EVENT_SYSTEM_PROMPT },
       { role: "user", content: userPrompt }
@@ -214,7 +214,7 @@ export async function extractMultipleEvents(
   console.log("[AI Extractor Multi] Raw AI response:", responseText.substring(0, 2000));
 
   // Parse the response as array
-  const events = parseMultiEventResponse(response, metadata);
+  const events = parseMultiEventResponse(response as AiTextGenerationOutput, metadata);
   const confidence = calculateMultiEventConfidence(events, metadata);
 
   console.log("[AI Extractor Multi] Parsed", events.length, "events");

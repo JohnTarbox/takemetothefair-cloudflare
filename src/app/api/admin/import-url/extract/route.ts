@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
+import type { PageMetadata } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
     const { events, confidence } = await extractMultipleEvents(
       ai,
       content,
-      metadata || {}
+      (metadata || {}) as PageMetadata
     );
 
     console.log("[Extract] AI extracted", events.length, "events");

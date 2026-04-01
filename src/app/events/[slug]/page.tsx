@@ -104,7 +104,7 @@ async function getEvent(slug: string) {
     const eventData = eventResults[0];
 
     // Get promoter's user
-    const promoterUser = eventData.promoters ? await db
+    const promoterUser = eventData.promoters?.userId ? await db
       .select({ name: users.name, email: users.email })
       .from(users)
       .where(eq(users.id, eventData.promoters.userId))
@@ -215,8 +215,8 @@ export default async function EventDetailPage({ params }: Props) {
       <EventSchema
         name={event.name}
         description={event.description || undefined}
-        startDate={event.startDate}
-        endDate={event.endDate}
+        startDate={event.startDate!}
+        endDate={event.endDate!}
         imageUrl={event.imageUrl}
         url={`https://meetmeatthefair.com/events/${event.slug}`}
         venue={event.venue ? {
@@ -411,7 +411,7 @@ export default async function EventDetailPage({ params }: Props) {
                       endDate={event.endDate}
                       url={`https://meetmeatthefair.com/events/${event.slug}`}
                       variant="icon"
-                      eventDays={event.eventDays}
+                      eventDays={event.eventDays as any}
                     />
                   </div>
                   {event.eventDays && event.eventDays.length > 0 ? (
@@ -569,7 +569,7 @@ export default async function EventDetailPage({ params }: Props) {
             </Card>
           )}
 
-          <Card>
+          {event.promoter && <Card>
             <CardHeader>
               <h3 className="font-semibold text-gray-900">Presented By</h3>
             </CardHeader>
@@ -608,7 +608,7 @@ export default async function EventDetailPage({ params }: Props) {
                 </a>
               )}
             </CardContent>
-          </Card>
+          </Card>}
         </aside>
       </div>
     </div>

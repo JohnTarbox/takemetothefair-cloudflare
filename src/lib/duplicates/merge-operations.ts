@@ -255,7 +255,7 @@ async function mergePromoters(
     .update(events)
     .set({ promoterId: primaryId })
     .where(eq(events.promoterId, duplicateId));
-  transferred.events = eventResult.rowsAffected || 0;
+  transferred.events = (eventResult as any).rowsAffected || 0;
 
   // Get existing favorites
   const existingFavorites = await db
@@ -277,7 +277,7 @@ async function mergePromoters(
         eq(userFavorites.favoritableId, duplicateId),
         notInArray(userFavorites.userId, existingUserIds)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
   } else {
     const favoriteResult = await db
       .update(userFavorites)
@@ -286,7 +286,7 @@ async function mergePromoters(
         eq(userFavorites.favoritableType, "PROMOTER"),
         eq(userFavorites.favoritableId, duplicateId)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
   }
 
   // Delete remaining duplicate favorites
@@ -420,7 +420,7 @@ async function mergeVendors(
     .update(eventVendors)
     .set({ vendorId: primaryId })
     .where(eq(eventVendors.vendorId, duplicateId));
-  transferred.eventVendors = eventVendorResult.rowsAffected || 0;
+  transferred.eventVendors = (eventVendorResult as any).rowsAffected || 0;
 
   // Get existing favorites
   const existingFavorites = await db
@@ -442,7 +442,7 @@ async function mergeVendors(
         eq(userFavorites.favoritableId, duplicateId),
         notInArray(userFavorites.userId, existingUserIds)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
   } else {
     const favoriteResult = await db
       .update(userFavorites)
@@ -451,7 +451,7 @@ async function mergeVendors(
         eq(userFavorites.favoritableType, "VENDOR"),
         eq(userFavorites.favoritableId, duplicateId)
       ));
-    transferred.favorites = favoriteResult.rowsAffected || 0;
+    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
   }
 
   // Delete remaining duplicate favorites
@@ -503,8 +503,8 @@ async function getEventMergePreview(
   }
 
   // Get venue and promoter info
-  const [primaryVenue] = await db.select({ name: venues.name }).from(venues).where(eq(venues.id, primary.venueId));
-  const [duplicateVenue] = await db.select({ name: venues.name }).from(venues).where(eq(venues.id, duplicate.venueId));
+  const [primaryVenue] = await db.select({ name: venues.name }).from(venues).where(eq(venues.id, primary.venueId!));
+  const [duplicateVenue] = await db.select({ name: venues.name }).from(venues).where(eq(venues.id, duplicate.venueId!));
   const [primaryPromoter] = await db.select({ companyName: promoters.companyName }).from(promoters).where(eq(promoters.id, primary.promoterId));
   const [duplicatePromoter] = await db.select({ companyName: promoters.companyName }).from(promoters).where(eq(promoters.id, duplicate.promoterId));
 

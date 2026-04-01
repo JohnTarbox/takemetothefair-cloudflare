@@ -55,7 +55,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("email");
@@ -72,7 +72,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("8 characters");
@@ -89,7 +89,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("2 characters");
@@ -108,7 +108,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("already exists");
@@ -128,7 +128,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(201);
     expect(data.message).toBe("Account created successfully");
@@ -153,7 +153,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("VENDOR");
@@ -177,7 +177,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("PROMOTER");
@@ -215,7 +215,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("USER");
@@ -234,7 +234,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json();
+    const data = await response.json() as any;
 
     expect(response.status).toBe(500);
     expect(data.error).toContain("error occurred");

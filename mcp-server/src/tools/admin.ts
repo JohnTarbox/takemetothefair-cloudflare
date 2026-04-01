@@ -8,7 +8,11 @@ import type { AuthContext } from "../auth.js";
 
 // ---------------------------------------------------------------------------
 // Vendor status transition map — duplicated from src/lib/vendor-status.ts.
-// KEEP IN SYNC: changes to the main app's VALID_TRANSITIONS must be reflected here.
+// KEEP IN SYNC with:
+//   - VALID_TRANSITIONS: src/lib/vendor-status.ts
+//   - EVENT_STATUS_ENUM:  src/lib/constants.ts (EventStatus)
+//   - VENDOR_STATUS_ENUM: src/lib/constants.ts (VendorStatus)
+//   - PAYMENT_STATUS_ENUM: src/lib/constants.ts (PaymentStatus)
 // ---------------------------------------------------------------------------
 const VALID_TRANSITIONS: Record<string, string[]> = {
   INVITED: ["INTERESTED", "APPLIED", "REJECTED", "WITHDRAWN", "CANCELLED"],

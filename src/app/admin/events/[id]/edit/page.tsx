@@ -114,7 +114,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         console.error("Failed to fetch venues:", res.status);
         return;
       }
-      const data = await res.json();
+      const data = await res.json() as any;
       if (Array.isArray(data)) {
         setVenues(data);
       }
@@ -130,7 +130,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         console.error("Failed to fetch promoters:", res.status);
         return;
       }
-      const data = await res.json();
+      const data = await res.json() as any;
       if (Array.isArray(data)) {
         setPromoters(data);
       }

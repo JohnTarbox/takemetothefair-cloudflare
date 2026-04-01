@@ -159,8 +159,8 @@ export default async function VenueDetailPage({ params }: Props) {
         upcomingEvents={venue.events.map((e) => ({
           name: e.name,
           url: `https://meetmeatthefair.com/events/${e.slug}`,
-          startDate: e.startDate,
-          endDate: e.endDate,
+          startDate: e.startDate!,
+          endDate: e.endDate!,
         }))}
       />
       <BreadcrumbSchema

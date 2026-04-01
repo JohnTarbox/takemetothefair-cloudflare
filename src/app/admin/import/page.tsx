@@ -122,8 +122,8 @@ function useImportPage() {
         fetch("/api/admin/venues"),
         fetch("/api/admin/promoters"),
       ]);
-      const venuesData = await venuesRes.json();
-      const promotersData = await promotersRes.json();
+      const venuesData = await venuesRes.json() as Venue[];
+      const promotersData = await promotersRes.json() as Promoter[];
       setVenues(venuesData);
       setPromoters(promotersData);
     } catch (err) {
@@ -155,7 +155,7 @@ function useImportPage() {
         throw new Error(`Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`);
       }
 
-      const data = await res.json();
+      const data = await res.json() as Record<string, any>;
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to fetch events");
@@ -168,7 +168,7 @@ function useImportPage() {
         existingCount: data.existingCount || 0,
       });
 
-      const newEventIds = new Set(
+      const newEventIds = new Set<string>(
         data.events.filter((e: PreviewEvent) => !e.exists).map((e: PreviewEvent) => e.sourceId)
       );
       setSelectedEvents(newEventIds);
@@ -218,7 +218,7 @@ function useImportPage() {
         throw new Error(`Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`);
       }
 
-      const data = await res.json();
+      const data = await res.json() as Record<string, any>;
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to import events");
@@ -256,7 +256,7 @@ function useImportPage() {
         method: "PATCH",
       });
 
-      const data = await res.json();
+      const data = await res.json() as Record<string, any>;
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to sync events");
@@ -673,7 +673,7 @@ function EventRow({
         {(event.vendorTypes?.length || event.commercialVendorsAllowed !== undefined) && (
           <div className="flex items-center gap-2 mt-1 text-sm">
             {event.commercialVendorsAllowed !== undefined && (
-              <Badge variant={event.commercialVendorsAllowed ? "success" : "secondary"}>
+              <Badge variant={event.commercialVendorsAllowed ? "success" : "default"}>
                 {event.commercialVendorsAllowed ? "Commercial OK" : "No Commercial"}
               </Badge>
             )}

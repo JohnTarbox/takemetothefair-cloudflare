@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
         .select({ userId: promoters.userId })
         .from(promoters);
 
-      const userIds = existingPromoterUserIds.map((p) => p.userId);
+      const userIds = existingPromoterUserIds.map((p) => p.userId).filter((id): id is string => id !== null);
 
       let userList;
       if (userIds.length > 0) {

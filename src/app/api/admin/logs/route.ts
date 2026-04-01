@@ -88,7 +88,7 @@ export async function DELETE(request: NextRequest) {
       const result = await db
         .delete(errorLogs)
         .where(lt(errorLogs.timestamp, cutoff));
-      return NextResponse.json({ deleted: result.rowsAffected ?? 0 });
+      return NextResponse.json({ deleted: (result as any).rowsAffected ?? (result as any).changes ?? 0 });
     }
 
     return NextResponse.json(

@@ -24,13 +24,13 @@ async function getFavorites(userId: string) {
       .orderBy(desc(userFavorites.createdAt));
 
     const eventIds = favorites
-      .filter((f) => f.favoritableType === "event")
+      .filter((f) => f.favoritableType === "EVENT")
       .map((f) => f.favoritableId);
     const venueIds = favorites
-      .filter((f) => f.favoritableType === "venue")
+      .filter((f) => f.favoritableType === "VENUE")
       .map((f) => f.favoritableId);
     const vendorIds = favorites
-      .filter((f) => f.favoritableType === "vendor")
+      .filter((f) => f.favoritableType === "VENDOR")
       .map((f) => f.favoritableId);
 
     // Get the actual items

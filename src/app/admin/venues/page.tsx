@@ -195,7 +195,7 @@ export default function AdminVenuesPage() {
         <div className="flex items-center gap-2">
           {missingGoogleCount > 0 && (
             <Button
-              variant={filterMissingGoogle ? "default" : "outline"}
+              variant={filterMissingGoogle ? "primary" : "outline"}
               onClick={() => setFilterMissingGoogle(!filterMissingGoogle)}
             >
               <Filter className="w-4 h-4 mr-2" />

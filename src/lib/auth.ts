@@ -64,7 +64,7 @@ export async function hashPassword(password: string): Promise<string> {
     ["deriveBits"]
   );
   const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     keyMaterial,
     256
   );
@@ -82,7 +82,7 @@ async function verifyPbkdf2(password: string, saltHex: string, hashHex: string):
     ["deriveBits"]
   );
   const derivedBits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     keyMaterial,
     256
   );
@@ -91,7 +91,7 @@ async function verifyPbkdf2(password: string, saltHex: string, hashHex: string):
 
 // Legacy SHA-256 verification for backward compatibility
 async function verifyLegacySha256(password: string, storedHash: string): Promise<boolean> {
-  const secret = process.env.AUTH_SECRET;
+  const secret = getRuntimeEnv("AUTH_SECRET");
   if (!secret) return false;
   const encoder = new TextEncoder();
   const data = encoder.encode(password + secret);
@@ -113,7 +113,7 @@ export async function verifyPassword(password: string, storedHash: string): Prom
 function getRuntimeEnv(key: string): string | undefined {
   try {
     const { env } = getRequestContext();
-    return (env as Record<string, string>)[key];
+    return (env as unknown as Record<string, string>)[key];
   } catch {
     return process.env[key];
   }

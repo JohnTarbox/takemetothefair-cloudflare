@@ -48,7 +48,7 @@ export default function CreateEventPage() {
   const fetchVenues = async () => {
     try {
       const res = await fetch("/api/venues");
-      const data = await res.json();
+      const data = await res.json() as any;
       setVenues(data);
     } catch (error) {
       console.error("Failed to fetch venues:", error);
@@ -119,7 +119,7 @@ export default function CreateEventPage() {
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json() as any;
 
       if (!res.ok) {
         setError(data.error || "Failed to create event");

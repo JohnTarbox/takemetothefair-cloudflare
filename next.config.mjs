@@ -2,12 +2,6 @@ import { setupDevPlatform } from "@cloudflare/next-on-pages/next-dev";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   images: {
     // Cloudflare Pages doesn't support Next.js image optimization by default
     // Use unoptimized for external URLs, but still get lazy loading benefits

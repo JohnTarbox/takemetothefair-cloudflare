@@ -116,7 +116,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     if (promoter.length > 0) {
       // Reset user role to USER
-      await db.update(users).set({ role: "USER" }).where(eq(users.id, promoter[0].userId));
+      await db.update(users).set({ role: "USER" }).where(eq(users.id, promoter[0].userId!));
     }
 
     await db.delete(promoters).where(eq(promoters.id, id));

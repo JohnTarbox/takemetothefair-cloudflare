@@ -464,7 +464,7 @@ export default async function VendorDetailPage({ params }: Props) {
                       <CreditCard className="w-5 h-5 text-gray-400 mt-0.5" />
                       <div className="flex flex-wrap gap-1">
                         {paymentMethods.map((method) => (
-                          <Badge key={method} variant="secondary" className="text-xs">
+                          <Badge key={method} variant="default" className="text-xs">
                             {method}
                           </Badge>
                         ))}

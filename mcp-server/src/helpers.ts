@@ -49,10 +49,12 @@ export function escapeLike(s: string): string {
   return s.replace(/[%_]/g, "");
 }
 
-/** Statuses visible to the public for events */
+/** Statuses visible to the public for events
+ *  KEEP IN SYNC with: src/lib/event-status.ts (isPublicEventStatus / PUBLIC_EVENT_STATUSES) */
 export const PUBLIC_EVENT_STATUSES = ["APPROVED", "TENTATIVE"] as const;
 
-/** Statuses visible to the public for event vendors */
+/** Statuses visible to the public for event vendors
+ *  KEEP IN SYNC with: src/lib/vendor-status.ts (isPublicVendorStatus / PUBLIC_VENDOR_STATUSES) */
 export const PUBLIC_VENDOR_STATUSES = ["APPROVED", "CONFIRMED"] as const;
 
 /** Build a concise text content response for MCP */

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -12,11 +12,8 @@ import {
   Calendar,
   MapPin,
   DollarSign,
-  ChevronRight,
-  ChevronLeft,
   Sparkles,
   AlertTriangle,
-  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,7 +98,7 @@ export default function VendorSuggestEventPage() {
   const [url, setUrl] = useState("");
   const [manualPaste, setManualPaste] = useState(false);
   const [pastedContent, setPastedContent] = useState("");
-  const [fetchedContent, setFetchedContent] = useState("");
+  const [_fetchedContent, setFetchedContent] = useState("");
   const [fetchedJsonLd, setFetchedJsonLd] = useState<Record<string, unknown> | null>(null);
   const [extractedData, setExtractedData] = useState<ExtractedEventData>({
     name: null,

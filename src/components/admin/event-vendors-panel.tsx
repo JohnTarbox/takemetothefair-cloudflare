@@ -85,7 +85,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
                       {event.venue && ` • ${event.venue.city}, ${event.venue.state}`}
                     </p>
                     <div className="mt-1 flex items-center gap-2">
-                      <Badge variant={event.vendorCount > 0 ? "success" : "secondary"}>
+                      <Badge variant={event.vendorCount > 0 ? "success" : "default"}>
                         <Store className="w-3 h-3 mr-1" />
                         {event.vendorCount} vendor{event.vendorCount !== 1 ? "s" : ""}
                       </Badge>

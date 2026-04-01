@@ -1,5 +1,6 @@
 /**
  * Database schema — copied from main app's src/lib/db/schema.ts.
+ * Source: /src/lib/db/schema.ts (table definitions only; relations & Zod types omitted)
  * KEEP IN SYNC: changes to the main schema must be reflected here.
  */
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
@@ -168,4 +169,91 @@ export const apiTokens = sqliteTable("api_tokens", {
   name: text("name").notNull().default("Default"),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// Notifications table
+export const notifications = sqliteTable("notifications", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  read: integer("read", { mode: "boolean" }).default(false),
+  data: text("data"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// NextAuth tables
+export const accounts = sqliteTable("accounts", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  provider: text("provider").notNull(),
+  providerAccountId: text("provider_account_id").notNull(),
+  refreshToken: text("refresh_token"),
+  accessToken: text("access_token"),
+  expiresAt: integer("expires_at"),
+  tokenType: text("token_type"),
+  scope: text("scope"),
+  idToken: text("id_token"),
+  sessionState: text("session_state"),
+});
+
+export const sessions = sqliteTable("sessions", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sessionToken: text("session_token").notNull().unique(),
+  expires: integer("expires", { mode: "timestamp" }).notNull(),
+});
+
+export const verificationTokens = sqliteTable("verification_tokens", {
+  identifier: text("identifier").notNull(),
+  token: text("token").notNull(),
+  expires: integer("expires", { mode: "timestamp" }).notNull(),
+});
+
+// Event Schema.org Data table — stores fetched schema.org markup from ticket URLs
+export const eventSchemaOrg = sqliteTable("event_schema_org", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  eventId: text("event_id").notNull().unique().references(() => events.id, { onDelete: "cascade" }),
+  ticketUrl: text("ticket_url"),
+  rawJsonLd: text("raw_json_ld"),
+  schemaName: text("schema_name"),
+  schemaDescription: text("schema_description"),
+  schemaStartDate: integer("schema_start_date", { mode: "timestamp" }),
+  schemaEndDate: integer("schema_end_date", { mode: "timestamp" }),
+  schemaVenueName: text("schema_venue_name"),
+  schemaVenueAddress: text("schema_venue_address"),
+  schemaVenueCity: text("schema_venue_city"),
+  schemaVenueState: text("schema_venue_state"),
+  schemaVenueLat: real("schema_venue_lat"),
+  schemaVenueLng: real("schema_venue_lng"),
+  schemaImageUrl: text("schema_image_url"),
+  schemaTicketUrl: text("schema_ticket_url"),
+  schemaPriceMin: real("schema_price_min"),
+  schemaPriceMax: real("schema_price_max"),
+  schemaEventStatus: text("schema_event_status"),
+  schemaOrganizerName: text("schema_organizer_name"),
+  schemaOrganizerUrl: text("schema_organizer_url"),
+  status: text("status", { enum: ["pending", "available", "not_found", "invalid", "error"] }).default("pending").notNull(),
+  lastFetchedAt: integer("last_fetched_at", { mode: "timestamp" }),
+  lastError: text("last_error"),
+  fetchCount: integer("fetch_count").default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// Error Logs table
+export const errorLogs = sqliteTable("error_logs", {
+  id: text("id").primaryKey(),
+  timestamp: integer("timestamp").notNull(),
+  level: text("level").notNull().default("error"),
+  message: text("message").notNull(),
+  context: text("context").default("{}"),
+  url: text("url"),
+  method: text("method"),
+  statusCode: integer("status_code"),
+  stackTrace: text("stack_trace"),
+  userAgent: text("user_agent"),
+  source: text("source"),
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
 import { extractEventData } from "@/lib/url-import/ai-extractor";
+import type { PageMetadata } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     const { extracted, confidence } = await extractEventData(
       ai,
       content,
-      metadata || {}
+      (metadata || {}) as PageMetadata
     );
 
     console.log("[Suggest Extract] AI extracted event:", extracted.name);

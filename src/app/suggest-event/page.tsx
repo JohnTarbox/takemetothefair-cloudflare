@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import {
@@ -176,7 +176,7 @@ export default function SuggestEventPage() {
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string>("");
-  const [turnstileReady, setTurnstileReady] = useState(false);
+  const [_turnstileReady, setTurnstileReady] = useState(false);
   const turnstileWidgetId = useRef<string | null>(null);
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
 

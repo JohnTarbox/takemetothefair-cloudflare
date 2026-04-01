@@ -106,8 +106,8 @@ export async function GET(request: Request) {
       escapeCSV(r.venues?.name),
       escapeCSV(r.venues?.city),
       escapeCSV(r.venues?.state),
-      formatDate(r.events.startDate),
-      formatDate(r.events.endDate),
+      formatDate(r.events.startDate!),
+      formatDate(r.events.endDate!),
       escapeCSV(r.events.ticketUrl),
     ]);
 

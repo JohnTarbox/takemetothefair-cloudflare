@@ -405,7 +405,7 @@ describe("eventCreateSchema", () => {
   });
 
   it("accepts up to 100 eventDays", () => {
-    const eventDays = Array.from({ length: 100 }, (_, i) => ({
+    const _eventDays = Array.from({ length: 100 }, (_, i) => ({
       date: `2025-01-${String(i + 1).padStart(2, "0")}`,
       openTime: "09:00",
       closeTime: "17:00",

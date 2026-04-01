@@ -73,7 +73,7 @@ export default function VendorProfilePage() {
     try {
       const res = await fetch("/api/vendor/profile");
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as VendorProfile;
         setProfile(data);
         // Parse paymentMethods from JSON string
         let paymentMethods: string[] = [];

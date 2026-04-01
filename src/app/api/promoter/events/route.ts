@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
     // Insert event days if provided
     if (Array.isArray(eventDaysInput) && eventDaysInput.length > 0) {
       await db.insert(eventDays).values(
-        eventDaysInput.map((day: { date: string; openTime: string; closeTime: string; notes?: string; closed?: boolean }) => ({
+        eventDaysInput.map((day: any) => ({
           id: crypto.randomUUID(),
           eventId,
           date: day.date,

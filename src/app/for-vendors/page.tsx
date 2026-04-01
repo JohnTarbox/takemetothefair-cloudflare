@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Search, UserCircle, ClipboardList, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
@@ -118,12 +119,12 @@ export default function ForVendorsPage() {
           >
             Get Started
           </a>
-          <a
+          <Link
             href="/events"
             className="inline-flex items-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
           >
             Browse Events
-          </a>
+          </Link>
         </div>
       </div>
     </div>

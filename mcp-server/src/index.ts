@@ -25,10 +25,12 @@ interface Env {
 // Durable Object — MCP agent with OAuth-provided user props
 // ---------------------------------------------------------------------------
 export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, UserProps> {
+  // Type assertion needed: @modelcontextprotocol/sdk and agents bundle separate
+  // copies of McpServer with incompatible private fields but identical public API.
   server = new McpServer({
     name: "MeetMeAtTheFair",
     version: "1.0.0",
-  });
+  }) as any;
 
   async init() {
     const db = getDb(this.env.DB);

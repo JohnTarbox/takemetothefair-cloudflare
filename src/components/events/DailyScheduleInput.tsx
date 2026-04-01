@@ -62,7 +62,7 @@ export function DailyScheduleInput({
   initialDays = [],
   initialEnabled,
   discontinuousDates = false,
-  onDiscontinuousChange,
+  onDiscontinuousChange: _onDiscontinuousChange,
   onChange,
   disabled = false,
 }: DailyScheduleInputProps) {

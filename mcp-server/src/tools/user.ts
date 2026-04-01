@@ -29,7 +29,8 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
         .where(and(...conditions));
 
       // Resolve names for each favorite
-      const resolved = await Promise.all(
+      // Use allSettled so a single deleted favorite target doesn't fail the whole list
+      const results = await Promise.allSettled(
         favs.map(async (fav) => {
           let name: string | null = null;
           let slug: string | null = null;
@@ -81,6 +82,10 @@ export function registerUserTools(server: McpServer, db: Db, auth: AuthContext) 
           };
         }),
       );
+
+      const resolved = results
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => (r as PromiseFulfilledResult<{ type: string; id: string; name: string | null; slug: string | null }>).value);
 
       return { content: [jsonContent({ count: resolved.length, favorites: resolved })] };
     },

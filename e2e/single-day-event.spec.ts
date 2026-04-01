@@ -101,7 +101,7 @@ test.describe("Single-Day Event Creation", () => {
     const promoterSelect = page.locator("#promoterId");
     // Wait for at least 2 options (including the "Select a promoter" placeholder)
     await page.waitForFunction(
-      (selector) => document.querySelector(selector)?.querySelectorAll("option").length >= 2,
+      (selector: string) => (document.querySelector(selector)?.querySelectorAll("option").length ?? 0) >= 2,
       "#promoterId",
       { timeout: 15000 }
     );

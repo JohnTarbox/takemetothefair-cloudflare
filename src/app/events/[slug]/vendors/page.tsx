@@ -46,7 +46,7 @@ export default function EventVendorsPage() {
     try {
       const res = await fetch(`/api/events/${slug}/vendors`);
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as { vendors?: Vendor[]; event?: EventInfo | null };
         setVendors(data.vendors || []);
         setEventInfo(data.event || null);
       }

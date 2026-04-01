@@ -93,6 +93,7 @@ app.post("/authorize", async (c) => {
     userId: user.id,
     scope: oauthReqInfo.scope,
     props,
+    metadata: {},
   });
 
   console.log("[LOGIN] Redirecting to:", redirectTo.slice(0, 100) + "...");

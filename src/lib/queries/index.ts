@@ -159,7 +159,7 @@ export async function getEventsWithRelations(
   // Build conditions
   const conditions = [];
   if (status) {
-    conditions.push(eq(events.status, status));
+    conditions.push(eq(events.status, status as any));
   }
   if (futureOnly) {
     conditions.push(gte(events.endDate, new Date()));
@@ -310,7 +310,7 @@ export async function countFavorites(
     .from(userFavorites)
     .where(
       and(
-        eq(userFavorites.favoritableType, favoritableType),
+        eq(userFavorites.favoritableType, favoritableType as any),
         eq(userFavorites.favoritableId, favoritableId)
       )
     );

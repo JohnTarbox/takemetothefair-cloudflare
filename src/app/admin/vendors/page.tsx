@@ -184,7 +184,7 @@ export default function AdminVendorsPage() {
                       {vendor.commercial ? (
                         <Badge variant="default">Commercial</Badge>
                       ) : (
-                        <Badge variant="outline">Non-Commercial</Badge>
+                        <Badge variant="default">Non-Commercial</Badge>
                       )}
                     </td>
                     <td className="py-3 px-4">
