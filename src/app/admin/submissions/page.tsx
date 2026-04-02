@@ -17,8 +17,8 @@ interface Event {
   startDate: string;
   endDate: string;
   createdAt: string;
-  venue: { name: string; city: string; state: string };
-  promoter: { companyName: string };
+  venue: { name: string; city: string; state: string } | null;
+  promoter: { companyName: string } | null;
 }
 
 export default function AdminSubmissionsPage() {
@@ -92,7 +92,7 @@ export default function AdminSubmissionsPage() {
                     {event.name}
                   </h2>
                   <p className="text-sm text-gray-500">
-                    Submitted by {event.promoter.companyName} on{" "}
+                    Submitted by {event.promoter?.companyName ?? "Unknown"} on{" "}
                     {formatDate(event.createdAt)}
                   </p>
                 </div>
@@ -103,7 +103,9 @@ export default function AdminSubmissionsPage() {
                   <div>
                     <p className="text-sm font-medium text-gray-700">Venue</p>
                     <p className="text-gray-600">
-                      {event.venue.name}, {event.venue.city}, {event.venue.state}
+                      {event.venue
+                        ? `${event.venue.name}, ${event.venue.city}, ${event.venue.state}`
+                        : "No venue assigned"}
                     </p>
                   </div>
                   <div>
