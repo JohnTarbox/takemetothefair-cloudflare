@@ -276,7 +276,12 @@ export default async function EventDetailPage({ params }: Props) {
           {(() => {
             const categories = parseJsonArray(event.categories);
             const tags = parseJsonArray(event.tags);
-            const INTERNAL_TAGS = new Set(["imported", "url-import"]);
+            const INTERNAL_TAGS = new Set([
+              "imported",
+              "url-import",
+              "community-suggestion",
+              "vendor-submission",
+            ]);
             const publicTags = tags.filter(
               (tag) => !INTERNAL_TAGS.has(tag) && !tag.includes(".")
             );
