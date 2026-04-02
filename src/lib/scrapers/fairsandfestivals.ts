@@ -340,9 +340,15 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
     // Extract full description (matches both id="event-description" and class="event-description")
     const descMatch = html.match(/<div[^>]*(?:id|class)="[^"]*event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
     if (descMatch) {
-      const fullDesc = descMatch[1]
+      let fullDesc = descMatch[1]
         .replace(/<[^>]+>/g, ' ')
         .replace(/\s+/g, ' ')
+        .trim();
+      // Strip boilerplate headers and disclaimers from fairsandfestivals.net
+      fullDesc = fullDesc
+        .replace(/^Description of Event:\s*/i, '')
+        .replace(/\s*Information:\s*Some events do get cancelled.*$/i, '')
+        .replace(/\s*More Information about\s.*$/i, '')
         .trim();
       if (fullDesc.length > 50) {
         details.description = decodeHtmlEntities(fullDesc.substring(0, 5000));
