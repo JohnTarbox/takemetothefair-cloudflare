@@ -10,6 +10,7 @@ import { parseJsonArray } from "@/types";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { getCategoryColors, getCategoryBadgeClass } from "@/lib/category-colors";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -36,11 +37,12 @@ interface EventCardProps {
 export function EventCard({ event, priority = false }: EventCardProps) {
   const categories = parseJsonArray(event.categories);
   const vendors = event.vendors || [];
+  const colors = getCategoryColors(categories);
 
   return (
-    <Card className="h-full hover:shadow-md transition-shadow">
+    <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
       <Link href={`/events/${event.slug}`} className="block">
-        <div className="aspect-video relative bg-gray-100">
+        <div className={`aspect-video relative ${event.imageUrl ? "bg-gray-100" : colors.bg}`}>
           {event.imageUrl ? (
             <Image
               src={event.imageUrl}
@@ -51,7 +53,7 @@ export function EventCard({ event, priority = false }: EventCardProps) {
               priority={priority}
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-400">
+            <div className={`w-full h-full flex items-center justify-center ${colors.icon}`}>
               <Calendar className="w-12 h-12" />
             </div>
           )}
@@ -114,7 +116,7 @@ export function EventCard({ event, priority = false }: EventCardProps) {
           {categories.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1">
               {categories.slice(0, 3).map((category) => (
-                <Badge key={category} variant="default">
+                <Badge key={category} className={getCategoryBadgeClass(category)}>
                   {category}
                 </Badge>
               ))}

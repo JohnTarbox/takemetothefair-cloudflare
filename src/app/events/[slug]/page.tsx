@@ -32,6 +32,7 @@ import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
+import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { FavoriteButton } from "@/components/FavoriteButton";
 
 export const runtime = "edge";
@@ -275,6 +276,10 @@ export default async function EventDetailPage({ params }: Props) {
           {(() => {
             const categories = parseJsonArray(event.categories);
             const tags = parseJsonArray(event.tags);
+            const INTERNAL_TAGS = new Set(["imported", "url-import"]);
+            const publicTags = tags.filter(
+              (tag) => !INTERNAL_TAGS.has(tag) && !tag.includes(".")
+            );
             return (
               <>
                 <div>
@@ -284,7 +289,7 @@ export default async function EventDetailPage({ params }: Props) {
                       <Badge variant="info">Tentative — Unverified</Badge>
                     )}
                     {categories.map((cat) => (
-                      <Badge key={cat}>{cat}</Badge>
+                      <Badge key={cat} className={getCategoryBadgeClass(cat)}>{cat}</Badge>
                     ))}
                   </div>
                   <div className="flex items-start justify-between gap-4">
@@ -308,9 +313,9 @@ export default async function EventDetailPage({ params }: Props) {
                   </p>
                 </div>
 
-                {tags.length > 0 && (
+                {publicTags.length > 0 && (
                   <div className="flex flex-wrap gap-2">
-                    {tags.map((tag) => (
+                    {publicTags.map((tag) => (
                       <span
                         key={tag}
                         className="px-2 py-1 bg-gray-100 text-gray-600 text-sm rounded"
