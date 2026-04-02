@@ -143,13 +143,11 @@ export default function AdminSubmissionsPage() {
                     Reject
                   </Button>
                   <a
-                    href={`/events/${event.slug}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    href={`/admin/events/${event.id}/edit`}
                   >
                     <Button variant="outline">
                       <Eye className="w-4 h-4 mr-2" />
-                      Preview
+                      Review
                     </Button>
                   </a>
                 </div>
