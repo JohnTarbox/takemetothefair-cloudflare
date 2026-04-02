@@ -30,7 +30,12 @@ const EVENT_STATUS_ENUM = ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTE
 const VENDOR_STATUS_ENUM = ["INVITED", "INTERESTED", "APPLIED", "WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"] as const;
 const PAYMENT_STATUS_ENUM = ["NOT_REQUIRED", "PENDING", "PAID", "REFUNDED", "OVERDUE"] as const;
 
-export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext) {
+interface Env {
+  MAIN_APP_URL: string;
+  INTERNAL_API_KEY: string;
+}
+
+export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
   // Defense-in-depth: guard even though registration is already gated in index.ts
   if (auth.role !== "ADMIN") return;
 
@@ -548,6 +553,54 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext)
         .where(eq(eventVendors.id, record.id));
 
       return { content: [jsonContent(result)] };
+    },
+  );
+
+  // ── rescrape_events ─────────────────────────────────────────────
+  server.tool(
+    "rescrape_events",
+    "Re-scrape specific events from their original source URLs to refresh descriptions, dates, images, and ticket URLs. Provide event IDs to re-scrape. Max 50 per request. Admin only.",
+    {
+      event_ids: z
+        .array(z.string())
+        .min(1)
+        .max(50)
+        .describe("Array of event IDs to re-scrape from their source URLs"),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [{ type: "text", text: "Re-scrape is not configured. MAIN_APP_URL and INTERNAL_API_KEY must be set in the MCP server environment." }],
+          isError: true,
+        };
+      }
+
+      try {
+        const response = await fetch(`${env.MAIN_APP_URL}/api/admin/import/rescrape-events`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Key": env.INTERNAL_API_KEY,
+          },
+          body: JSON.stringify({ event_ids: params.event_ids }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({})) as Record<string, string>;
+          return {
+            content: [{ type: "text", text: `Re-scrape failed (${response.status}): ${errorData.error || response.statusText}` }],
+            isError: true,
+          };
+        }
+
+        const result = await response.json();
+        return { content: [jsonContent(result)] };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Re-scrape request failed: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          isError: true,
+        };
+      }
     },
   );
 }

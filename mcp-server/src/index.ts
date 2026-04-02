@@ -19,6 +19,8 @@ interface Env {
   DB: D1Database;
   OAUTH_KV: KVNamespace;
   MCP_OBJECT: DurableObjectNamespace;
+  MAIN_APP_URL: string;
+  INTERNAL_API_KEY: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerPromoterTools(this.server, db, auth);
       }
       if (auth.role === "ADMIN") {
-        registerAdminTools(this.server, db, auth);
+        registerAdminTools(this.server, db, auth, this.env);
       }
     }
   }
@@ -162,7 +164,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     registerUserTools(server, db, auth);
     if (auth.role === "VENDOR" || auth.role === "ADMIN") registerVendorTools(server, db, auth);
     if (auth.role === "PROMOTER" || auth.role === "ADMIN") registerPromoterTools(server, db, auth);
-    if (auth.role === "ADMIN") registerAdminTools(server, db, auth);
+    if (auth.role === "ADMIN") registerAdminTools(server, db, auth, env);
   }
 
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
