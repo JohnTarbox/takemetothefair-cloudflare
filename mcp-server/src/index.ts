@@ -57,7 +57,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
           toolSets.push(props.vendorId ? "vendor tools (6)" : "vendor tools (1 — suggest_event only, no vendor profile)");
         }
         if (props.role === "PROMOTER" || props.role === "ADMIN") toolSets.push("promoter tools (2)");
-        if (props.role === "ADMIN") toolSets.push("admin tools (5)");
+        if (props.role === "ADMIN") toolSets.push("admin tools (6)");
         return {
           content: [{
             type: "text" as const,
