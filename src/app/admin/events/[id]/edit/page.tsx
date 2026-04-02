@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
+import { RescrapePanel } from "@/components/admin/RescrapePanel";
 
 export const runtime = "edge";
 
@@ -53,6 +54,9 @@ interface Event {
   commercialVendorsAllowed: boolean;
   status: string;
   eventDays?: EventDay[];
+  sourceName?: string | null;
+  sourceUrl?: string | null;
+  lastSyncedAt?: string | null;
 }
 
 export default function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
@@ -491,8 +495,17 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         </CardContent>
       </Card>
 
-      {/* Schema.org Data Panel */}
-      <div className="max-w-2xl">
+      {/* Source Data & Schema.org Panels */}
+      <div className="max-w-2xl space-y-4">
+        {event && (event.sourceName || event.sourceUrl) && (
+          <RescrapePanel
+            eventId={id}
+            sourceName={event.sourceName ?? null}
+            sourceUrl={event.sourceUrl ?? null}
+            lastSyncedAt={event.lastSyncedAt ?? null}
+            onRescrapeComplete={() => fetchEvent()}
+          />
+        )}
         <SchemaOrgPanel
           eventId={id}
           onFieldsApplied={handleSchemaOrgFieldsApplied}

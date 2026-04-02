@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, Store } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, Store, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,7 @@ export default function AdminEventsPage() {
     column: "startDate",
     direction: "asc",
   });
+  const [rescrapingId, setRescrapingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchEvents();
@@ -71,6 +72,35 @@ export default function AdminEventsPage() {
       }
     } catch (error) {
       console.error("Failed to delete event:", error);
+    }
+  };
+
+  const handleRescrape = async (id: string) => {
+    setRescrapingId(id);
+    try {
+      const res = await fetch("/api/admin/import/rescrape-events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_ids: [id] }),
+      });
+      const data = await res.json() as { details?: { status: string; fieldsUpdated?: string[] }[] };
+      const detail = data.details?.[0];
+      if (detail?.status === "updated") {
+        alert(`Updated: ${detail.fieldsUpdated?.join(", ")}`);
+      } else if (detail?.status === "skipped") {
+        alert("No changes found — data is already up to date.");
+      } else if (detail?.status === "no_scraper") {
+        alert("No scraper available for this event's source.");
+      } else if (detail?.status === "no_source") {
+        alert("This event has no source URL to re-scrape.");
+      } else {
+        alert(`Re-scrape result: ${detail?.status || "unknown"}`);
+      }
+    } catch (error) {
+      console.error("Failed to re-scrape:", error);
+      alert("Re-scrape failed. Check console for details.");
+    } finally {
+      setRescrapingId(null);
     }
   };
 
@@ -195,6 +225,15 @@ export default function AdminEventsPage() {
                             <Pencil className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRescrape(event.id)}
+                          disabled={rescrapingId === event.id}
+                          aria-label={`Re-scrape ${event.name}`}
+                        >
+                          <RefreshCw className={`w-4 h-4 ${rescrapingId === event.id ? "animate-spin text-blue-500" : ""}`} aria-hidden="true" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
