@@ -85,6 +85,15 @@ function useImportPage() {
   const [commercialFilter, setCommercialFilter] = useState<"all" | "yes" | "no">("all");
   const [excludeFarmersMarkets, setExcludeFarmersMarkets] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
+  const [rescraping, setRescraping] = useState(false);
+  const [rescrapeResults, setRescrapeResults] = useState<{
+    found: number;
+    updated: number;
+    skipped: number;
+    noScraper: number;
+    errors: string[];
+    previews?: { name: string; sourceName: string; status: string }[];
+  } | null>(null);
 
   useEffect(() => {
     fetchVenuesAndPromoters();
@@ -325,6 +334,42 @@ function useImportPage() {
     }
   };
 
+  const handleRescrapeDescriptions = async (dryRun: boolean) => {
+    setRescraping(true);
+    setError("");
+    setSuccess("");
+    setRescrapeResults(null);
+
+    try {
+      const res = await fetch(
+        `/api/admin/import/rescrape-descriptions${dryRun ? "?dryRun=true" : ""}`,
+        { method: "POST" }
+      );
+
+      const data = await res.json() as {
+        found: number;
+        updated: number;
+        skipped: number;
+        noScraper: number;
+        errors: string[];
+        previews?: { name: string; sourceName: string; status: string }[];
+      };
+
+      if (!res.ok) {
+        throw new Error((data as unknown as Record<string, string>).error || "Failed to re-scrape");
+      }
+
+      setRescrapeResults(data);
+      if (!dryRun && data.updated > 0) {
+        setSuccess(`Updated ${data.updated} event descriptions. ${data.skipped} skipped. ${data.errors.length} errors.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to re-scrape descriptions");
+    } finally {
+      setRescraping(false);
+    }
+  };
+
   return {
     source, setSource,
     loading, syncing, importing,
@@ -345,6 +390,7 @@ function useImportPage() {
     filteredEvents, filteredStats,
     downloadImportResults,
     handlePreview, handleImport, handleSync,
+    handleRescrapeDescriptions, rescraping, rescrapeResults,
     toggleEventSelection, selectAllNew, selectAll, deselectAll,
     formatDate,
   };
@@ -892,6 +938,77 @@ export default function ImportEventsPage() {
           {state.success}
         </div>
       )}
+
+      {/* Re-scrape Truncated Descriptions */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="text-lg">Fix Truncated Descriptions</CardTitle>
+          <p className="text-sm text-gray-600">
+            Find events with descriptions ending in &quot;...&quot; and re-scrape full text from source pages.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2 mb-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => state.handleRescrapeDescriptions(true)}
+              disabled={state.rescraping}
+            >
+              {state.rescraping ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : null}
+              Preview
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => state.handleRescrapeDescriptions(false)}
+              disabled={state.rescraping}
+            >
+              {state.rescraping ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : null}
+              Fix Descriptions
+            </Button>
+          </div>
+
+          {state.rescrapeResults && (
+            <div className="text-sm space-y-2">
+              <div className="flex gap-4 text-gray-700">
+                <span>Found: <strong>{state.rescrapeResults.found}</strong></span>
+                {state.rescrapeResults.updated !== undefined && !state.rescrapeResults.previews && (
+                  <span>Updated: <strong className="text-green-600">{state.rescrapeResults.updated}</strong></span>
+                )}
+                <span>Skipped: <strong>{state.rescrapeResults.skipped || state.rescrapeResults.noScraper}</strong></span>
+                {state.rescrapeResults.errors.length > 0 && (
+                  <span>Errors: <strong className="text-red-600">{state.rescrapeResults.errors.length}</strong></span>
+                )}
+              </div>
+
+              {state.rescrapeResults.previews && state.rescrapeResults.previews.length > 0 && (
+                <div className="max-h-48 overflow-y-auto border rounded p-2 mt-2">
+                  {state.rescrapeResults.previews.map((p, i) => (
+                    <div key={i} className="flex justify-between text-xs py-1 border-b last:border-0">
+                      <span className="truncate mr-2">{p.name}</span>
+                      <span className={p.status === "will re-scrape" ? "text-green-600" : "text-gray-400"}>
+                        {p.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {state.rescrapeResults.errors.length > 0 && (
+                <div className="max-h-32 overflow-y-auto text-xs text-red-600 border border-red-200 rounded p-2 mt-2">
+                  {state.rescrapeResults.errors.map((err, i) => (
+                    <div key={i} className="py-0.5">{err}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <ImportResultsCard
         importedEvents={state.importedEvents}

@@ -244,9 +244,6 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
           .replace(/\s+/g, ' ')
           .trim();
         description = decodeHtmlEntities(description);
-        if (description.length > 500) {
-          description = description.substring(0, 497) + "...";
-        }
       }
 
       // Extract event detail URL
@@ -348,7 +345,7 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
         .replace(/\s+/g, ' ')
         .trim();
       if (fullDesc.length > 50) {
-        details.description = decodeHtmlEntities(fullDesc.substring(0, 2000));
+        details.description = decodeHtmlEntities(fullDesc.substring(0, 5000));
       }
     }
 

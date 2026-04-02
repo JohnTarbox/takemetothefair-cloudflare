@@ -266,7 +266,7 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
                   .replace(/<[^>]+>/g, " ")
                   .replace(/\s+/g, " ")
                   .trim()
-                  .slice(0, 2000);
+                  .slice(0, 5000);
               }
               if (item.image && !details.imageUrl) {
                 details.imageUrl = typeof item.image === "string" ? item.image : item.image?.url;
@@ -320,7 +320,7 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
             .replace(/<[^>]+>/g, " ")
             .replace(/\s+/g, " ")
             .trim()
-            .slice(0, 2000);
+            .slice(0, 5000);
           if (details.description.length > 50) break;
         }
       }

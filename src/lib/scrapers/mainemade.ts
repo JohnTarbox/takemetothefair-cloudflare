@@ -238,7 +238,7 @@ export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Par
                   .replace(/<[^>]+>/g, " ")
                   .replace(/\s+/g, " ")
                   .trim()
-                  .slice(0, 2000);
+                  .slice(0, 5000);
               }
               if (item.image && !details.imageUrl) {
                 details.imageUrl = typeof item.image === "string" ? item.image : item.image?.url;

@@ -16,7 +16,7 @@ Return a JSON array where each event has these fields (use null for fields not f
 [
   {
     "name": "event title/name",
-    "description": "brief description (max 500 chars)",
+    "description": "full event description (max 2000 chars)",
     "startDate": "YYYY-MM-DD format",
     "endDate": "YYYY-MM-DD format",
     "startTime": "HH:MM (24-hour) or null - opening time",
@@ -62,7 +62,7 @@ Find and extract these fields. Use null for any field not found:
 
 {
   "name": "event title/name",
-  "description": "event description (max 500 chars)",
+  "description": "full event description (max 2000 chars)",
   "startDate": "YYYY-MM-DD format (e.g., February 01, 2026 = 2026-02-01)",
   "endDate": "YYYY-MM-DD format",
   "startTime": "HH:MM (24-hour) or null - opening time (e.g., 10am = 10:00, 6pm = 18:00)",
@@ -310,7 +310,7 @@ function sanitizeEventData(
     _extractId: `event-${index}-${Date.now()}`,
     _selected: true, // Default to selected
     name: sanitizeString(item.name || item.title),
-    description: sanitizeString(item.description, 500),
+    description: sanitizeString(item.description, 2000),
     startDate: sanitizeDate(rawStartDate),
     endDate: sanitizeDate(rawEndDate),
     startTime,
@@ -380,7 +380,7 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
   if (metadata.jsonLd) {
     const ld = metadata.jsonLd;
     if (ld.name) event.name = String(ld.name);
-    if (ld.description) event.description = sanitizeString(String(ld.description), 500);
+    if (ld.description) event.description = sanitizeString(String(ld.description), 2000);
     if (ld.startDate) {
       event.startDate = sanitizeDate(String(ld.startDate));
       // Try to extract time from JSON-LD datetime
@@ -500,7 +500,7 @@ function parseAiResponse(
     // Validate and sanitize each field
     const extracted: ExtractedEventData = {
       name: sanitizeString(parsed.name),
-      description: sanitizeString(parsed.description, 500),
+      description: sanitizeString(parsed.description, 2000),
       startDate: sanitizeDate(parsed.startDate),
       endDate: sanitizeDate(parsed.endDate),
       startTime,
@@ -552,7 +552,7 @@ function fallbackFromMetadata(
     }
 
     if (!data.description && ld.description) {
-      data.description = sanitizeString(String(ld.description), 500);
+      data.description = sanitizeString(String(ld.description), 2000);
     }
 
     if (!data.startDate && ld.startDate) {
