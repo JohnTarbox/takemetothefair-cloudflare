@@ -337,8 +337,8 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
       details.imageUrl = ogImageMatch[1];
     }
 
-    // Extract full description
-    const descMatch = html.match(/<div[^>]*class="[^"]*event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    // Extract full description (matches both id="event-description" and class="event-description")
+    const descMatch = html.match(/<div[^>]*(?:id|class)="[^"]*event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
     if (descMatch) {
       const fullDesc = descMatch[1]
         .replace(/<[^>]+>/g, ' ')
