@@ -19,6 +19,9 @@ interface Event {
   createdAt: string;
   venue: { name: string; city: string; state: string } | null;
   promoter: { companyName: string } | null;
+  submitter: { name: string | null; email: string } | null;
+  suggesterEmail: string | null;
+  sourceName: string | null;
 }
 
 export default function AdminSubmissionsPage() {
@@ -92,8 +95,9 @@ export default function AdminSubmissionsPage() {
                     {event.name}
                   </h2>
                   <p className="text-sm text-gray-500">
-                    Submitted by {event.promoter?.companyName ?? "Unknown"} on{" "}
-                    {formatDate(event.createdAt)}
+                    Submitted by{" "}
+                    {event.submitter?.name || event.submitter?.email || event.suggesterEmail || event.sourceName || event.promoter?.companyName || "Unknown"}{" "}
+                    on {formatDate(event.createdAt)}
                   </p>
                 </div>
                 <Badge variant="warning">Pending Review</Badge>

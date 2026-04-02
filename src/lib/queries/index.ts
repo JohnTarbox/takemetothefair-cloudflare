@@ -2,7 +2,7 @@
  * Reusable query helpers to eliminate N+1 queries and reduce code duplication
  */
 
-import { eq, count, and, gte, ne, isNotNull } from "drizzle-orm";
+import { eq, count, and, gte, ne, isNotNull, inArray } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -32,6 +32,7 @@ export type PromoterWithCount = typeof promoters.$inferSelect & {
 export type EventWithRelations = typeof events.$inferSelect & {
   venue: typeof venues.$inferSelect | null;
   promoter: typeof promoters.$inferSelect | null;
+  submitter: { name: string | null; email: string } | null;
   _count: { eventVendors: number };
 };
 
@@ -207,11 +208,27 @@ export async function getEventsWithRelations(
     countMap = new Map(vendorCounts.map(vc => [vc.eventId, vc.count]));
   }
 
+  // Batch-fetch submitter user info for events with submittedByUserId
+  const submitterIds = eventList
+    .map(e => e.event.submittedByUserId)
+    .filter((id): id is string => id != null);
+  let submitterMap = new Map<string, { name: string | null; email: string }>();
+  if (submitterIds.length > 0) {
+    const submitters = await db
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(users)
+      .where(inArray(users.id, submitterIds));
+    submitterMap = new Map(submitters.map(u => [u.id, { name: u.name, email: u.email }]));
+  }
+
   // Combine events with their relations and counts
   return eventList.map(e => ({
     ...e.event,
     venue: e.venue,
     promoter: e.promoter,
+    submitter: e.event.submittedByUserId
+      ? submitterMap.get(e.event.submittedByUserId) || null
+      : null,
     _count: { eventVendors: countMap.get(e.event.id) || 0 },
   }));
 }
