@@ -17,6 +17,14 @@ export const metadata: Metadata = {
     siteName: "Meet Me at the Fair",
     type: "website",
     locale: "en_US",
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.svg",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",

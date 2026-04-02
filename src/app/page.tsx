@@ -8,8 +8,16 @@ import { events, venues, promoters } from "@/lib/db/schema";
 import { and, gte, eq } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
+import type { Metadata } from "next";
+
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
+
+export const metadata: Metadata = {
+  alternates: {
+    canonical: "https://meetmeatthefair.com",
+  },
+};
 
 async function getFeaturedEvents() {
   try {
@@ -118,9 +126,9 @@ export default async function HomePage() {
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto">
                 <Calendar className="w-6 h-6 text-blue-600" />
               </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900">
+              <h2 className="mt-4 text-lg font-semibold text-gray-900">
                 Find Events
-              </h3>
+              </h2>
               <p className="mt-2 text-gray-600">
                 Browse upcoming fairs, festivals, and markets by date, location,
                 or category.
@@ -130,9 +138,9 @@ export default async function HomePage() {
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto">
                 <MapPin className="w-6 h-6 text-blue-600" />
               </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900">
+              <h2 className="mt-4 text-lg font-semibold text-gray-900">
                 Explore Venues
-              </h3>
+              </h2>
               <p className="mt-2 text-gray-600">
                 Discover amazing venues and fairgrounds hosting events in your
                 region.
@@ -142,9 +150,9 @@ export default async function HomePage() {
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto">
                 <Users className="w-6 h-6 text-blue-600" />
               </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900">
+              <h2 className="mt-4 text-lg font-semibold text-gray-900">
                 Connect with Vendors
-              </h3>
+              </h2>
               <p className="mt-2 text-gray-600">
                 Meet local artisans, food vendors, and businesses participating
                 in events.

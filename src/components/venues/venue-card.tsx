@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { parseJsonArray } from "@/types";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { getStateColors } from "@/lib/state-colors";
 
 interface VenueCardProps {
   venue: {
@@ -55,10 +56,12 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
 
   const addressParts = formatAddress();
 
+  const stateColors = getStateColors(venue.state);
+
   return (
-    <Card className="h-full hover:shadow-md transition-shadow">
+    <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
       <Link href={`/venues/${venue.slug}`} className="block">
-        <div className="aspect-video relative bg-gray-100">
+        <div className={`aspect-video relative ${venue.imageUrl ? "bg-gray-100" : stateColors.bg}`}>
           {venue.imageUrl ? (
             <Image
               src={venue.imageUrl}
@@ -69,8 +72,15 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
               priority={priority}
             />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-gray-400">
+            <div className={`w-full h-full flex items-center justify-center ${stateColors.icon}`}>
               <MapPin className="w-12 h-12" />
+            </div>
+          )}
+          {venue.state && !venue.imageUrl && (
+            <div className="absolute top-3 left-3">
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${stateColors.badge}`}>
+                {venue.state}
+              </span>
             </div>
           )}
           <FavoriteButton

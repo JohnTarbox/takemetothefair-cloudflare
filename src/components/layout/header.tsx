@@ -1,15 +1,24 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Menu, X, User, LogOut, Settings, Calendar, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function Header() {
   const { data: session, status } = useSession();
+  const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 10);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   const navigation = [
     { name: "Events", href: "/events" },
@@ -24,7 +33,7 @@ export function Header() {
   ];
 
   return (
-    <header className="bg-white border-b border-gray-200">
+    <header className={`bg-white border-b border-gray-200 transition-shadow ${scrolled ? "shadow-sm" : ""}`}>
       {/* Skip navigation link for accessibility */}
       <a
         href="#main-content"
@@ -43,15 +52,19 @@ export function Header() {
           </div>
 
           <div className="hidden md:flex md:items-center md:space-x-8">
-            {navigation.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className="text-gray-600 hover:text-gray-900 font-medium transition-colors"
-              >
-                {item.name}
-              </Link>
-            ))}
+            {navigation.map((item) => {
+              const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`font-medium transition-colors ${isActive ? "text-blue-600" : "text-gray-600 hover:text-gray-900"}`}
+                >
+                  {item.name}
+                </Link>
+              );
+            })}
           </div>
 
           <div className="hidden md:flex md:items-center md:space-x-4">
@@ -160,16 +173,20 @@ export function Header() {
         {mobileMenuOpen && (
           <div className="md:hidden py-4 border-t border-gray-200">
             <div className="space-y-2">
-              {navigation.map((item) => (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  className="block px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  {item.name}
-                </Link>
-              ))}
+              {navigation.map((item) => {
+                const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    aria-current={isActive ? "page" : undefined}
+                    className={`block px-3 py-2 rounded-lg ${isActive ? "text-blue-600 bg-blue-50 font-medium" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    {item.name}
+                  </Link>
+                );
+              })}
               {!session && (
                 <>
                   <Link
