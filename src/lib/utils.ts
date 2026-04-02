@@ -59,16 +59,21 @@ export function formatDate(date: Date | string): string {
 }
 
 export function formatDateRange(start: Date | string | null | undefined, end: Date | string | null | undefined): string {
-  if (!start || !end) {
+  if (!start) {
     return "TBD";
   }
 
   const startDate = new Date(start);
-  const endDate = new Date(end);
 
-  // Check for invalid dates
-  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+  // Check for invalid or epoch start date
+  if (isNaN(startDate.getTime()) || startDate.getTime() === 0) {
     return "TBD";
+  }
+
+  // If end date is missing, invalid, or epoch (Jan 1 1970), show start only
+  const endDate = end ? new Date(end) : null;
+  if (!endDate || isNaN(endDate.getTime()) || endDate.getTime() === 0) {
+    return formatDate(startDate);
   }
 
   // Use UTC for comparison (event dates are midnight UTC)

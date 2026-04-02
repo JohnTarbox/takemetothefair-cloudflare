@@ -5,7 +5,7 @@ import { Check, X, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatDateRange } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -14,8 +14,8 @@ interface Event {
   name: string;
   slug: string;
   description: string | null;
-  startDate: string;
-  endDate: string;
+  startDate: string | null;
+  endDate: string | null;
   createdAt: string;
   venue: { name: string; city: string; state: string } | null;
   promoter: { companyName: string } | null;
@@ -111,7 +111,7 @@ export default function AdminSubmissionsPage() {
                   <div>
                     <p className="text-sm font-medium text-gray-700">Dates</p>
                     <p className="text-gray-600">
-                      {formatDate(event.startDate)} - {formatDate(event.endDate)}
+                      {formatDateRange(event.startDate, event.endDate)}
                     </p>
                   </div>
                 </div>
