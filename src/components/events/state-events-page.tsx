@@ -192,15 +192,31 @@ export async function StateEventsPage({
       </div>
 
       {/* Event listing */}
-      <EventsView
-        events={eventsList}
-        view="cards"
-        emptyMessage={`No upcoming events found in ${state.name}. Check back soon!`}
-        currentPage={page}
-        totalPages={totalPages}
-        searchParams={{ state: stateSlug, ...(searchParams.page ? { page: searchParams.page } : {}) }}
-        total={total}
-      />
+      {eventsList.length > 0 ? (
+        <EventsView
+          events={eventsList}
+          view="cards"
+          emptyMessage={`No upcoming events found in ${state.name}. Check back soon!`}
+          currentPage={page}
+          totalPages={totalPages}
+          searchParams={{ state: stateSlug, ...(searchParams.page ? { page: searchParams.page } : {}) }}
+          total={total}
+        />
+      ) : (
+        <div className="text-center py-12">
+          <MapPin className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-600 text-lg">
+            No upcoming events found in {state.name}.
+          </p>
+          <p className="text-gray-500 mt-2">
+            Check back soon or{" "}
+            <Link href="/events" className="text-royal hover:text-navy font-medium">
+              browse all events
+            </Link>
+            .
+          </p>
+        </div>
+      )}
 
       {/* SEO content */}
       {total > 0 && (
