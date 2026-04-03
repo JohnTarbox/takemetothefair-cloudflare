@@ -473,25 +473,28 @@ async function main() {
       fail("Horizontal scroll (mobile detail)", "Page wider than viewport");
     }
 
-    // Check touch targets are at least 44px
+    // Check touch targets are at least 44px (icon-only buttons and nav targets)
     const smallTargets = await mobileDetail.evaluate(() => {
-      const links = document.querySelectorAll("a, button");
-      let tooSmall = 0;
-      for (const el of links) {
+      const small: string[] = [];
+      document.querySelectorAll("a, button").forEach((el) => {
         const rect = el.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44)) {
-          // Exclude inline text links — only flag icon/button targets
-          if (el.textContent?.trim().length === 0 || el.querySelector("svg")) {
-            tooSmall++;
+          const text = el.textContent?.trim() || "";
+          const hasSvg = !!el.querySelector("svg");
+          // Only flag icon-only targets (no text, just an icon)
+          // Text links and buttons with text labels are acceptable under 44px
+          if (text.length === 0 && hasSvg) {
+            const label = el.getAttribute("aria-label") || "no label";
+            small.push(`${label} (${Math.round(rect.width)}x${Math.round(rect.height)})`);
           }
         }
-      }
-      return tooSmall;
+      });
+      return small;
     });
-    if (smallTargets === 0) {
-      pass("Touch targets >= 44px (mobile detail)", "All icon/button targets adequate");
+    if (smallTargets.length === 0) {
+      pass("Touch targets >= 44px (mobile detail)", "All icon-only targets adequate");
     } else {
-      warn("Touch targets (mobile detail)", `${smallTargets} icon/button target(s) under 44px`);
+      warn("Touch targets (mobile detail)", `${smallTargets.length} icon-only target(s) under 44px: ${smallTargets.join(", ")}`);
     }
 
     await mobileDetail.screenshot({ path: "/tmp/mmatf-mobile-detail.png" });
