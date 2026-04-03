@@ -9,7 +9,7 @@ import {
   eventVendors,
   vendors,
 } from "@/lib/db/schema";
-import { eq, and, gte, count, inArray } from "drizzle-orm";
+import { eq, and, gte, or, isNull, count, inArray } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
@@ -36,7 +36,7 @@ async function getStateEvents(
 
   const conditions = [
     isPublicEventStatus(),
-    gte(events.endDate, new Date()),
+    or(gte(events.endDate, new Date()), isNull(events.endDate))!,
     eq(venues.state, stateCode),
   ];
 
