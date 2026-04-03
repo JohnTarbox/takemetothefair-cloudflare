@@ -21,6 +21,7 @@ export const metadata: Metadata = {
   title: "FAQ | Meet Me at the Fair",
   description:
     "Find answers to common questions about Meet Me at the Fair - how to find events, become a vendor, list your event, and more.",
+  alternates: { canonical: "https://meetmeatthefair.com/faq" },
 };
 
 const faqCategories = [

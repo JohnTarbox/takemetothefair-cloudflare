@@ -7,6 +7,7 @@ export const revalidate = 86400;
 export const metadata: Metadata = {
   title: "Terms of Service | Meet Me at the Fair",
   description: "Terms of service for Meet Me at the Fair - rules and guidelines for using our platform.",
+  alternates: { canonical: "https://meetmeatthefair.com/terms" },
 };
 
 export default function TermsPage() {

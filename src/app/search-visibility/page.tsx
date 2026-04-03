@@ -20,6 +20,7 @@ export const metadata: Metadata = {
   title: "Search Visibility | Meet Me at the Fair",
   description:
     "Learn how Meet Me at the Fair helps your events, venues, and vendor profiles appear in Google search results with rich event cards and business information.",
+  alternates: { canonical: "https://meetmeatthefair.com/search-visibility" },
 };
 
 export default function SearchVisibilityPage() {

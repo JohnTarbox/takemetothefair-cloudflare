@@ -10,6 +10,7 @@ export const revalidate = 86400;
 export const metadata: Metadata = {
   title: "For Vendors | Meet Me at the Fair",
   description: "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+  alternates: { canonical: "https://meetmeatthefair.com/for-vendors" },
 };
 
 export default function ForVendorsPage() {

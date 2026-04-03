@@ -7,6 +7,7 @@ export const revalidate = 86400;
 export const metadata: Metadata = {
   title: "Privacy Policy | Meet Me at the Fair",
   description: "Privacy policy for Meet Me at the Fair - how we collect, use, and protect your personal information.",
+  alternates: { canonical: "https://meetmeatthefair.com/privacy" },
 };
 
 export default function PrivacyPage() {
