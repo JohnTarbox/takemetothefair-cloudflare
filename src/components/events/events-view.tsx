@@ -40,6 +40,8 @@ interface EventsViewProps {
   searchParams?: Record<string, string>;
   total?: number;
   myEvents?: boolean;
+  /** Base path for pagination links. Defaults to "/events". */
+  basePath?: string;
 }
 
 function getCalendarPeriodSummary(
@@ -765,6 +767,7 @@ export function EventsView({
   searchParams = {},
   total,
   myEvents = false,
+  basePath = "/events",
 }: EventsViewProps) {
   const currentSearchParams = useSearchParams();
   const viewMode = view;
@@ -1027,7 +1030,7 @@ export function EventsView({
         <div className="mt-8 flex justify-center flex-wrap gap-2">
           {currentPage > 1 && (
             <a
-              href={`/events?${new URLSearchParams({
+              href={`${basePath}?${new URLSearchParams({
                 ...searchParams,
                 page: (currentPage - 1).toString(),
               }).toString()}`}
@@ -1056,7 +1059,7 @@ export function EventsView({
               elements.push(
                 <a
                   key={p}
-                  href={`/events?${new URLSearchParams({
+                  href={`${basePath}?${new URLSearchParams({
                     ...searchParams,
                     page: p.toString(),
                   }).toString()}`}
@@ -1073,7 +1076,7 @@ export function EventsView({
             })}
           {currentPage < totalPages && (
             <a
-              href={`/events?${new URLSearchParams({
+              href={`${basePath}?${new URLSearchParams({
                 ...searchParams,
                 page: (currentPage + 1).toString(),
               }).toString()}`}

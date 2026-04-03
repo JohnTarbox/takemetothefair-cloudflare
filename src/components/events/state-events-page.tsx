@@ -199,8 +199,9 @@ export async function StateEventsPage({
           emptyMessage={`No upcoming events found in ${state.name}. Check back soon!`}
           currentPage={page}
           totalPages={totalPages}
-          searchParams={{ state: stateSlug, ...(searchParams.page ? { page: searchParams.page } : {}) }}
+          searchParams={searchParams.page ? { page: searchParams.page } : {}}
           total={total}
+          basePath={`/events/${stateSlug}`}
         />
       ) : (
         <div className="text-center py-12">
