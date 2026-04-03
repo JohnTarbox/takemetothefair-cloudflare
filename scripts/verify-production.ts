@@ -338,6 +338,166 @@ async function main() {
     }
 
     await scrollPage.close();
+
+    // ── Dynamic OG Image Test ──────────────────────────────────
+    console.log("--- Dynamic OG Image ---");
+    const ogPage = await context.newPage();
+    await ogPage.goto(
+      `${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`,
+      { waitUntil: "networkidle" }
+    );
+    const eventOgImage = await ogPage
+      .locator('meta[property="og:image"]')
+      .getAttribute("content")
+      .catch(() => null);
+    if (eventOgImage) {
+      pass("Event OG image", eventOgImage);
+      // Verify the OG image URL returns 200
+      const ogResponse = await ogPage.goto(eventOgImage);
+      if (ogResponse && ogResponse.status() === 200) {
+        const contentType = ogResponse.headers()["content-type"] || "";
+        pass("OG image loads", `Status 200, type: ${contentType}`);
+      } else {
+        fail("OG image loads", `Status: ${ogResponse?.status()}`);
+      }
+    } else {
+      fail("Event OG image", "No og:image meta tag found");
+    }
+    await ogPage.close();
+
+    // ── Mobile UX Tests ────────────────────────────────────────
+    console.log("--- Mobile UX (375px) ---");
+    const mobileContext = await browser.newContext({
+      viewport: { width: 375, height: 812 },
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+    });
+
+    // Mobile homepage
+    const mobileHome = await mobileContext.newPage();
+    await mobileHome.goto(BASE_URL, { waitUntil: "networkidle" });
+
+    // Check mobile menu button is visible
+    const menuBtn = await mobileHome.locator('button[aria-label*="menu"]').isVisible();
+    if (menuBtn) {
+      pass("Mobile menu button", "Visible");
+    } else {
+      fail("Mobile menu button", "Not visible on mobile viewport");
+    }
+
+    // Check desktop nav is hidden
+    const desktopNav = await mobileHome.locator(".hidden.md\\:flex").first().isVisible();
+    if (!desktopNav) {
+      pass("Desktop nav hidden on mobile", "Correctly hidden");
+    } else {
+      fail("Desktop nav hidden on mobile", "Still visible on 375px viewport");
+    }
+
+    // Check hero content is readable (not overflowing)
+    const heroOverflow = await mobileHome.evaluate(() => {
+      const hero = document.querySelector("section");
+      if (!hero) return false;
+      return hero.scrollWidth > hero.clientWidth;
+    });
+    if (!heroOverflow) {
+      pass("Hero no horizontal overflow (mobile)", "Content fits viewport");
+    } else {
+      fail("Hero horizontal overflow (mobile)", "Content wider than viewport");
+    }
+
+    // Check CTA buttons are full-width on mobile
+    const ctaWidth = await mobileHome.evaluate(() => {
+      const btn = document.querySelector('a[href="/events"] button');
+      if (!btn) return 0;
+      return btn.getBoundingClientRect().width;
+    });
+    if (ctaWidth > 300) {
+      pass("CTA button width (mobile)", `${Math.round(ctaWidth)}px — full width`);
+    } else if (ctaWidth > 0) {
+      warn("CTA button width (mobile)", `${Math.round(ctaWidth)}px — may be too narrow`);
+    } else {
+      warn("CTA button width (mobile)", "Could not measure");
+    }
+
+    // Take mobile screenshot
+    await mobileHome.screenshot({ path: "/tmp/mmatf-mobile-home.png" });
+    pass("Mobile homepage screenshot", "Saved to /tmp/mmatf-mobile-home.png");
+    await mobileHome.close();
+
+    // Mobile events page
+    const mobileEvents = await mobileContext.newPage();
+    await mobileEvents.goto(`${BASE_URL}/events`, { waitUntil: "networkidle" });
+
+    // Check cards stack in single column
+    const cardLayout = await mobileEvents.evaluate(() => {
+      const cards = document.querySelectorAll('[class*="aspect-video"]');
+      if (cards.length < 2) return "insufficient";
+      const first = cards[0].getBoundingClientRect();
+      const second = cards[1].getBoundingClientRect();
+      // If second card is below first (not beside), they're stacking
+      return second.top > first.bottom ? "stacked" : "side-by-side";
+    });
+    if (cardLayout === "stacked") {
+      pass("Event cards stack on mobile", "Single column layout");
+    } else {
+      fail("Event cards stack on mobile", `Layout: ${cardLayout}`);
+    }
+
+    // Check no horizontal scroll on events page
+    const eventsOverflow = await mobileEvents.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    if (!eventsOverflow) {
+      pass("No horizontal scroll (mobile events)", "Content fits viewport");
+    } else {
+      fail("Horizontal scroll (mobile events)", "Page wider than viewport");
+    }
+
+    await mobileEvents.screenshot({ path: "/tmp/mmatf-mobile-events.png" });
+    pass("Mobile events screenshot", "Saved to /tmp/mmatf-mobile-events.png");
+    await mobileEvents.close();
+
+    // Mobile event detail page
+    const mobileDetail = await mobileContext.newPage();
+    await mobileDetail.goto(
+      `${BASE_URL}/events/2026-orono-easter-craft-and-vendor-fair`,
+      { waitUntil: "networkidle" }
+    );
+
+    const detailOverflow = await mobileDetail.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    if (!detailOverflow) {
+      pass("No horizontal scroll (mobile detail)", "Content fits viewport");
+    } else {
+      fail("Horizontal scroll (mobile detail)", "Page wider than viewport");
+    }
+
+    // Check touch targets are at least 44px
+    const smallTargets = await mobileDetail.evaluate(() => {
+      const links = document.querySelectorAll("a, button");
+      let tooSmall = 0;
+      for (const el of links) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44)) {
+          // Exclude inline text links — only flag icon/button targets
+          if (el.textContent?.trim().length === 0 || el.querySelector("svg")) {
+            tooSmall++;
+          }
+        }
+      }
+      return tooSmall;
+    });
+    if (smallTargets === 0) {
+      pass("Touch targets >= 44px (mobile detail)", "All icon/button targets adequate");
+    } else {
+      warn("Touch targets (mobile detail)", `${smallTargets} icon/button target(s) under 44px`);
+    }
+
+    await mobileDetail.screenshot({ path: "/tmp/mmatf-mobile-detail.png" });
+    pass("Mobile detail screenshot", "Saved to /tmp/mmatf-mobile-detail.png");
+    await mobileDetail.close();
+    await mobileContext.close();
   } finally {
     await browser.close();
   }

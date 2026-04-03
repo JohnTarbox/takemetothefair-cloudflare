@@ -96,12 +96,12 @@ export function Footer() {
           <p className="text-sm text-gray-400">
             &copy; {currentYear} Meet Me at the Fair. All rights reserved.
           </p>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <a
               href="https://facebook.com/meetmeatthefair"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-gray-400 hover:text-white transition-colors"
+              className="text-gray-400 hover:text-white transition-colors p-2"
               aria-label="Follow us on Facebook"
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -112,7 +112,7 @@ export function Footer() {
               href="https://instagram.com/meetmeatthefair"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-gray-400 hover:text-white transition-colors"
+              className="text-gray-400 hover:text-white transition-colors p-2"
               aria-label="Follow us on Instagram"
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">

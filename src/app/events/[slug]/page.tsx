@@ -179,22 +179,20 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       url,
       siteName: "Meet Me at the Fair",
       type: "website",
-      ...(event.imageUrl && {
-        images: [
-          {
-            url: event.imageUrl,
-            width: 1200,
-            height: 630,
-            alt: event.name,
-          },
-        ],
-      }),
+      images: [
+        {
+          url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
+          width: 1200,
+          height: 630,
+          alt: event.name,
+        },
+      ],
     },
     twitter: {
-      card: event.imageUrl ? "summary_large_image" : "summary",
+      card: "summary_large_image",
       title: event.name,
       description,
-      ...(event.imageUrl && { images: [event.imageUrl] }),
+      images: [event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`],
     },
   };
 }
