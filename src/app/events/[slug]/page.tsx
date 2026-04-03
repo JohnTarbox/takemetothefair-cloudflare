@@ -178,7 +178,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       url,
       siteName: "Meet Me at the Fair",
-      type: "website",
+      type: "article",
       images: [
         {
           url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,

@@ -11,7 +11,7 @@ export function OrganizationSchema() {
           "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
         logo: {
           "@type": "ImageObject",
-          url: "https://meetmeatthefair.com/icon.png",
+          url: "https://meetmeatthefair.com/og-default.png",
         },
         sameAs: [
           "https://facebook.com/meetmeatthefair",

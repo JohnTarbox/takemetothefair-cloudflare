@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     images: [
       {
-        url: "https://meetmeatthefair.com/og-default.svg",
+        url: "https://meetmeatthefair.com/og-default.png",
         width: 1200,
         height: 630,
         alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
@@ -30,6 +30,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Meet Me at the Fair",
     description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
+    images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
 

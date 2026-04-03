@@ -134,7 +134,7 @@ export function EventSchema({
     description: description || `${name} - a fair and community event.`,
     startDate: new Date(startDate).toISOString(),
     endDate: new Date(endDate).toISOString(),
-    image: imageUrl || "https://meetmeatthefair.com/og-image.png",
+    image: imageUrl || "https://meetmeatthefair.com/og-default.png",
     url,
     eventStatus:
       datesConfirmed === false

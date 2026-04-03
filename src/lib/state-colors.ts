@@ -42,6 +42,16 @@ const STATE_COLORS: Record<string, StateColors> = {
   },
 };
 
+/** Maps full state names to abbreviations for fallback lookup */
+const STATE_NAME_TO_ABBR: Record<string, string> = {
+  MAINE: "ME",
+  MASSACHUSETTS: "MA",
+  "NEW HAMPSHIRE": "NH",
+  VERMONT: "VT",
+  CONNECTICUT: "CT",
+  "RHODE ISLAND": "RI",
+};
+
 const DEFAULT_COLORS: StateColors = {
   bg: "bg-gray-100",
   icon: "text-gray-400",
@@ -50,10 +60,12 @@ const DEFAULT_COLORS: StateColors = {
 
 export function getStateColors(state: string | null | undefined): StateColors {
   if (!state) return DEFAULT_COLORS;
-  return STATE_COLORS[state.toUpperCase()] ?? DEFAULT_COLORS;
+  const upper = state.toUpperCase();
+  return STATE_COLORS[upper] ?? STATE_COLORS[STATE_NAME_TO_ABBR[upper]] ?? DEFAULT_COLORS;
 }
 
 export function getStateBadgeClass(state: string | null | undefined): string {
   if (!state) return DEFAULT_COLORS.badge;
-  return STATE_COLORS[state.toUpperCase()]?.badge ?? DEFAULT_COLORS.badge;
+  const upper = state.toUpperCase();
+  return STATE_COLORS[upper]?.badge ?? STATE_COLORS[STATE_NAME_TO_ABBR[upper]]?.badge ?? DEFAULT_COLORS.badge;
 }

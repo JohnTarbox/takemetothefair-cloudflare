@@ -22,6 +22,13 @@ export const metadata: Metadata = {
     url: "https://meetmeatthefair.com/venues",
     siteName: "Meet Me at the Fair",
     type: "website",
+    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Fair & Festival Venues | Meet Me at the Fair",
+    description: "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
+    images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
 

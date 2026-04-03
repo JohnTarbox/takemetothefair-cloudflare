@@ -9,6 +9,21 @@ export const runtime = "edge";
 export const metadata: Metadata = {
   title: "About Us | Meet Me at the Fair",
   description: "Learn about Meet Me at the Fair - your community calendar for fairs, festivals, and local events.",
+  alternates: { canonical: "https://meetmeatthefair.com/about" },
+  openGraph: {
+    title: "About Us | Meet Me at the Fair",
+    description: "Learn about Meet Me at the Fair - your community calendar for fairs, festivals, and local events.",
+    url: "https://meetmeatthefair.com/about",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "About Us | Meet Me at the Fair",
+    description: "Learn about Meet Me at the Fair - your community calendar for fairs, festivals, and local events.",
+    images: ["https://meetmeatthefair.com/og-default.png"],
+  },
 };
 
 export default function AboutPage() {
