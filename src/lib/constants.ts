@@ -4,7 +4,7 @@
 
 // Pagination
 export const PAGINATION = {
-  EVENTS_PER_PAGE: 12,
+  EVENTS_PER_PAGE: 24,
   ADMIN_LIST_LIMIT: 50,
   RECENT_ITEMS_LIMIT: 5,
   MAX_PAGE_SIZE: 100,

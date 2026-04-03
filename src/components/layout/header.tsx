@@ -6,6 +6,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { Menu, X, User, LogOut, Settings, Calendar, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { GlobalSearch } from "./global-search";
 
 export function Header() {
   const { data: session, status } = useSession();
@@ -68,6 +69,7 @@ export function Header() {
           </div>
 
           <div className="hidden md:flex md:items-center md:space-x-4">
+            <GlobalSearch />
             {status === "loading" ? (
               <div className="h-8 w-20 bg-gray-200 rounded animate-pulse" />
             ) : session ? (

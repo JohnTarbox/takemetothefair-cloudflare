@@ -570,6 +570,26 @@ export default function SuggestEventPage() {
         </p>
       </div>
 
+      {/* Progress indicator */}
+      {step !== "success" && (
+        <div className="flex items-center gap-2 mb-6 text-sm">
+          <span className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-gray-400"}`}>
+            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "url-input" ? "bg-royal text-white" : ["review", "submitting"].includes(step) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>1</span>
+            Source
+          </span>
+          <div className="flex-1 h-px bg-gray-200" />
+          <span className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-gray-400"}`}>
+            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "review" ? "bg-royal text-white" : step === "submitting" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>2</span>
+            Review
+          </span>
+          <div className="flex-1 h-px bg-gray-200" />
+          <span className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-gray-400"}`}>
+            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-500`}>3</span>
+            Submit
+          </span>
+        </div>
+      )}
+
       {/* Error Display */}
       {error && (
         <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm flex items-center gap-2">
@@ -590,7 +610,15 @@ export default function SuggestEventPage() {
           <CardContent className="space-y-4">
             <p className="text-sm text-gray-600">
               Paste a link to the event page and we&apos;ll automatically extract the details.
+              You&apos;ll be able to review and edit everything before submitting.
             </p>
+
+            <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 space-y-1">
+              <p className="font-medium text-gray-700">What happens next:</p>
+              <p>1. We&apos;ll extract the event name, dates, location, and description</p>
+              <p>2. You review and correct any details</p>
+              <p>3. Our team reviews your suggestion within 24–48 hours</p>
+            </div>
 
             {!manualPaste ? (
               <>
@@ -610,15 +638,13 @@ export default function SuggestEventPage() {
                     </Button>
                   </div>
                 </div>
-                <label className="flex items-center gap-2 text-sm text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={manualPaste}
-                    onChange={(e) => setManualPaste(e.target.checked)}
-                    className="rounded border-gray-300"
-                  />
-                  I can&apos;t fetch the page - let me paste content
-                </label>
+                <button
+                  type="button"
+                  onClick={() => setManualPaste(true)}
+                  className="text-sm text-royal hover:text-navy underline underline-offset-2"
+                >
+                  Don&apos;t have a URL? Enter details manually instead
+                </button>
               </>
             ) : (
               <>
@@ -1247,16 +1273,19 @@ export default function SuggestEventPage() {
               <h3 className="text-xl font-bold text-gray-900 mb-2">
                 Thank You!
               </h3>
-              <p className="text-gray-600 mb-6">
+              <p className="text-gray-600 mb-2">
                 Your event suggestion has been submitted for review.
                 {suggesterEmail && " We'll notify you once it's approved."}
+              </p>
+              <p className="text-sm text-gray-500 mb-6">
+                Our team typically reviews suggestions within 24–48 hours.
               </p>
 
               {createdEvent && (
                 <div className="max-w-md mx-auto mb-6 p-4 bg-gray-50 rounded-lg">
                   <p className="font-medium text-gray-900">{createdEvent.name}</p>
                   <p className="text-sm text-gray-500 mt-1">
-                    Your suggestion is now pending admin review.
+                    Pending review — you&apos;ll see it on the site once approved.
                   </p>
                 </div>
               )}

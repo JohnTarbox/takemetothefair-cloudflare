@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, users, eventDays } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, ne, gte, like } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
@@ -35,6 +35,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { EventCard } from "@/components/events/event-card";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -156,6 +157,60 @@ async function getEvent(slug: string) {
   }
 }
 
+async function getRelatedEvents(eventId: string, venueId: string | null, categories: string[]) {
+  const db = getCloudflareDb();
+  try {
+    const baseConditions = [
+      ne(events.id, eventId),
+      isPublicEventStatus(),
+      gte(events.endDate, new Date()),
+    ];
+
+    // Try same venue first
+    if (venueId) {
+      const sameVenue = await db
+        .select()
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
+        .where(and(...baseConditions, eq(events.venueId, venueId)))
+        .orderBy(events.startDate)
+        .limit(4);
+
+      if (sameVenue.length >= 2) {
+        return {
+          heading: "More Events at This Venue",
+          events: sameVenue.map((r) => ({ ...r.events, venue: r.venues, promoter: r.promoters })),
+        };
+      }
+    }
+
+    // Fallback: same category
+    const primaryCategory = categories[0];
+    if (primaryCategory) {
+      const sameCategory = await db
+        .select()
+        .from(events)
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
+        .where(and(...baseConditions, like(events.categories, `%${primaryCategory}%`)))
+        .orderBy(events.startDate)
+        .limit(4);
+
+      if (sameCategory.length > 0) {
+        return {
+          heading: `More ${primaryCategory} Events`,
+          events: sameCategory.map((r) => ({ ...r.events, venue: r.venues, promoter: r.promoters })),
+        };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const event = await getEvent(slug);
@@ -209,6 +264,11 @@ export default async function EventDetailPage({ params }: Props) {
   const session = await auth();
   const vendorInfo = await getUserVendorInfo(session?.user?.id, event.id);
   const isAdmin = session?.user?.role === "ADMIN";
+  const relatedEvents = await getRelatedEvents(
+    event.id,
+    event.venueId,
+    parseJsonArray(event.categories)
+  );
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -626,6 +686,20 @@ export default async function EventDetailPage({ params }: Props) {
           </Card>}
         </aside>
       </div>
+
+      {/* Related Events */}
+      {relatedEvents && relatedEvents.events.length > 0 && (
+        <div className="mt-12 border-t border-gray-200 pt-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">
+            {relatedEvents.heading}
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {relatedEvents.events.map((relEvent) => (
+              <EventCard key={relEvent.id} event={relEvent} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

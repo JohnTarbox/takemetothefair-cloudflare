@@ -4,7 +4,7 @@ import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, userFavorites, eventDays } from "@/lib/db/schema";
-import { eq, and, gte, or, count, inArray, sql, like, isNull } from "drizzle-orm";
+import { eq, and, gte, or, count, inArray, sql, like, isNull, asc, desc } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -47,6 +47,7 @@ interface SearchParams {
   favorites?: string;
   page?: string;
   view?: string;
+  sort?: string;
 }
 
 type ViewMode = "cards" | "table" | "calendar";
@@ -106,8 +107,9 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
   const page = parseInt(searchParams.page || "1");
-  const limit = 12;
+  const limit = 24;
   const offset = (page - 1) * limit;
+  const sort = searchParams.sort || "date-asc";
 
   const db = getCloudflareDb();
 
@@ -210,6 +212,15 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
       ? [...conditions, eq(venues.state, searchParams.state)]
       : conditions;
 
+    const orderByMap: Record<string, ReturnType<typeof asc>> = {
+      "date-asc": asc(events.startDate),
+      "date-desc": desc(events.startDate),
+      "name-asc": asc(events.name),
+      "name-desc": desc(events.name),
+      "popular": desc(events.viewCount),
+    };
+    const orderBy = orderByMap[sort] || asc(events.startDate);
+
     let query;
     if (isCalendarView) {
       query = db
@@ -218,7 +229,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
         .where(and(...stateConditions))
-        .orderBy(events.startDate);
+        .orderBy(orderBy);
     } else {
       query = db
         .select()
@@ -226,7 +237,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
         .where(and(...stateConditions))
-        .orderBy(events.startDate)
+        .orderBy(orderBy)
         .limit(limit)
         .offset(offset);
     }

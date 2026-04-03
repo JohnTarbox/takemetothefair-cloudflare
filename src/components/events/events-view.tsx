@@ -44,6 +44,14 @@ interface EventsViewProps {
   basePath?: string;
 }
 
+const SORT_OPTIONS = [
+  { value: "date-asc", label: "Date (soonest)" },
+  { value: "date-desc", label: "Date (latest)" },
+  { value: "name-asc", label: "Name (A–Z)" },
+  { value: "name-desc", label: "Name (Z–A)" },
+  { value: "popular", label: "Most viewed" },
+] as const;
+
 function getCalendarPeriodSummary(
   events: EventWithRelations[],
   viewType: CalendarViewType,
@@ -778,8 +786,17 @@ export function EventsView({
     const params = new URLSearchParams(currentSearchParams.toString());
     params.set("view", newView);
     params.delete("page");
-    window.location.href = `/events?${params.toString()}`;
+    window.location.href = `${basePath}?${params.toString()}`;
   };
+
+  const switchSort = (newSort: string) => {
+    const params = new URLSearchParams(currentSearchParams.toString());
+    params.set("sort", newSort);
+    params.delete("page");
+    window.location.href = `${basePath}?${params.toString()}`;
+  };
+
+  const currentSort = currentSearchParams.get("sort") || "date-asc";
 
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "startDate",
@@ -840,8 +857,17 @@ export function EventsView({
         <p className="text-sm text-gray-600 mb-4 print:hidden">{summaryText}</p>
       )}
 
-      {/* View Toggle and Download */}
+      {/* Sort, View Toggle, and Download */}
       <div className="flex justify-end items-center gap-3 mb-4 print:hidden">
+        <select
+          value={currentSort}
+          onChange={(e) => switchSort(e.target.value)}
+          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent mr-auto"
+        >
+          {SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
         {viewMode === "table" && (
           <button
             onClick={downloadCSV}
