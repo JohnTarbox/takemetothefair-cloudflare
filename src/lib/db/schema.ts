@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
 // Users table
@@ -44,7 +44,9 @@ export const venues = sqliteTable("venues", {
   status: text("status", { enum: ["ACTIVE", "INACTIVE"] }).default("ACTIVE").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("idx_venues_status").on(table.status),
+]);
 
 // Promoters table
 export const promoters = sqliteTable("promoters", {
@@ -97,7 +99,11 @@ export const events = sqliteTable("events", {
   submittedByUserId: text("submitted_by_user_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("idx_events_status_startdate").on(table.status, table.startDate),
+  index("idx_events_venueid").on(table.venueId),
+  index("idx_events_promoterid").on(table.promoterId),
+]);
 
 // Vendors table
 export const vendors = sqliteTable("vendors", {
@@ -141,7 +147,10 @@ export const eventVendors = sqliteTable("event_vendors", {
   status: text("status", { enum: ["INVITED", "INTERESTED", "APPLIED", "WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"] }).default("APPLIED").notNull(),
   paymentStatus: text("payment_status", { enum: ["NOT_REQUIRED", "PENDING", "PAID", "REFUNDED", "OVERDUE"] }).default("NOT_REQUIRED").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("idx_eventvendors_eventid_status").on(table.eventId, table.status),
+  index("idx_eventvendors_vendorid").on(table.vendorId),
+]);
 
 // Event Days table - per-day schedules for multi-day events
 export const eventDays = sqliteTable("event_days", {
@@ -162,7 +171,9 @@ export const userFavorites = sqliteTable("user_favorites", {
   favoritableType: text("favoritable_type", { enum: ["EVENT", "VENUE", "VENDOR", "PROMOTER"] }).notNull(),
   favoritableId: text("favoritable_id").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("idx_userfavorites_userid_type").on(table.userId, table.favoritableType),
+]);
 
 // Notifications table
 export const notifications = sqliteTable("notifications", {

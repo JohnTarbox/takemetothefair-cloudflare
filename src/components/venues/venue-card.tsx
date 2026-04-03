@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { MapPin, Users, Calendar } from "lucide-react";
@@ -30,6 +31,7 @@ interface VenueCardProps {
 }
 
 export function VenueCard({ venue, priority = false }: VenueCardProps) {
+  const [imgError, setImgError] = useState(false);
   const amenities = parseJsonArray(venue.amenities);
 
   // Build full address string
@@ -61,8 +63,8 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
       <Link href={`/venues/${venue.slug}`} className="block">
-        <div className={`aspect-video relative ${venue.imageUrl ? "bg-gray-100" : stateColors.bg}`}>
-          {venue.imageUrl ? (
+        <div className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-gray-100" : stateColors.bg}`}>
+          {venue.imageUrl && !imgError ? (
             <Image
               src={venue.imageUrl}
               alt={`Photo of ${venue.name} venue`}
@@ -70,13 +72,14 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
               priority={priority}
+              onError={() => setImgError(true)}
             />
           ) : (
             <div className={`w-full h-full flex items-center justify-center ${stateColors.icon}`}>
               <MapPin className="w-12 h-12" />
             </div>
           )}
-          {venue.state && !venue.imageUrl && (
+          {venue.state && (!venue.imageUrl || imgError) && (
             <div className="absolute top-3 left-3">
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${stateColors.badge}`}>
                 {venue.state}

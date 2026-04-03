@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { MapPin, Phone, Mail, Globe, Users, Calendar, ExternalLink, Pencil } from "lucide-react";
+import { MapPin, Phone, Mail, Globe, Users, Calendar, ExternalLink, Pencil, Accessibility, ParkingSquare } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -218,6 +218,35 @@ export default async function VenueDetailPage({ params }: Props) {
               </div>
             );
           })()}
+
+          {(() => {
+            const accessibilityItems = parseJsonArray(venue.accessibility);
+            return accessibilityItems.length > 0 && (
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <Accessibility className="w-5 h-5" />
+                  Accessibility
+                </h2>
+                <div className="flex flex-wrap gap-2">
+                  {accessibilityItems.map((item) => (
+                    <Badge key={item} variant="info">
+                      {item}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {venue.parking && (
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <ParkingSquare className="w-5 h-5" />
+                Parking
+              </h2>
+              <p className="text-gray-600">{venue.parking}</p>
+            </div>
+          )}
 
           {venue.events.length > 0 && (
             <div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Store, CheckCircle, Calendar, MapPin } from "lucide-react";
@@ -41,6 +42,7 @@ interface VendorCardProps {
 }
 
 export function VendorCard({ vendor }: VendorCardProps) {
+  const [logoError, setLogoError] = useState(false);
   const products = parseJsonArray(vendor.products);
 
   return (
@@ -49,13 +51,14 @@ export function VendorCard({ vendor }: VendorCardProps) {
         <div className="flex gap-4">
           <Link href={`/vendors/${vendor.slug}`} className="flex-shrink-0">
             <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center relative overflow-hidden hover:opacity-80 transition-opacity">
-              {vendor.logoUrl ? (
+              {vendor.logoUrl && !logoError ? (
                 <Image
                   src={vendor.logoUrl}
                   alt={`${vendor.businessName} logo`}
                   fill
                   sizes="64px"
                   className="object-cover"
+                  onError={() => setLogoError(true)}
                 />
               ) : (
                 <Store className="w-8 h-8 text-gray-400" />

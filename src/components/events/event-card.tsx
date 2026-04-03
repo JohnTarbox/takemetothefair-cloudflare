@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Calendar, MapPin, Tag, Store } from "lucide-react";
@@ -35,6 +36,7 @@ interface EventCardProps {
 }
 
 export function EventCard({ event, priority = false }: EventCardProps) {
+  const [imgError, setImgError] = useState(false);
   const categories = parseJsonArray(event.categories);
   const vendors = event.vendors || [];
   const colors = getCategoryColors(categories);
@@ -51,8 +53,8 @@ export function EventCard({ event, priority = false }: EventCardProps) {
       {/* Top accent bar */}
       <div className={`h-1 ${colors.bg.replace("-50", "-400").replace("-100", "-500")}`} style={{ backgroundColor: colors.icon.includes("blue") ? "#3B6FD4" : colors.icon.includes("purple") ? "#9333ea" : colors.icon.includes("amber") ? "#E8960C" : colors.icon.includes("green") ? "#16a34a" : colors.icon.includes("emerald") ? "#059669" : "#9ca3af" }} />
       <Link href={`/events/${event.slug}`} className="block">
-        <div className={`aspect-video relative ${event.imageUrl ? "bg-gray-100" : colors.bg}`}>
-          {event.imageUrl ? (
+        <div className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-gray-100" : colors.bg}`}>
+          {event.imageUrl && !imgError ? (
             <Image
               src={event.imageUrl}
               alt={`Photo of ${event.name} event`}
@@ -60,6 +62,7 @@ export function EventCard({ event, priority = false }: EventCardProps) {
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
               priority={priority}
+              onError={() => setImgError(true)}
             />
           ) : (
             <div className={`w-full h-full flex items-center justify-center ${colors.icon}`}>
@@ -67,7 +70,7 @@ export function EventCard({ event, priority = false }: EventCardProps) {
             </div>
           )}
           {/* Date badge */}
-          {monthAbbr && dayNum && !event.imageUrl && (
+          {monthAbbr && dayNum && (!event.imageUrl || imgError) && (
             <div className="absolute bottom-3 left-3 bg-white rounded-lg shadow-sm px-2.5 py-1.5 text-center leading-tight">
               <div className="text-[10px] font-semibold text-amber tracking-wide">{monthAbbr}</div>
               <div className="text-lg font-bold text-navy -mt-0.5">{dayNum}</div>

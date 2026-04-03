@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Pencil,
   UserPlus,
+  Eye,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -308,6 +309,12 @@ export default async function EventDetailPage({ params }: Props) {
                       />
                     </div>
                   </div>
+                  {(event.viewCount ?? 0) > 10 && (
+                    <p className="text-sm text-gray-400 flex items-center gap-1 mt-1">
+                      <Eye className="w-3.5 h-3.5" />
+                      {(event.viewCount ?? 0).toLocaleString()} views
+                    </p>
+                  )}
                 </div>
 
                 <div className="prose prose-gray max-w-none">
