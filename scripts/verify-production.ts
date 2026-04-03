@@ -365,6 +365,99 @@ async function main() {
     }
     await ogPage.close();
 
+    // ── Desktop Pagination Tests ───────────────────────────────
+    console.log("--- Desktop Pagination ---");
+
+    // Test main events page pagination
+    const paginationPage = await context.newPage();
+    await paginationPage.goto(`${BASE_URL}/events`, {
+      waitUntil: "networkidle",
+    });
+
+    // Check pagination exists and links are correct
+    const mainNextHref = await paginationPage
+      .locator('a:has-text("»")')
+      .first()
+      .getAttribute("href")
+      .catch(() => null);
+    if (mainNextHref && mainNextHref.startsWith("/events?")) {
+      pass("Events pagination next link", mainNextHref);
+    } else if (mainNextHref) {
+      fail("Events pagination next link", `Wrong path: ${mainNextHref}`);
+    } else {
+      warn("Events pagination next link", "No next link found (may have ≤1 page)");
+    }
+
+    // Click next and verify page 2 loads with events
+    if (mainNextHref) {
+      await paginationPage.locator('a:has-text("»")').first().click();
+      await paginationPage.waitForLoadState("networkidle");
+      const page2Url = paginationPage.url();
+      const page2HasEvents = await paginationPage.evaluate(() => {
+        return document.querySelectorAll(".aspect-video").length > 0;
+      });
+      if (page2Url.includes("page=2") && page2HasEvents) {
+        pass("Events page 2 loads correctly", `URL: ${page2Url}`);
+      } else {
+        fail(
+          "Events page 2 loads correctly",
+          `URL: ${page2Url}, hasEvents: ${page2HasEvents}`
+        );
+      }
+    }
+    await paginationPage.close();
+
+    // Test state page pagination (Maine has 151+ events, so definitely paginated)
+    const statePagPage = await context.newPage();
+    await statePagPage.goto(`${BASE_URL}/events/maine`, {
+      waitUntil: "networkidle",
+    });
+
+    const stateNextHref = await statePagPage
+      .locator('a:has-text("»")')
+      .first()
+      .getAttribute("href")
+      .catch(() => null);
+    if (stateNextHref && stateNextHref.startsWith("/events/maine?")) {
+      pass("State page pagination next link", stateNextHref);
+    } else if (stateNextHref) {
+      fail(
+        "State page pagination next link",
+        `Wrong path (should be /events/maine?...): ${stateNextHref}`
+      );
+    } else {
+      warn("State page pagination next link", "No next link found");
+    }
+
+    // Click next and verify we stay on state page with events
+    if (stateNextHref) {
+      await statePagPage.locator('a:has-text("»")').first().click();
+      await statePagPage.waitForLoadState("networkidle");
+      const statePage2Url = statePagPage.url();
+      const statePage2H1 = await statePagPage
+        .locator("h1")
+        .first()
+        .textContent()
+        .catch(() => "");
+      const statePage2HasEvents = await statePagPage.evaluate(() => {
+        return document.querySelectorAll(".aspect-video").length > 0;
+      });
+      if (
+        statePage2Url.includes("/events/maine") &&
+        statePage2Url.includes("page=2") &&
+        statePage2HasEvents &&
+        statePage2H1?.includes("Maine")
+      ) {
+        pass("State page 2 loads correctly", `URL: ${statePage2Url}`);
+      } else {
+        fail(
+          "State page 2 loads correctly",
+          `URL: ${statePage2Url}, h1: ${statePage2H1}, hasEvents: ${statePage2HasEvents}`
+        );
+      }
+    }
+    await statePagPage.close();
+
     // ── Mobile UX Tests ────────────────────────────────────────
     console.log("--- Mobile UX (375px) ---");
     const mobileContext = await browser.newContext({
@@ -455,7 +548,74 @@ async function main() {
 
     await mobileEvents.screenshot({ path: "/tmp/mmatf-mobile-events.png" });
     pass("Mobile events screenshot", "Saved to /tmp/mmatf-mobile-events.png");
+
+    // Mobile pagination: check no horizontal overflow on pagination
+    const mobilePagOverflow = await mobileEvents.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    if (!mobilePagOverflow) {
+      pass("Mobile pagination no overflow", "Pagination fits viewport");
+    } else {
+      fail("Mobile pagination overflow", "Pagination wider than viewport");
+    }
+
+    // Mobile pagination: check next link works
+    const mobileNextHref = await mobileEvents
+      .locator('a:has-text("»")')
+      .first()
+      .getAttribute("href")
+      .catch(() => null);
+    if (mobileNextHref) {
+      await mobileEvents.locator('a:has-text("»")').first().click();
+      await mobileEvents.waitForLoadState("networkidle");
+      const mobilePage2Url = mobileEvents.url();
+      const mobilePage2HasEvents = await mobileEvents.evaluate(() => {
+        return document.querySelectorAll(".aspect-video").length > 0;
+      });
+      const mobilePage2Overflow = await mobileEvents.evaluate(() => {
+        return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+      });
+      if (
+        mobilePage2Url.includes("page=2") &&
+        mobilePage2HasEvents &&
+        !mobilePage2Overflow
+      ) {
+        pass("Mobile pagination page 2", `URL: ${mobilePage2Url}, no overflow`);
+      } else {
+        fail(
+          "Mobile pagination page 2",
+          `URL: ${mobilePage2Url}, events: ${mobilePage2HasEvents}, overflow: ${mobilePage2Overflow}`
+        );
+      }
+    } else {
+      warn("Mobile pagination", "No next link found");
+    }
     await mobileEvents.close();
+
+    // Mobile state page pagination
+    const mobileStatePage = await mobileContext.newPage();
+    await mobileStatePage.goto(`${BASE_URL}/events/maine`, {
+      waitUntil: "networkidle",
+    });
+    const mobileStateNextHref = await mobileStatePage
+      .locator('a:has-text("»")')
+      .first()
+      .getAttribute("href")
+      .catch(() => null);
+    if (
+      mobileStateNextHref &&
+      mobileStateNextHref.startsWith("/events/maine?")
+    ) {
+      pass("Mobile state pagination link", mobileStateNextHref);
+    } else if (mobileStateNextHref) {
+      fail(
+        "Mobile state pagination link",
+        `Wrong path: ${mobileStateNextHref}`
+      );
+    } else {
+      warn("Mobile state pagination link", "No next link found");
+    }
+    await mobileStatePage.close();
 
     // Mobile event detail page
     const mobileDetail = await mobileContext.newPage();
