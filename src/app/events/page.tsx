@@ -440,7 +440,7 @@ function EventsFilter({
             name="query"
             defaultValue={searchParams.query}
             placeholder="Search events..."
-            className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
           />
         </div>
       </div>
@@ -452,7 +452,7 @@ function EventsFilter({
         <select
           name="category"
           defaultValue={searchParams.category}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
         >
           <option value="">All Categories</option>
           {categories.map((cat) => (
@@ -470,7 +470,7 @@ function EventsFilter({
         <select
           name="state"
           defaultValue={searchParams.state}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
         >
           <option value="">All States</option>
           {states.map((state) => (
@@ -487,7 +487,7 @@ function EventsFilter({
           name="featured"
           value="true"
           defaultChecked={searchParams.featured === "true"}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="rounded border-gray-300 text-royal focus:ring-royal"
         />
         <span className="text-sm text-gray-700">Featured only</span>
       </label>
@@ -498,7 +498,7 @@ function EventsFilter({
           name="commercialVendors"
           value="true"
           defaultChecked={searchParams.commercialVendors === "true"}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="rounded border-gray-300 text-royal focus:ring-royal"
         />
         <span className="text-sm text-gray-700">Commercial vendors allowed</span>
       </label>
@@ -509,7 +509,7 @@ function EventsFilter({
           name="includeTBD"
           value="true"
           defaultChecked={searchParams.includeTBD === "true"}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="rounded border-gray-300 text-royal focus:ring-royal"
         />
         <span className="text-sm text-gray-700">Include dates TBD</span>
       </label>
@@ -520,7 +520,7 @@ function EventsFilter({
           name="includePast"
           value="true"
           defaultChecked={searchParams.includePast === "true"}
-          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          className="rounded border-gray-300 text-royal focus:ring-royal"
         />
         <span className="text-sm text-gray-700">Include past events</span>
       </label>
@@ -542,7 +542,7 @@ function EventsFilter({
       <div className="flex gap-2">
         <button
           type="submit"
-          className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+          className="flex-1 bg-royal text-white py-2 px-4 rounded-lg hover:bg-navy transition-colors flex items-center justify-center gap-2"
         >
           <Filter className="w-4 h-4" />
           Apply Filters

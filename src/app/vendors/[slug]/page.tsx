@@ -202,7 +202,7 @@ export default async function VendorDetailPage({ params }: Props) {
                   {vendor.businessName}
                 </h1>
                 {vendor.verified && (
-                  <CheckCircle className="w-6 h-6 text-blue-600" />
+                  <CheckCircle className="w-6 h-6 text-royal" />
                 )}
               </div>
               {vendor.vendorType && (
@@ -245,7 +245,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 {vendor.eventVendors.length > 6 && (
                   <Link
                     href={`/vendors/${vendor.slug}/events`}
-                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    className="text-sm text-royal hover:text-navy font-medium"
                   >
                     View all events
                   </Link>
@@ -255,12 +255,12 @@ export default async function VendorDetailPage({ params }: Props) {
                 {upcomingEvents.slice(0, 6).map(({ event }) => (
                   <Card key={event.id} className="hover:shadow-md transition-shadow">
                     <CardContent className="p-4 flex items-center gap-4">
-                      <Link href={`/events/${event.slug}`} className="w-16 h-16 rounded-lg bg-blue-50 flex flex-col items-center justify-center text-blue-600">
+                      <Link href={`/events/${event.slug}`} className="w-16 h-16 rounded-lg bg-brand-blue-light flex flex-col items-center justify-center text-royal">
                         <Calendar className="w-6 h-6" />
                       </Link>
                       <div className="flex-1">
                         <Link href={`/events/${event.slug}`}>
-                          <h3 className="font-medium text-gray-900 hover:text-blue-600">
+                          <h3 className="font-medium text-gray-900 hover:text-royal">
                             {event.name}
                           </h3>
                         </Link>
@@ -291,7 +291,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 <div className="mt-4 text-center">
                   <Link
                     href={`/vendors/${vendor.slug}/events`}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
                   >
                     View all {vendor.eventVendors.length} events
                   </Link>
@@ -309,7 +309,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 {pastEvents.length > 5 && (
                   <Link
                     href={`/vendors/${vendor.slug}/events?filter=past`}
-                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    className="text-sm text-royal hover:text-navy font-medium"
                   >
                     View all past events
                   </Link>
@@ -340,7 +340,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 <div className="mt-4 text-center">
                   <Link
                     href={`/vendors/${vendor.slug}/events`}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
                   >
                     View all {pastEvents.length} past events
                   </Link>
@@ -378,18 +378,18 @@ export default async function VendorDetailPage({ params }: Props) {
               {vendor.contactEmail && (
                 <a
                   href={`mailto:${vendor.contactEmail}`}
-                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
                 >
-                  <Mail className="w-5 h-5 text-blue-600" />
+                  <Mail className="w-5 h-5 text-royal" />
                   {vendor.contactEmail}
                 </a>
               )}
               {vendor.contactPhone && (
                 <a
                   href={`tel:${vendor.contactPhone}`}
-                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
                 >
-                  <Phone className="w-5 h-5 text-blue-600" />
+                  <Phone className="w-5 h-5 text-royal" />
                   {vendor.contactPhone}
                 </a>
               )}
@@ -398,9 +398,9 @@ export default async function VendorDetailPage({ params }: Props) {
                   href={vendor.website}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
                 >
-                  <Globe className="w-5 h-5 text-blue-600" />
+                  <Globe className="w-5 h-5 text-royal" />
                   Visit Website
                 </a>
               )}
@@ -413,7 +413,7 @@ export default async function VendorDetailPage({ params }: Props) {
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-3 text-gray-700 hover:text-blue-600 capitalize"
+                      className="flex items-center gap-3 text-gray-700 hover:text-royal capitalize"
                     >
                       {platform}
                     </a>

@@ -177,7 +177,7 @@ export function GooglePlaceSearch({
           disabled={disabled || loadingPlace}
           className={cn(
             "w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm text-gray-900 placeholder-gray-400",
-            "focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500",
+            "focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal",
             "disabled:bg-gray-50 disabled:text-gray-500"
           )}
         />
@@ -204,7 +204,7 @@ export function GooglePlaceSearch({
                 key={s.placeId}
                 type="button"
                 onClick={() => selectSuggestion(s)}
-                className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-start gap-2 text-sm border-b border-gray-50 last:border-0"
+                className="w-full text-left px-3 py-2 hover:bg-brand-blue-light flex items-start gap-2 text-sm border-b border-gray-50 last:border-0"
               >
                 <MapPin className="w-4 h-4 mt-0.5 text-gray-400 shrink-0" />
                 <div className="min-w-0">
@@ -228,7 +228,7 @@ export function GooglePlaceSearch({
         <button
           type="button"
           onClick={() => setShowUrl(true)}
-          className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+          className="text-xs text-royal hover:text-blue-800 flex items-center gap-1"
         >
           <Link2 className="w-3 h-3" />
           Or paste a Google Maps URL
@@ -266,7 +266,7 @@ export function GooglePlaceSearch({
               disabled={disabled || resolvingUrl}
               className={cn(
                 "w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm text-gray-900 placeholder-gray-400",
-                "focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500",
+                "focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal",
                 "disabled:bg-gray-50 disabled:text-gray-500"
               )}
             />
@@ -294,7 +294,7 @@ export function GooglePlaceSearch({
 
       {/* Loading indicator when fetching place details */}
       {loadingPlace && (
-        <div className="text-sm text-blue-600 flex items-center gap-1.5">
+        <div className="text-sm text-royal flex items-center gap-1.5">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           Loading place details...
         </div>

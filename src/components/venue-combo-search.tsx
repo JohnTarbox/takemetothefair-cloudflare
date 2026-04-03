@@ -263,7 +263,7 @@ export function VenueComboSearch({
             disabled={disabled || loadingPlace}
             className={cn(
               "w-full rounded-lg border border-gray-300 pl-9 pr-9 py-2 text-sm text-gray-900 placeholder-gray-400",
-              "focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500",
+              "focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal",
               "disabled:bg-gray-50 disabled:text-gray-500"
             )}
           />
@@ -298,7 +298,7 @@ export function VenueComboSearch({
                       key={v.id}
                       type="button"
                       onClick={() => selectDbVenue(v.id)}
-                      className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2 text-sm border-b border-gray-50"
+                      className="w-full text-left px-3 py-2 hover:bg-brand-blue-light flex items-center gap-2 text-sm border-b border-gray-50"
                     >
                       <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
                       <span className="font-medium">{v.name}</span>

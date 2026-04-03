@@ -3,8 +3,12 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
+  --background: #FAF7F2;
   --foreground: #171717;
+}
+
+h1, h2, h3 {
+  font-family: Georgia, 'Times New Roman', serif;
 }
 
 @media (prefers-color-scheme: dark) {

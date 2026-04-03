@@ -61,7 +61,7 @@ export default function SearchVisibilityPage() {
           <ul className="space-y-3">
             <li className="flex items-start gap-3">
               <Calendar
-                className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0"
+                className="w-5 h-5 text-royal mt-0.5 flex-shrink-0"
                 aria-hidden="true"
               />
               <span className="text-gray-700">
@@ -106,9 +106,9 @@ export default function SearchVisibilityPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <div className="w-10 h-10 bg-brand-blue-light rounded-lg flex items-center justify-center">
                   <Calendar
-                    className="w-5 h-5 text-blue-600"
+                    className="w-5 h-5 text-royal"
                     aria-hidden="true"
                   />
                 </div>
@@ -322,9 +322,9 @@ export default function SearchVisibilityPage() {
           <Card>
             <CardContent className="p-6">
               <div className="flex items-start gap-4">
-                <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <div className="w-10 h-10 bg-brand-blue-light rounded-lg flex items-center justify-center flex-shrink-0">
                   <ImageIcon
-                    className="w-5 h-5 text-blue-600"
+                    className="w-5 h-5 text-royal"
                     aria-hidden="true"
                   />
                 </div>
@@ -456,7 +456,7 @@ export default function SearchVisibilityPage() {
                   href="https://search.google.com/test/rich-results"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-700 underline"
+                  className="text-royal hover:text-navy underline"
                 >
                   Rich Results Test
                 </a>
@@ -483,7 +483,7 @@ export default function SearchVisibilityPage() {
         <div className="flex flex-wrap justify-center gap-4">
           <Link
             href="/vendor/profile"
-            className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
           >
             Update Vendor Profile
           </Link>

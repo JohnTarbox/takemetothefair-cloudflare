@@ -95,7 +95,7 @@ export default async function FavoritesPage() {
             <p className="text-gray-500">You haven&apos;t saved any favorites yet.</p>
             <Link
               href="/events"
-              className="mt-4 inline-block text-blue-600 hover:text-blue-700 font-medium"
+              className="mt-4 inline-block text-royal hover:text-navy font-medium"
             >
               Browse Events
             </Link>
@@ -114,8 +114,8 @@ export default async function FavoritesPage() {
                   <Link key={event.id} href={`/events/${event.slug}`}>
                     <Card className="hover:shadow-md transition-shadow">
                       <CardContent className="p-4 flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-lg bg-blue-50 flex items-center justify-center">
-                          <Calendar className="w-8 h-8 text-blue-600" />
+                        <div className="w-16 h-16 rounded-lg bg-brand-blue-light flex items-center justify-center">
+                          <Calendar className="w-8 h-8 text-royal" />
                         </div>
                         <div className="flex-1">
                           <h3 className="font-medium text-gray-900">

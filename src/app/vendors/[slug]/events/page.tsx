@@ -136,7 +136,7 @@ export default function VendorEventsPage() {
       <div className="mb-8">
         <Link
           href={`/vendors/${slug}`}
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 mb-4"
+          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-royal mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Vendor
@@ -158,13 +158,13 @@ export default function VendorEventsPage() {
             placeholder="Search events..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
           />
         </div>
         <select
           value={timeFilter}
           onChange={(e) => setTimeFilter(e.target.value as "all" | "upcoming" | "past")}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
         >
           <option value="all">All Events ({events.length})</option>
           <option value="upcoming">Upcoming ({upcomingCount})</option>
@@ -175,7 +175,7 @@ export default function VendorEventsPage() {
             onClick={() => setViewMode("grid")}
             className={`p-2 rounded ${
               viewMode === "grid"
-                ? "bg-blue-100 text-blue-600"
+                ? "bg-brand-blue-light text-royal"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             aria-label="Grid view"
@@ -186,7 +186,7 @@ export default function VendorEventsPage() {
             onClick={() => setViewMode("list")}
             className={`p-2 rounded ${
               viewMode === "list"
-                ? "bg-blue-100 text-blue-600"
+                ? "bg-brand-blue-light text-royal"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             aria-label="List view"

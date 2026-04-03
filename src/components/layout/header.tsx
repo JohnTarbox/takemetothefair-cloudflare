@@ -37,7 +37,7 @@ export function Header() {
       {/* Skip navigation link for accessibility */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-navy focus:text-white focus:rounded-md focus:outline-none focus:ring-2 focus:ring-royal focus:ring-offset-2"
       >
         Skip to main content
       </a>
@@ -45,7 +45,7 @@ export function Header() {
         <div className="flex h-16 justify-between items-center">
           <div className="flex items-center">
             <Link href="/" className="flex items-center space-x-2">
-              <span className="text-xl font-bold text-blue-600">
+              <span className="text-xl font-bold text-navy">
                 Meet Me at the Fair
               </span>
             </Link>
@@ -59,7 +59,7 @@ export function Header() {
                   key={item.name}
                   href={item.href}
                   aria-current={isActive ? "page" : undefined}
-                  className={`font-medium transition-colors ${isActive ? "text-blue-600" : "text-gray-600 hover:text-gray-900"}`}
+                  className={`font-medium transition-colors ${isActive ? "text-royal" : "text-gray-600 hover:text-gray-900"}`}
                 >
                   {item.name}
                 </Link>
@@ -76,7 +76,7 @@ export function Header() {
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
                   className="flex items-center space-x-2 text-gray-700 hover:text-gray-900"
                 >
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-brand-blue-light flex items-center justify-center">
                     {session.user.image ? (
                       <img
                         src={session.user.image}
@@ -84,7 +84,7 @@ export function Header() {
                         className="w-8 h-8 rounded-full"
                       />
                     ) : (
-                      <User className="w-4 h-4 text-blue-600" />
+                      <User className="w-4 h-4 text-royal" />
                     )}
                   </div>
                   <span className="font-medium">
@@ -180,7 +180,7 @@ export function Header() {
                     key={item.name}
                     href={item.href}
                     aria-current={isActive ? "page" : undefined}
-                    className={`block px-3 py-2 rounded-lg ${isActive ? "text-blue-600 bg-blue-50 font-medium" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
+                    className={`block px-3 py-2 rounded-lg ${isActive ? "text-royal bg-brand-blue-light font-medium" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     {item.name}
@@ -198,7 +198,7 @@ export function Header() {
                   </Link>
                   <Link
                     href="/register"
-                    className="block px-3 py-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg font-medium"
+                    className="block px-3 py-2 text-royal hover:text-blue-700 hover:bg-brand-blue-light rounded-lg font-medium"
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     Get Started

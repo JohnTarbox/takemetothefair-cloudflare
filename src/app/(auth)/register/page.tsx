@@ -266,7 +266,7 @@ function RegisterForm() {
               name="role"
               value={formData.role}
               onChange={handleChange}
-              className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
             >
               <option value="USER">Event Enthusiast</option>
               <option value="PROMOTER">Event Promoter</option>
@@ -365,7 +365,7 @@ function RegisterForm() {
           Already have an account?{" "}
           <Link
             href="/login"
-            className="text-blue-600 hover:text-blue-700 font-medium"
+            className="text-royal hover:text-navy font-medium"
           >
             Sign in
           </Link>

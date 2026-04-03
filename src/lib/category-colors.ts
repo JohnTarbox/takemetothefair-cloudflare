@@ -11,24 +11,24 @@ type CategoryColors = {
 
 const CATEGORY_COLORS: Record<string, CategoryColors> = {
   Fair: {
-    bg: "bg-blue-50",
-    icon: "text-blue-400",
-    badge: "bg-blue-100 text-blue-700",
+    bg: "bg-amber-light",
+    icon: "text-amber",
+    badge: "bg-amber-light text-amber",
   },
   Festival: {
+    bg: "bg-brand-blue-light",
+    icon: "text-royal",
+    badge: "bg-brand-blue-light text-royal",
+  },
+  "Craft Show": {
     bg: "bg-purple-50",
     icon: "text-purple-400",
     badge: "bg-purple-100 text-purple-700",
   },
-  "Craft Show": {
-    bg: "bg-amber-50",
-    icon: "text-amber-400",
-    badge: "bg-amber-100 text-amber-700",
-  },
   "Craft Fair": {
-    bg: "bg-amber-50",
-    icon: "text-amber-400",
-    badge: "bg-amber-100 text-amber-700",
+    bg: "bg-purple-50",
+    icon: "text-purple-400",
+    badge: "bg-purple-100 text-purple-700",
   },
   Market: {
     bg: "bg-green-50",

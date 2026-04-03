@@ -39,8 +39,17 @@ export function EventCard({ event, priority = false }: EventCardProps) {
   const vendors = event.vendors || [];
   const colors = getCategoryColors(categories);
 
+  // Parse start date for date badge
+  const startDate = event.startDate ? new Date(event.startDate) : null;
+  const monthAbbr = startDate
+    ? startDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()
+    : null;
+  const dayNum = startDate ? startDate.getDate() : null;
+
   return (
-    <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
+    <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
+      {/* Top accent bar */}
+      <div className={`h-1 ${colors.bg.replace("-50", "-400").replace("-100", "-500")}`} style={{ backgroundColor: colors.icon.includes("blue") ? "#3B6FD4" : colors.icon.includes("purple") ? "#9333ea" : colors.icon.includes("amber") ? "#E8960C" : colors.icon.includes("green") ? "#16a34a" : colors.icon.includes("emerald") ? "#059669" : "#9ca3af" }} />
       <Link href={`/events/${event.slug}`} className="block">
         <div className={`aspect-video relative ${event.imageUrl ? "bg-gray-100" : colors.bg}`}>
           {event.imageUrl ? (
@@ -55,6 +64,13 @@ export function EventCard({ event, priority = false }: EventCardProps) {
           ) : (
             <div className={`w-full h-full flex items-center justify-center ${colors.icon}`}>
               <Calendar className="w-12 h-12" />
+            </div>
+          )}
+          {/* Date badge */}
+          {monthAbbr && dayNum && !event.imageUrl && (
+            <div className="absolute bottom-3 left-3 bg-white rounded-lg shadow-sm px-2.5 py-1.5 text-center leading-tight">
+              <div className="text-[10px] font-semibold text-amber tracking-wide">{monthAbbr}</div>
+              <div className="text-lg font-bold text-navy -mt-0.5">{dayNum}</div>
             </div>
           )}
           <div className="absolute top-3 left-3 flex gap-1">
@@ -140,7 +156,7 @@ export function EventCard({ event, priority = false }: EventCardProps) {
                 className="block group"
                 title={vendor.businessName}
               >
-                <div className="aspect-square rounded bg-gray-100 flex items-center justify-center overflow-hidden group-hover:ring-2 ring-blue-500 transition-all relative">
+                <div className="aspect-square rounded bg-gray-100 flex items-center justify-center overflow-hidden group-hover:ring-2 ring-royal transition-all relative">
                   {vendor.logoUrl ? (
                     <Image
                       src={vendor.logoUrl}

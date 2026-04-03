@@ -53,8 +53,8 @@ export default function ContactPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                <Mail className="w-5 h-5 text-blue-600" aria-hidden="true" />
+              <div className="w-10 h-10 bg-brand-blue-light rounded-lg flex items-center justify-center">
+                <Mail className="w-5 h-5 text-royal" aria-hidden="true" />
               </div>
               <CardTitle>Email Us</CardTitle>
             </div>
@@ -65,7 +65,7 @@ export default function ContactPage() {
             </p>
             <a
               href="mailto:hello@meetmeatthefair.com"
-              className="text-blue-600 hover:text-blue-700 font-medium"
+              className="text-royal hover:text-navy font-medium"
             >
               hello@meetmeatthefair.com
             </a>
@@ -87,7 +87,7 @@ export default function ContactPage() {
             </p>
             <a
               href="mailto:support@meetmeatthefair.com"
-              className="text-blue-600 hover:text-blue-700 font-medium"
+              className="text-royal hover:text-navy font-medium"
             >
               support@meetmeatthefair.com
             </a>
@@ -150,7 +150,7 @@ export default function ContactPage() {
         </p>
         <a
           href="mailto:partnerships@meetmeatthefair.com"
-          className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
         >
           Get in Touch
         </a>

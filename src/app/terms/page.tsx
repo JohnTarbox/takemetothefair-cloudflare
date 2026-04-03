@@ -169,7 +169,7 @@ export default function TermsPage() {
           If you have questions about these Terms, please contact us at:
         </p>
         <p className="text-gray-600">
-          <a href="mailto:legal@meetmeatthefair.com" className="text-blue-600 hover:text-blue-700">
+          <a href="mailto:legal@meetmeatthefair.com" className="text-royal hover:text-navy">
             legal@meetmeatthefair.com
           </a>
         </p>

@@ -98,7 +98,7 @@ export function VendorsView({
               onClick={() => setViewMode("cards")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 viewMode === "cards"
-                  ? "bg-blue-600 text-white"
+                  ? "bg-royal text-white"
                   : "text-gray-600 hover:bg-gray-100"
               }`}
               aria-pressed={viewMode === "cards"}
@@ -111,7 +111,7 @@ export function VendorsView({
               onClick={() => setViewMode("table")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 viewMode === "table"
-                  ? "bg-blue-600 text-white"
+                  ? "bg-royal text-white"
                   : "text-gray-600 hover:bg-gray-100"
               }`}
               aria-pressed={viewMode === "table"}
@@ -190,7 +190,7 @@ export function VendorsView({
                         <div>
                           <Link
                             href={`/vendors/${vendor.slug}`}
-                            className="font-medium text-gray-900 hover:text-blue-600"
+                            className="font-medium text-gray-900 hover:text-royal"
                           >
                             {vendor.businessName}
                           </Link>
@@ -211,7 +211,7 @@ export function VendorsView({
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         {vendor.verified && (
-                          <span className="inline-flex items-center gap-1 text-xs text-blue-600">
+                          <span className="inline-flex items-center gap-1 text-xs text-royal">
                             <CheckCircle className="w-3 h-3" />
                             Verified
                           </span>
@@ -228,7 +228,7 @@ export function VendorsView({
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/vendors/${vendor.slug}`}
-                          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                          className="text-royal hover:text-blue-800 text-sm font-medium"
                         >
                           View
                         </Link>

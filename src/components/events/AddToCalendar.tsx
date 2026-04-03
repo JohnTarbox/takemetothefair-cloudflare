@@ -137,7 +137,7 @@ export function AddToCalendar({
         <button
           onClick={() => setIsOpen(!isOpen)}
           onKeyDown={handleKeyDown}
-          className="p-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors"
+          className="p-1 text-royal hover:text-navy hover:bg-brand-blue-light rounded transition-colors"
           aria-label="Add to calendar"
           aria-expanded={isOpen}
           aria-haspopup="true"
@@ -176,7 +176,7 @@ export function AddToCalendar({
         <button
           onClick={() => setIsOpen(!isOpen)}
           onKeyDown={handleKeyDown}
-          className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+          className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
           aria-label="Add to calendar"
           aria-expanded={isOpen}
           aria-haspopup="true"

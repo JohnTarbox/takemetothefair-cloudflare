@@ -285,7 +285,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
       <div className="border-t border-gray-200">
         <div className="text-center py-2 border-b border-gray-200 bg-gray-50">
           <div className="text-sm text-gray-500">{currentDate.toLocaleDateString("en-US", { weekday: "long" })}</div>
-          <div className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-blue-600" : "text-gray-900"}`}>
+          <div className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-royal" : "text-gray-900"}`}>
             {currentDate.getDate()}
           </div>
         </div>
@@ -340,7 +340,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
           {days.map((day, i) => (
             <div key={i} className="py-2 print:py-1 text-center border-r border-gray-200 last:border-r-0">
               <div className="text-xs print:text-[0.6rem] text-gray-500 uppercase">{weekDays[i]}</div>
-              <div className={`text-lg print:text-sm font-semibold ${isSameDay(day, today) ? "bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}>
+              <div className={`text-lg print:text-sm font-semibold ${isSameDay(day, today) ? "bg-royal text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}>
                 {day.getDate()}
               </div>
             </div>
@@ -434,7 +434,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                     <div className="flex justify-center mb-1 print:mb-0">
                       <span
                         className={`inline-flex items-center justify-center w-7 h-7 print:w-4 print:h-4 text-sm print:text-[0.6rem] ${
-                          isToday ? "bg-blue-600 text-white rounded-full font-semibold" : "text-gray-700"
+                          isToday ? "bg-royal text-white rounded-full font-semibold" : "text-gray-700"
                         }`}
                       >
                         {day}
@@ -521,7 +521,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                   {monthDate.toLocaleDateString("en-US", { month: "long" })}
                 </div>
                 {monthEvents.length > 0 && (
-                  <div className="text-xs text-blue-600">{monthEvents.length} event{monthEvents.length !== 1 ? "s" : ""}</div>
+                  <div className="text-xs text-royal">{monthEvents.length} event{monthEvents.length !== 1 ? "s" : ""}</div>
                 )}
               </div>
               <div className="p-2">
@@ -536,7 +536,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                       <div
                         key={i}
                         className={`text-[10px] w-5 h-5 flex items-center justify-center rounded-full ${
-                          isCurrentDay ? "bg-blue-600 text-white" : hasEvent ? "bg-blue-100 text-blue-700" : "text-gray-700"
+                          isCurrentDay ? "bg-royal text-white" : hasEvent ? "bg-brand-blue-light text-royal" : "text-gray-700"
                         }`}
                       >
                         {day}
@@ -593,13 +593,13 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
               const isCurrentDay = isSameDay(date, today);
               return (
                 <div key={dateKey}>
-                  <div className={`sticky top-0 px-4 py-2 bg-gray-50 border-b border-gray-100 ${isCurrentDay ? "bg-blue-50" : ""}`}>
+                  <div className={`sticky top-0 px-4 py-2 bg-gray-50 border-b border-gray-100 ${isCurrentDay ? "bg-brand-blue-light" : ""}`}>
                     <div className="flex items-center gap-3">
-                      <div className={`text-2xl font-bold ${isCurrentDay ? "text-blue-600" : "text-gray-900"}`}>
+                      <div className={`text-2xl font-bold ${isCurrentDay ? "text-royal" : "text-gray-900"}`}>
                         {date.getDate()}
                       </div>
                       <div>
-                        <div className={`text-sm font-medium ${isCurrentDay ? "text-blue-600" : "text-gray-900"}`}>
+                        <div className={`text-sm font-medium ${isCurrentDay ? "text-royal" : "text-gray-900"}`}>
                           {date.toLocaleDateString("en-US", { weekday: "long" })}
                         </div>
                         <div className="text-xs text-gray-500">
@@ -686,7 +686,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
               onClick={() => setCalendarViewType(option.value)}
               className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                 calendarViewType === option.value
-                  ? "bg-blue-600 text-white"
+                  ? "bg-royal text-white"
                   : "text-gray-600 hover:bg-gray-100"
               }`}
             >
@@ -735,7 +735,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
             <div className="mt-4">
               <Link
                 href={`/events/${selectedEvent.slug}`}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-lg hover:bg-navy transition-colors"
               >
                 View Event Details
               </Link>
@@ -862,7 +862,7 @@ export function EventsView({
             onClick={() => switchView("cards")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === "cards"
-                ? "bg-blue-600 text-white"
+                ? "bg-royal text-white"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
           >
@@ -873,7 +873,7 @@ export function EventsView({
             onClick={() => switchView("table")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === "table"
-                ? "bg-blue-600 text-white"
+                ? "bg-royal text-white"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
           >
@@ -884,7 +884,7 @@ export function EventsView({
             onClick={() => switchView("calendar")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               viewMode === "calendar"
-                ? "bg-blue-600 text-white"
+                ? "bg-royal text-white"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
           >
@@ -952,7 +952,7 @@ export function EventsView({
                     <td className="py-3 px-4">
                       <Link
                         href={`/events/${event.slug}`}
-                        className="font-medium text-gray-900 hover:text-blue-600"
+                        className="font-medium text-gray-900 hover:text-royal"
                       >
                         {event.name}
                       </Link>
@@ -962,7 +962,7 @@ export function EventsView({
                         </span>
                       )}
                       {event.status === "TENTATIVE" && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-blue-800">
                           Tentative
                         </span>
                       )}
@@ -986,7 +986,7 @@ export function EventsView({
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/events/${event.slug}`}
-                          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                          className="text-royal hover:text-blue-800 text-sm font-medium"
                         >
                           View
                         </Link>
@@ -1034,7 +1034,7 @@ export function EventsView({
               }).toString()}`}
               className={`px-4 py-2 rounded-lg ${
                 p === currentPage
-                  ? "bg-blue-600 text-white"
+                  ? "bg-royal text-white"
                   : "bg-gray-100 text-gray-700 hover:bg-gray-200"
               }`}
             >

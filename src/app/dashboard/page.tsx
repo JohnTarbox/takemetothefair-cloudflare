@@ -80,8 +80,8 @@ export default async function DashboardPage() {
             <Card className="h-full hover:shadow-md transition-shadow cursor-pointer">
               <CardContent className="p-6">
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-lg bg-blue-50 flex items-center justify-center">
-                    <link.icon className="w-6 h-6 text-blue-600" />
+                  <div className="w-12 h-12 rounded-lg bg-brand-blue-light flex items-center justify-center">
+                    <link.icon className="w-6 h-6 text-royal" />
                   </div>
                   <div>
                     <h3 className="font-medium text-gray-900">{link.name}</h3>
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
+            <div className="w-16 h-16 rounded-full bg-brand-blue-light flex items-center justify-center">
               {session.user.image ? (
                 <img
                   src={session.user.image}
@@ -108,7 +108,7 @@ export default async function DashboardPage() {
                   className="w-16 h-16 rounded-full object-cover"
                 />
               ) : (
-                <User className="w-8 h-8 text-blue-600" />
+                <User className="w-8 h-8 text-royal" />
               )}
             </div>
             <div>

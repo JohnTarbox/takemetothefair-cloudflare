@@ -667,7 +667,7 @@ export default function SuggestEventPage() {
       {step === "fetching" && (
         <Card>
           <CardContent className="py-12 text-center">
-            <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+            <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-medium text-gray-900">
               Fetching page content...
             </h3>
@@ -720,7 +720,7 @@ export default function SuggestEventPage() {
               </p>
               <Link
                 href={`/events/${duplicateEvent.slug}`}
-                className="text-sm text-blue-600 hover:underline mt-2 inline-flex items-center"
+                className="text-sm text-royal hover:underline mt-2 inline-flex items-center"
                 target="_blank"
               >
                 View existing event
@@ -746,7 +746,7 @@ export default function SuggestEventPage() {
       {step === "duplicate-check" && !duplicateEvent && (
         <Card>
           <CardContent className="py-12 text-center">
-            <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+            <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-medium text-gray-900">
               Checking for duplicates...
             </h3>
@@ -758,7 +758,7 @@ export default function SuggestEventPage() {
       {step === "venue-match" && matchedVenue && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-blue-600">
+            <CardTitle className="flex items-center gap-2 text-royal">
               <MapPin className="w-5 h-5" />
               Venue Found in Database
             </CardTitle>
@@ -768,7 +768,7 @@ export default function SuggestEventPage() {
               We found a venue that matches &quot;{extractedData.venueName}&quot;. Would you like to link this event to it?
             </p>
 
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="p-4 bg-brand-blue-light border border-blue-200 rounded-lg">
               <h4 className="font-medium text-gray-900">{matchedVenue.name}</h4>
               <p className="text-sm text-gray-600 mt-1">
                 <MapPin className="w-3 h-3 inline mr-1" />
@@ -781,7 +781,7 @@ export default function SuggestEventPage() {
               </p>
               <Link
                 href={`/venues/${matchedVenue.slug}`}
-                className="text-sm text-blue-600 hover:underline mt-2 inline-flex items-center"
+                className="text-sm text-royal hover:underline mt-2 inline-flex items-center"
                 target="_blank"
               >
                 View venue page
@@ -826,7 +826,7 @@ export default function SuggestEventPage() {
       {step === "venue-match" && !matchedVenue && (
         <Card>
           <CardContent className="py-12 text-center">
-            <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+            <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-medium text-gray-900">
               Checking for matching venues...
             </h3>
@@ -1227,7 +1227,7 @@ export default function SuggestEventPage() {
       {step === "submitting" && (
         <Card>
           <CardContent className="py-12 text-center">
-            <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+            <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-medium text-gray-900">
               Submitting your suggestion...
             </h3>

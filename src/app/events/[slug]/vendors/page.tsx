@@ -106,7 +106,7 @@ export default function EventVendorsPage() {
       <div className="mb-8">
         <Link
           href={`/events/${slug}`}
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 mb-4"
+          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-royal mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Event
@@ -128,13 +128,13 @@ export default function EventVendorsPage() {
             placeholder="Search vendors..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
           />
         </div>
         <select
           value={selectedType}
           onChange={(e) => setSelectedType(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
         >
           <option value="all">All Types</option>
           {vendorTypes.map((type) => (
@@ -148,7 +148,7 @@ export default function EventVendorsPage() {
             onClick={() => setViewMode("grid")}
             className={`p-2 rounded ${
               viewMode === "grid"
-                ? "bg-blue-100 text-blue-600"
+                ? "bg-brand-blue-light text-royal"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             aria-label="Grid view"
@@ -159,7 +159,7 @@ export default function EventVendorsPage() {
             onClick={() => setViewMode("list")}
             className={`p-2 rounded ${
               viewMode === "list"
-                ? "bg-blue-100 text-blue-600"
+                ? "bg-brand-blue-light text-royal"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             aria-label="List view"
@@ -206,7 +206,7 @@ export default function EventVendorsPage() {
                           {vendor.businessName}
                         </h3>
                         {vendor.verified && (
-                          <CheckCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                          <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />
                         )}
                       </div>
                       {vendor.vendorType && (
@@ -266,7 +266,7 @@ export default function EventVendorsPage() {
                         {vendor.businessName}
                       </h3>
                       {vendor.verified && (
-                        <CheckCircle className="w-4 h-4 text-blue-600" />
+                        <CheckCircle className="w-4 h-4 text-royal" />
                       )}
                       {vendor.vendorType && (
                         <Badge variant="default">{vendor.vendorType}</Badge>

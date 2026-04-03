@@ -238,7 +238,7 @@ export default async function VenuesPage({
                     name="q"
                     defaultValue={params.q || ""}
                     placeholder="Search venues..."
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
                   />
                 </div>
               </form>
@@ -252,7 +252,7 @@ export default async function VenuesPage({
                   href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                   className={`block px-3 py-2 rounded-lg text-sm ${
                     !params.state
-                      ? "bg-blue-50 text-blue-700 font-medium"
+                      ? "bg-brand-blue-light text-royal font-medium"
                       : "text-gray-600 hover:bg-gray-50"
                   }`}
                 >
@@ -264,7 +264,7 @@ export default async function VenuesPage({
                     href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       params.state === state
-                        ? "bg-blue-50 text-blue-700 font-medium"
+                        ? "bg-brand-blue-light text-royal font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >

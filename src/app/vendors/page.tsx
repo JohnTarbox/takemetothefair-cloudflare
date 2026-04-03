@@ -277,7 +277,7 @@ export default async function VendorsPage({
                     name="q"
                     defaultValue={params.q || ""}
                     placeholder="Search vendors..."
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
                   />
                 </div>
               </form>
@@ -291,7 +291,7 @@ export default async function VendorsPage({
                   href={`/vendors${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                   className={`block px-3 py-2 rounded-lg text-sm ${
                     !params.type
-                      ? "bg-blue-50 text-blue-700 font-medium"
+                      ? "bg-brand-blue-light text-royal font-medium"
                       : "text-gray-600 hover:bg-gray-50"
                   }`}
                 >
@@ -303,7 +303,7 @@ export default async function VendorsPage({
                     href={`/vendors${buildQueryString({ type, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       params.type === type
-                        ? "bg-blue-50 text-blue-700 font-medium"
+                        ? "bg-brand-blue-light text-royal font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >

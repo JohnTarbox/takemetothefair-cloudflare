@@ -144,7 +144,7 @@ export default function PrivacyPage() {
           If you have questions about this Privacy Policy, please contact us at:
         </p>
         <p className="text-gray-600">
-          <a href="mailto:privacy@meetmeatthefair.com" className="text-blue-600 hover:text-blue-700">
+          <a href="mailto:privacy@meetmeatthefair.com" className="text-royal hover:text-navy">
             privacy@meetmeatthefair.com
           </a>
         </p>

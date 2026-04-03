@@ -46,8 +46,8 @@ export default function AboutPage() {
         <Card>
           <CardContent className="p-6">
             <div className="flex items-center gap-4 mb-4">
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                <Calendar className="w-6 h-6 text-blue-600" aria-hidden="true" />
+              <div className="w-12 h-12 bg-brand-blue-light rounded-lg flex items-center justify-center">
+                <Calendar className="w-6 h-6 text-royal" aria-hidden="true" />
               </div>
               <h2 className="text-xl font-semibold text-gray-900">For Event-Goers</h2>
             </div>
@@ -115,7 +115,7 @@ export default function AboutPage() {
         <div className="flex flex-wrap justify-center gap-4">
           <Link
             href="/events"
-            className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
           >
             Browse Events
           </Link>

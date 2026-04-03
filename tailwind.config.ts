@@ -11,6 +11,16 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
+        navy: "#1E2761",
+        royal: "#3B6FD4",
+        amber: {
+          DEFAULT: "#E8960C",
+          light: "#FFF3D6",
+        },
+        cream: "#FAF7F2",
+        "brand-blue": {
+          light: "#D6E4F7",
+        },
       },
     },
   },

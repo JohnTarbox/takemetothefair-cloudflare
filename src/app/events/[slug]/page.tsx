@@ -345,7 +345,7 @@ export default async function EventDetailPage({ params }: Props) {
                   {event.eventVendors.length > 8 && (
                     <Link
                       href={`/events/${event.slug}/vendors`}
-                      className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                      className="text-sm text-royal hover:text-navy font-medium"
                     >
                       View all vendors
                     </Link>
@@ -390,7 +390,7 @@ export default async function EventDetailPage({ params }: Props) {
                   <div className="mt-4 text-center">
                     <Link
                       href={`/events/${event.slug}/vendors`}
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors"
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
                     >
                       View all {event.eventVendors.length} vendors
                     </Link>
@@ -405,7 +405,7 @@ export default async function EventDetailPage({ params }: Props) {
           <Card>
             <CardContent className="p-6 space-y-4">
               <div className="flex items-start gap-3">
-                <Calendar className="w-5 h-5 text-blue-600 mt-0.5" />
+                <Calendar className="w-5 h-5 text-royal mt-0.5" />
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <p className="font-medium text-gray-900">
@@ -440,11 +440,11 @@ export default async function EventDetailPage({ params }: Props) {
 
               {event.venue ? (
                 <div className="flex items-start gap-3">
-                  <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
+                  <MapPin className="w-5 h-5 text-royal mt-0.5" />
                   <div>
                     <Link
                       href={`/venues/${event.venue.slug}`}
-                      className="font-medium text-gray-900 hover:text-blue-600"
+                      className="font-medium text-gray-900 hover:text-royal"
                     >
                       {event.venue.name}
                     </Link>
@@ -457,7 +457,7 @@ export default async function EventDetailPage({ params }: Props) {
                       href={event.venue.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 mt-1"
+                      className="inline-flex items-center gap-1 text-xs text-royal hover:text-navy mt-1"
                     >
                       <ExternalLink className="w-3 h-3" />
                       View on Google Maps
@@ -474,7 +474,7 @@ export default async function EventDetailPage({ params }: Props) {
               )}
 
               <div className="flex items-start gap-3">
-                <Tag className="w-5 h-5 text-blue-600 mt-0.5" />
+                <Tag className="w-5 h-5 text-royal mt-0.5" />
                 <div>
                   <p className="font-medium text-gray-900">
                     {formatPrice(event.ticketPriceMin, event.ticketPriceMax)}
@@ -612,7 +612,7 @@ export default async function EventDetailPage({ params }: Props) {
                   href={event.promoter.website}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-4 text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                  className="mt-4 text-sm text-royal hover:text-navy flex items-center gap-1"
                 >
                   Visit Website <ExternalLink className="w-3 h-3" />
                 </a>

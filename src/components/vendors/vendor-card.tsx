@@ -64,13 +64,13 @@ export function VendorCard({ vendor }: VendorCardProps) {
           </Link>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <Link href={`/vendors/${vendor.slug}`} className="hover:text-blue-600">
+              <Link href={`/vendors/${vendor.slug}`} className="hover:text-royal">
                 <h3 className="font-semibold text-gray-900 truncate">
                   {vendor.businessName}
                 </h3>
               </Link>
               {vendor.verified && (
-                <CheckCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />
               )}
               {vendor.commercial && (
                 <Badge variant="default">Commercial</Badge>

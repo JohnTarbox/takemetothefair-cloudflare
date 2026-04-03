@@ -229,7 +229,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 </h2>
                 <Link
                   href={`/events?venue=${venue.slug}`}
-                  className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                  className="text-royal hover:text-navy text-sm font-medium"
                 >
                   View All
                 </Link>
@@ -246,7 +246,7 @@ export default async function VenueDetailPage({ params }: Props) {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-start gap-3">
-                <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
+                <MapPin className="w-5 h-5 text-royal mt-0.5" />
                 <div>
                   <p className="text-gray-900">{venue.address}</p>
                   <p className="text-gray-600">
@@ -256,7 +256,7 @@ export default async function VenueDetailPage({ params }: Props) {
                     href={venue.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${venue.address}, ${venue.city}, ${venue.state} ${venue.zip}`)}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 mt-2"
+                    className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy mt-2"
                   >
                     <ExternalLink className="w-4 h-4" />
                     View on Google Maps
@@ -265,7 +265,7 @@ export default async function VenueDetailPage({ params }: Props) {
               </div>
               {venue.capacity && (
                 <div className="flex items-center gap-3">
-                  <Users className="w-5 h-5 text-blue-600" />
+                  <Users className="w-5 h-5 text-royal" />
                   <p className="text-gray-900">
                     Capacity: {venue.capacity.toLocaleString()}
                   </p>
@@ -290,18 +290,18 @@ export default async function VenueDetailPage({ params }: Props) {
               {venue.contactPhone && (
                 <a
                   href={`tel:${venue.contactPhone}`}
-                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
                 >
-                  <Phone className="w-5 h-5 text-blue-600" />
+                  <Phone className="w-5 h-5 text-royal" />
                   {venue.contactPhone}
                 </a>
               )}
               {venue.contactEmail && (
                 <a
                   href={`mailto:${venue.contactEmail}`}
-                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
                 >
-                  <Mail className="w-5 h-5 text-blue-600" />
+                  <Mail className="w-5 h-5 text-royal" />
                   {venue.contactEmail}
                 </a>
               )}
@@ -310,9 +310,9 @@ export default async function VenueDetailPage({ params }: Props) {
                   href={venue.website}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-3 text-gray-700 hover:text-blue-600"
+                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
                 >
-                  <Globe className="w-5 h-5 text-blue-600" />
+                  <Globe className="w-5 h-5 text-royal" />
                   Visit Website
                 </a>
               )}
@@ -322,7 +322,7 @@ export default async function VenueDetailPage({ params }: Props) {
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center gap-3">
-                <Calendar className="w-8 h-8 text-blue-600" />
+                <Calendar className="w-8 h-8 text-royal" />
                 <div>
                   <p className="text-2xl font-bold text-gray-900">
                     {venue.events.length}

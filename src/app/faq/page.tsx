@@ -26,8 +26,8 @@ const faqCategories = [
   {
     title: "Getting Started",
     icon: HelpCircle,
-    iconBg: "bg-blue-100",
-    iconColor: "text-blue-600",
+    iconBg: "bg-brand-blue-light",
+    iconColor: "text-royal",
     items: [
       {
         question: "What is Meet Me at the Fair?",
@@ -240,7 +240,7 @@ export default function FAQPage() {
         </p>
         <a
           href="/contact"
-          className="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
         >
           Contact Us
         </a>

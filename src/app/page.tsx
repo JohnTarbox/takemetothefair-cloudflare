@@ -84,21 +84,21 @@ export default async function HomePage() {
     <div>
       <OrganizationSchema />
       {/* Hero Section */}
-      <section className="bg-gradient-to-br from-blue-600 to-blue-800 text-white">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28">
+      <section className="bg-navy text-white">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28 max-h-[600px]">
           <div className="text-center max-w-3xl mx-auto">
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight">
               Discover Local Fairs & Events
             </h1>
-            <p className="mt-6 text-lg md:text-xl text-blue-100">
-              Find the best fairs, festivals, and community events in your area.
+            <p className="mt-6 text-lg md:text-xl text-gray-300">
+              Find the best fairs, festivals, and community events across New England.
               Connect with vendors and never miss an experience.
             </p>
             <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/events">
                 <Button
                   size="lg"
-                  className="w-full sm:w-auto bg-white text-blue-600 hover:bg-blue-50"
+                  className="w-full sm:w-auto bg-amber text-navy font-semibold hover:bg-amber/90"
                 >
                   <Search className="w-5 h-5 mr-2" />
                   Browse Events
@@ -114,6 +114,27 @@ export default async function HomePage() {
                 </Button>
               </Link>
             </div>
+            {/* Stat Callouts */}
+            <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-8 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
+                  <Calendar className="w-4 h-4 text-amber" />
+                </div>
+                <span className="text-white font-medium">248+ Events</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
+                  <MapPin className="w-4 h-4 text-amber" />
+                </div>
+                <span className="text-white font-medium">261 Venues</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
+                  <Users className="w-4 h-4 text-amber" />
+                </div>
+                <span className="text-white font-medium">Growing Vendor Network</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -123,8 +144,8 @@ export default async function HomePage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="text-center p-6">
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto">
-                <Calendar className="w-6 h-6 text-blue-600" />
+              <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
+                <Calendar className="w-6 h-6 text-royal" />
               </div>
               <h2 className="mt-4 text-lg font-semibold text-gray-900">
                 Find Events
@@ -135,8 +156,8 @@ export default async function HomePage() {
               </p>
             </div>
             <div className="text-center p-6">
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto">
-                <MapPin className="w-6 h-6 text-blue-600" />
+              <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
+                <MapPin className="w-6 h-6 text-royal" />
               </div>
               <h2 className="mt-4 text-lg font-semibold text-gray-900">
                 Explore Venues
@@ -147,8 +168,8 @@ export default async function HomePage() {
               </p>
             </div>
             <div className="text-center p-6">
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto">
-                <Users className="w-6 h-6 text-blue-600" />
+              <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
+                <Users className="w-6 h-6 text-royal" />
               </div>
               <h2 className="mt-4 text-lg font-semibold text-gray-900">
                 Connect with Vendors
@@ -172,7 +193,7 @@ export default async function HomePage() {
               </h2>
               <Link
                 href="/events?featured=true"
-                className="text-blue-600 hover:text-blue-700 font-medium flex items-center"
+                className="text-royal hover:text-navy font-medium flex items-center"
               >
                 View All <ArrowRight className="w-4 h-4 ml-1" />
               </Link>
@@ -191,7 +212,7 @@ export default async function HomePage() {
             </h2>
             <Link
               href="/events"
-              className="text-blue-600 hover:text-blue-700 font-medium flex items-center"
+              className="text-royal hover:text-navy font-medium flex items-center"
             >
               View All <ArrowRight className="w-4 h-4 ml-1" />
             </Link>
@@ -204,12 +225,12 @@ export default async function HomePage() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-16 bg-blue-600">
+      <section className="py-16 bg-navy">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-2xl md:text-3xl font-bold text-white">
             Ready to Share Your Event?
           </h2>
-          <p className="mt-4 text-lg text-blue-100 max-w-2xl mx-auto">
+          <p className="mt-4 text-lg text-gray-300 max-w-2xl mx-auto">
             Whether you&apos;re a promoter organizing fairs or a vendor looking
             to participate, we&apos;ve got you covered.
           </p>
@@ -217,7 +238,7 @@ export default async function HomePage() {
             <Link href="/register?role=promoter">
               <Button
                 size="lg"
-                className="w-full sm:w-auto bg-white text-blue-600 hover:bg-blue-50"
+                className="w-full sm:w-auto bg-amber text-navy font-semibold hover:bg-amber/90"
               >
                 I&apos;m a Promoter
               </Button>
@@ -243,21 +264,21 @@ export default async function HomePage() {
             <div className="flex gap-4">
               <Link
                 href="/faq"
-                className="text-blue-600 hover:text-blue-700 font-medium"
+                className="text-royal hover:text-navy font-medium"
               >
                 FAQ
               </Link>
               <span className="text-gray-300">|</span>
               <Link
                 href="/search-visibility"
-                className="text-blue-600 hover:text-blue-700 font-medium"
+                className="text-royal hover:text-navy font-medium"
               >
                 Search Visibility
               </Link>
               <span className="text-gray-300">|</span>
               <Link
                 href="/contact"
-                className="text-blue-600 hover:text-blue-700 font-medium"
+                className="text-royal hover:text-navy font-medium"
               >
                 Contact Us
               </Link>
