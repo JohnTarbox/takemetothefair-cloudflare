@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     const ai = getCloudflareAi();
 
-    console.log("[Suggest Extract] Starting AI extraction, content length:", content.length);
+    // Debug logging removed for production
 
     // Call AI extraction for single event (simplified for suggestions)
     const { extracted, confidence } = await extractEventData(
@@ -52,7 +52,6 @@ export async function POST(request: NextRequest) {
       (metadata || {}) as PageMetadata
     );
 
-    console.log("[Suggest Extract] AI extracted event:", extracted.name);
 
     // If URL provided but no ticketUrl extracted, use source URL
     if (url && !extracted.ticketUrl) {

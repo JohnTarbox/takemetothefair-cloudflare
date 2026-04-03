@@ -14,6 +14,7 @@ import Link from "next/link";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
+export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "Search Visibility | Meet Me at the Fair",

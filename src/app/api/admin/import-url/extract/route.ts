@@ -41,8 +41,7 @@ export async function POST(request: NextRequest) {
 
     const ai = getCloudflareAi();
 
-    console.log("[Extract] Starting multi-event AI extraction, content length:", content.length);
-    console.log("[Extract] Metadata:", JSON.stringify(metadata || {}, null, 2).substring(0, 500));
+    // Debug logging removed for production
 
     // Call AI extraction for multiple events
     const { events, confidence } = await extractMultipleEvents(
@@ -51,7 +50,6 @@ export async function POST(request: NextRequest) {
       (metadata || {}) as PageMetadata
     );
 
-    console.log("[Extract] AI extracted", events.length, "events");
 
     // If URL provided but no ticketUrl extracted, use source URL for events without one
     if (url) {

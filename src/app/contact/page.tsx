@@ -5,6 +5,7 @@ import { FAQSchema } from "@/components/seo/FAQSchema";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
+export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "Contact Us | Meet Me at the Fair",

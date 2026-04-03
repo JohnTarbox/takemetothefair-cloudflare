@@ -32,6 +32,7 @@ export const metadata: Metadata = {
     description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({

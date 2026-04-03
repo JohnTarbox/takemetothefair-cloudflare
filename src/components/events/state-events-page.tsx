@@ -26,6 +26,13 @@ export const STATE_MAP: Record<
   massachusetts: { code: "MA", name: "Massachusetts" },
 };
 
+const STATE_DESCRIPTIONS: Record<string, string> = {
+  maine: "Maine is home to some of New England's most beloved agricultural fairs, from the iconic Fryeburg Fair — the state's largest — to the Common Ground Country Fair celebrating organic farming. With over 25 county and community fairs, plus dozens of farmers markets and craft shows, Maine's fair season runs from spring through late fall.",
+  vermont: "Vermont's fair tradition celebrates the state's agricultural heritage, from the Champlain Valley Fair to the famous Tunbridge World's Fair. The state's craft shows highlight Vermont's artisan community, while farmers markets in Burlington, Montpelier, and Rutland offer fresh local produce year-round.",
+  "new-hampshire": "New Hampshire's fair circuit features events from the Lakes Region to the White Mountains. The Hopkinton State Fair and Deerfield Fair are annual highlights, while craft shows and farmers markets dot the landscape from Concord to the Seacoast region throughout the warmer months.",
+  massachusetts: "Massachusetts hosts events ranging from the massive Eastern States Exposition (The Big E) in West Springfield to intimate Cape Cod craft fairs. County fairs, harvest festivals, and year-round farmers markets make the Bay State a hub for community events and local artisan culture.",
+};
+
 async function getStateEvents(
   stateCode: string,
   page: number,
@@ -224,12 +231,9 @@ export async function StateEventsPage({
         <div className="mt-12 prose prose-gray max-w-none">
           <h2>About Fairs in {state.name}</h2>
           <p>
-            {state.name} hosts a vibrant calendar of fairs, festivals, farmers
-            markets, and craft shows throughout the year. From county fairs
-            celebrating local agriculture to artisan craft fairs showcasing
-            handmade goods, there&apos;s always something happening. Browse our
-            listings to find events near you, check dates and venues, and
-            connect with vendors.
+            {STATE_DESCRIPTIONS[stateSlug] || `${state.name} hosts a vibrant calendar of fairs, festivals, farmers markets, and craft shows throughout the year. From county fairs celebrating local agriculture to artisan craft fairs showcasing handmade goods, there's always something happening.`}
+            {" "}Browse our listings to find events near you, check dates and
+            venues, and connect with vendors.
           </p>
         </div>
       )}

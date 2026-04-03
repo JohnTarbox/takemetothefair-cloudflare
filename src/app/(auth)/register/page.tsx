@@ -48,6 +48,7 @@ function RegisterForm() {
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string>("");
@@ -296,11 +297,27 @@ function RegisterForm() {
             />
           )}
 
+          <label className="flex items-start gap-2 text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={termsAccepted}
+              onChange={(e) => setTermsAccepted(e.target.checked)}
+              className="rounded border-gray-300 mt-0.5"
+              required
+            />
+            <span>
+              I agree to the{" "}
+              <a href="/terms" target="_blank" className="text-royal hover:underline">Terms of Service</a>
+              {" "}and{" "}
+              <a href="/privacy" target="_blank" className="text-royal hover:underline">Privacy Policy</a>
+            </span>
+          </label>
+
           <Button
             type="submit"
             className="w-full"
             isLoading={isLoading}
-            disabled={isLoading}
+            disabled={isLoading || !termsAccepted}
           >
             Create Account
           </Button>

@@ -1,0 +1,16 @@
+{
+  "name": "Meet Me at the Fair",
+  "short_name": "MMATF",
+  "description": "Discover local fairs, festivals, and community events in New England",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAF7F2",
+  "theme_color": "#1E2761",
+  "icons": [
+    {
+      "src": "/og-default.png",
+      "sizes": "1200x630",
+      "type": "image/png"
+    }
+  ]
+}

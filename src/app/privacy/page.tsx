@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
+export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "Privacy Policy | Meet Me at the Fair",
@@ -22,7 +23,7 @@ export default function PrivacyPage() {
 
       <div className="prose prose-gray max-w-none">
         <p className="text-gray-600 mb-6">
-          <strong>Last updated:</strong> January 2026
+          <strong>Last updated:</strong> April 2026
         </p>
 
         <p className="text-gray-600 mb-6">
@@ -99,6 +100,43 @@ export default function PrivacyPage() {
         </p>
 
         <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">
+          Data Retention
+        </h2>
+        <p className="text-gray-600 mb-6">
+          We retain your personal information for as long as your account is active
+          or as needed to provide our services. If you request account deletion, we
+          will remove your personal data within 30 days of your request. Anonymized
+          data (such as aggregate statistics) may be retained indefinitely.
+        </p>
+
+        <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">
+          Third-Party Services
+        </h2>
+        <p className="text-gray-600 mb-4">
+          We use the following third-party services to operate our website:
+        </p>
+        <ul className="list-disc pl-6 text-gray-600 mb-6 space-y-2">
+          <li><strong>Cloudflare</strong> — hosting, CDN, and security services</li>
+          <li><strong>Google Analytics</strong> — website usage analytics</li>
+          <li><strong>Google OAuth</strong> — optional social login</li>
+          <li><strong>Facebook OAuth</strong> — optional social login</li>
+          <li><strong>Google Places API</strong> — venue location data and mapping</li>
+          <li><strong>Cloudflare Workers AI</strong> — event data extraction from submitted URLs</li>
+        </ul>
+        <p className="text-gray-600 mb-6">
+          Each service has its own privacy policy governing how they handle your data.
+        </p>
+
+        <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">
+          Data Breach Notification
+        </h2>
+        <p className="text-gray-600 mb-6">
+          In the event of a data breach that may affect your personal information,
+          we will notify affected users within 72 hours of discovering the breach
+          via email and/or a notice on our website.
+        </p>
+
+        <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">
           Your Rights
         </h2>
         <p className="text-gray-600 mb-4">
@@ -109,7 +147,15 @@ export default function PrivacyPage() {
           <li>Request correction of inaccurate information</li>
           <li>Request deletion of your account and data</li>
           <li>Opt out of marketing communications</li>
+          <li>Request a copy of your data in a portable format</li>
         </ul>
+        <p className="text-gray-600 mb-6">
+          To exercise any of these rights, please contact us at{" "}
+          <a href="mailto:privacy@meetmeatthefair.com" className="text-royal hover:text-navy">
+            privacy@meetmeatthefair.com
+          </a>.
+          We will respond to your request within 30 days.
+        </p>
 
         <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">
           Cookies

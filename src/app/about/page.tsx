@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
 export const runtime = "edge";
+export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "About Us | Meet Me at the Fair",
