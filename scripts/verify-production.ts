@@ -62,12 +62,12 @@ async function main() {
       fail("Canonical URL (homepage)", "Missing canonical link tag");
     }
 
-    // bg-white on html
+    // bg-cream on html
     const htmlClass = await homepage.locator("html").getAttribute("class");
-    if (htmlClass?.includes("bg-white")) {
-      pass("bg-white on <html>", `class="${htmlClass}"`);
+    if (htmlClass?.includes("bg-cream")) {
+      pass("bg-cream on <html>", `class="${htmlClass}"`);
     } else {
-      fail("bg-white on <html>", `class="${htmlClass}"`);
+      fail("bg-cream on <html>", `class="${htmlClass}"`);
     }
 
     // Heading hierarchy
@@ -143,8 +143,8 @@ async function main() {
       .locator('nav a[href="/events"]')
       .first()
       .getAttribute("class");
-    if (eventsLinkClass?.includes("text-blue-600")) {
-      pass("Active nav link styling", "text-blue-600 applied");
+    if (eventsLinkClass?.includes("text-royal")) {
+      pass("Active nav link styling", "text-royal applied");
     } else {
       fail("Active nav link styling", `class="${eventsLinkClass}"`);
     }
@@ -168,8 +168,8 @@ async function main() {
       const classes = new Set<string>();
       badges.forEach((b) => {
         const cl = b.className;
-        if (cl.includes("bg-blue-100")) classes.add("blue");
-        if (cl.includes("bg-purple-100")) classes.add("purple");
+        if (cl.includes("bg-amber-light")) classes.add("amber");
+        if (cl.includes("bg-brand-blue-light")) classes.add("purple");
         if (cl.includes("bg-amber-100")) classes.add("amber");
         if (cl.includes("bg-green-100")) classes.add("green");
         if (cl.includes("bg-gray-100")) classes.add("gray");
@@ -290,8 +290,8 @@ async function main() {
         const cl = b.className;
         const text = b.textContent?.trim();
         if (text && !["Featured", "Tentative", "Verified"].includes(text)) {
-          if (cl.includes("bg-blue-100")) colors.push(`${text}=blue`);
-          else if (cl.includes("bg-purple-100")) colors.push(`${text}=purple`);
+          if (cl.includes("bg-amber-light")) colors.push(`${text}=amber`);
+          else if (cl.includes("bg-brand-blue-light")) colors.push(`${text}=blue`);
           else if (cl.includes("bg-amber-100")) colors.push(`${text}=amber`);
           else if (cl.includes("bg-gray-100")) colors.push(`${text}=gray`);
           else colors.push(`${text}=other`);
