@@ -3,6 +3,7 @@
 
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import { decodeHtmlEntities } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 const SOURCE_NAME = "mainemade.com";
 const BASE_URL = "https://www.mainemade.com/events/";
@@ -144,10 +145,11 @@ export async function scrapeMaineMade(): Promise<ScrapeResult> {
     while (currentPage <= MAX_PAGES) {
       const url = currentPage === 1 ? BASE_URL : `${BASE_URL}page/${currentPage}/`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
         },
+        timeoutMs: 15000,
       });
 
       if (!response.ok) {
@@ -196,10 +198,11 @@ export async function scrapeMaineMade(): Promise<ScrapeResult> {
 // Fetch additional details from an event's detail page
 export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Partial<ScrapedEvent>> {
   try {
-    const response = await fetch(eventUrl, {
+    const response = await fetchWithTimeout(eventUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
       },
+      timeoutMs: 15000,
     });
 
     if (!response.ok) {

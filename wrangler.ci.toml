@@ -1,10 +1,17 @@
 name = "takemetothefair"
-compatibility_date = "2024-09-23"
+compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = ".vercel/output/static"
+
+[ai]
+binding = "AI"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "takemetothefair-db"
 database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 migrations_dir = "drizzle"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "b7aeca316e7a41108fd375be2e152cff"

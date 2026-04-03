@@ -3,6 +3,7 @@
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 const SOURCE_NAME = "fairsandfestivals.net";
 const BASE_URL = "https://www.fairsandfestivals.net";
@@ -107,10 +108,11 @@ export async function scrapeFairsAndFestivalsUrl(url: string, defaultState: stri
       fetchUrl = url;
     }
 
-    const response = await fetch(fetchUrl, {
+    const response = await fetchWithTimeout(fetchUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)',
       },
+      timeoutMs: 15000,
     });
 
     if (!response.ok) {
@@ -317,10 +319,11 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
  */
 export async function scrapeEventDetails(detailUrl: string): Promise<Partial<ScrapedEvent>> {
   try {
-    const response = await fetch(detailUrl, {
+    const response = await fetchWithTimeout(detailUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)',
       },
+      timeoutMs: 15000,
     });
 
     if (!response.ok) {

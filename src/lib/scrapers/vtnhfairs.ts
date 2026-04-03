@@ -3,6 +3,7 @@
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities, createSlugFromName } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 // Parse date strings like "April 25-27th", "June 6 - 8", "July 29 - August 2"
 // Returns null for dates, with datesConfirmed=false for TBD/unknown dates
@@ -99,10 +100,11 @@ interface PositionedUrl {
 async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
   try {
     // Fetch the page
-    const response = await fetch(config.url, {
+    const response = await fetchWithTimeout(config.url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
       },
+      timeoutMs: 15000,
     });
 
     if (!response.ok) {

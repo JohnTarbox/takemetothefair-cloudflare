@@ -3,6 +3,7 @@
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities, createSlugFromName } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 const SOURCE_NAME = "newenglandcraftfairs.com";
 const EVENTS_URL = "https://www.newenglandcraftfairs.com/maine-craft-fairs.html";
@@ -203,10 +204,11 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
 
 export async function scrapeNewEnglandCraftFairs(): Promise<ScrapeResult> {
   try {
-    const response = await fetch(EVENTS_URL, {
+    const response = await fetchWithTimeout(EVENTS_URL, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
       },
+      timeoutMs: 15000,
     });
 
     if (!response.ok) {

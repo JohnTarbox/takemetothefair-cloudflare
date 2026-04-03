@@ -3,6 +3,7 @@
 
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import { decodeHtmlEntities } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 const SOURCE_NAME = "mainepublic.org";
 const CALENDAR_URL = "https://www.mainepublic.org/community-calendar";
@@ -166,10 +167,11 @@ export async function scrapeMainePublic(): Promise<ScrapeResult> {
     for (let page = 1; page <= MAX_PAGES; page++) {
       const url = page === 1 ? CALENDAR_URL : `${CALENDAR_URL}?page=${page}&p=${page}`;
 
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
         },
+        timeoutMs: 15000,
       });
 
       if (!response.ok) {
@@ -216,18 +218,12 @@ export async function scrapeMainePublic(): Promise<ScrapeResult> {
 // Fetch additional details from an event's detail page
 export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<Partial<ScrapedEvent>> {
   try {
-    // Add timeout using AbortController
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
-
-    const response = await fetch(eventUrl, {
+    const response = await fetchWithTimeout(eventUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
       },
-      signal: controller.signal,
+      timeoutMs: 15000,
     });
-
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.log(`[MainePublic Scraper] Response not OK: ${response.status} for ${eventUrl}`);

@@ -1,4 +1,5 @@
 import type { ExtractedEventData, ExtractedEvent, FieldConfidence, EventConfidence, PageMetadata } from "./types";
+import { withTimeout } from "@/lib/fetch-timeout";
 
 const SYSTEM_PROMPT = `You are an expert at extracting event information from webpage text. You always respond with valid JSON only, no explanations.`;
 
@@ -135,14 +136,18 @@ export async function extractEventData(
   // Call Workers AI with Llama 3.1 8B using messages format for better instruction following
   console.log("[AI Extractor] Calling Workers AI, content length:", truncatedContent.length);
 
-  const response = await ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userPrompt }
-    ],
-    max_tokens: 1024,
-    temperature: 0.1, // Low temperature for consistent structured output
-  });
+  const response = await withTimeout(
+    ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ],
+      max_tokens: 1024,
+      temperature: 0.1, // Low temperature for consistent structured output
+    }),
+    15000,
+    "Workers AI single extraction"
+  );
 
   // Log raw response for debugging
   const responseText = typeof response === "string"
@@ -198,14 +203,18 @@ export async function extractMultipleEvents(
   // Call Workers AI with Llama 3.1 8B using messages format
   console.log("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);
 
-  const response = await ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
-    messages: [
-      { role: "system", content: MULTI_EVENT_SYSTEM_PROMPT },
-      { role: "user", content: userPrompt }
-    ],
-    max_tokens: 4096, // More tokens for multiple events
-    temperature: 0.1,
-  });
+  const response = await withTimeout(
+    ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
+      messages: [
+        { role: "system", content: MULTI_EVENT_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ],
+      max_tokens: 4096, // More tokens for multiple events
+      temperature: 0.1,
+    }),
+    20000,
+    "Workers AI multi-event extraction"
+  );
 
   // Log raw response for debugging
   const responseText = typeof response === "string"

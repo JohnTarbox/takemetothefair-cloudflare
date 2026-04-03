@@ -1,4 +1,5 @@
 // Google Maps Geocoding and Places API (server-side fetch, edge-compatible)
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 /**
  * Result type for resolveGoogleMapsUrl that can indicate partial matches.
@@ -136,8 +137,9 @@ async function parsePlaceObject(
   if (place.photos?.length) {
     try {
       const photoName = place.photos[0].name;
-      const photoRes = await fetch(
-        `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${apiKey}&skipHttpRedirect=true`
+      const photoRes = await fetchWithTimeout(
+        `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${apiKey}&skipHttpRedirect=true`,
+        { timeoutMs: 5000 }
       );
       if (photoRes.ok) {
         const photoData = (await photoRes.json()) as { photoUri?: string };
@@ -193,7 +195,7 @@ export async function geocodeAddress(
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(parts)}&key=${apiKey}`;
 
   try {
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
     if (!res.ok) return null;
 
     const data = (await res.json()) as GeocodingResponse;
@@ -250,10 +252,11 @@ export async function lookupPlace(
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers,
       body: JSON.stringify(buildBody(textQuery)),
+      timeoutMs: 8000,
     });
 
     if (!res.ok) return null;
@@ -263,10 +266,11 @@ export async function lookupPlace(
     // Retry with address-only query if no results and address was provided
     if (!data.places?.length && address) {
       const fallbackQuery = `${address} ${city} ${state}`;
-      const retryRes = await fetch(url, {
+      const retryRes = await fetchWithTimeout(url, {
         method: "POST",
         headers,
         body: JSON.stringify(buildBody(fallbackQuery)),
+        timeoutMs: 8000,
       });
       if (retryRes.ok) {
         data = (await retryRes.json()) as PlacesSearchResponse;
@@ -292,13 +296,14 @@ export async function autocompletePlace(
   const url = "https://places.googleapis.com/v1/places:autocomplete";
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
       },
       body: JSON.stringify({ input }),
+      timeoutMs: 5000,
     });
 
     if (!res.ok) return [];
@@ -332,11 +337,12 @@ export async function getPlaceById(
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         "X-Goog-Api-Key": apiKey,
         "X-Goog-FieldMask": PLACE_FIELD_MASK,
       },
+      timeoutMs: 8000,
     });
 
     if (!res.ok) return null;
@@ -366,7 +372,7 @@ export async function resolveGoogleMapsUrl(
       url.includes("goo.gl/maps") ||
       url.includes("share.google")
     ) {
-      const res = await fetch(url, { redirect: "follow" });
+      const res = await fetchWithTimeout(url, { redirect: "follow", timeoutMs: 8000 });
       finalUrl = res.url;
 
       // Google may block datacenter IPs with 429 → redirect to google.com/sorry.

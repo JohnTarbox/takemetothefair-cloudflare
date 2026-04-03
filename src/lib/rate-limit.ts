@@ -104,6 +104,18 @@ function getClientIp(request: Request): string {
 }
 
 /**
+ * Detect if running on Cloudflare Pages (production/preview)
+ */
+function isProductionEnvironment(): boolean {
+  try {
+    const { env } = getRequestContext();
+    return !!(env as unknown as Record<string, unknown>).CF_PAGES;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get the Cloudflare KV binding for rate limiting
  */
 function getRateLimitKv(): KVNamespace | null {
@@ -153,9 +165,20 @@ export async function checkRateLimit(
   // Get KV binding
   const kv = getRateLimitKv();
 
-  // If KV is not available (local dev without KV), allow all requests
+  // If KV is not available, allow in dev but deny in production
   if (!kv) {
-    console.warn("[Rate Limit] KV not available, allowing request");
+    const isProduction = isProductionEnvironment();
+    if (isProduction) {
+      console.error("[Rate Limit] KV not available in production — denying request");
+      return {
+        allowed: false,
+        remaining: 0,
+        limit,
+        resetAt: Math.floor((now + config.windowMs) / 1000),
+        isAuthenticated,
+      };
+    }
+    console.warn("[Rate Limit] KV not available, allowing request (dev mode)");
     return {
       allowed: true,
       remaining: limit - 1,

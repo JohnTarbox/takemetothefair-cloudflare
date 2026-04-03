@@ -3,6 +3,7 @@
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities, createSlugFromName } from "./utils";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 // Parse date strings like "July 15-19", "Aug 7-9", "Sept 4-7", "Oct 2-12"
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
@@ -78,10 +79,11 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
 
   try {
     // Fetch the page
-    const response = await fetch(CALENDAR_URL, {
+    const response = await fetchWithTimeout(CALENDAR_URL, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
       },
+      timeoutMs: 15000,
     });
 
     if (!response.ok) {

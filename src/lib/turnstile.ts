@@ -1,4 +1,5 @@
 import { getRequestContext } from "@cloudflare/next-on-pages";
+import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 export interface TurnstileVerifyResult {
   success: boolean;
@@ -12,6 +13,18 @@ interface TurnstileResponse {
   "error-codes"?: string[];
   challenge_ts?: string;
   hostname?: string;
+}
+
+/**
+ * Detect if running on Cloudflare Pages (production/preview)
+ */
+function isCloudflarePages(): boolean {
+  try {
+    const { env } = getRequestContext();
+    return !!(env as unknown as Record<string, unknown>).CF_PAGES;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -55,8 +68,13 @@ export async function verifyTurnstileToken(
   const secretKey = getTurnstileSecretKey();
 
   if (!secretKey) {
-    console.warn("[Turnstile] Secret key not configured, skipping verification");
-    // In development without a secret key, allow requests through
+    // In production (Cloudflare Pages), fail closed — missing secret key is a misconfiguration
+    const isProduction = isCloudflarePages();
+    if (isProduction) {
+      console.error("[Turnstile] Secret key not configured in production — rejecting request");
+      return { success: false, errorCodes: ["missing-input-secret"] };
+    }
+    console.warn("[Turnstile] Secret key not configured, skipping verification (dev mode)");
     return { success: true };
   }
 
@@ -77,7 +95,7 @@ export async function verifyTurnstileToken(
       formData.append("remoteip", clientIp);
     }
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       "https://challenges.cloudflare.com/turnstile/v0/siteverify",
       {
         method: "POST",
@@ -85,6 +103,7 @@ export async function verifyTurnstileToken(
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: formData.toString(),
+        timeoutMs: 5000,
       }
     );
 
