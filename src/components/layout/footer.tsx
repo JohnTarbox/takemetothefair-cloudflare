@@ -6,6 +6,10 @@ export function Footer() {
   const footerLinks = {
     discover: [
       { name: "Events", href: "/events" },
+      { name: "Maine Fairs", href: "/events/maine" },
+      { name: "Vermont Fairs", href: "/events/vermont" },
+      { name: "NH Fairs", href: "/events/new-hampshire" },
+      { name: "MA Fairs", href: "/events/massachusetts" },
       { name: "Venues", href: "/venues" },
       { name: "Vendors", href: "/vendors" },
       { name: "Suggest an Event", href: "/suggest-event" },
