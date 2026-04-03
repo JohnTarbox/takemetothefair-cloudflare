@@ -137,7 +137,7 @@ export function AddToCalendar({
         <button
           onClick={() => setIsOpen(!isOpen)}
           onKeyDown={handleKeyDown}
-          className="p-3 text-royal hover:text-navy hover:bg-brand-blue-light rounded transition-colors"
+          className="p-3.5 -m-1 text-royal hover:text-navy hover:bg-brand-blue-light rounded transition-colors"
           aria-label="Add to calendar"
           aria-expanded={isOpen}
           aria-haspopup="true"
