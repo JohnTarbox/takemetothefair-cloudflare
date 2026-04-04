@@ -40,6 +40,7 @@
     "@auth/drizzle-adapter": "^1.7.4",
     "@hookform/resolvers": "^5.2.2",
     "@next/third-parties": "^15.1.0",
+    "@tailwindcss/typography": "^0.5.19",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.38.3",
@@ -49,6 +50,9 @@
     "react": "^18",
     "react-dom": "^18",
     "react-hook-form": "^7.71.1",
+    "react-markdown": "^10.1.0",
+    "rehype-external-links": "^3.0.0",
+    "remark-gfm": "^4.0.1",
     "slugify": "^1.6.6",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.3.6"

@@ -12,6 +12,7 @@ export function Footer() {
       { name: "MA Fairs", href: "/events/massachusetts" },
       { name: "Venues", href: "/venues" },
       { name: "Vendors", href: "/vendors" },
+      { name: "Blog", href: "/blog" },
       { name: "Suggest an Event", href: "/suggest-event" },
     ],
     forBusiness: [

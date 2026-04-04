@@ -1,5 +1,6 @@
 name = "meetmeatthefair-mcp"
 main = "src/index.ts"
+workers_dev = true
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -11,6 +12,10 @@ database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 [vars]
 MAIN_APP_URL = "https://meetmeatthefair.com"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
+
+[[routes]]
+pattern = "mcp.meetmeatthefair.com"
+custom_domain = true
 
 [[kv_namespaces]]
 binding = "OAUTH_KV"

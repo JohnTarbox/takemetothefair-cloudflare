@@ -1,32 +1,12 @@
 import { NextResponse } from "next/server";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
-import { auth } from "@/lib/auth";
+import { isAuthorized } from "@/lib/api-auth";
 import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { inArray, eq } from "drizzle-orm";
 
 export const runtime = "edge";
-
-/**
- * Authenticate via admin session OR X-Internal-Key header.
- * Returns true if authorized, false otherwise.
- */
-async function isAuthorized(request: Request): Promise<boolean> {
-  // Check session auth first
-  const session = await auth();
-  if (session?.user?.role === "ADMIN") return true;
-
-  // Fall back to internal API key (for MCP server calls)
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey) {
-    const env = getCloudflareEnv() as unknown as Record<string, string>;
-    const expectedKey = env.INTERNAL_API_KEY;
-    if (expectedKey && internalKey === expectedKey) return true;
-  }
-
-  return false;
-}
 
 export async function POST(request: Request) {
   const db = getCloudflareDb();

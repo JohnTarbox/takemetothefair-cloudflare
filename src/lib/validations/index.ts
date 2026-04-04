@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { VALIDATION, EVENT_STATUS, VENUE_STATUS, EVENT_VENDOR_STATUS, PAYMENT_STATUS } from "@/lib/constants";
+import { VALIDATION, EVENT_STATUS, VENUE_STATUS, EVENT_VENDOR_STATUS, PAYMENT_STATUS, BLOG_POST_STATUS } from "@/lib/constants";
 
 // Common field schemas
 const nameSchema = z.string().min(VALIDATION.NAME_MIN_LENGTH).max(VALIDATION.NAME_MAX_LENGTH);
@@ -325,6 +325,23 @@ export const favoriteSchema = z.object({
   type: z.enum(["EVENT", "VENUE", "VENDOR", "PROMOTER"]),
   id: z.string().min(1),
 });
+
+// Blog post schemas
+export const blogPostCreateSchema = z.object({
+  title: z.string().min(1).max(200),
+  body: z.string().min(1), // Markdown content
+  excerpt: z.string().max(500).optional().nullable(),
+  authorId: z.string().min(1).optional(), // Optional — defaults to session user
+  tags: z.array(z.string()).optional().default([]),
+  categories: z.array(z.string()).optional().default([]),
+  featuredImageUrl: urlSchema,
+  status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional().default(BLOG_POST_STATUS.DRAFT),
+  publishDate: z.string().datetime().optional().nullable(),
+  metaTitle: z.string().max(70).optional().nullable(),
+  metaDescription: z.string().max(160).optional().nullable(),
+});
+
+export const blogPostUpdateSchema = blogPostCreateSchema.partial().omit({ authorId: true });
 
 // Helper function to validate and parse request body
 export async function validateRequestBody<T extends z.ZodType>(

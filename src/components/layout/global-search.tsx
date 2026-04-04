@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Calendar, MapPin, Store, X } from "lucide-react";
+import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
 
 interface SearchResults {
   events: { name: string; slug: string; startDate: string | null }[];
   venues: { name: string; slug: string; city: string | null; state: string | null }[];
   vendors: { businessName: string; slug: string; vendorType: string | null }[];
+  blogPosts: { title: string; slug: string; excerpt: string | null }[];
 }
 
 export function GlobalSearch() {
@@ -76,7 +77,7 @@ export function GlobalSearch() {
     router.push(path);
   };
 
-  const hasResults = results && (results.events.length > 0 || results.venues.length > 0 || results.vendors.length > 0);
+  const hasResults = results && (results.events.length > 0 || results.venues.length > 0 || results.vendors.length > 0 || results.blogPosts.length > 0);
 
   if (!open) {
     return (
@@ -101,10 +102,10 @@ export function GlobalSearch() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && query.trim()) {
-              navigate(`/events?query=${encodeURIComponent(query.trim())}`);
+              navigate(`/search?q=${encodeURIComponent(query.trim())}`);
             }
           }}
-          placeholder="Search events, venues, vendors..."
+          placeholder="Search events, venues, vendors, blog..."
           className="w-40 md:w-56 text-sm border-none outline-none bg-transparent"
         />
         <button
@@ -186,8 +187,24 @@ export function GlobalSearch() {
                 </div>
               )}
 
+              {results!.blogPosts.length > 0 && (
+                <div>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">Blog</div>
+                  {results!.blogPosts.map((post) => (
+                    <button
+                      key={post.slug}
+                      onClick={() => navigate(`/blog/${post.slug}`)}
+                      className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                    >
+                      <FileText className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                      <span className="text-sm text-gray-900 truncate">{post.title}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <button
-                onClick={() => navigate(`/events?query=${encodeURIComponent(query.trim())}`)}
+                onClick={() => navigate(`/search?q=${encodeURIComponent(query.trim())}`)}
                 className="w-full text-center px-3 py-2.5 text-sm text-royal hover:bg-gray-50 border-t border-gray-100 font-medium transition-colors"
               >
                 View all results →

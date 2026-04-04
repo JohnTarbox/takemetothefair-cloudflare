@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors } from "@/lib/db/schema";
-import { and, gte, eq, sql } from "drizzle-orm";
+import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
+import { and, gte, eq, sql, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
 export const runtime = "edge";
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const searchTerm = `%${q}%`;
 
   try {
-    const [eventResults, venueResults, vendorResults] = await Promise.all([
+    const [eventResults, venueResults, vendorResults, blogResults] = await Promise.all([
       db
         .select({
           name: events.name,
@@ -63,14 +63,31 @@ export async function GET(request: Request) {
         .where(sql`LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm})`)
         .orderBy(vendors.businessName)
         .limit(5),
+
+      db
+        .select({
+          title: blogPosts.title,
+          slug: blogPosts.slug,
+          excerpt: blogPosts.excerpt,
+        })
+        .from(blogPosts)
+        .where(
+          and(
+            eq(blogPosts.status, "PUBLISHED"),
+            sql`(LOWER(${blogPosts.title}) LIKE LOWER(${searchTerm}) OR LOWER(${blogPosts.body}) LIKE LOWER(${searchTerm}))`
+          )
+        )
+        .orderBy(desc(blogPosts.publishDate))
+        .limit(5),
     ]);
 
     return NextResponse.json({
       events: eventResults,
       venues: venueResults,
       vendors: vendorResults,
+      blogPosts: blogResults,
     });
   } catch {
-    return NextResponse.json({ events: [], venues: [], vendors: [] });
+    return NextResponse.json({ events: [], venues: [], vendors: [], blogPosts: [] });
   }
 }

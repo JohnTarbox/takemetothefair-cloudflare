@@ -68,6 +68,12 @@ export const PAYMENT_STATUS = {
   OVERDUE: "OVERDUE",
 } as const;
 
+// Blog post statuses
+export const BLOG_POST_STATUS = {
+  DRAFT: "DRAFT",
+  PUBLISHED: "PUBLISHED",
+} as const;
+
 // Favoritable types
 export const FAVORITABLE_TYPE = {
   EVENT: "EVENT",
@@ -105,3 +111,4 @@ export type UserRole = (typeof USER_ROLE)[keyof typeof USER_ROLE];
 export type EventVendorStatus = (typeof EVENT_VENDOR_STATUS)[keyof typeof EVENT_VENDOR_STATUS];
 export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
 export type FavoritableType = (typeof FAVORITABLE_TYPE)[keyof typeof FAVORITABLE_TYPE];
+export type BlogPostStatus = (typeof BLOG_POST_STATUS)[keyof typeof BLOG_POST_STATUS];

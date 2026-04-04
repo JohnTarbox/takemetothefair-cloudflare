@@ -259,6 +259,29 @@ export const apiTokens = sqliteTable("api_tokens", {
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
+// Blog Posts table
+export const blogPosts = sqliteTable("blog_posts", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title: text("title").notNull(),
+  slug: text("slug").notNull().unique(),
+  body: text("body").notNull(), // Markdown content
+  excerpt: text("excerpt"),
+  authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tags: text("tags").default("[]"),
+  categories: text("categories").default("[]"),
+  featuredImageUrl: text("featured_image_url"),
+  status: text("status", { enum: ["DRAFT", "PUBLISHED"] }).default("DRAFT").notNull(),
+  publishDate: integer("publish_date", { mode: "timestamp" }),
+  metaTitle: text("meta_title"),
+  metaDescription: text("meta_description"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+}, (table) => [
+  index("idx_blogposts_status_publishdate").on(table.status, table.publishDate),
+  index("idx_blogposts_slug").on(table.slug),
+  index("idx_blogposts_authorid").on(table.authorId),
+]);
+
 // Relations
 export const usersRelations = relations(users, ({ one, many }) => ({
   promoter: one(promoters, { fields: [users.id], references: [promoters.userId] }),
@@ -268,6 +291,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   accounts: many(accounts),
   sessions: many(sessions),
   apiTokens: many(apiTokens),
+  blogPosts: many(blogPosts),
 }));
 
 export const venuesRelations = relations(venues, ({ many }) => ({
@@ -325,6 +349,10 @@ export const apiTokensRelations = relations(apiTokens, ({ one }) => ({
   user: one(users, { fields: [apiTokens.userId], references: [users.id] }),
 }));
 
+export const blogPostsRelations = relations(blogPosts, ({ one }) => ({
+  author: one(users, { fields: [blogPosts.authorId], references: [users.id] }),
+}));
+
 // Error Logs table
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
@@ -353,3 +381,4 @@ export type Notification = typeof notifications.$inferSelect;
 export type ErrorLog = typeof errorLogs.$inferSelect;
 export type EventSchemaOrg = typeof eventSchemaOrg.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
+export type BlogPost = typeof blogPosts.$inferSelect;

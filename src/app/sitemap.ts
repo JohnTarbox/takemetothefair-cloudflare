@@ -1,6 +1,6 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors } from "@/lib/db/schema";
+import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
@@ -58,6 +58,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: new Date(),
       changeFrequency: "weekly",
       priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/blog`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.7,
     },
     {
       url: `${baseUrl}/about`,
@@ -150,7 +156,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    return [...staticPages, ...eventPages, ...venuePages, ...vendorPages];
+    // Get published blog posts
+    const blogResults = await db
+      .select({ slug: blogPosts.slug, updatedAt: blogPosts.updatedAt })
+      .from(blogPosts)
+      .where(eq(blogPosts.status, "PUBLISHED"));
+
+    const blogPages: MetadataRoute.Sitemap = blogResults.map((post) => ({
+      url: `${baseUrl}/blog/${post.slug}`,
+      lastModified: post.updatedAt || new Date(),
+      changeFrequency: "weekly" as const,
+      priority: 0.6,
+    }));
+
+    return [...staticPages, ...eventPages, ...venuePages, ...vendorPages, ...blogPages];
   } catch (error) {
     console.error("Error generating sitemap:", error);
     return staticPages;

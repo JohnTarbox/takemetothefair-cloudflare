@@ -243,6 +243,25 @@ export const eventSchemaOrg = sqliteTable("event_schema_org", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
+// Blog Posts table
+export const blogPosts = sqliteTable("blog_posts", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title: text("title").notNull(),
+  slug: text("slug").notNull().unique(),
+  body: text("body").notNull(), // Markdown content
+  excerpt: text("excerpt"),
+  authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tags: text("tags").default("[]"),
+  categories: text("categories").default("[]"),
+  featuredImageUrl: text("featured_image_url"),
+  status: text("status", { enum: ["DRAFT", "PUBLISHED"] }).default("DRAFT").notNull(),
+  publishDate: integer("publish_date", { mode: "timestamp" }),
+  metaTitle: text("meta_title"),
+  metaDescription: text("meta_description"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
 // Error Logs table
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),

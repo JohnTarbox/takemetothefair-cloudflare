@@ -9,6 +9,7 @@ import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
+import { registerBlogTools } from "./tools/blog.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -95,6 +96,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       }
       if (auth.role === "ADMIN") {
         registerAdminTools(this.server, db, auth, this.env);
+        registerBlogTools(this.server, db, auth, this.env);
       }
     }
   }
@@ -164,7 +166,10 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     registerUserTools(server, db, auth);
     if (auth.role === "VENDOR" || auth.role === "ADMIN") registerVendorTools(server, db, auth);
     if (auth.role === "PROMOTER" || auth.role === "ADMIN") registerPromoterTools(server, db, auth);
-    if (auth.role === "ADMIN") registerAdminTools(server, db, auth, env);
+    if (auth.role === "ADMIN") {
+      registerAdminTools(server, db, auth, env);
+      registerBlogTools(server, db, auth, env);
+    }
   }
 
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
