@@ -222,8 +222,8 @@ export default async function BlogPostPage({ params }: Props) {
             <span>{readingTime} min read</span>
           </div>
 
-          {/* Featured image */}
-          {post.featuredImageUrl && (
+          {/* Featured image — skip if the same image already appears in the body */}
+          {post.featuredImageUrl && !post.body.includes(post.featuredImageUrl) && (
             <div className="aspect-video relative rounded-lg overflow-hidden mb-8">
               <Image
                 src={post.featuredImageUrl}
