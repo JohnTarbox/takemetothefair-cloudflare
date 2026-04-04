@@ -48,6 +48,9 @@ const nextConfig = {
       // Public API — short CDN cache
       { source: "/api/search", headers: [cdnCache(60)] },
       { source: "/api/og", headers: [cdnCache(86400)] },
+      // Sitemap & RSS — short CDN cache so new content appears quickly
+      { source: "/sitemap.xml", headers: [cdnCache(300, 300)] },
+      { source: "/blog/feed.xml", headers: [cdnCache(300, 300)] },
     ];
   },
 };
