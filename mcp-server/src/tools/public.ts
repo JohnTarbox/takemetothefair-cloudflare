@@ -95,6 +95,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         categories: parseJsonArray(r.categories),
         price: formatPrice(r.ticketPriceMin, r.ticketPriceMax),
         status: r.status,
+        image_url: r.imageUrl || null,
       }));
 
       return { content: [jsonContent({ count: output.length, events: output })] };
@@ -181,6 +182,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
             tags: parseJsonArray(event.tags),
             price: formatPrice(event.ticketPriceMin, event.ticketPriceMax),
             ticketUrl: event.ticketUrl,
+            imageUrl: event.imageUrl || null,
             commercialVendorsAllowed: event.commercialVendorsAllowed,
             vendorCount: vendorRows.length,
             status: event.status,
