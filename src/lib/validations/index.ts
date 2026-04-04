@@ -341,7 +341,13 @@ export const blogPostCreateSchema = z.object({
   metaDescription: z.string().max(160).optional().nullable(),
 });
 
-export const blogPostUpdateSchema = blogPostCreateSchema.partial().omit({ authorId: true });
+export const blogPostUpdateSchema = blogPostCreateSchema.partial().omit({ authorId: true }).extend({
+  // Override fields that have .default() on the create schema — partial() doesn't
+  // remove defaults, so omitted fields would get filled with default values on update.
+  tags: z.array(z.string()).optional(),
+  categories: z.array(z.string()).optional(),
+  status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
+});
 
 // Helper function to validate and parse request body
 export async function validateRequestBody<T extends z.ZodType>(
