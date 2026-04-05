@@ -28,6 +28,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:smoke": "PLAYWRIGHT_BASE_URL=https://meetmeatthefair.com playwright test e2e/smoke.spec.ts --project=chromium",
+    "test:sweep": "npx tsx scripts/fairground-sweep.ts",
     "gvalidate": "npx tsx gvalidate/index.ts",
     "gvalidate:all": "npx tsx gvalidate/index.ts --no-fail-fast",
     "gvalidate:vendors": "npx tsx gvalidate/index.ts --type=vendor",
