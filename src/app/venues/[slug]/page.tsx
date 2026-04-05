@@ -14,6 +14,7 @@ import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 import { logError } from "@/lib/logger";
+import { buildVenueMetaDescription } from "@/lib/seo-utils";
 import { VenueSchema } from "@/components/seo/VenueSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
@@ -87,7 +88,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const title = `${venue.name} | Meet Me at the Fair`;
-  const description = venue.description?.slice(0, 160) || `${venue.name} in ${venue.city}, ${venue.state}`;
+  const description = buildVenueMetaDescription(venue);
   const url = `https://meetmeatthefair.com/venues/${venue.slug}`;
 
   return {

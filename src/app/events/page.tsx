@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import Link from "next/link";
 import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -122,21 +123,15 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
 
     // Date filtering logic:
     // - includePast=true: show all events (past, future, and TBD)
-    // - includeTBD=true: show future events AND events with null dates
-    // - default: show only future events with confirmed dates
+    // - default: show future events AND events with null dates (TBD)
     if (searchParams.includePast !== "true") {
-      if (searchParams.includeTBD === "true") {
-        // Show future events OR events with null end dates (TBD)
-        conditions.push(
-          or(
-            gte(events.endDate, new Date()),
-            isNull(events.endDate)
-          )!
-        );
-      } else {
-        // Show only future events with confirmed dates
-        conditions.push(gte(events.endDate, new Date()));
-      }
+      // Show future events OR events with null end dates (TBD)
+      conditions.push(
+        or(
+          gte(events.endDate, new Date()),
+          isNull(events.endDate)
+        )!
+      );
     }
 
     if (searchParams.query) {
@@ -524,17 +519,6 @@ function EventsFilter({
       <label className="flex items-center gap-2">
         <input
           type="checkbox"
-          name="includeTBD"
-          value="true"
-          defaultChecked={searchParams.includeTBD === "true"}
-          className="rounded border-gray-300 text-royal focus:ring-royal"
-        />
-        <span className="text-sm text-gray-700">Include dates TBD</span>
-      </label>
-
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
           name="includePast"
           value="true"
           defaultChecked={searchParams.includePast === "true"}
@@ -657,6 +641,14 @@ export default async function EventsPage({
             total={total}
             myEvents={params.myEvents === "true"}
           />
+          <div className="mt-8 text-center print:hidden">
+            <Link
+              href="/events/past"
+              className="text-royal hover:text-navy transition-colors text-sm font-medium"
+            >
+              Browse past events &rarr;
+            </Link>
+          </div>
         </main>
       </div>
     </div>

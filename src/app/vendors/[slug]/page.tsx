@@ -15,6 +15,7 @@ import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
+import { buildVendorMetaDescription } from "@/lib/seo-utils";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
@@ -96,7 +97,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const title = `${vendor.businessName} | Meet Me at the Fair`;
-  const description = vendor.description?.slice(0, 160) || `${vendor.businessName} - ${vendor.vendorType}`;
+  const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
 
   return {

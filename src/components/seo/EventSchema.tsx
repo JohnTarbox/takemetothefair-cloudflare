@@ -17,9 +17,10 @@ interface EventVendor {
 
 interface EventSchemaProps {
   name: string;
+  slug: string;
   description?: string;
-  startDate: Date;
-  endDate: Date;
+  startDate?: Date | null;
+  endDate?: Date | null;
   imageUrl?: string | null;
   url: string;
   venue?: {
@@ -42,6 +43,7 @@ interface EventSchemaProps {
   datesConfirmed?: boolean | null;
   eventDays?: EventDay[];
   vendors?: EventVendor[];
+  createdAt?: Date | null;
 }
 
 function getEventType(categories?: string[]): string {
@@ -64,6 +66,7 @@ function getEventType(categories?: string[]): string {
 
 export function EventSchema({
   name,
+  slug,
   description,
   startDate,
   endDate,
@@ -78,6 +81,7 @@ export function EventSchema({
   datesConfirmed,
   eventDays,
   vendors,
+  createdAt,
 }: EventSchemaProps) {
   // Calculate isAccessibleForFree based on ticket price
   const isAccessibleForFree = ticketPriceMin === 0 || ticketPriceMin === null || ticketPriceMin === undefined;
@@ -127,17 +131,24 @@ export function EventSchema({
           }))
       : undefined;
 
+  const hasDates = startDate && endDate;
+  const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;
+
   const schema = {
     "@context": "https://schema.org",
     "@type": getEventType(categories),
     name,
     description: description || `${name} - a fair and community event.`,
-    startDate: new Date(startDate).toISOString(),
-    endDate: new Date(endDate).toISOString(),
-    image: imageUrl || "https://meetmeatthefair.com/og-default.png",
+    ...(hasDates
+      ? {
+          startDate: new Date(startDate).toISOString(),
+          endDate: new Date(endDate).toISOString(),
+        }
+      : {}),
+    image: imageUrl || `https://meetmeatthefair.com/api/og?slug=${slug}`,
     url,
     eventStatus:
-      datesConfirmed === false
+      !hasDates || datesConfirmed === false
         ? "https://schema.org/EventPostponed"
         : "https://schema.org/EventScheduled",
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
@@ -156,11 +167,7 @@ export function EventSchema({
           name: organizer.name,
           url: organizer.url || url,
         }
-      : {
-          "@type": "Organization",
-          name: "Meet Me at the Fair",
-          url: "https://meetmeatthefair.com",
-        },
+      : undefined,
     performer: vendors && vendors.length > 0
       ? vendors.map((v) => ({
           "@type": "Organization",
@@ -177,6 +184,7 @@ export function EventSchema({
             highPrice: ticketPriceMax,
             priceCurrency: "USD",
             availability: "https://schema.org/InStock",
+            validFrom: validFromDate,
           }
         : {
             "@type": "Offer",
@@ -184,7 +192,7 @@ export function EventSchema({
             price: ticketPriceMin,
             priceCurrency: "USD",
             availability: "https://schema.org/InStock",
-            validFrom: new Date().toISOString(),
+            validFrom: validFromDate,
           }
       : {
           "@type": "Offer",
@@ -192,6 +200,7 @@ export function EventSchema({
           price: 0,
           priceCurrency: "USD",
           availability: "https://schema.org/InStock",
+          validFrom: validFromDate,
         },
   };
 

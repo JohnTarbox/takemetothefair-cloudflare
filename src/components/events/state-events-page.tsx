@@ -137,7 +137,7 @@ export async function StateEventsPage({
   if (!state) return null;
 
   const page = parseInt(searchParams.page || "1");
-  const limit = 12;
+  const limit = 24;
   const { events: eventsList, total } = await getStateEvents(
     state.code,
     page,
@@ -225,6 +225,15 @@ export async function StateEventsPage({
           </p>
         </div>
       )}
+
+      <div className="mt-8 text-center">
+        <Link
+          href={`/events/past?state=${state.code}`}
+          className="text-royal hover:text-navy transition-colors text-sm font-medium"
+        >
+          Browse past events in {state.name} &rarr;
+        </Link>
+      </div>
 
       {/* SEO content */}
       {total > 0 && (

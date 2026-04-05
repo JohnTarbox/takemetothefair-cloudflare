@@ -34,6 +34,7 @@ import { EventSchema } from "@/components/seo/EventSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
+import { buildEventMetaDescription } from "@/lib/seo-utils";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
 
@@ -220,7 +221,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const title = `${event.name} | Meet Me at the Fair`;
-  const description = event.description?.slice(0, 160) || `${event.name}${event.venue ? ` at ${event.venue.name}` : ""}`;
+  const description = buildEventMetaDescription(event);
   const url = `https://meetmeatthefair.com/events/${event.slug}`;
 
   return {
@@ -274,9 +275,10 @@ export default async function EventDetailPage({ params }: Props) {
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <EventSchema
         name={event.name}
+        slug={event.slug}
         description={event.description || undefined}
-        startDate={event.startDate!}
-        endDate={event.endDate!}
+        startDate={event.startDate}
+        endDate={event.endDate}
         imageUrl={event.imageUrl}
         url={`https://meetmeatthefair.com/events/${event.slug}`}
         venue={event.venue ? {
@@ -302,6 +304,7 @@ export default async function EventDetailPage({ params }: Props) {
           name: vendor.businessName,
           url: `https://meetmeatthefair.com/vendors/${vendor.slug}`,
         }))}
+        createdAt={event.createdAt}
       />
       <BreadcrumbSchema
         items={[
