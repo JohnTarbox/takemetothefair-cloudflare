@@ -3,6 +3,7 @@
 import { useState, useEffect, useTransition } from "react";
 import { Heart } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { trackEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 type FavoritableType = "EVENT" | "VENUE" | "VENDOR" | "PROMOTER";
@@ -73,6 +74,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
     // Optimistic update
     const newState = !isFavorited;
     setIsFavorited(newState);
+    trackEvent("favorite_toggle", { category: "engagement", label: `${type}:${id}` });
 
     startTransition(async () => {
       try {

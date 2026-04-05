@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
+import { trackEvent } from "@/lib/analytics";
 
 interface SearchResults {
   events: { name: string; slug: string; startDate: string | null }[];
@@ -102,6 +103,7 @@ export function GlobalSearch() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && query.trim()) {
+              trackEvent("search", { category: "engagement", label: query.trim() });
               navigate(`/search?q=${encodeURIComponent(query.trim())}`);
             }
           }}
@@ -204,7 +206,7 @@ export function GlobalSearch() {
               )}
 
               <button
-                onClick={() => navigate(`/search?q=${encodeURIComponent(query.trim())}`)}
+                onClick={() => { trackEvent("search", { category: "engagement", label: query.trim() }); navigate(`/search?q=${encodeURIComponent(query.trim())}`); }}
                 className="w-full text-center px-3 py-2.5 text-sm text-royal hover:bg-gray-50 border-t border-gray-100 font-medium transition-colors"
               >
                 View all results →

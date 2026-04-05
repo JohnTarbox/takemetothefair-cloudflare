@@ -8,6 +8,7 @@ import Script from "next/script";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { trackEvent } from "@/lib/analytics";
 
 // Turnstile widget types
 declare global {
@@ -180,6 +181,7 @@ function RegisterForm() {
       if (result?.error) {
         router.push("/login");
       } else {
+        trackEvent("sign_up", { category: "conversion", label: "email" });
         router.push("/dashboard");
         router.refresh();
       }
@@ -338,7 +340,7 @@ function RegisterForm() {
               type="button"
               variant="outline"
               className="w-full"
-              onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+              onClick={() => { trackEvent("sign_up", { category: "conversion", label: "google" }); signIn("google", { callbackUrl: "/dashboard" }); }}
             >
               <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                 <path
@@ -365,7 +367,7 @@ function RegisterForm() {
               type="button"
               variant="outline"
               className="w-full"
-              onClick={() => signIn("facebook", { callbackUrl: "/dashboard" })}
+              onClick={() => { trackEvent("sign_up", { category: "conversion", label: "facebook" }); signIn("facebook", { callbackUrl: "/dashboard" }); }}
             >
               <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                 <path

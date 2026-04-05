@@ -35,6 +35,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { buildEventMetaDescription } from "@/lib/seo-utils";
+import { TrackedLink } from "@/components/TrackedLink";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
 
@@ -551,16 +552,17 @@ export default async function EventDetailPage({ params }: Props) {
               </div>
 
               {event.ticketUrl && (
-                <a
+                <TrackedLink
                   href={event.ticketUrl}
                   target="_blank"
                   rel="noopener noreferrer"
+                  eventLabel={event.ticketUrl}
                 >
                   <Button className="w-full" size="lg">
                     <ExternalLink className="w-4 h-4 mr-2" />
                     Event Website
                   </Button>
-                </a>
+                </TrackedLink>
               )}
 
               {isAdmin && (
@@ -676,14 +678,15 @@ export default async function EventDetailPage({ params }: Props) {
                 </div>
               </div>
               {event.promoter.website && (
-                <a
+                <TrackedLink
                   href={event.promoter.website}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-4 text-sm text-royal hover:text-navy flex items-center gap-1"
+                  eventLabel={event.promoter.website}
                 >
                   Visit Website <ExternalLink className="w-3 h-3" />
-                </a>
+                </TrackedLink>
               )}
             </CardContent>
           </Card>}

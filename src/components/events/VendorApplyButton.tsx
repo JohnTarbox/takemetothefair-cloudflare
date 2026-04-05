@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getErrorMessage } from "@/lib/error-messages";
+import { trackEvent } from "@/lib/analytics";
 
 interface VendorApplyButtonProps {
   eventId: string;
@@ -42,6 +43,7 @@ export function VendorApplyButton({ eventId, eventName, canSelfConfirm }: Vendor
       const result = await res.json() as { status?: string };
       setWasAutoApproved(result.status === "CONFIRMED");
       setSuccess(true);
+      trackEvent("vendor_apply", { category: "conversion", label: eventId });
     } catch (err) {
       setError(getErrorMessage(err, "submit your application"));
     } finally {

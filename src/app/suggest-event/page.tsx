@@ -25,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
+import { trackEvent } from "@/lib/analytics";
 import type {
   ExtractedEventData,
   FieldConfidence,
@@ -456,6 +457,7 @@ export default function SuggestEventPage() {
 
       setCreatedEvent(data.event || null);
       setStep("success");
+      trackEvent("event_suggest", { category: "conversion", label: extractedData.name || undefined });
     } catch {
       setError("Failed to submit event. Please try again.");
       resetTurnstile();
