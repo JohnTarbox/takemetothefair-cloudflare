@@ -1,5 +1,25 @@
 /** Shared helpers for MCP tool implementations */
 
+/** Generate a URL-safe slug from text (no external dependency) */
+export function createSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // strip accents
+    .replace(/[^a-z0-9]+/g, "-") // non-alphanum → hyphen
+    .replace(/^-+|-+$/g, "") // trim leading/trailing hyphens
+    .slice(0, 100);
+}
+
+/** Parse "City, ST" into { city, state }. Returns nulls if unparseable. */
+export function parseLocation(location: string): { city: string | null; state: string | null } {
+  const lastComma = location.lastIndexOf(",");
+  if (lastComma === -1) return { city: location.trim() || null, state: null };
+  const city = location.slice(0, lastComma).trim() || null;
+  const state = location.slice(lastComma + 1).trim() || null;
+  return { city, state };
+}
+
 /** Parse a JSON string array stored in SQLite, returning string[] */
 export function parseJsonArray(value: string | null | undefined): string[] {
   if (!value) return [];
@@ -25,7 +45,7 @@ export function formatDate(date: Date | null | undefined): string | null {
 /** Format a date range as a human-readable string */
 export function formatDateRange(
   start: Date | null | undefined,
-  end: Date | null | undefined,
+  end: Date | null | undefined
 ): string {
   if (!start && !end) return "TBD";
   if (!start) return `Ends ${formatDate(end)}`;
