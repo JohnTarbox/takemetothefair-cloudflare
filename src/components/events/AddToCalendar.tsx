@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Calendar, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { trackAddToCalendar } from "@/lib/analytics";
 import {
   generateGoogleCalendarUrl,
   generateOutlookCalendarUrl,
@@ -50,13 +51,21 @@ export function AddToCalendar({
   const hasMultiDaySchedule = openDays.length > 0;
 
   // For Google/Outlook, use the first day's hours if we have per-day schedule
-  const effectiveStartDate = hasMultiDaySchedule && openDays[0]
-    ? new Date(`${openDays[0].date}T${openDays[0].openTime}:00`)
-    : startDate ? new Date(startDate) : new Date();
+  const effectiveStartDate =
+    hasMultiDaySchedule && openDays[0]
+      ? new Date(`${openDays[0].date}T${openDays[0].openTime}:00`)
+      : startDate
+        ? new Date(startDate)
+        : new Date();
 
-  const effectiveEndDate = hasMultiDaySchedule && openDays[openDays.length - 1]
-    ? new Date(`${openDays[openDays.length - 1].date}T${openDays[openDays.length - 1].closeTime}:00`)
-    : endDate ? new Date(endDate) : new Date();
+  const effectiveEndDate =
+    hasMultiDaySchedule && openDays[openDays.length - 1]
+      ? new Date(
+          `${openDays[openDays.length - 1].date}T${openDays[openDays.length - 1].closeTime}:00`
+        )
+      : endDate
+        ? new Date(endDate)
+        : new Date();
 
   const eventParams = {
     title,
@@ -98,6 +107,13 @@ export function AddToCalendar({
     }
   };
 
+  const slugFromTitle = title.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+
+  const handleCalendarClick = (calendarType: string) => {
+    trackAddToCalendar(slugFromTitle, calendarType);
+    setIsOpen(false);
+  };
+
   const calendarOptions = [
     {
       name: "Google Calendar",
@@ -122,9 +138,15 @@ export function AddToCalendar({
     {
       name: hasMultiDaySchedule ? "Download .ics (all days)" : "Download .ics",
       href: icsUrl,
-      download: `${title.replace(/[^a-z0-9]/gi, "-").toLowerCase()}.ics`,
+      download: `${slugFromTitle}.ics`,
       icon: (
-        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg
+          className="w-4 h-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
         </svg>
       ),
@@ -155,13 +177,11 @@ export function AddToCalendar({
                 rel="noopener noreferrer"
                 download={option.download}
                 className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                onClick={() => setIsOpen(false)}
+                onClick={() => handleCalendarClick(option.name)}
               >
                 {option.icon}
                 <span className="flex-1">{option.name}</span>
-                {option.note && (
-                  <span className="text-xs text-gray-400">{option.note}</span>
-                )}
+                {option.note && <span className="text-xs text-gray-400">{option.note}</span>}
               </a>
             ))}
           </div>
@@ -183,7 +203,10 @@ export function AddToCalendar({
         >
           <Calendar className="w-4 h-4" aria-hidden="true" />
           Add to Calendar
-          <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+          <ChevronDown
+            className={`w-3 h-3 transition-transform ${isOpen ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
         </button>
 
         {isOpen && (
@@ -196,13 +219,11 @@ export function AddToCalendar({
                 rel="noopener noreferrer"
                 download={option.download}
                 className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                onClick={() => setIsOpen(false)}
+                onClick={() => handleCalendarClick(option.name)}
               >
                 {option.icon}
                 <span className="flex-1">{option.name}</span>
-                {option.note && (
-                  <span className="text-xs text-gray-400">{option.note}</span>
-                )}
+                {option.note && <span className="text-xs text-gray-400">{option.note}</span>}
               </a>
             ))}
           </div>
@@ -225,7 +246,10 @@ export function AddToCalendar({
       >
         <Calendar className="w-4 h-4 mr-2" aria-hidden="true" />
         Add to Calendar
-        <ChevronDown className={`w-4 h-4 ml-2 transition-transform ${isOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+        <ChevronDown
+          className={`w-4 h-4 ml-2 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
       </Button>
 
       {isOpen && (
@@ -242,9 +266,7 @@ export function AddToCalendar({
             >
               {option.icon}
               <span className="flex-1">{option.name}</span>
-              {option.note && (
-                <span className="text-xs text-gray-400">{option.note}</span>
-              )}
+              {option.note && <span className="text-xs text-gray-400">{option.note}</span>}
             </a>
           ))}
         </div>

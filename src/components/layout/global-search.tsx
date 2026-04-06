@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
-import { trackEvent } from "@/lib/analytics";
+import { trackEvent, trackZeroResults } from "@/lib/analytics";
 
 interface SearchResults {
   events: { name: string; slug: string; startDate: string | null }[];
@@ -11,6 +11,14 @@ interface SearchResults {
   vendors: { businessName: string; slug: string; vendorType: string | null }[];
   blogPosts: { title: string; slug: string; excerpt: string | null }[];
 }
+
+/** Fires a zero-results analytics event once when mounted */
+const ZeroResultsTracker = memo(function ZeroResultsTracker({ query }: { query: string }) {
+  useEffect(() => {
+    trackZeroResults(query);
+  }, [query]);
+  return null;
+});
 
 export function GlobalSearch() {
   const router = useRouter();
@@ -78,7 +86,12 @@ export function GlobalSearch() {
     router.push(path);
   };
 
-  const hasResults = results && (results.events.length > 0 || results.venues.length > 0 || results.vendors.length > 0 || results.blogPosts.length > 0);
+  const hasResults =
+    results &&
+    (results.events.length > 0 ||
+      results.venues.length > 0 ||
+      results.vendors.length > 0 ||
+      results.blogPosts.length > 0);
 
   if (!open) {
     return (
@@ -111,7 +124,11 @@ export function GlobalSearch() {
           className="w-40 md:w-56 text-sm border-none outline-none bg-transparent"
         />
         <button
-          onClick={() => { setOpen(false); setQuery(""); setResults(null); }}
+          onClick={() => {
+            setOpen(false);
+            setQuery("");
+            setResults(null);
+          }}
           className="text-gray-400 hover:text-gray-600"
         >
           <X className="w-4 h-4" />
@@ -121,19 +138,23 @@ export function GlobalSearch() {
       {/* Dropdown */}
       {query.length >= 2 && (
         <div className="absolute top-full mt-2 right-0 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50 max-h-96 overflow-y-auto">
-          {loading && (
-            <div className="p-4 text-sm text-gray-500 text-center">Searching...</div>
-          )}
+          {loading && <div className="p-4 text-sm text-gray-500 text-center">Searching...</div>}
 
-          {!loading && !hasResults && (
-            <div className="p-4 text-sm text-gray-500 text-center">No results found</div>
+          {!loading && !hasResults && results && (
+            <div className="p-4 text-sm text-gray-500 text-center">
+              {/* Track zero-result searches to identify content gaps */}
+              <ZeroResultsTracker query={query} />
+              No results found
+            </div>
           )}
 
           {!loading && hasResults && (
             <div className="py-2">
               {results!.events.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">Events</div>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    Events
+                  </div>
                   {results!.events.map((event) => (
                     <button
                       key={event.slug}
@@ -149,7 +170,9 @@ export function GlobalSearch() {
 
               {results!.venues.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">Venues</div>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">
+                    Venues
+                  </div>
                   {results!.venues.map((venue) => (
                     <button
                       key={venue.slug}
@@ -160,7 +183,9 @@ export function GlobalSearch() {
                       <div className="min-w-0">
                         <div className="text-sm text-gray-900 truncate">{venue.name}</div>
                         {(venue.city || venue.state) && (
-                          <div className="text-xs text-gray-500">{[venue.city, venue.state].filter(Boolean).join(", ")}</div>
+                          <div className="text-xs text-gray-500">
+                            {[venue.city, venue.state].filter(Boolean).join(", ")}
+                          </div>
                         )}
                       </div>
                     </button>
@@ -170,7 +195,9 @@ export function GlobalSearch() {
 
               {results!.vendors.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">Vendors</div>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">
+                    Vendors
+                  </div>
                   {results!.vendors.map((vendor) => (
                     <button
                       key={vendor.slug}
@@ -191,7 +218,9 @@ export function GlobalSearch() {
 
               {results!.blogPosts.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">Blog</div>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">
+                    Blog
+                  </div>
                   {results!.blogPosts.map((post) => (
                     <button
                       key={post.slug}
@@ -206,7 +235,10 @@ export function GlobalSearch() {
               )}
 
               <button
-                onClick={() => { trackEvent("search", { category: "engagement", label: query.trim() }); navigate(`/search?q=${encodeURIComponent(query.trim())}`); }}
+                onClick={() => {
+                  trackEvent("search", { category: "engagement", label: query.trim() });
+                  navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+                }}
                 className="w-full text-center px-3 py-2.5 text-sm text-royal hover:bg-gray-50 border-t border-gray-100 font-medium transition-colors"
               >
                 View all results →

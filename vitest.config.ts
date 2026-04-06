@@ -23,7 +23,15 @@ export default defineConfig({
         "**/test/**",
         "drizzle/",
         "scripts/",
+        "gvalidate/",
       ],
+      thresholds: {
+        // Conservative thresholds — raise as coverage improves
+        lines: 15,
+        functions: 15,
+        branches: 15,
+        statements: 15,
+      },
     },
   },
   resolve: {

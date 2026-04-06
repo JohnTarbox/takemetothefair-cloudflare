@@ -4,9 +4,9 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { trackEventStatusChange } from "@/lib/server-analytics";
 
 export const runtime = "edge";
-
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -27,15 +27,17 @@ export async function POST(request: NextRequest, { params }: Params) {
       .set({ status: "APPROVED", updatedAt: new Date() })
       .where(eq(events.id, id));
 
-    const updatedEvent = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, id))
-      .limit(1);
+    const updatedEvent = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
+    await trackEventStatusChange(db, id, "PENDING", "APPROVED", session.user.id);
     return NextResponse.json(updatedEvent[0]);
   } catch (error) {
-    await logError(db, { message: "Failed to approve event", error, source: "api/admin/events/[id]/approve", request });
+    await logError(db, {
+      message: "Failed to approve event",
+      error,
+      source: "api/admin/events/[id]/approve",
+      request,
+    });
     return NextResponse.json({ error: "Failed to approve event" }, { status: 500 });
   }
 }

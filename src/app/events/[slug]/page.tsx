@@ -19,7 +19,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors, users, eventDays } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  promoters,
+  eventVendors,
+  vendors,
+  users,
+  eventDays,
+} from "@/lib/db/schema";
 import { eq, and, sql, ne, gte, like } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -38,10 +46,11 @@ import { buildEventMetaDescription } from "@/lib/seo-utils";
 import { TrackedLink } from "@/components/TrackedLink";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
+import { DetailPageTracker } from "@/components/DetailPageTracker";
+import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
-
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -53,7 +62,6 @@ async function getUserVendorInfo(userId: string | undefined, eventId: string) {
   const db = getCloudflareDb();
 
   try {
-
     // Get the vendor for this user
     const vendorResults = await db
       .select()
@@ -69,10 +77,7 @@ async function getUserVendorInfo(userId: string | undefined, eventId: string) {
     const existingApplication = await db
       .select()
       .from(eventVendors)
-      .where(and(
-        eq(eventVendors.eventId, eventId),
-        eq(eventVendors.vendorId, vendor.id)
-      ))
+      .where(and(eq(eventVendors.eventId, eventId), eq(eventVendors.vendorId, vendor.id)))
       .limit(1);
 
     return {
@@ -94,7 +99,6 @@ async function getEvent(slug: string) {
   const db = getCloudflareDb();
 
   try {
-
     // Get event with venue and promoter
     const eventResults = await db
       .select()
@@ -109,11 +113,13 @@ async function getEvent(slug: string) {
     const eventData = eventResults[0];
 
     // Get promoter's user
-    const promoterUser = eventData.promoters?.userId ? await db
-      .select({ name: users.name, email: users.email })
-      .from(users)
-      .where(eq(users.id, eventData.promoters.userId))
-      .limit(1) : [];
+    const promoterUser = eventData.promoters?.userId
+      ? await db
+          .select({ name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.id, eventData.promoters.userId))
+          .limit(1)
+      : [];
 
     // Get event vendors
     const eventVendorResults = await db
@@ -138,10 +144,12 @@ async function getEvent(slug: string) {
     return {
       ...eventData.events,
       venue: eventData.venues,
-      promoter: eventData.promoters ? {
-        ...eventData.promoters,
-        user: promoterUser[0] || { name: null, email: null },
-      } : null,
+      promoter: eventData.promoters
+        ? {
+            ...eventData.promoters,
+            user: promoterUser[0] || { name: null, email: null },
+          }
+        : null,
       eventVendors: eventVendorResults.map((ev) => ({
         ...ev.event_vendors,
         vendor: ev.vendors!,
@@ -202,7 +210,11 @@ async function getRelatedEvents(eventId: string, venueId: string | null, categor
       if (sameCategory.length > 0) {
         return {
           heading: `More ${primaryCategory} Events`,
-          events: sameCategory.map((r) => ({ ...r.events, venue: r.venues, promoter: r.promoters })),
+          events: sameCategory.map((r) => ({
+            ...r.events,
+            venue: r.venues,
+            promoter: r.promoters,
+          })),
         };
       }
     }
@@ -274,6 +286,8 @@ export default async function EventDetailPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <DetailPageTracker type="event" slug={event.slug} name={event.name} />
+      <ScrollDepthTracker pageType="event-detail" />
       <EventSchema
         name={event.name}
         slug={event.slug}
@@ -282,19 +296,27 @@ export default async function EventDetailPage({ params }: Props) {
         endDate={event.endDate}
         imageUrl={event.imageUrl}
         url={`https://meetmeatthefair.com/events/${event.slug}`}
-        venue={event.venue ? {
-          name: event.venue.name,
-          address: event.venue.address,
-          city: event.venue.city,
-          state: event.venue.state,
-          zip: event.venue.zip,
-          latitude: event.venue.latitude,
-          longitude: event.venue.longitude,
-        } : null}
-        organizer={event.promoter ? {
-          name: event.promoter.companyName,
-          url: event.promoter.website,
-        } : null}
+        venue={
+          event.venue
+            ? {
+                name: event.venue.name,
+                address: event.venue.address,
+                city: event.venue.city,
+                state: event.venue.state,
+                zip: event.venue.zip,
+                latitude: event.venue.latitude,
+                longitude: event.venue.longitude,
+              }
+            : null
+        }
+        organizer={
+          event.promoter
+            ? {
+                name: event.promoter.companyName,
+                url: event.promoter.website,
+              }
+            : null
+        }
         ticketPriceMin={event.ticketPriceMin}
         ticketPriceMax={event.ticketPriceMax}
         ticketUrl={event.ticketUrl}
@@ -317,7 +339,8 @@ export default async function EventDetailPage({ params }: Props) {
       {event.status === "TENTATIVE" && (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
           <p className="text-sm text-amber-800">
-            <strong>Tentative Event</strong> — This event has not yet been verified by our team. Details may be incomplete or inaccurate.
+            <strong>Tentative Event</strong> — This event has not yet been verified by our team.
+            Details may be incomplete or inaccurate.
           </p>
         </div>
       )}
@@ -345,9 +368,7 @@ export default async function EventDetailPage({ params }: Props) {
               "community-suggestion",
               "vendor-submission",
             ]);
-            const publicTags = tags.filter(
-              (tag) => !INTERNAL_TAGS.has(tag) && !tag.includes(".")
-            );
+            const publicTags = tags.filter((tag) => !INTERNAL_TAGS.has(tag) && !tag.includes("."));
             return (
               <>
                 <div>
@@ -357,13 +378,13 @@ export default async function EventDetailPage({ params }: Props) {
                       <Badge variant="info">Tentative — Unverified</Badge>
                     )}
                     {categories.map((cat) => (
-                      <Badge key={cat} className={getCategoryBadgeClass(cat)}>{cat}</Badge>
+                      <Badge key={cat} className={getCategoryBadgeClass(cat)}>
+                        {cat}
+                      </Badge>
                     ))}
                   </div>
                   <div className="flex items-start justify-between gap-4">
-                    <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-                      {event.name}
-                    </h1>
+                    <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{event.name}</h1>
                     <div className="flex items-center gap-2">
                       <FavoriteButton type="EVENT" id={event.id} size="lg" />
                       <ShareButtons
@@ -443,13 +464,9 @@ export default async function EventDetailPage({ params }: Props) {
                         )}
                       </div>
                       <div>
-                        <p className="font-medium text-gray-900">
-                          {vendor.businessName}
-                        </p>
+                        <p className="font-medium text-gray-900">{vendor.businessName}</p>
                         {vendor.vendorType && (
-                          <p className="text-sm text-gray-500">
-                            {vendor.vendorType}
-                          </p>
+                          <p className="text-sm text-gray-500">{vendor.vendorType}</p>
                         )}
                       </div>
                     </Link>
@@ -485,7 +502,11 @@ export default async function EventDetailPage({ params }: Props) {
                     <AddToCalendar
                       title={event.name}
                       description={event.description || undefined}
-                      location={event.venue ? `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}` : undefined}
+                      location={
+                        event.venue
+                          ? `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`
+                          : undefined
+                      }
                       startDate={event.startDate}
                       endDate={event.endDate}
                       url={`https://meetmeatthefair.com/events/${event.slug}`}
@@ -494,7 +515,11 @@ export default async function EventDetailPage({ params }: Props) {
                     />
                   </div>
                   {event.eventDays && event.eventDays.length > 0 ? (
-                    <DailyScheduleDisplay days={event.eventDays} discontinuousDates={event.discontinuousDates ?? false} className="mt-2" />
+                    <DailyScheduleDisplay
+                      days={event.eventDays}
+                      discontinuousDates={event.discontinuousDates ?? false}
+                      className="mt-2"
+                    />
                   ) : event.startDate ? (
                     <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                       <Clock className="w-4 h-4" />
@@ -523,7 +548,10 @@ export default async function EventDetailPage({ params }: Props) {
                       {event.venue.city}, {event.venue.state} {event.venue.zip}
                     </p>
                     <a
-                      href={event.venue.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`}
+                      href={
+                        event.venue.googleMapsUrl ||
+                        `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-xs text-royal hover:text-navy mt-1"
@@ -596,23 +624,38 @@ export default async function EventDetailPage({ params }: Props) {
               <CardContent>
                 {vendorInfo.existingApplication ? (
                   <div className="text-center">
-                    <Badge variant={
-                      vendorInfo.existingApplication.status === "CONFIRMED" || vendorInfo.existingApplication.status === "APPROVED" ? "success" :
-                      vendorInfo.existingApplication.status === "REJECTED" || vendorInfo.existingApplication.status === "CANCELLED" ? "danger" :
-                      "warning"
-                    }>
+                    <Badge
+                      variant={
+                        vendorInfo.existingApplication.status === "CONFIRMED" ||
+                        vendorInfo.existingApplication.status === "APPROVED"
+                          ? "success"
+                          : vendorInfo.existingApplication.status === "REJECTED" ||
+                              vendorInfo.existingApplication.status === "CANCELLED"
+                            ? "danger"
+                            : "warning"
+                      }
+                    >
                       Application {vendorInfo.existingApplication.status}
                     </Badge>
                     <p className="text-sm text-gray-500 mt-2">
-                      {vendorInfo.existingApplication.status === "APPLIED" && "Your application is being reviewed."}
-                      {vendorInfo.existingApplication.status === "WAITLISTED" && "You're on the waitlist."}
-                      {vendorInfo.existingApplication.status === "APPROVED" && "You've been approved!"}
-                      {vendorInfo.existingApplication.status === "CONFIRMED" && "You're confirmed to participate!"}
-                      {vendorInfo.existingApplication.status === "REJECTED" && "Your application was not accepted."}
-                      {vendorInfo.existingApplication.status === "WITHDRAWN" && "You withdrew your application."}
-                      {vendorInfo.existingApplication.status === "CANCELLED" && "Your participation was cancelled."}
-                      {vendorInfo.existingApplication.status === "INTERESTED" && "You've expressed interest."}
-                      {vendorInfo.existingApplication.status === "INVITED" && "You've been invited to participate!"}
+                      {vendorInfo.existingApplication.status === "APPLIED" &&
+                        "Your application is being reviewed."}
+                      {vendorInfo.existingApplication.status === "WAITLISTED" &&
+                        "You're on the waitlist."}
+                      {vendorInfo.existingApplication.status === "APPROVED" &&
+                        "You've been approved!"}
+                      {vendorInfo.existingApplication.status === "CONFIRMED" &&
+                        "You're confirmed to participate!"}
+                      {vendorInfo.existingApplication.status === "REJECTED" &&
+                        "Your application was not accepted."}
+                      {vendorInfo.existingApplication.status === "WITHDRAWN" &&
+                        "You withdrew your application."}
+                      {vendorInfo.existingApplication.status === "CANCELLED" &&
+                        "Your participation was cancelled."}
+                      {vendorInfo.existingApplication.status === "INTERESTED" &&
+                        "You've expressed interest."}
+                      {vendorInfo.existingApplication.status === "INVITED" &&
+                        "You've been invited to participate!"}
                     </p>
                   </div>
                 ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (
@@ -637,9 +680,7 @@ export default async function EventDetailPage({ params }: Props) {
             <Card>
               <CardContent className="p-6 text-center">
                 <Store className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                <p className="text-sm text-gray-600 mb-3">
-                  Are you a vendor?
-                </p>
+                <p className="text-sm text-gray-600 mb-3">Are you a vendor?</p>
                 <Link href="/login">
                   <Button variant="outline" className="w-full">
                     Login to Apply
@@ -649,56 +690,52 @@ export default async function EventDetailPage({ params }: Props) {
             </Card>
           )}
 
-          {event.promoter && <Card>
-            <CardHeader>
-              <h3 className="font-semibold text-gray-900">Presented By</h3>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
-                  {event.promoter.logoUrl ? (
-                    <Image
-                      src={event.promoter.logoUrl}
-                      alt={event.promoter.companyName}
-                      fill
-                      sizes="48px"
-                      className="object-cover"
-                    />
-                  ) : (
-                    <User className="w-6 h-6 text-gray-400" />
-                  )}
+          {event.promoter && (
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold text-gray-900">Presented By</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
+                    {event.promoter.logoUrl ? (
+                      <Image
+                        src={event.promoter.logoUrl}
+                        alt={event.promoter.companyName}
+                        fill
+                        sizes="48px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <User className="w-6 h-6 text-gray-400" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{event.promoter.companyName}</p>
+                    {event.promoter.verified && <Badge variant="success">Verified</Badge>}
+                  </div>
                 </div>
-                <div>
-                  <p className="font-medium text-gray-900">
-                    {event.promoter.companyName}
-                  </p>
-                  {event.promoter.verified && (
-                    <Badge variant="success">Verified</Badge>
-                  )}
-                </div>
-              </div>
-              {event.promoter.website && (
-                <TrackedLink
-                  href={event.promoter.website}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-4 text-sm text-royal hover:text-navy flex items-center gap-1"
-                  eventLabel={event.promoter.website}
-                >
-                  Visit Website <ExternalLink className="w-3 h-3" />
-                </TrackedLink>
-              )}
-            </CardContent>
-          </Card>}
+                {event.promoter.website && (
+                  <TrackedLink
+                    href={event.promoter.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-4 text-sm text-royal hover:text-navy flex items-center gap-1"
+                    eventLabel={event.promoter.website}
+                  >
+                    Visit Website <ExternalLink className="w-3 h-3" />
+                  </TrackedLink>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </aside>
       </div>
 
       {/* Related Events */}
       {relatedEvents && relatedEvents.events.length > 0 && (
         <div className="mt-12 border-t border-gray-200 pt-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">
-            {relatedEvents.heading}
-          </h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">{relatedEvents.heading}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {relatedEvents.events.map((relEvent) => (
               <EventCard key={relEvent.id} event={relEvent} />

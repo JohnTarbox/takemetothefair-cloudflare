@@ -1,0 +1,40 @@
+name: Production Verification
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Weekly on Monday 6 AM UTC
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Verify Production Site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run production verification
+        run: npx tsx scripts/verify-production.ts
+        continue-on-error: true
+
+      - name: Upload screenshots and results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-verification
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14

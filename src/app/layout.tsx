@@ -4,6 +4,8 @@ import "./globals.css";
 import { Providers } from "@/components/layout/providers";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
+import { WebVitals } from "@/components/WebVitals";
+import { ErrorAnalyticsBridge } from "@/components/ErrorAnalyticsBridge";
 
 export const metadata: Metadata = {
   title: "Meet Me at the Fair - Discover Local Fairs & Events",
@@ -12,7 +14,8 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://meetmeatthefair.com"),
   openGraph: {
     title: "Meet Me at the Fair",
-    description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
+    description:
+      "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
     url: "https://meetmeatthefair.com",
     siteName: "Meet Me at the Fair",
     type: "website",
@@ -29,7 +32,8 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Meet Me at the Fair",
-    description: "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
+    description:
+      "Find fairs, festivals, and community events in your area. Connect with vendors and promoters.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
   manifest: "/manifest.json",
@@ -49,14 +53,16 @@ export default function RootLayout({
       </head>
       <body className="antialiased min-h-screen flex flex-col">
         <Providers>
+          <WebVitals />
+          <ErrorAnalyticsBridge />
           <Header />
-          <main id="main-content" className="flex-1">{children}</main>
+          <main id="main-content" className="flex-1">
+            {children}
+          </main>
           <Footer />
         </Providers>
       </body>
-      {process.env.NEXT_PUBLIC_GA_ID && (
-        <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />
-      )}
+      {process.env.NEXT_PUBLIC_GA_ID && <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />}
       {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
         <script
           defer

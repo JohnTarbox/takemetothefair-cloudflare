@@ -3,12 +3,16 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { eventVendorAddSchema, eventVendorUpdateSchema, validateRequestBody } from "@/lib/validations";
+import {
+  eventVendorAddSchema,
+  eventVendorUpdateSchema,
+  validateRequestBody,
+} from "@/lib/validations";
 import { isValidTransition } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
+import { trackVendorStatusChange } from "@/lib/server-analytics";
 
 export const runtime = "edge";
-
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -40,7 +44,12 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(vendorList);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch event vendors", error, source: "api/admin/events/[id]/vendors", request });
+    await logError(db, {
+      message: "Failed to fetch event vendors",
+      error,
+      source: "api/admin/events/[id]/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
 }
@@ -64,15 +73,11 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-
     // Check if vendor is already added to this event
     const existing = await db
       .select()
       .from(eventVendors)
-      .where(and(
-        eq(eventVendors.eventId, id),
-        eq(eventVendors.vendorId, data.vendorId)
-      ))
+      .where(and(eq(eventVendors.eventId, id), eq(eventVendors.vendorId, data.vendorId)))
       .limit(1);
 
     if (existing.length > 0) {
@@ -96,12 +101,20 @@ export async function POST(request: NextRequest, { params }: Params) {
       .where(eq(eventVendors.id, eventVendorId))
       .limit(1);
 
-    return NextResponse.json({
-      ...newEventVendor.event_vendors,
-      vendor: newEventVendor.vendors,
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        ...newEventVendor.event_vendors,
+        vendor: newEventVendor.vendors,
+      },
+      { status: 201 }
+    );
   } catch (error) {
-    await logError(db, { message: "Failed to add vendor to event", error, source: "api/admin/events/[id]/vendors", request });
+    await logError(db, {
+      message: "Failed to add vendor to event",
+      error,
+      source: "api/admin/events/[id]/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to add vendor" }, { status: 500 });
   }
 }
@@ -125,7 +138,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-
     const updateData: Record<string, unknown> = {};
     if (data.boothInfo !== undefined) updateData.boothInfo = data.boothInfo;
     if (data.paymentStatus !== undefined) updateData.paymentStatus = data.paymentStatus;
@@ -135,10 +147,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       const [current] = await db
         .select({ status: eventVendors.status })
         .from(eventVendors)
-        .where(and(
-          eq(eventVendors.id, data.eventVendorId),
-          eq(eventVendors.eventId, id)
-        ))
+        .where(and(eq(eventVendors.id, data.eventVendorId), eq(eventVendors.eventId, id)))
         .limit(1);
 
       if (!current) {
@@ -146,21 +155,31 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
 
       if (!isValidTransition(current.status, data.status)) {
-        return NextResponse.json({
-          error: `Cannot transition from ${current.status} to ${data.status}`,
-        }, { status: 400 });
+        return NextResponse.json(
+          {
+            error: `Cannot transition from ${current.status} to ${data.status}`,
+          },
+          { status: 400 }
+        );
       }
 
       updateData.status = data.status;
+
+      // Track the status change for analytics
+      trackVendorStatusChange(
+        db,
+        data.eventVendorId,
+        id,
+        current.status,
+        data.status,
+        session.user.id
+      );
     }
 
     await db
       .update(eventVendors)
       .set(updateData)
-      .where(and(
-        eq(eventVendors.id, data.eventVendorId),
-        eq(eventVendors.eventId, id)
-      ));
+      .where(and(eq(eventVendors.id, data.eventVendorId), eq(eventVendors.eventId, id)));
 
     const [updated] = await db
       .select()
@@ -174,7 +193,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       vendor: updated.vendors,
     });
   } catch (error) {
-    await logError(db, { message: "Failed to update event vendor", error, source: "api/admin/events/[id]/vendors", request });
+    await logError(db, {
+      message: "Failed to update event vendor",
+      error,
+      source: "api/admin/events/[id]/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to update vendor" }, { status: 500 });
   }
 }
@@ -199,14 +223,16 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     await db
       .delete(eventVendors)
-      .where(and(
-        eq(eventVendors.id, eventVendorId),
-        eq(eventVendors.eventId, id)
-      ));
+      .where(and(eq(eventVendors.id, eventVendorId), eq(eventVendors.eventId, id)));
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to remove vendor from event", error, source: "api/admin/events/[id]/vendors", request });
+    await logError(db, {
+      message: "Failed to remove vendor from event",
+      error,
+      source: "api/admin/events/[id]/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to remove vendor" }, { status: 500 });
   }
 }

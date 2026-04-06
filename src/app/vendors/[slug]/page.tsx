@@ -1,7 +1,19 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Store, Globe, CheckCircle, Calendar, MapPin, Pencil, Mail, Phone, User, CreditCard, Building } from "lucide-react";
+import {
+  Store,
+  Globe,
+  CheckCircle,
+  Calendar,
+  MapPin,
+  Pencil,
+  Mail,
+  Phone,
+  User,
+  CreditCard,
+  Building,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -18,10 +30,11 @@ import { logError } from "@/lib/logger";
 import { buildVendorMetaDescription } from "@/lib/seo-utils";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { DetailPageTracker } from "@/components/DetailPageTracker";
+import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
-
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -31,7 +44,6 @@ async function getVendor(slug: string) {
   const db = getCloudflareDb();
 
   try {
-
     // Get vendor with user
     const vendorResults = await db
       .select()
@@ -50,12 +62,7 @@ async function getVendor(slug: string) {
       .from(eventVendors)
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(
-        and(
-          eq(eventVendors.vendorId, vendor.vendors.id),
-          isPublicVendorStatus()
-        )
-      );
+      .where(and(eq(eventVendors.vendorId, vendor.vendors.id), isPublicVendorStatus()));
 
     const vendorEvents = eventVendorResults
       .filter((ev) => ev.events !== null)
@@ -74,7 +81,9 @@ async function getVendor(slug: string) {
 
     return {
       ...vendor.vendors,
-      user: vendor.users ? { name: vendor.users.name, email: vendor.users.email } : { name: null, email: null },
+      user: vendor.users
+        ? { name: vendor.users.name, email: vendor.users.email }
+        : { name: null, email: null },
       eventVendors: vendorEvents,
     };
   } catch (e) {
@@ -115,7 +124,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       images: [
         vendor.logoUrl
           ? { url: vendor.logoUrl, width: 400, height: 400, alt: vendor.businessName }
-          : { url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: vendor.businessName },
+          : {
+              url: "https://meetmeatthefair.com/og-default.png",
+              width: 1200,
+              height: 630,
+              alt: vendor.businessName,
+            },
       ],
     },
     twitter: {
@@ -151,6 +165,8 @@ export default async function VendorDetailPage({ params }: Props) {
 
   return (
     <>
+      <DetailPageTracker type="vendor" slug={vendor.slug} name={vendor.businessName} />
+      <ScrollDepthTracker pageType="vendor-detail" />
       <VendorSchema
         businessName={vendor.businessName}
         description={vendor.description}
@@ -175,316 +191,317 @@ export default async function VendorDetailPage({ params }: Props) {
           { name: vendor.businessName, url: `https://meetmeatthefair.com/vendors/${vendor.slug}` },
         ]}
       />
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <main className="lg:col-span-2 space-y-6">
-          <div className="flex items-start gap-6">
-            <div className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
-              {vendor.logoUrl ? (
-                <Image
-                  src={vendor.logoUrl}
-                  alt={vendor.businessName}
-                  fill
-                  sizes="96px"
-                  className="object-cover rounded-xl"
-                />
-              ) : (
-                <Store className="w-12 h-12 text-gray-400" />
-              )}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-3xl font-bold text-gray-900">
-                  {vendor.businessName}
-                </h1>
-                {vendor.verified && (
-                  <CheckCircle className="w-6 h-6 text-royal" />
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <main className="lg:col-span-2 space-y-6">
+            <div className="flex items-start gap-6">
+              <div className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                {vendor.logoUrl ? (
+                  <Image
+                    src={vendor.logoUrl}
+                    alt={vendor.businessName}
+                    fill
+                    sizes="96px"
+                    className="object-cover rounded-xl"
+                  />
+                ) : (
+                  <Store className="w-12 h-12 text-gray-400" />
                 )}
               </div>
-              {vendor.vendorType && (
-                <p className="mt-1 text-lg text-gray-600">{vendor.vendorType}</p>
-              )}
-            </div>
-          </div>
-
-          {vendor.description && (
-            <div className="prose prose-gray max-w-none">
-              <p className="text-gray-600 whitespace-pre-wrap">
-                {vendor.description}
-              </p>
-            </div>
-          )}
-
-          {(() => {
-            return products.length > 0 && (
               <div>
-                <h2 className="text-xl font-semibold text-gray-900 mb-3">
-                  Products & Services
-                </h2>
-                <div className="flex flex-wrap gap-2">
-                  {products.map((product) => (
-                    <Badge key={product} variant="info">
-                      {product}
-                    </Badge>
-                  ))}
+                <div className="flex items-center gap-2">
+                  <h1 className="text-3xl font-bold text-gray-900">{vendor.businessName}</h1>
+                  {vendor.verified && <CheckCircle className="w-6 h-6 text-royal" />}
                 </div>
-              </div>
-            );
-          })()}
-
-          {upcomingEvents.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  Upcoming Events ({upcomingEvents.length})
-                </h2>
-                {vendor.eventVendors.length > 6 && (
-                  <Link
-                    href={`/vendors/${vendor.slug}/events`}
-                    className="text-sm text-royal hover:text-navy font-medium"
-                  >
-                    View all events
-                  </Link>
+                {vendor.vendorType && (
+                  <p className="mt-1 text-lg text-gray-600">{vendor.vendorType}</p>
                 )}
               </div>
-              <div className="space-y-3">
-                {upcomingEvents.slice(0, 6).map(({ event }) => (
-                  <Card key={event.id} className="hover:shadow-md transition-shadow">
-                    <CardContent className="p-4 flex items-center gap-4">
-                      <Link href={`/events/${event.slug}`} className="w-16 h-16 rounded-lg bg-brand-blue-light flex flex-col items-center justify-center text-royal">
-                        <Calendar className="w-6 h-6" />
-                      </Link>
-                      <div className="flex-1">
-                        <Link href={`/events/${event.slug}`}>
-                          <h3 className="font-medium text-gray-900 hover:text-royal">
-                            {event.name}
-                          </h3>
-                        </Link>
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <span>{formatDateRange(event.startDate, event.endDate)}</span>
-                          <AddToCalendar
-                            title={event.name}
-                            description={event.description || undefined}
-                            location={event.venue ? `${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}` : undefined}
-                            startDate={event.startDate}
-                            endDate={event.endDate}
-                            url={`https://meetmeatthefair.com/events/${event.slug}`}
-                            variant="icon"
-                          />
-                        </div>
-                        {event.venue && (
-                          <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                            <MapPin className="w-3 h-3" />
-                            {event.venue.name}, {event.venue.city}
-                          </p>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-              {upcomingEvents.length > 6 && (
-                <div className="mt-4 text-center">
-                  <Link
-                    href={`/vendors/${vendor.slug}/events`}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
-                  >
-                    View all {vendor.eventVendors.length} events
-                  </Link>
-                </div>
-              )}
             </div>
-          )}
 
-          {pastEvents.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">
-                  Past Events ({pastEvents.length})
-                </h2>
-                {pastEvents.length > 5 && (
-                  <Link
-                    href={`/vendors/${vendor.slug}/events?filter=past`}
-                    className="text-sm text-royal hover:text-navy font-medium"
-                  >
-                    View all past events
-                  </Link>
-                )}
+            {vendor.description && (
+              <div className="prose prose-gray max-w-none">
+                <p className="text-gray-600 whitespace-pre-wrap">{vendor.description}</p>
               </div>
-              <div className="space-y-3">
-                {pastEvents.slice(0, 5).map(({ event }) => (
-                  <Link key={event.id} href={`/events/${event.slug}`}>
-                    <Card className="hover:shadow-md transition-shadow opacity-75">
+            )}
+
+            {(() => {
+              return (
+                products.length > 0 && (
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900 mb-3">
+                      Products & Services
+                    </h2>
+                    <div className="flex flex-wrap gap-2">
+                      {products.map((product) => (
+                        <Badge key={product} variant="info">
+                          {product}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )
+              );
+            })()}
+
+            {upcomingEvents.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Upcoming Events ({upcomingEvents.length})
+                  </h2>
+                  {vendor.eventVendors.length > 6 && (
+                    <Link
+                      href={`/vendors/${vendor.slug}/events`}
+                      className="text-sm text-royal hover:text-navy font-medium"
+                    >
+                      View all events
+                    </Link>
+                  )}
+                </div>
+                <div className="space-y-3">
+                  {upcomingEvents.slice(0, 6).map(({ event }) => (
+                    <Card key={event.id} className="hover:shadow-md transition-shadow">
                       <CardContent className="p-4 flex items-center gap-4">
-                        <div className="w-16 h-16 rounded-lg bg-gray-100 flex flex-col items-center justify-center text-gray-400">
+                        <Link
+                          href={`/events/${event.slug}`}
+                          className="w-16 h-16 rounded-lg bg-brand-blue-light flex flex-col items-center justify-center text-royal"
+                        >
                           <Calendar className="w-6 h-6" />
-                        </div>
+                        </Link>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-700">
-                            {event.name}
-                          </h3>
-                          <p className="text-sm text-gray-500">
-                            {formatDateRange(event.startDate, event.endDate)}
-                          </p>
+                          <Link href={`/events/${event.slug}`}>
+                            <h3 className="font-medium text-gray-900 hover:text-royal">
+                              {event.name}
+                            </h3>
+                          </Link>
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <span>{formatDateRange(event.startDate, event.endDate)}</span>
+                            <AddToCalendar
+                              title={event.name}
+                              description={event.description || undefined}
+                              location={
+                                event.venue
+                                  ? `${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}`
+                                  : undefined
+                              }
+                              startDate={event.startDate}
+                              endDate={event.endDate}
+                              url={`https://meetmeatthefair.com/events/${event.slug}`}
+                              variant="icon"
+                            />
+                          </div>
+                          {event.venue && (
+                            <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                              <MapPin className="w-3 h-3" />
+                              {event.venue.name}, {event.venue.city}
+                            </p>
+                          )}
                         </div>
                       </CardContent>
                     </Card>
-                  </Link>
-                ))}
-              </div>
-              {pastEvents.length > 5 && (
-                <div className="mt-4 text-center">
-                  <Link
-                    href={`/vendors/${vendor.slug}/events`}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
-                  >
-                    View all {pastEvents.length} past events
-                  </Link>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
-        </main>
-
-        <aside className="space-y-6">
-          {isAdmin && (
-            <Card>
-              <CardContent className="p-6">
-                <Link href={`/admin/vendors/${vendor.id}/edit`}>
-                  <Button variant="outline" className="w-full">
-                    <Pencil className="w-4 h-4 mr-2" />
-                    Edit Vendor
-                  </Button>
-                </Link>
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader>
-              <h3 className="font-semibold text-gray-900">Contact & Links</h3>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {vendor.contactName && (
-                <div className="flex items-center gap-3 text-gray-700">
-                  <User className="w-5 h-5 text-gray-400" />
-                  {vendor.contactName}
-                </div>
-              )}
-              {vendor.contactEmail && (
-                <a
-                  href={`mailto:${vendor.contactEmail}`}
-                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
-                >
-                  <Mail className="w-5 h-5 text-royal" />
-                  {vendor.contactEmail}
-                </a>
-              )}
-              {vendor.contactPhone && (
-                <a
-                  href={`tel:${vendor.contactPhone}`}
-                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
-                >
-                  <Phone className="w-5 h-5 text-royal" />
-                  {vendor.contactPhone}
-                </a>
-              )}
-              {vendor.website && (
-                <a
-                  href={vendor.website}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 text-gray-700 hover:text-royal"
-                >
-                  <Globe className="w-5 h-5 text-royal" />
-                  Visit Website
-                </a>
-              )}
-              {vendor.socialLinks &&
-                typeof vendor.socialLinks === "object" &&
-                Object.entries(vendor.socialLinks as Record<string, string>).map(
-                  ([platform, url]) => (
-                    <a
-                      key={platform}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 text-gray-700 hover:text-royal capitalize"
+                {upcomingEvents.length > 6 && (
+                  <div className="mt-4 text-center">
+                    <Link
+                      href={`/vendors/${vendor.slug}/events`}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
                     >
-                      {platform}
-                    </a>
-                  )
-                )}
-            </CardContent>
-          </Card>
-
-          {/* Location Card */}
-          {(vendor.address || vendor.city) && (
-            <Card>
-              <CardHeader>
-                <h3 className="font-semibold text-gray-900">Location</h3>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-start gap-3 text-gray-700">
-                  <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
-                  <div>
-                    {vendor.address && <div>{vendor.address}</div>}
-                    {(vendor.city || vendor.state || vendor.zip) && (
-                      <div>
-                        {[vendor.city, vendor.state].filter(Boolean).join(", ")}
-                        {vendor.zip && ` ${vendor.zip}`}
-                      </div>
-                    )}
+                      View all {vendor.eventVendors.length} events
+                    </Link>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                )}
+              </div>
+            )}
 
-          {/* Business Details Card */}
-          {(vendor.yearEstablished || vendor.paymentMethods) && (
+            {pastEvents.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Past Events ({pastEvents.length})
+                  </h2>
+                  {pastEvents.length > 5 && (
+                    <Link
+                      href={`/vendors/${vendor.slug}/events?filter=past`}
+                      className="text-sm text-royal hover:text-navy font-medium"
+                    >
+                      View all past events
+                    </Link>
+                  )}
+                </div>
+                <div className="space-y-3">
+                  {pastEvents.slice(0, 5).map(({ event }) => (
+                    <Link key={event.id} href={`/events/${event.slug}`}>
+                      <Card className="hover:shadow-md transition-shadow opacity-75">
+                        <CardContent className="p-4 flex items-center gap-4">
+                          <div className="w-16 h-16 rounded-lg bg-gray-100 flex flex-col items-center justify-center text-gray-400">
+                            <Calendar className="w-6 h-6" />
+                          </div>
+                          <div className="flex-1">
+                            <h3 className="font-medium text-gray-700">{event.name}</h3>
+                            <p className="text-sm text-gray-500">
+                              {formatDateRange(event.startDate, event.endDate)}
+                            </p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  ))}
+                </div>
+                {pastEvents.length > 5 && (
+                  <div className="mt-4 text-center">
+                    <Link
+                      href={`/vendors/${vendor.slug}/events`}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
+                    >
+                      View all {pastEvents.length} past events
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
+
+          <aside className="space-y-6">
+            {isAdmin && (
+              <Card>
+                <CardContent className="p-6">
+                  <Link href={`/admin/vendors/${vendor.id}/edit`}>
+                    <Button variant="outline" className="w-full">
+                      <Pencil className="w-4 h-4 mr-2" />
+                      Edit Vendor
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
+            )}
+
             <Card>
               <CardHeader>
-                <h3 className="font-semibold text-gray-900">Business Details</h3>
+                <h3 className="font-semibold text-gray-900">Contact & Links</h3>
               </CardHeader>
               <CardContent className="space-y-3">
-                {vendor.yearEstablished && (
+                {vendor.contactName && (
                   <div className="flex items-center gap-3 text-gray-700">
-                    <Building className="w-5 h-5 text-gray-400" />
-                    <span>Est. {vendor.yearEstablished}</span>
+                    <User className="w-5 h-5 text-gray-400" />
+                    {vendor.contactName}
                   </div>
                 )}
-                {(() => {
-                  return paymentMethods.length > 0 && (
-                    <div className="flex items-start gap-3 text-gray-700">
-                      <CreditCard className="w-5 h-5 text-gray-400 mt-0.5" />
-                      <div className="flex flex-wrap gap-1">
-                        {paymentMethods.map((method) => (
-                          <Badge key={method} variant="default" className="text-xs">
-                            {method}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
+                {vendor.contactEmail && (
+                  <a
+                    href={`mailto:${vendor.contactEmail}`}
+                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                  >
+                    <Mail className="w-5 h-5 text-royal" />
+                    {vendor.contactEmail}
+                  </a>
+                )}
+                {vendor.contactPhone && (
+                  <a
+                    href={`tel:${vendor.contactPhone}`}
+                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                  >
+                    <Phone className="w-5 h-5 text-royal" />
+                    {vendor.contactPhone}
+                  </a>
+                )}
+                {vendor.website && (
+                  <a
+                    href={vendor.website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                  >
+                    <Globe className="w-5 h-5 text-royal" />
+                    Visit Website
+                  </a>
+                )}
+                {vendor.socialLinks &&
+                  typeof vendor.socialLinks === "object" &&
+                  Object.entries(vendor.socialLinks as Record<string, string>).map(
+                    ([platform, url]) => (
+                      <a
+                        key={platform}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 text-gray-700 hover:text-royal capitalize"
+                      >
+                        {platform}
+                      </a>
+                    )
+                  )}
               </CardContent>
             </Card>
-          )}
 
-          <Card>
-            <CardContent className="p-6">
-              <div className="text-center">
-                <p className="text-3xl font-bold text-gray-900">
-                  {vendor.eventVendors.length}
-                </p>
-                <p className="text-sm text-gray-600">Total Events Attended</p>
-              </div>
-            </CardContent>
-          </Card>
-        </aside>
+            {/* Location Card */}
+            {(vendor.address || vendor.city) && (
+              <Card>
+                <CardHeader>
+                  <h3 className="font-semibold text-gray-900">Location</h3>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-start gap-3 text-gray-700">
+                    <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
+                    <div>
+                      {vendor.address && <div>{vendor.address}</div>}
+                      {(vendor.city || vendor.state || vendor.zip) && (
+                        <div>
+                          {[vendor.city, vendor.state].filter(Boolean).join(", ")}
+                          {vendor.zip && ` ${vendor.zip}`}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Business Details Card */}
+            {(vendor.yearEstablished || vendor.paymentMethods) && (
+              <Card>
+                <CardHeader>
+                  <h3 className="font-semibold text-gray-900">Business Details</h3>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {vendor.yearEstablished && (
+                    <div className="flex items-center gap-3 text-gray-700">
+                      <Building className="w-5 h-5 text-gray-400" />
+                      <span>Est. {vendor.yearEstablished}</span>
+                    </div>
+                  )}
+                  {(() => {
+                    return (
+                      paymentMethods.length > 0 && (
+                        <div className="flex items-start gap-3 text-gray-700">
+                          <CreditCard className="w-5 h-5 text-gray-400 mt-0.5" />
+                          <div className="flex flex-wrap gap-1">
+                            {paymentMethods.map((method) => (
+                              <Badge key={method} variant="default" className="text-xs">
+                                {method}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="text-center">
+                  <p className="text-3xl font-bold text-gray-900">{vendor.eventVendors.length}</p>
+                  <p className="text-sm text-gray-600">Total Events Attended</p>
+                </div>
+              </CardContent>
+            </Card>
+          </aside>
+        </div>
       </div>
-    </div>
     </>
   );
 }

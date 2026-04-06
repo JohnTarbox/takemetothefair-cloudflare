@@ -35,7 +35,19 @@
     "gvalidate:events": "npx tsx gvalidate/index.ts --type=event",
     "gvalidate:venues": "npx tsx gvalidate/index.ts --type=venue",
     "gvalidate:quick": "npx tsx gvalidate/index.ts --limit=3",
-    "gvalidate:urls": "npx tsx gvalidate/index.ts --urls-only"
+    "gvalidate:urls": "npx tsx gvalidate/index.ts --urls-only",
+    "prepare": "husky",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "*.{json,css,md,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",
@@ -56,6 +68,7 @@
     "remark-gfm": "^4.0.1",
     "slugify": "^1.6.6",
     "tailwind-merge": "^3.4.0",
+    "web-vitals": "^5.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -73,8 +86,11 @@
     "drizzle-kit": "^0.30.1",
     "eslint": "^8",
     "eslint-config-next": "^15.1.0",
+    "husky": "^9.1.7",
     "jsdom": "^24.0.0",
+    "lint-staged": "^16.4.0",
     "postcss": "^8",
+    "prettier": "^3.8.1",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.19.2",
     "typescript": "^5",

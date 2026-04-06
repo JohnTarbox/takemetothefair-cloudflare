@@ -10,26 +10,17 @@ interface LogErrorOptions {
   context?: Record<string, unknown>;
   level?: "error" | "warn" | "info";
   statusCode?: number;
+  requestId?: string;
 }
 
 export async function logError(
   db: DrizzleD1Database<Record<string, unknown>> | null,
   options: LogErrorOptions
 ): Promise<void> {
-  const {
-    message,
-    error,
-    source,
-    request,
-    context,
-    level = "error",
-    statusCode,
-  } = options;
+  const { message, error, source, request, context, level = "error", statusCode } = options;
 
-  const stackTrace =
-    error instanceof Error ? error.stack : error ? String(error) : undefined;
-  const fullMessage =
-    error instanceof Error ? `${message}: ${error.message}` : message;
+  const stackTrace = error instanceof Error ? error.stack : error ? String(error) : undefined;
+  const fullMessage = error instanceof Error ? `${message}: ${error.message}` : message;
 
   // Always log to console
   console.error(fullMessage, error);
