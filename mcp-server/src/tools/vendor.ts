@@ -1,13 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
-import {
-  parseJsonArray,
-  formatDateRange,
-  PUBLIC_EVENT_STATUSES,
-  jsonContent,
-} from "../helpers.js";
+import { parseJsonArray, formatDateRange, jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -15,7 +10,9 @@ const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
 export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext) {
   // suggest_event only needs userId, not a vendor profile — register it first
-  console.log(`[VENDOR-TOOLS] Registering suggest_event for userId=${auth.userId} role=${auth.role} vendorId=${auth.vendorId || "none"}`);
+  console.log(
+    `[VENDOR-TOOLS] Registering suggest_event for userId=${auth.userId} role=${auth.role} vendorId=${auth.vendorId || "none"}`
+  );
   registerSuggestEvent(server, db, auth);
 
   if (!auth.vendorId) {
@@ -26,43 +23,35 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
   const vendorId = auth.vendorId;
 
   // ── get_my_vendor_profile ──────────────────────────────────────
-  server.tool(
-    "get_my_vendor_profile",
-    "Get your vendor profile details.",
-    {},
-    async () => {
-      const rows = await db
-        .select()
-        .from(vendors)
-        .where(eq(vendors.id, vendorId))
-        .limit(1);
+  server.tool("get_my_vendor_profile", "Get your vendor profile details.", {}, async () => {
+    const rows = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
 
-      if (rows.length === 0) {
-        return { content: [{ type: "text", text: "Vendor profile not found." }], isError: true };
-      }
+    if (rows.length === 0) {
+      return { content: [{ type: "text", text: "Vendor profile not found." }], isError: true };
+    }
 
-      const v = rows[0];
-      return {
-        content: [
-          jsonContent({
-            businessName: v.businessName,
-            slug: v.slug,
-            description: v.description,
-            vendorType: v.vendorType,
-            products: parseJsonArray(v.products),
-            website: v.website,
-            commercial: v.commercial,
-            verified: v.verified,
-            contactName: v.contactName,
-            contactEmail: v.contactEmail,
-            contactPhone: v.contactPhone,
-            city: v.city,
-            state: v.state,
-          }),
-        ],
-      };
-    },
-  );
+    const v = rows[0];
+    return {
+      content: [
+        jsonContent({
+          id: v.id,
+          businessName: v.businessName,
+          slug: v.slug,
+          description: v.description,
+          vendorType: v.vendorType,
+          products: parseJsonArray(v.products),
+          website: v.website,
+          commercial: v.commercial,
+          verified: v.verified,
+          contactName: v.contactName,
+          contactEmail: v.contactEmail,
+          contactPhone: v.contactPhone,
+          city: v.city,
+          state: v.state,
+        }),
+      ],
+    };
+  });
 
   // ── update_vendor_profile ──────────────────────────────────────
   server.tool(
@@ -99,8 +88,15 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
 
       await db.update(vendors).set(updates).where(eq(vendors.id, vendorId));
 
-      return { content: [jsonContent({ updated: true, fields: Object.keys(updates).filter((k) => k !== "updatedAt") })] };
-    },
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            fields: Object.keys(updates).filter((k) => k !== "updatedAt"),
+          }),
+        ],
+      };
+    }
   );
 
   // ── list_my_applications ───────────────────────────────────────
@@ -109,9 +105,26 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
     "List all your event applications with their status.",
     {
       status: z
-        .enum(["INVITED", "INTERESTED", "APPLIED", "WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"])
+        .enum([
+          "INVITED",
+          "INTERESTED",
+          "APPLIED",
+          "WAITLISTED",
+          "APPROVED",
+          "CONFIRMED",
+          "REJECTED",
+          "WITHDRAWN",
+          "CANCELLED",
+        ])
         .optional()
         .describe("Filter by application status"),
+      limit: z.number().int().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       const conditions = [eq(eventVendors.vendorId, vendorId)];
@@ -122,6 +135,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
       const rows = await db
         .select({
           applicationId: eventVendors.id,
+          eventId: eventVendors.eventId,
           status: eventVendors.status,
           paymentStatus: eventVendors.paymentStatus,
           boothInfo: eventVendors.boothInfo,
@@ -133,7 +147,12 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
         })
         .from(eventVendors)
         .innerJoin(events, eq(eventVendors.eventId, events.id))
-        .where(and(...conditions));
+        .where(and(...conditions))
+        .limit(params.limit ?? 20)
+        .offset(params.offset ?? 0);
+
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
 
       const output = rows.map((r) => ({
         applicationId: r.applicationId,
@@ -141,6 +160,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
         paymentStatus: r.paymentStatus,
         boothInfo: r.boothInfo,
         event: {
+          id: r.eventId,
           name: r.eventName,
           slug: r.eventSlug,
           dates: formatDateRange(r.eventStartDate, r.eventEndDate),
@@ -148,8 +168,17 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
         },
       }));
 
-      return { content: [jsonContent({ count: output.length, applications: output })] };
-    },
+      return {
+        content: [
+          jsonContent({
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            applications: output,
+          }),
+        ],
+      };
+    }
   );
 
   // ── apply_to_event ─────────────────────────────────────────────
@@ -181,7 +210,9 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
 
       if (event.status !== "APPROVED" && event.status !== "TENTATIVE") {
         return {
-          content: [{ type: "text", text: "This event is not currently accepting vendor applications." }],
+          content: [
+            { type: "text", text: "This event is not currently accepting vendor applications." },
+          ],
           isError: true,
         };
       }
@@ -235,7 +266,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
           }),
         ],
       };
-    },
+    }
   );
 
   // ── withdraw_application ───────────────────────────────────────
@@ -269,11 +300,21 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
         };
       }
 
-      const withdrawable = ["APPLIED", "APPROVED", "CONFIRMED", "WAITLISTED", "INTERESTED", "INVITED"];
+      const withdrawable = [
+        "APPLIED",
+        "APPROVED",
+        "CONFIRMED",
+        "WAITLISTED",
+        "INTERESTED",
+        "INVITED",
+      ];
       if (!withdrawable.includes(application[0].status)) {
         return {
           content: [
-            { type: "text", text: `Cannot withdraw — application status is ${application[0].status}.` },
+            {
+              type: "text",
+              text: `Cannot withdraw — application status is ${application[0].status}.`,
+            },
           ],
           isError: true,
         };
@@ -286,12 +327,15 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
 
       return {
         content: [
-          jsonContent({ withdrawn: true, event: eventRows[0].name, previousStatus: application[0].status }),
+          jsonContent({
+            withdrawn: true,
+            event: eventRows[0].name,
+            previousStatus: application[0].status,
+          }),
         ],
       };
-    },
+    }
   );
-
 }
 
 // ---------------------------------------------------------------------------
@@ -387,9 +431,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
 
         if (existingVenues.length > 0 && venueCity) {
           // Match by slug + city
-          const cityMatch = existingVenues.find(
-            (v) => v.city.toLowerCase().trim() === venueCity,
-          );
+          const cityMatch = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
           if (cityMatch) {
             venueId = cityMatch.id;
             venueResult = { matched: true, venueId: cityMatch.id, name: cityMatch.name };
@@ -398,7 +440,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         } else if (existingVenues.length > 0 && !venueCity && venueState) {
           // No city — try state match
           const stateMatch = existingVenues.find(
-            (v) => v.state.toUpperCase().trim() === venueState,
+            (v) => v.state.toUpperCase().trim() === venueState
           );
           if (stateMatch) {
             venueId = stateMatch.id;
@@ -408,7 +450,11 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         } else if (existingVenues.length > 0) {
           // No city or state — use first match
           venueId = existingVenues[0].id;
-          venueResult = { matched: true, venueId: existingVenues[0].id, name: existingVenues[0].name };
+          venueResult = {
+            matched: true,
+            venueId: existingVenues[0].id,
+            name: existingVenues[0].name,
+          };
           matched = true;
         }
 
@@ -464,7 +510,10 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         sourceName: "vendor-submission",
         sourceUrl: params.source_url || null,
         sourceId: params.source_url
-          ? params.source_url.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+          ? params.source_url
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
           : eventId,
         syncEnabled: false,
         lastSyncedAt: new Date(),
@@ -480,6 +529,6 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
           }),
         ],
       };
-    },
+    }
   );
 }

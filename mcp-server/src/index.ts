@@ -55,7 +55,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
             ],
           };
         }
-        const toolSets = ["public tools (6)", "user tools (2)"];
+        const toolSets = ["public tools (10)", "user tools (2)"];
         if (props.role === "VENDOR" || props.role === "ADMIN") {
           toolSets.push(
             props.vendorId
@@ -64,8 +64,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
           );
         }
         if (props.role === "PROMOTER" || props.role === "ADMIN")
-          toolSets.push("promoter tools (2)");
-        if (props.role === "ADMIN") toolSets.push("admin tools (8)");
+          toolSets.push("promoter tools (3)");
+        if (props.role === "ADMIN") toolSets.push("admin tools (13)", "blog tools (6)");
         return {
           content: [
             {

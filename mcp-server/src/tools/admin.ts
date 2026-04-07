@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, like, inArray } from "drizzle-orm";
-import { events, eventVendors, vendors, venues, promoters, users } from "../schema.js";
+import { events, eventVendors, vendors, venues, promoters, users, eventDays } from "../schema.js";
 import {
   formatDateRange,
   parseJsonArray,
@@ -9,50 +9,13 @@ import {
   jsonContent,
   createSlug,
   parseLocation,
+  VALID_TRANSITIONS,
+  EVENT_STATUS_ENUM,
+  VENDOR_STATUS_ENUM,
+  PAYMENT_STATUS_ENUM,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
-
-// ---------------------------------------------------------------------------
-// Vendor status transition map — duplicated from src/lib/vendor-status.ts.
-// KEEP IN SYNC with:
-//   - VALID_TRANSITIONS: src/lib/vendor-status.ts
-//   - EVENT_STATUS_ENUM:  src/lib/constants.ts (EventStatus)
-//   - VENDOR_STATUS_ENUM: src/lib/constants.ts (VendorStatus)
-//   - PAYMENT_STATUS_ENUM: src/lib/constants.ts (PaymentStatus)
-// ---------------------------------------------------------------------------
-const VALID_TRANSITIONS: Record<string, string[]> = {
-  INVITED: ["INTERESTED", "APPLIED", "REJECTED", "WITHDRAWN", "CANCELLED"],
-  INTERESTED: ["APPLIED", "WITHDRAWN", "CANCELLED"],
-  APPLIED: ["WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN"],
-  WAITLISTED: ["APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"],
-  APPROVED: ["CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"],
-  CONFIRMED: ["WITHDRAWN", "CANCELLED"],
-  REJECTED: ["APPLIED", "INVITED"],
-  WITHDRAWN: ["APPLIED", "INTERESTED"],
-  CANCELLED: ["INVITED"],
-};
-
-const EVENT_STATUS_ENUM = [
-  "DRAFT",
-  "PENDING",
-  "TENTATIVE",
-  "APPROVED",
-  "REJECTED",
-  "CANCELLED",
-] as const;
-const VENDOR_STATUS_ENUM = [
-  "INVITED",
-  "INTERESTED",
-  "APPLIED",
-  "WAITLISTED",
-  "APPROVED",
-  "CONFIRMED",
-  "REJECTED",
-  "WITHDRAWN",
-  "CANCELLED",
-] as const;
-const PAYMENT_STATUS_ENUM = ["NOT_REQUIRED", "PENDING", "PAID", "REFUNDED", "OVERDUE"] as const;
 
 interface Env {
   MAIN_APP_URL: string;
@@ -574,6 +537,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     {
       event_id: z.string().describe("Event ID"),
       status: z.enum(VENDOR_STATUS_ENUM).optional().describe("Filter by vendor application status"),
+      limit: z.number().int().min(1).max(100).optional().describe("Max results (default 50)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       // Verify event exists
@@ -590,6 +560,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      const limit = params.limit ?? 50;
+      const offset = params.offset ?? 0;
+
       const conditions = [eq(eventVendors.eventId, eventRows[0].id)];
       if (params.status) {
         conditions.push(eq(eventVendors.status, params.status));
@@ -598,6 +571,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       const rows = await db
         .select({
           applicationId: eventVendors.id,
+          vendorId: eventVendors.vendorId,
           status: eventVendors.status,
           paymentStatus: eventVendors.paymentStatus,
           boothInfo: eventVendors.boothInfo,
@@ -610,7 +584,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .from(eventVendors)
         .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(and(...conditions));
+        .where(and(...conditions))
+        .limit(limit)
+        .offset(offset);
 
       const output = rows.map((r) => ({
         applicationId: r.applicationId,
@@ -619,6 +595,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         boothInfo: r.boothInfo,
         appliedAt: r.createdAt?.toISOString() || null,
         vendor: {
+          id: r.vendorId,
           businessName: r.businessName,
           slug: r.vendorSlug,
           type: r.vendorType,
@@ -628,7 +605,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }));
 
       return {
-        content: [jsonContent({ event: eventRows[0].name, count: output.length, vendors: output })],
+        content: [
+          jsonContent({
+            event: eventRows[0].name,
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            vendors: output,
+          }),
+        ],
       };
     }
   );
@@ -1198,6 +1183,335 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             location: `${params.city}, ${params.state.toUpperCase()}`,
           }),
         ],
+      };
+    }
+  );
+
+  // ── update_vendor ─────────────────────────────────────────────
+  server.tool(
+    "update_vendor",
+    "Update any vendor's profile fields. Admin only.",
+    {
+      vendor_id: z.string().describe("Vendor ID (UUID)"),
+      business_name: z.string().optional().describe("Business name (also regenerates slug)"),
+      vendor_type: z.string().optional().describe("Vendor category"),
+      description: z.string().optional().describe("Business description"),
+      products: z.array(z.string()).optional().describe("Products/services list"),
+      website: z.string().optional().describe("Website URL"),
+      contact_name: z.string().optional().describe("Contact person name"),
+      contact_email: z.string().optional().describe("Contact email"),
+      contact_phone: z.string().optional().describe("Contact phone"),
+      city: z.string().optional().describe("City"),
+      state: z.string().optional().describe("State (2-letter code)"),
+      address: z.string().optional().describe("Street address"),
+      zip: z.string().optional().describe("ZIP code"),
+      logo_url: z.string().optional().describe("Logo image URL"),
+      social_links: z.string().optional().describe("Social media links (JSON string)"),
+      verified: z.boolean().optional().describe("Verified status"),
+      commercial: z.boolean().optional().describe("Commercial vendor flag"),
+      can_self_confirm: z
+        .boolean()
+        .optional()
+        .describe("Whether vendor can auto-confirm applications"),
+    },
+    async (params) => {
+      const fieldMap: Array<{
+        param: string;
+        column: string;
+        transform?: (v: any) => unknown;
+      }> = [
+        { param: "vendor_type", column: "vendorType" },
+        { param: "description", column: "description" },
+        { param: "products", column: "products", transform: (v: string[]) => JSON.stringify(v) },
+        { param: "website", column: "website" },
+        { param: "contact_name", column: "contactName" },
+        { param: "contact_email", column: "contactEmail" },
+        { param: "contact_phone", column: "contactPhone" },
+        { param: "city", column: "city" },
+        { param: "state", column: "state", transform: (v: string) => v.toUpperCase() },
+        { param: "address", column: "address" },
+        { param: "zip", column: "zip" },
+        { param: "logo_url", column: "logoUrl" },
+        { param: "social_links", column: "socialLinks" },
+        { param: "verified", column: "verified" },
+        { param: "commercial", column: "commercial" },
+        { param: "can_self_confirm", column: "canSelfConfirm" },
+      ];
+
+      const updates: Record<string, unknown> = {};
+      const requestedFields: string[] = [];
+
+      for (const { param, column, transform } of fieldMap) {
+        const value = (params as Record<string, unknown>)[param];
+        if (value !== undefined) {
+          updates[column] = transform ? transform(value) : value;
+          requestedFields.push(param);
+        }
+      }
+
+      if (params.business_name !== undefined) {
+        updates.businessName = params.business_name;
+        requestedFields.push("business_name");
+      }
+
+      if (requestedFields.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No fields provided to update. Supply at least one optional field.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Fetch current vendor
+      const vendorRows = await db
+        .select()
+        .from(vendors)
+        .where(eq(vendors.id, params.vendor_id))
+        .limit(1);
+
+      if (vendorRows.length === 0) {
+        return { content: [{ type: "text", text: "Vendor not found." }], isError: true };
+      }
+
+      const vendor = vendorRows[0];
+
+      // If business_name changed, regenerate slug
+      if (params.business_name !== undefined) {
+        const baseSlug = createSlug(params.business_name);
+        let finalSlug = baseSlug;
+        let suffix = 0;
+        while (true) {
+          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const existing = await db
+            .select({ id: vendors.id })
+            .from(vendors)
+            .where(eq(vendors.slug, candidate))
+            .limit(1);
+          if (existing.length === 0 || existing[0].id === vendor.id) {
+            finalSlug = candidate;
+            break;
+          }
+          suffix++;
+          if (suffix > 20) {
+            return {
+              content: [
+                { type: "text", text: "Too many slug collisions. Try a more unique name." },
+              ],
+              isError: true,
+            };
+          }
+        }
+        updates.slug = finalSlug;
+      }
+
+      updates.updatedAt = new Date();
+
+      // Capture previous values
+      const previousValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        if (field === "business_name") {
+          previousValues.business_name = vendor.businessName;
+          previousValues.slug = vendor.slug;
+          continue;
+        }
+        const mapping = fieldMap.find((f) => f.param === field);
+        if (mapping) {
+          previousValues[field] = (vendor as Record<string, unknown>)[mapping.column];
+        }
+      }
+
+      await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+
+      const newValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        newValues[field] = (params as Record<string, unknown>)[field];
+      }
+      if (params.business_name !== undefined && updates.slug) {
+        newValues.slug = updates.slug;
+      }
+
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            vendor: { id: vendor.id, businessName: updates.businessName ?? vendor.businessName },
+            fieldsUpdated: requestedFields,
+            previousValues,
+            newValues,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── list_event_days ───────────────────────────────────────────
+  server.tool(
+    "list_event_days",
+    "List the daily schedule for an event. Admin only.",
+    {
+      event_id: z.string().describe("Event ID"),
+    },
+    async (params) => {
+      const eventRows = await db
+        .select({ id: events.id, name: events.name })
+        .from(events)
+        .where(eq(events.id, params.event_id))
+        .limit(1);
+
+      if (eventRows.length === 0) {
+        return { content: [{ type: "text", text: "Event not found." }], isError: true };
+      }
+
+      const days = await db
+        .select({
+          id: eventDays.id,
+          date: eventDays.date,
+          openTime: eventDays.openTime,
+          closeTime: eventDays.closeTime,
+          notes: eventDays.notes,
+          closed: eventDays.closed,
+        })
+        .from(eventDays)
+        .where(eq(eventDays.eventId, params.event_id));
+
+      return {
+        content: [
+          jsonContent({
+            event: eventRows[0].name,
+            count: days.length,
+            days,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── create_event_day ──────────────────────────────────────────
+  server.tool(
+    "create_event_day",
+    "Add a day to an event's schedule. Admin only.",
+    {
+      event_id: z.string().describe("Event ID"),
+      date: z.string().describe("Date (YYYY-MM-DD)"),
+      open_time: z.string().describe("Opening time (HH:MM)"),
+      close_time: z.string().describe("Closing time (HH:MM)"),
+      notes: z.string().optional().describe("Notes for this day"),
+    },
+    async (params) => {
+      // Verify event exists
+      const eventRows = await db
+        .select({ id: events.id, name: events.name })
+        .from(events)
+        .where(eq(events.id, params.event_id))
+        .limit(1);
+
+      if (eventRows.length === 0) {
+        return { content: [{ type: "text", text: "Event not found." }], isError: true };
+      }
+
+      const dayId = crypto.randomUUID();
+
+      await db.insert(eventDays).values({
+        id: dayId,
+        eventId: params.event_id,
+        date: params.date,
+        openTime: params.open_time,
+        closeTime: params.close_time,
+        notes: params.notes ?? null,
+      });
+
+      return {
+        content: [
+          jsonContent({
+            created: true,
+            id: dayId,
+            event: eventRows[0].name,
+            date: params.date,
+            openTime: params.open_time,
+            closeTime: params.close_time,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── update_event_day ──────────────────────────────────────────
+  server.tool(
+    "update_event_day",
+    "Update an event day's schedule. Admin only.",
+    {
+      day_id: z.string().describe("Event day ID"),
+      date: z.string().optional().describe("Date (YYYY-MM-DD)"),
+      open_time: z.string().optional().describe("Opening time (HH:MM)"),
+      close_time: z.string().optional().describe("Closing time (HH:MM)"),
+      notes: z.string().optional().describe("Notes for this day"),
+      closed: z.boolean().optional().describe("Whether this day is cancelled/closed"),
+    },
+    async (params) => {
+      const dayRows = await db
+        .select()
+        .from(eventDays)
+        .where(eq(eventDays.id, params.day_id))
+        .limit(1);
+
+      if (dayRows.length === 0) {
+        return { content: [{ type: "text", text: "Event day not found." }], isError: true };
+      }
+
+      const updates: Record<string, unknown> = {};
+      if (params.date !== undefined) updates.date = params.date;
+      if (params.open_time !== undefined) updates.openTime = params.open_time;
+      if (params.close_time !== undefined) updates.closeTime = params.close_time;
+      if (params.notes !== undefined) updates.notes = params.notes;
+      if (params.closed !== undefined) updates.closed = params.closed;
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          content: [{ type: "text", text: "No fields provided to update." }],
+          isError: true,
+        };
+      }
+
+      await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
+
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            id: params.day_id,
+            fieldsUpdated: Object.keys(updates),
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── delete_event_day ──────────────────────────────────────────
+  server.tool(
+    "delete_event_day",
+    "Remove a day from an event's schedule. Admin only.",
+    {
+      day_id: z.string().describe("Event day ID"),
+    },
+    async (params) => {
+      const dayRows = await db
+        .select({ id: eventDays.id, date: eventDays.date })
+        .from(eventDays)
+        .where(eq(eventDays.id, params.day_id))
+        .limit(1);
+
+      if (dayRows.length === 0) {
+        return { content: [{ type: "text", text: "Event day not found." }], isError: true };
+      }
+
+      await db.delete(eventDays).where(eq(eventDays.id, params.day_id));
+
+      return {
+        content: [jsonContent({ deleted: true, id: params.day_id, date: dayRows[0].date })],
       };
     }
   );

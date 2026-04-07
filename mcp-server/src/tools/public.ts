@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, gte, lte, like, inArray } from "drizzle-orm";
-import { events, venues, vendors, eventVendors, eventDays } from "../schema.js";
+import { events, venues, vendors, eventVendors, eventDays, promoters } from "../schema.js";
 import {
   parseJsonArray,
   formatDateRange,
@@ -25,6 +25,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       start_after: z.string().optional().describe("Events starting after this date (YYYY-MM-DD)"),
       start_before: z.string().optional().describe("Events starting before this date (YYYY-MM-DD)"),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       const conditions = [inArray(events.status, [...PUBLIC_EVENT_STATUSES])];
@@ -47,6 +52,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }
 
       const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
 
       // Over-fetch when category post-filter is needed (categories are JSON strings)
       const sqlLimit = params.category ? limit * 5 : limit;
@@ -70,7 +76,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .where(and(...conditions))
-        .limit(sqlLimit);
+        .limit(sqlLimit)
+        .offset(offset);
 
       const rows = await query;
 
@@ -84,6 +91,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }
 
       const output = results.map((r) => ({
+        id: r.id,
         name: r.name,
         slug: r.slug,
         dates: formatDateRange(r.startDate, r.endDate),
@@ -94,7 +102,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
         image_url: r.imageUrl || null,
       }));
 
-      return { content: [jsonContent({ count: output.length, events: output })] };
+      return {
+        content: [
+          jsonContent({
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            events: output,
+          }),
+        ],
+      };
     }
   );
 
@@ -123,6 +140,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           imageUrl: events.imageUrl,
           status: events.status,
           commercialVendorsAllowed: events.commercialVendorsAllowed,
+          venueId: events.venueId,
           venueName: venues.name,
           venueAddress: venues.address,
           venueCity: venues.city,
@@ -172,6 +190,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
             datesConfirmed: event.datesConfirmed,
             venue: event.venueName
               ? {
+                  id: event.venueId,
                   name: event.venueName,
                   address: event.venueAddress,
                   city: event.venueCity,
@@ -201,6 +220,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
     {
       event_slug: z.string().describe("Event slug"),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       // Find event by slug
@@ -221,6 +245,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       const rows = await db
         .select({
+          vendorId: vendors.id,
           businessName: vendors.businessName,
           slug: vendors.slug,
           vendorType: vendors.vendorType,
@@ -236,9 +261,14 @@ export function registerPublicTools(server: McpServer, db: Db) {
             inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES])
           )
         )
-        .limit(params.limit ?? 20);
+        .limit(params.limit ?? 20)
+        .offset(params.offset ?? 0);
+
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
 
       const output = rows.map((r) => ({
+        id: r.vendorId,
         businessName: r.businessName,
         slug: r.slug,
         type: r.vendorType,
@@ -252,6 +282,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
           jsonContent({
             event: eventRows[0].name,
             count: output.length,
+            offset,
+            has_more: output.length === limit,
             vendors: output,
           }),
         ],
@@ -267,6 +299,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       query: z.string().optional().describe("Search by business name (partial match)"),
       type: z.string().optional().describe("Filter by vendor type"),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       const conditions = [];
@@ -280,6 +317,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       const rows = await db
         .select({
+          id: vendors.id,
           businessName: vendors.businessName,
           slug: vendors.slug,
           vendorType: vendors.vendorType,
@@ -290,9 +328,14 @@ export function registerPublicTools(server: McpServer, db: Db) {
         })
         .from(vendors)
         .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .limit(params.limit ?? 20);
+        .limit(params.limit ?? 20)
+        .offset(params.offset ?? 0);
+
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
 
       const output = rows.map((r) => ({
+        id: r.id,
         businessName: r.businessName,
         slug: r.slug,
         type: r.vendorType,
@@ -301,7 +344,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
         location: [r.city, r.state].filter(Boolean).join(", ") || null,
       }));
 
-      return { content: [jsonContent({ count: output.length, vendors: output })] };
+      return {
+        content: [
+          jsonContent({
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            vendors: output,
+          }),
+        ],
+      };
     }
   );
 
@@ -314,6 +366,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       city: z.string().optional().describe("Filter by city"),
       state: z.string().optional().describe("Filter by state (2-letter code)"),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       const conditions = [eq(venues.status, "ACTIVE")];
@@ -343,7 +400,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
         })
         .from(venues)
         .where(and(...conditions))
-        .limit(params.limit ?? 20);
+        .limit(params.limit ?? 20)
+        .offset(params.offset ?? 0);
+
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
 
       const output = rows.map((r) => ({
         id: r.id,
@@ -355,7 +416,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
         website: r.website,
       }));
 
-      return { content: [jsonContent({ count: output.length, venues: output })] };
+      return {
+        content: [
+          jsonContent({
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            venues: output,
+          }),
+        ],
+      };
     }
   );
 
@@ -445,6 +515,221 @@ export function registerPublicTools(server: McpServer, db: Db) {
             googleRating: venue.googleRating,
             status: venue.status,
             upcomingEventCount: upcomingEvents.length,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── get_vendor_details ────────────────────────────────────────
+  server.tool(
+    "get_vendor_details",
+    "Get full details for a vendor by slug or ID, including count of upcoming confirmed events.",
+    {
+      slug: z.string().optional().describe("Vendor slug (URL-friendly name)"),
+      id: z.string().optional().describe("Vendor ID (UUID)"),
+    },
+    async (params) => {
+      if (!params.slug && !params.id) {
+        return {
+          content: [{ type: "text", text: "Provide either slug or id to look up a vendor." }],
+          isError: true,
+        };
+      }
+
+      const condition = params.id ? eq(vendors.id, params.id) : eq(vendors.slug, params.slug!);
+
+      const rows = await db
+        .select({
+          id: vendors.id,
+          businessName: vendors.businessName,
+          slug: vendors.slug,
+          description: vendors.description,
+          vendorType: vendors.vendorType,
+          products: vendors.products,
+          website: vendors.website,
+          logoUrl: vendors.logoUrl,
+          verified: vendors.verified,
+          commercial: vendors.commercial,
+          contactName: vendors.contactName,
+          contactEmail: vendors.contactEmail,
+          contactPhone: vendors.contactPhone,
+          city: vendors.city,
+          state: vendors.state,
+          createdAt: vendors.createdAt,
+        })
+        .from(vendors)
+        .where(condition)
+        .limit(1);
+
+      if (rows.length === 0) {
+        return { content: [{ type: "text", text: "Vendor not found." }], isError: true };
+      }
+
+      const vendor = rows[0];
+
+      // Count upcoming confirmed events for this vendor
+      const confirmedEvents = await db
+        .select({ id: eventVendors.id })
+        .from(eventVendors)
+        .innerJoin(events, eq(eventVendors.eventId, events.id))
+        .where(
+          and(
+            eq(eventVendors.vendorId, vendor.id),
+            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
+            inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+            gte(events.endDate, new Date())
+          )
+        );
+
+      return {
+        content: [
+          jsonContent({
+            id: vendor.id,
+            businessName: vendor.businessName,
+            slug: vendor.slug,
+            description: vendor.description,
+            vendorType: vendor.vendorType,
+            products: parseJsonArray(vendor.products),
+            website: vendor.website,
+            logoUrl: vendor.logoUrl || null,
+            verified: vendor.verified,
+            commercial: vendor.commercial,
+            contactName: vendor.contactName,
+            contactEmail: vendor.contactEmail,
+            contactPhone: vendor.contactPhone,
+            city: vendor.city,
+            state: vendor.state,
+            upcomingEventCount: confirmedEvents.length,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── get_promoter_details ──────────────────────────────────────
+  server.tool(
+    "get_promoter_details",
+    "Get full details for an event promoter by slug or ID, including count of upcoming public events.",
+    {
+      slug: z.string().optional().describe("Promoter slug (URL-friendly name)"),
+      id: z.string().optional().describe("Promoter ID (UUID)"),
+    },
+    async (params) => {
+      if (!params.slug && !params.id) {
+        return {
+          content: [{ type: "text", text: "Provide either slug or id to look up a promoter." }],
+          isError: true,
+        };
+      }
+
+      const condition = params.id ? eq(promoters.id, params.id) : eq(promoters.slug, params.slug!);
+
+      const rows = await db
+        .select({
+          id: promoters.id,
+          companyName: promoters.companyName,
+          slug: promoters.slug,
+          description: promoters.description,
+          website: promoters.website,
+          socialLinks: promoters.socialLinks,
+          logoUrl: promoters.logoUrl,
+          verified: promoters.verified,
+          createdAt: promoters.createdAt,
+        })
+        .from(promoters)
+        .where(condition)
+        .limit(1);
+
+      if (rows.length === 0) {
+        return { content: [{ type: "text", text: "Promoter not found." }], isError: true };
+      }
+
+      const promoter = rows[0];
+
+      // Count upcoming public events by this promoter
+      const upcomingEvents = await db
+        .select({ id: events.id })
+        .from(events)
+        .where(
+          and(
+            eq(events.promoterId, promoter.id),
+            inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+            gte(events.endDate, new Date())
+          )
+        );
+
+      return {
+        content: [
+          jsonContent({
+            id: promoter.id,
+            companyName: promoter.companyName,
+            slug: promoter.slug,
+            description: promoter.description,
+            website: promoter.website,
+            socialLinks: promoter.socialLinks,
+            logoUrl: promoter.logoUrl || null,
+            verified: promoter.verified,
+            upcomingEventCount: upcomingEvents.length,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── search_promoters ──────────────────────────────────────────
+  server.tool(
+    "search_promoters",
+    "Search event promoters by name.",
+    {
+      query: z.string().optional().describe("Search by promoter/company name (partial match)"),
+      limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
+    },
+    async (params) => {
+      const conditions = [];
+
+      if (params.query) {
+        conditions.push(like(promoters.companyName, `%${escapeLike(params.query)}%`));
+      }
+
+      const rows = await db
+        .select({
+          id: promoters.id,
+          companyName: promoters.companyName,
+          slug: promoters.slug,
+          description: promoters.description,
+          website: promoters.website,
+          verified: promoters.verified,
+        })
+        .from(promoters)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .limit(params.limit ?? 20)
+        .offset(params.offset ?? 0);
+
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
+
+      const output = rows.map((r) => ({
+        id: r.id,
+        companyName: r.companyName,
+        slug: r.slug,
+        description: r.description ? r.description.slice(0, 200) : null,
+        website: r.website,
+        verified: r.verified,
+      }));
+
+      return {
+        content: [
+          jsonContent({
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            promoters: output,
           }),
         ],
       };

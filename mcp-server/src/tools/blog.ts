@@ -28,14 +28,26 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       categories: z.array(z.string()).optional().describe("Array of category strings"),
       featured_image_url: z.string().url().optional().describe("URL of the featured image"),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("DRAFT (default) or PUBLISHED"),
-      publish_date: z.string().optional().describe("ISO 8601 publish date (auto-set when publishing if omitted)"),
+      publish_date: z
+        .string()
+        .optional()
+        .describe("ISO 8601 publish date (auto-set when publishing if omitted)"),
       meta_title: z.string().max(70).optional().describe("SEO meta title (max 70 chars)"),
-      meta_description: z.string().max(160).optional().describe("SEO meta description (max 160 chars)"),
+      meta_description: z
+        .string()
+        .max(160)
+        .optional()
+        .describe("SEO meta description (max 160 chars)"),
     },
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
         return {
-          content: [{ type: "text", text: "Blog post creation requires MAIN_APP_URL and INTERNAL_API_KEY to be configured." }],
+          content: [
+            {
+              type: "text",
+              text: "Blog post creation requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
           isError: true,
         };
       }
@@ -63,9 +75,14 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({})) as Record<string, string>;
+          const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
           return {
-            content: [{ type: "text", text: `Failed to create blog post (${response.status}): ${errorData.error || response.statusText}` }],
+            content: [
+              {
+                type: "text",
+                text: `Failed to create blog post (${response.status}): ${errorData.error || response.statusText}`,
+              },
+            ],
             isError: true,
           };
         }
@@ -74,11 +91,16 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         return { content: [jsonContent(result)] };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Create blog post failed: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          content: [
+            {
+              type: "text",
+              text: `Create blog post failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
           isError: true,
         };
       }
-    },
+    }
   );
 
   // ── get_blog_post ────────────────────────────────────────────────
@@ -121,16 +143,18 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       }
 
       return {
-        content: [jsonContent({
-          ...post,
-          tags: parseJsonArray(post.tags),
-          categories: parseJsonArray(post.categories),
-          publishDate: formatDate(post.publishDate),
-          createdAt: formatDate(post.createdAt),
-          updatedAt: formatDate(post.updatedAt),
-        })],
+        content: [
+          jsonContent({
+            ...post,
+            tags: parseJsonArray(post.tags),
+            categories: parseJsonArray(post.categories),
+            publishDate: formatDate(post.publishDate),
+            createdAt: formatDate(post.createdAt),
+            updatedAt: formatDate(post.updatedAt),
+          }),
+        ],
       };
-    },
+    }
   );
 
   // ── list_blog_posts ──────────────────────────────────────────────
@@ -140,7 +164,19 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     {
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("Filter by status: DRAFT or PUBLISHED"),
       tag: z.string().optional().describe("Filter by tag name"),
-      limit: z.number().int().min(1).max(100).optional().describe("Number of posts to return (default 20, max 100)"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Number of posts to return (default 20, max 100)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       const limit = params.limit || 20;
@@ -174,21 +210,28 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         .leftJoin(users, eq(blogPosts.authorId, users.id))
         .where(where)
         .orderBy(desc(blogPosts.publishDate))
-        .limit(limit);
+        .limit(limit)
+        .offset(params.offset ?? 0);
+
+      const offset = params.offset ?? 0;
 
       return {
-        content: [jsonContent({
-          count: posts.length,
-          posts: posts.map((p) => ({
-            ...p,
-            tags: parseJsonArray(p.tags),
-            categories: parseJsonArray(p.categories),
-            publishDate: formatDate(p.publishDate),
-            createdAt: formatDate(p.createdAt),
-          })),
-        })],
+        content: [
+          jsonContent({
+            count: posts.length,
+            offset,
+            has_more: posts.length === limit,
+            posts: posts.map((p) => ({
+              ...p,
+              tags: parseJsonArray(p.tags),
+              categories: parseJsonArray(p.categories),
+              publishDate: formatDate(p.publishDate),
+              createdAt: formatDate(p.createdAt),
+            })),
+          }),
+        ],
       };
-    },
+    }
   );
 
   // ── update_blog_post ─────────────────────────────────────────────
@@ -201,7 +244,10 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       body: z.string().min(1).optional().describe("New body in Markdown format"),
       excerpt: z.string().max(500).optional().describe("New excerpt/summary"),
       tags: z.array(z.string()).optional().describe("New tags array (replaces existing)"),
-      categories: z.array(z.string()).optional().describe("New categories array (replaces existing)"),
+      categories: z
+        .array(z.string())
+        .optional()
+        .describe("New categories array (replaces existing)"),
       featured_image_url: z.string().url().optional().describe("New featured image URL"),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("New status: DRAFT or PUBLISHED"),
       publish_date: z.string().optional().describe("New publish date (ISO 8601)"),
@@ -211,7 +257,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
         return {
-          content: [{ type: "text", text: "Blog post update requires MAIN_APP_URL and INTERNAL_API_KEY to be configured." }],
+          content: [
+            {
+              type: "text",
+              text: "Blog post update requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
           isError: true,
         };
       }
@@ -224,25 +275,35 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         if (params.excerpt !== undefined) payload.excerpt = params.excerpt;
         if (params.tags !== undefined) payload.tags = params.tags;
         if (params.categories !== undefined) payload.categories = params.categories;
-        if (params.featured_image_url !== undefined) payload.featuredImageUrl = params.featured_image_url;
+        if (params.featured_image_url !== undefined)
+          payload.featuredImageUrl = params.featured_image_url;
         if (params.status !== undefined) payload.status = params.status;
         if (params.publish_date !== undefined) payload.publishDate = params.publish_date;
         if (params.meta_title !== undefined) payload.metaTitle = params.meta_title;
-        if (params.meta_description !== undefined) payload.metaDescription = params.meta_description;
+        if (params.meta_description !== undefined)
+          payload.metaDescription = params.meta_description;
 
-        const response = await fetch(`${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Internal-Key": env.INTERNAL_API_KEY,
-          },
-          body: JSON.stringify(payload),
-        });
+        const response = await fetch(
+          `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+            },
+            body: JSON.stringify(payload),
+          }
+        );
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({})) as Record<string, string>;
+          const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
           return {
-            content: [{ type: "text", text: `Failed to update blog post (${response.status}): ${errorData.error || response.statusText}` }],
+            content: [
+              {
+                type: "text",
+                text: `Failed to update blog post (${response.status}): ${errorData.error || response.statusText}`,
+              },
+            ],
             isError: true,
           };
         }
@@ -251,11 +312,16 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         return { content: [jsonContent(result)] };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Update blog post failed: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          content: [
+            {
+              type: "text",
+              text: `Update blog post failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
           isError: true,
         };
       }
-    },
+    }
   );
 
   // ── update_blog_post_status ──────────────────────────────────────
@@ -269,39 +335,123 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
         return {
-          content: [{ type: "text", text: "Blog post status update requires MAIN_APP_URL and INTERNAL_API_KEY to be configured." }],
+          content: [
+            {
+              type: "text",
+              text: "Blog post status update requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
           isError: true,
         };
       }
 
       try {
-        const response = await fetch(`${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Internal-Key": env.INTERNAL_API_KEY,
-          },
-          body: JSON.stringify({ status: params.status }),
-        });
+        const response = await fetch(
+          `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+            },
+            body: JSON.stringify({ status: params.status }),
+          }
+        );
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({})) as Record<string, string>;
+          const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
           return {
-            content: [{ type: "text", text: `Failed to update status (${response.status}): ${errorData.error || response.statusText}` }],
+            content: [
+              {
+                type: "text",
+                text: `Failed to update status (${response.status}): ${errorData.error || response.statusText}`,
+              },
+            ],
             isError: true,
           };
         }
 
-        const result = await response.json() as Record<string, unknown>;
+        const result = (await response.json()) as Record<string, unknown>;
         return {
-          content: [{ type: "text", text: `Blog post "${result.title}" status changed to ${params.status}. Slug: ${result.slug}` }],
+          content: [
+            {
+              type: "text",
+              text: `Blog post "${result.title}" status changed to ${params.status}. Slug: ${result.slug}`,
+            },
+          ],
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Status update failed: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          content: [
+            {
+              type: "text",
+              text: `Status update failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
           isError: true,
         };
       }
+    }
+  );
+
+  // ── delete_blog_post ────────────────────────────────────────────
+  server.tool(
+    "delete_blog_post",
+    "Permanently delete a blog post by slug. Admin only.",
+    {
+      slug: z.string().min(1).describe("Slug of the blog post to delete"),
     },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Blog post deletion requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const response = await fetch(
+          `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,
+          {
+            method: "DELETE",
+            headers: {
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+            },
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to delete blog post (${response.status}): ${errorData.error || response.statusText}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [jsonContent({ deleted: true, slug: params.slug })],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Delete blog post failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
   );
 }

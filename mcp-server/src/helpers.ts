@@ -81,3 +81,52 @@ export const PUBLIC_VENDOR_STATUSES = ["APPROVED", "CONFIRMED"] as const;
 export function jsonContent(data: unknown): { type: "text"; text: string } {
   return { type: "text", text: JSON.stringify(data, null, 2) };
 }
+
+// ---------------------------------------------------------------------------
+// Status enums & transitions — shared between admin.ts and promoter.ts.
+// KEEP IN SYNC with:
+//   - VALID_TRANSITIONS: src/lib/vendor-status.ts
+//   - EVENT_STATUS_ENUM:  src/lib/constants.ts (EventStatus)
+//   - VENDOR_STATUS_ENUM: src/lib/constants.ts (VendorStatus)
+//   - PAYMENT_STATUS_ENUM: src/lib/constants.ts (PaymentStatus)
+// ---------------------------------------------------------------------------
+export const VALID_TRANSITIONS: Record<string, string[]> = {
+  INVITED: ["INTERESTED", "APPLIED", "REJECTED", "WITHDRAWN", "CANCELLED"],
+  INTERESTED: ["APPLIED", "WITHDRAWN", "CANCELLED"],
+  APPLIED: ["WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN"],
+  WAITLISTED: ["APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"],
+  APPROVED: ["CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"],
+  CONFIRMED: ["WITHDRAWN", "CANCELLED"],
+  REJECTED: ["APPLIED", "INVITED"],
+  WITHDRAWN: ["APPLIED", "INTERESTED"],
+  CANCELLED: ["INVITED"],
+};
+
+export const EVENT_STATUS_ENUM = [
+  "DRAFT",
+  "PENDING",
+  "TENTATIVE",
+  "APPROVED",
+  "REJECTED",
+  "CANCELLED",
+] as const;
+
+export const VENDOR_STATUS_ENUM = [
+  "INVITED",
+  "INTERESTED",
+  "APPLIED",
+  "WAITLISTED",
+  "APPROVED",
+  "CONFIRMED",
+  "REJECTED",
+  "WITHDRAWN",
+  "CANCELLED",
+] as const;
+
+export const PAYMENT_STATUS_ENUM = [
+  "NOT_REQUIRED",
+  "PENDING",
+  "PAID",
+  "REFUNDED",
+  "OVERDUE",
+] as const;
