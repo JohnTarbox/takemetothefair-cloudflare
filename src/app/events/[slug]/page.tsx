@@ -27,8 +27,9 @@ import {
   vendors,
   users,
   eventDays,
+  blogPosts,
 } from "@/lib/db/schema";
-import { eq, and, sql, ne, gte, lt, like } from "drizzle-orm";
+import { eq, and, sql, ne, gte, lt, like, desc, or } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
@@ -229,6 +230,33 @@ async function getRelatedEvents(
   }
 }
 
+async function getRelatedBlogPosts(eventName: string, categories: string[]) {
+  try {
+    const db = getCloudflareDb();
+    const searchConditions = [
+      like(blogPosts.tags, `%${eventName}%`),
+      ...categories.map((cat) => like(blogPosts.tags, `%${cat}%`)),
+      ...categories.map((cat) => like(blogPosts.categories, `%${cat}%`)),
+    ];
+
+    const posts = await db
+      .select({
+        title: blogPosts.title,
+        slug: blogPosts.slug,
+        excerpt: blogPosts.excerpt,
+        publishDate: blogPosts.publishDate,
+      })
+      .from(blogPosts)
+      .where(and(eq(blogPosts.status, "PUBLISHED"), or(...searchConditions)))
+      .orderBy(desc(blogPosts.publishDate))
+      .limit(3);
+
+    return posts;
+  } catch {
+    return [];
+  }
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const event = await getEvent(slug);
@@ -283,12 +311,11 @@ export default async function EventDetailPage({ params }: Props) {
   const vendorInfo = await getUserVendorInfo(session?.user?.id, event.id);
   const isAdmin = session?.user?.role === "ADMIN";
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
-  const relatedEvents = await getRelatedEvents(
-    event.id,
-    event.venueId,
-    parseJsonArray(event.categories),
-    isPastEvent
-  );
+  const eventCategories = parseJsonArray(event.categories);
+  const [relatedEvents, relatedBlogPosts] = await Promise.all([
+    getRelatedEvents(event.id, event.venueId, eventCategories, isPastEvent),
+    getRelatedBlogPosts(event.name, eventCategories),
+  ]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -754,6 +781,39 @@ export default async function EventDetailPage({ params }: Props) {
               </Link>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Related Blog Posts */}
+      {relatedBlogPosts.length > 0 && (
+        <div className="mt-12 border-t border-gray-200 pt-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Related Blog Posts</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {relatedBlogPosts.map((post) => (
+              <Link
+                key={post.slug}
+                href={`/blog/${post.slug}`}
+                className="p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all group"
+              >
+                <p className="font-medium text-gray-900 group-hover:text-royal line-clamp-2">
+                  {post.title}
+                </p>
+                {post.excerpt && (
+                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">{post.excerpt}</p>
+                )}
+                {post.publishDate && (
+                  <p className="text-xs text-gray-400 mt-2">
+                    {new Date(post.publishDate).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      timeZone: "UTC",
+                    })}
+                  </p>
+                )}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
     </div>

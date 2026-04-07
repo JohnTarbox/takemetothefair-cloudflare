@@ -5,8 +5,9 @@ import { Calendar, ArrowLeft, Tag, User, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { blogPosts, users } from "@/lib/db/schema";
-import { eq, and, ne, desc } from "drizzle-orm";
+import { blogPosts, users, events, venues } from "@/lib/db/schema";
+import { eq, and, ne, desc, gte, or, like } from "drizzle-orm";
+import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { MarkdownContent } from "@/components/blog/markdown-content";
 import { ShareButtons } from "@/components/ShareButtons";
@@ -76,6 +77,42 @@ async function getRecentPosts(excludeId: string) {
     .limit(3);
 }
 
+async function getRelatedEvents(tags: string[], categories: string[]) {
+  try {
+    const db = getCloudflareDb();
+    // Build search terms from tags and categories
+    const searchTerms = [...tags, ...categories].filter(Boolean);
+    if (searchTerms.length === 0) return [];
+
+    // Match events whose name or categories overlap with blog tags
+    const searchConditions = searchTerms.map((term) =>
+      or(like(events.name, `%${term}%`), like(events.categories, `%${term}%`))
+    );
+
+    const results = await db
+      .select({
+        id: events.id,
+        name: events.name,
+        slug: events.slug,
+        startDate: events.startDate,
+        endDate: events.endDate,
+        imageUrl: events.imageUrl,
+        venueName: venues.name,
+        venueCity: venues.city,
+        venueState: venues.state,
+      })
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(and(isPublicEventStatus(), gte(events.endDate, new Date()), or(...searchConditions)))
+      .orderBy(events.startDate)
+      .limit(3);
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const post = await getPost(slug);
@@ -138,7 +175,10 @@ export default async function BlogPostPage({ params }: Props) {
   const readingTime = estimateReadingTime(post.body);
   const wordCount = countWords(post.body);
   const postImage = post.featuredImageUrl || extractFirstImage(post.body);
-  const recentPosts = await getRecentPosts(post.id);
+  const [recentPosts, relatedEvents] = await Promise.all([
+    getRecentPosts(post.id),
+    getRelatedEvents(tags, categories),
+  ]);
   const parsedRecentPosts = recentPosts.map((p) => ({
     ...p,
     tags: JSON.parse(p.tags || "[]") as string[],
@@ -201,9 +241,7 @@ export default async function BlogPostPage({ params }: Props) {
           )}
 
           {/* Title */}
-          <h1 className="text-3xl sm:text-4xl font-bold text-navy mb-4">
-            {post.title}
-          </h1>
+          <h1 className="text-3xl sm:text-4xl font-bold text-navy mb-4">{post.title}</h1>
 
           {/* Meta line */}
           <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 mb-6">
@@ -257,11 +295,7 @@ export default async function BlogPostPage({ params }: Props) {
 
           {/* Share */}
           <div className="mt-6 pt-6 border-t border-gray-200">
-            <ShareButtons
-              url={url}
-              title={post.title}
-              description={post.excerpt || post.title}
-            />
+            <ShareButtons url={url} title={post.title} description={post.excerpt || post.title} />
           </div>
         </article>
 
@@ -277,7 +311,15 @@ export default async function BlogPostPage({ params }: Props) {
                 </h3>
                 <BlogStatusButton slug={post.slug} currentStatus={post.status} />
                 <div className="text-xs text-gray-500 space-y-1">
-                  <p>Status: <Badge variant={post.status === "PUBLISHED" ? "success" : "warning"} className="ml-1">{post.status}</Badge></p>
+                  <p>
+                    Status:{" "}
+                    <Badge
+                      variant={post.status === "PUBLISHED" ? "success" : "warning"}
+                      className="ml-1"
+                    >
+                      {post.status}
+                    </Badge>
+                  </p>
                   <p>Slug: {post.slug}</p>
                   <p>Author ID: {post.authorId}</p>
                 </div>
@@ -292,7 +334,9 @@ export default async function BlogPostPage({ params }: Props) {
                 <h3 className="text-sm font-semibold text-navy mb-2">Categories</h3>
                 <div className="flex flex-wrap gap-2">
                   {categories.map((cat) => (
-                    <Badge key={cat} variant="default">{cat}</Badge>
+                    <Badge key={cat} variant="default">
+                      {cat}
+                    </Badge>
                   ))}
                 </div>
               </CardContent>
@@ -303,15 +347,81 @@ export default async function BlogPostPage({ params }: Props) {
           <Card>
             <CardContent className="p-4 text-xs text-gray-500 space-y-1">
               {post.createdAt && (
-                <p>Created: {new Date(post.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" })}</p>
+                <p>
+                  Created:{" "}
+                  {new Date(post.createdAt).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                    timeZone: "UTC",
+                  })}
+                </p>
               )}
               {post.updatedAt && (
-                <p>Updated: {new Date(post.updatedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" })}</p>
+                <p>
+                  Updated:{" "}
+                  {new Date(post.updatedAt).toLocaleDateString("en-US", {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                    timeZone: "UTC",
+                  })}
+                </p>
               )}
             </CardContent>
           </Card>
         </aside>
       </div>
+
+      {/* Related Events */}
+      {relatedEvents.length > 0 && (
+        <section className="mt-12 pt-8 border-t border-gray-200">
+          <h2 className="text-2xl font-bold text-navy mb-6">Related Events</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {relatedEvents.map((event) => (
+              <Link
+                key={event.id}
+                href={`/events/${event.slug}`}
+                className="flex gap-4 p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all group"
+              >
+                {event.imageUrl && (
+                  <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 relative">
+                    <Image
+                      src={event.imageUrl}
+                      alt={event.name}
+                      fill
+                      sizes="64px"
+                      className="object-cover"
+                    />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="font-medium text-gray-900 group-hover:text-royal line-clamp-1">
+                    {event.name}
+                  </p>
+                  {event.startDate && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {new Date(event.startDate).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                        timeZone: "UTC",
+                      })}
+                    </p>
+                  )}
+                  {event.venueName && (
+                    <p className="text-xs text-gray-500">
+                      {event.venueName}
+                      {event.venueCity ? `, ${event.venueCity}` : ""}
+                      {event.venueState ? `, ${event.venueState}` : ""}
+                    </p>
+                  )}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Recent posts */}
       {parsedRecentPosts.length > 0 && (
