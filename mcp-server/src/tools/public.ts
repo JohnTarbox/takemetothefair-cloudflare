@@ -27,9 +27,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
     },
     async (params) => {
-      const conditions = [
-        inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
-      ];
+      const conditions = [inArray(events.status, [...PUBLIC_EVENT_STATUSES])];
 
       if (params.query) {
         conditions.push(like(events.name, `%${escapeLike(params.query)}%`));
@@ -53,7 +51,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       // Over-fetch when category post-filter is needed (categories are JSON strings)
       const sqlLimit = params.category ? limit * 5 : limit;
 
-      let query = db
+      const query = db
         .select({
           id: events.id,
           name: events.name,
@@ -81,9 +79,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       if (params.category) {
         const cat = params.category.toLowerCase();
         results = results
-          .filter((r) =>
-            parseJsonArray(r.categories).some((c) => c.toLowerCase().includes(cat)),
-          )
+          .filter((r) => parseJsonArray(r.categories).some((c) => c.toLowerCase().includes(cat)))
           .slice(0, limit);
       }
 
@@ -99,7 +95,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }));
 
       return { content: [jsonContent({ count: output.length, events: output })] };
-    },
+    }
   );
 
   // ── get_event_details ──────────────────────────────────────────
@@ -151,13 +147,18 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .where(
           and(
             eq(eventVendors.eventId, event.id),
-            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
-          ),
+            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES])
+          )
         );
 
       // Get event days
       const days = await db
-        .select({ date: eventDays.date, openTime: eventDays.openTime, closeTime: eventDays.closeTime, notes: eventDays.notes })
+        .select({
+          date: eventDays.date,
+          openTime: eventDays.openTime,
+          closeTime: eventDays.closeTime,
+          notes: eventDays.notes,
+        })
         .from(eventDays)
         .where(eq(eventDays.eventId, event.id));
 
@@ -190,7 +191,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           }),
         ],
       };
-    },
+    }
   );
 
   // ── list_event_vendors ─────────────────────────────────────────
@@ -206,7 +207,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const eventRows = await db
         .select({ id: events.id, name: events.name })
         .from(events)
-        .where(and(eq(events.slug, params.event_slug), inArray(events.status, [...PUBLIC_EVENT_STATUSES])))
+        .where(
+          and(
+            eq(events.slug, params.event_slug),
+            inArray(events.status, [...PUBLIC_EVENT_STATUSES])
+          )
+        )
         .limit(1);
 
       if (eventRows.length === 0) {
@@ -227,8 +233,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .where(
           and(
             eq(eventVendors.eventId, eventRows[0].id),
-            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
-          ),
+            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES])
+          )
         )
         .limit(params.limit ?? 20);
 
@@ -250,7 +256,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           }),
         ],
       };
-    },
+    }
   );
 
   // ── search_vendors ─────────────────────────────────────────────
@@ -296,7 +302,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }));
 
       return { content: [jsonContent({ count: output.length, vendors: output })] };
-    },
+    }
   );
 
   // ── search_venues ──────────────────────────────────────────────
@@ -324,6 +330,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       const rows = await db
         .select({
+          id: venues.id,
           name: venues.name,
           slug: venues.slug,
           address: venues.address,
@@ -339,6 +346,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .limit(params.limit ?? 20);
 
       const output = rows.map((r) => ({
+        id: r.id,
         name: r.name,
         slug: r.slug,
         address: `${r.address}, ${r.city}, ${r.state} ${r.zip}`,
@@ -348,6 +356,98 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }));
 
       return { content: [jsonContent({ count: output.length, venues: output })] };
+    }
+  );
+
+  // ── get_venue_details ─────────────────────────────────────────
+  server.tool(
+    "get_venue_details",
+    "Get full details for a venue by slug or ID, including upcoming event count.",
+    {
+      slug: z.string().optional().describe("Venue slug (URL-friendly name)"),
+      id: z.string().optional().describe("Venue ID (UUID)"),
     },
+    async (params) => {
+      if (!params.slug && !params.id) {
+        return {
+          content: [{ type: "text", text: "Provide either slug or id to look up a venue." }],
+          isError: true,
+        };
+      }
+
+      const condition = params.id ? eq(venues.id, params.id) : eq(venues.slug, params.slug!);
+
+      const rows = await db
+        .select({
+          id: venues.id,
+          name: venues.name,
+          slug: venues.slug,
+          address: venues.address,
+          city: venues.city,
+          state: venues.state,
+          zip: venues.zip,
+          latitude: venues.latitude,
+          longitude: venues.longitude,
+          capacity: venues.capacity,
+          amenities: venues.amenities,
+          contactEmail: venues.contactEmail,
+          contactPhone: venues.contactPhone,
+          website: venues.website,
+          description: venues.description,
+          imageUrl: venues.imageUrl,
+          googleMapsUrl: venues.googleMapsUrl,
+          googleRating: venues.googleRating,
+          status: venues.status,
+          createdAt: venues.createdAt,
+        })
+        .from(venues)
+        .where(condition)
+        .limit(1);
+
+      if (rows.length === 0) {
+        return { content: [{ type: "text", text: "Venue not found." }], isError: true };
+      }
+
+      const venue = rows[0];
+
+      // Count upcoming events at this venue
+      const upcomingEvents = await db
+        .select({ id: events.id })
+        .from(events)
+        .where(
+          and(
+            eq(events.venueId, venue.id),
+            inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+            gte(events.endDate, new Date())
+          )
+        );
+
+      return {
+        content: [
+          jsonContent({
+            id: venue.id,
+            name: venue.name,
+            slug: venue.slug,
+            address: venue.address,
+            city: venue.city,
+            state: venue.state,
+            zip: venue.zip,
+            latitude: venue.latitude,
+            longitude: venue.longitude,
+            capacity: venue.capacity,
+            amenities: parseJsonArray(venue.amenities),
+            contactEmail: venue.contactEmail,
+            contactPhone: venue.contactPhone,
+            website: venue.website,
+            description: venue.description,
+            imageUrl: venue.imageUrl || null,
+            googleMapsUrl: venue.googleMapsUrl,
+            googleRating: venue.googleRating,
+            status: venue.status,
+            upcomingEventCount: upcomingEvents.length,
+          }),
+        ],
+      };
+    }
   );
 }

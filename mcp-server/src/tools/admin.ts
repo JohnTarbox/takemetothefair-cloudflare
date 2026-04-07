@@ -77,6 +77,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .max(100)
         .optional()
         .describe("Max results to return (default 20)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
       const conditions = [];
@@ -88,6 +94,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
 
       const query = db
         .select({
@@ -111,12 +118,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const eventRows =
         conditions.length > 0
-          ? await query.where(and(...conditions)).limit(limit)
-          : await query.limit(limit);
+          ? await query
+              .where(and(...conditions))
+              .limit(limit)
+              .offset(offset)
+          : await query.limit(limit).offset(offset);
 
       // Batch-fetch vendor counts per event
       const eventIds = eventRows.map((e) => e.id);
-      const vendorCounts: Record<string, { total: number; applied: number; confirmed: number }> = {};
+      const vendorCounts: Record<string, { total: number; applied: number; confirmed: number }> =
+        {};
 
       if (eventIds.length > 0) {
         const allApps = await db
@@ -152,7 +163,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         vendors: vendorCounts[e.id] || { total: 0, applied: 0, confirmed: 0 },
       }));
 
-      return { content: [jsonContent({ count: output.length, events: output })] };
+      return {
+        content: [
+          jsonContent({
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            events: output,
+          }),
+        ],
+      };
     }
   );
 
@@ -242,6 +262,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .describe("Whether the event has non-consecutive dates"),
       sync_enabled: z.boolean().optional().describe("Whether automated sync is enabled"),
+      venue_name: z
+        .string()
+        .optional()
+        .describe("Update linked venue's name (convenience shortcut)"),
+      venue_address: z.string().optional().describe("Update linked venue's street address"),
+      venue_city: z.string().optional().describe("Update linked venue's city"),
+      venue_state: z.string().optional().describe("Update linked venue's state (2-letter code)"),
+      venue_zip: z.string().optional().describe("Update linked venue's ZIP code"),
     },
     async (params) => {
       // Field mapping: snake_case param → camelCase Drizzle column + optional transform
@@ -313,7 +341,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         requestedFields.push("name");
       }
 
-      if (requestedFields.length === 0) {
+      // Collect inline venue fields
+      const venueFieldMap: Array<{
+        param: string;
+        column: string;
+        transform?: (v: any) => unknown;
+      }> = [
+        { param: "venue_name", column: "name" },
+        { param: "venue_address", column: "address" },
+        { param: "venue_city", column: "city" },
+        { param: "venue_state", column: "state", transform: (v: string) => v.toUpperCase() },
+        { param: "venue_zip", column: "zip" },
+      ];
+      const venueUpdates: Record<string, unknown> = {};
+      const venueRequestedFields: string[] = [];
+      for (const { param, column, transform } of venueFieldMap) {
+        const value = (params as Record<string, unknown>)[param];
+        if (value !== undefined) {
+          venueUpdates[column] = transform ? transform(value) : value;
+          venueRequestedFields.push(param);
+        }
+      }
+
+      if (requestedFields.length === 0 && venueRequestedFields.length === 0) {
         return {
           content: [
             {
@@ -407,8 +457,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      // Execute update
-      await db.update(events).set(updates).where(eq(events.id, event.id));
+      // Execute event update (skip if only venue fields provided)
+      if (requestedFields.length > 0) {
+        await db.update(events).set(updates).where(eq(events.id, event.id));
+      }
 
       // Build new values for confirmation
       const newValues: Record<string, unknown> = {};
@@ -419,17 +471,99 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         newValues.slug = updates.slug;
       }
 
-      return {
-        content: [
-          jsonContent({
-            updated: true,
-            event: { id: event.id, name: updates.name ?? event.name },
-            fieldsUpdated: requestedFields,
-            previousValues,
-            newValues,
-          }),
-        ],
+      // Handle inline venue field updates
+      let venueUpdateResult: Record<string, unknown> | null = null;
+      if (venueRequestedFields.length > 0) {
+        // Determine which venue to update
+        const targetVenueId = params.venue_id ?? event.venueId;
+        if (!targetVenueId) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Event has no linked venue. Use create_venue + venue_id to link one first.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Fetch current venue for previous values
+        const venueRows = await db
+          .select()
+          .from(venues)
+          .where(eq(venues.id, targetVenueId))
+          .limit(1);
+
+        if (venueRows.length === 0) {
+          return {
+            content: [{ type: "text", text: `Linked venue not found: ${targetVenueId}` }],
+            isError: true,
+          };
+        }
+
+        const venue = venueRows[0];
+        const venuePreviousValues: Record<string, unknown> = {};
+        const venueNewValues: Record<string, unknown> = {};
+
+        for (const field of venueRequestedFields) {
+          const mapping = venueFieldMap.find((f) => f.param === field);
+          if (mapping) {
+            venuePreviousValues[field] = (venue as Record<string, unknown>)[mapping.column];
+            venueNewValues[field] = (params as Record<string, unknown>)[field];
+          }
+        }
+
+        // If venue_name changed, regenerate slug
+        if (venueUpdates.name !== undefined) {
+          const baseSlug = createSlug(venueUpdates.name as string);
+          let finalSlug = baseSlug;
+          let suffix = 0;
+          while (true) {
+            const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+            const existing = await db
+              .select({ id: venues.id })
+              .from(venues)
+              .where(eq(venues.slug, candidate))
+              .limit(1);
+            if (existing.length === 0 || existing[0].id === venue.id) {
+              finalSlug = candidate;
+              break;
+            }
+            suffix++;
+            if (suffix > 20) break;
+          }
+          venueUpdates.slug = finalSlug;
+          venuePreviousValues.slug = venue.slug;
+          venueNewValues.slug = finalSlug;
+        }
+
+        venueUpdates.updatedAt = new Date();
+        await db.update(venues).set(venueUpdates).where(eq(venues.id, venue.id));
+
+        venueUpdateResult = {
+          venue_id: venue.id,
+          venue_name: venue.name,
+          fieldsUpdated: venueRequestedFields,
+          previousValues: venuePreviousValues,
+          newValues: venueNewValues,
+        };
+      }
+
+      const result: Record<string, unknown> = {
+        updated: true,
+        event: { id: event.id, name: updates.name ?? event.name },
       };
+      if (requestedFields.length > 0) {
+        result.fieldsUpdated = requestedFields;
+        result.previousValues = previousValues;
+        result.newValues = newValues;
+      }
+      if (venueUpdateResult) {
+        result.venueUpdated = venueUpdateResult;
+      }
+
+      return { content: [jsonContent(result)] };
     }
   );
 
@@ -803,6 +937,268 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           isError: true,
         };
       }
+    }
+  );
+
+  // ── update_venue ──────────────────────────────────────────────
+  server.tool(
+    "update_venue",
+    "Update venue fields (name, address, coordinates, etc.). Admin only.",
+    {
+      venue_id: z.string().describe("Venue ID (UUID)"),
+      name: z.string().optional().describe("Venue name (also regenerates slug)"),
+      address: z.string().optional().describe("Street address"),
+      city: z.string().optional().describe("City"),
+      state: z.string().optional().describe("State (2-letter code)"),
+      zip: z.string().optional().describe("ZIP code"),
+      latitude: z.number().optional().describe("Latitude coordinate"),
+      longitude: z.number().optional().describe("Longitude coordinate"),
+      description: z.string().optional().describe("Venue description"),
+      capacity: z.number().int().optional().describe("Venue capacity"),
+      website: z.string().optional().describe("Website URL"),
+      contact_email: z.string().optional().describe("Contact email"),
+      contact_phone: z.string().optional().describe("Contact phone"),
+      image_url: z.string().optional().describe("Venue image URL"),
+      status: z.enum(["ACTIVE", "INACTIVE"]).optional().describe("Venue status"),
+    },
+    async (params) => {
+      const fieldMap: Array<{
+        param: string;
+        column: string;
+        transform?: (v: any) => unknown;
+      }> = [
+        { param: "address", column: "address" },
+        { param: "city", column: "city" },
+        { param: "state", column: "state", transform: (v: string) => v.toUpperCase() },
+        { param: "zip", column: "zip" },
+        { param: "latitude", column: "latitude" },
+        { param: "longitude", column: "longitude" },
+        { param: "description", column: "description" },
+        { param: "capacity", column: "capacity" },
+        { param: "website", column: "website" },
+        { param: "contact_email", column: "contactEmail" },
+        { param: "contact_phone", column: "contactPhone" },
+        { param: "image_url", column: "imageUrl" },
+        { param: "status", column: "status" },
+      ];
+
+      const updates: Record<string, unknown> = {};
+      const requestedFields: string[] = [];
+
+      for (const { param, column, transform } of fieldMap) {
+        const value = (params as Record<string, unknown>)[param];
+        if (value !== undefined) {
+          updates[column] = transform ? transform(value) : value;
+          requestedFields.push(param);
+        }
+      }
+
+      if (params.name !== undefined) {
+        updates.name = params.name;
+        requestedFields.push("name");
+      }
+
+      if (requestedFields.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No fields provided to update. Supply at least one optional field.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Fetch current venue
+      const venueRows = await db
+        .select()
+        .from(venues)
+        .where(eq(venues.id, params.venue_id))
+        .limit(1);
+
+      if (venueRows.length === 0) {
+        return { content: [{ type: "text", text: "Venue not found." }], isError: true };
+      }
+
+      const venue = venueRows[0];
+
+      // If name changed, regenerate slug with collision check
+      if (params.name !== undefined) {
+        const baseSlug = createSlug(params.name);
+        let finalSlug = baseSlug;
+        let suffix = 0;
+        while (true) {
+          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const existing = await db
+            .select({ id: venues.id })
+            .from(venues)
+            .where(eq(venues.slug, candidate))
+            .limit(1);
+          if (existing.length === 0 || existing[0].id === venue.id) {
+            finalSlug = candidate;
+            break;
+          }
+          suffix++;
+          if (suffix > 20) {
+            return {
+              content: [
+                { type: "text", text: "Too many slug collisions. Try a more unique name." },
+              ],
+              isError: true,
+            };
+          }
+        }
+        updates.slug = finalSlug;
+      }
+
+      updates.updatedAt = new Date();
+
+      // Capture previous values
+      const previousValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        if (field === "name") {
+          previousValues.name = venue.name;
+          previousValues.slug = venue.slug;
+          continue;
+        }
+        const mapping = fieldMap.find((f) => f.param === field);
+        if (mapping) {
+          previousValues[field] = (venue as Record<string, unknown>)[mapping.column];
+        }
+      }
+
+      await db.update(venues).set(updates).where(eq(venues.id, venue.id));
+
+      const newValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        newValues[field] = (params as Record<string, unknown>)[field];
+      }
+      if (params.name !== undefined && updates.slug) {
+        newValues.slug = updates.slug;
+      }
+
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            venue: { id: venue.id, name: updates.name ?? venue.name },
+            fieldsUpdated: requestedFields,
+            previousValues,
+            newValues,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── create_venue ──────────────────────────────────────────────
+  server.tool(
+    "create_venue",
+    "Create a new venue record. Returns the venue ID for use with update_event. Admin only.",
+    {
+      name: z.string().min(1).max(200).describe("Venue name"),
+      address: z.string().min(1).describe("Street address"),
+      city: z.string().min(1).describe("City"),
+      state: z.string().min(1).max(2).describe("State (2-letter code)"),
+      zip: z.string().min(1).describe("ZIP code"),
+      latitude: z.number().optional().describe("Latitude coordinate"),
+      longitude: z.number().optional().describe("Longitude coordinate"),
+      capacity: z.number().int().optional().describe("Venue capacity"),
+      website: z.string().optional().describe("Website URL"),
+      description: z.string().optional().describe("Venue description"),
+      contact_email: z.string().optional().describe("Contact email"),
+      contact_phone: z.string().optional().describe("Contact phone"),
+      image_url: z.string().optional().describe("Venue image URL"),
+    },
+    async (params) => {
+      // Warn on potential duplicate (same name + city + state)
+      const dupeCheck = await db
+        .select({ id: venues.id, slug: venues.slug })
+        .from(venues)
+        .where(
+          and(
+            eq(venues.name, params.name),
+            eq(venues.city, params.city),
+            eq(venues.state, params.state.toUpperCase())
+          )
+        )
+        .limit(1);
+
+      if (dupeCheck.length > 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `A venue named "${params.name}" already exists in ${params.city}, ${params.state} (slug: ${dupeCheck[0].slug}, id: ${dupeCheck[0].id}). Use update_venue to modify it, or choose a different name.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Generate unique slug
+      const baseSlug = createSlug(params.name);
+      if (!baseSlug) {
+        return {
+          content: [{ type: "text", text: "Could not generate a valid slug from the venue name." }],
+          isError: true,
+        };
+      }
+
+      let finalSlug = baseSlug;
+      let suffix = 0;
+      while (true) {
+        const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+        const slugCheck = await db
+          .select({ id: venues.id })
+          .from(venues)
+          .where(eq(venues.slug, candidate))
+          .limit(1);
+        if (slugCheck.length === 0) {
+          finalSlug = candidate;
+          break;
+        }
+        suffix++;
+        if (suffix > 20) {
+          return {
+            content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+            isError: true,
+          };
+        }
+      }
+
+      const venueId = crypto.randomUUID();
+
+      await db.insert(venues).values({
+        id: venueId,
+        name: params.name,
+        slug: finalSlug,
+        address: params.address,
+        city: params.city,
+        state: params.state.toUpperCase(),
+        zip: params.zip,
+        latitude: params.latitude ?? null,
+        longitude: params.longitude ?? null,
+        capacity: params.capacity ?? null,
+        website: params.website ?? null,
+        description: params.description ?? null,
+        contactEmail: params.contact_email ?? null,
+        contactPhone: params.contact_phone ?? null,
+        imageUrl: params.image_url ?? null,
+      });
+
+      return {
+        content: [
+          jsonContent({
+            created: true,
+            venue_id: venueId,
+            slug: finalSlug,
+            name: params.name,
+            location: `${params.city}, ${params.state.toUpperCase()}`,
+          }),
+        ],
+      };
     }
   );
 }

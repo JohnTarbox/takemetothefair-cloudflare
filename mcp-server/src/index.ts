@@ -50,30 +50,43 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       async () => {
         if (!props) {
           return {
-            content: [{ type: "text" as const, text: JSON.stringify({ authenticated: false }, null, 2) }],
+            content: [
+              { type: "text" as const, text: JSON.stringify({ authenticated: false }, null, 2) },
+            ],
           };
         }
-        const toolSets = ["public tools (5)", "user tools (2)"];
+        const toolSets = ["public tools (6)", "user tools (2)"];
         if (props.role === "VENDOR" || props.role === "ADMIN") {
-          toolSets.push(props.vendorId ? "vendor tools (6)" : "vendor tools (1 — suggest_event only, no vendor profile)");
+          toolSets.push(
+            props.vendorId
+              ? "vendor tools (6)"
+              : "vendor tools (1 — suggest_event only, no vendor profile)"
+          );
         }
-        if (props.role === "PROMOTER" || props.role === "ADMIN") toolSets.push("promoter tools (2)");
-        if (props.role === "ADMIN") toolSets.push("admin tools (6)");
+        if (props.role === "PROMOTER" || props.role === "ADMIN")
+          toolSets.push("promoter tools (2)");
+        if (props.role === "ADMIN") toolSets.push("admin tools (8)");
         return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              authenticated: true,
-              userId: props.userId,
-              email: props.email,
-              role: props.role,
-              vendorId: props.vendorId || null,
-              promoterId: props.promoterId || null,
-              toolSets,
-            }, null, 2),
-          }],
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  authenticated: true,
+                  userId: props.userId,
+                  email: props.email,
+                  role: props.role,
+                  vendorId: props.vendorId || null,
+                  promoterId: props.promoterId || null,
+                  toolSets,
+                },
+                null,
+                2
+              ),
+            },
+          ],
         };
-      },
+      }
     );
 
     // Role-specific tools based on OAuth props
@@ -88,7 +101,9 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       registerUserTools(this.server, db, auth);
 
       if (auth.role === "VENDOR" || auth.role === "ADMIN") {
-        console.log(`[INIT] Registering vendor tools for role=${auth.role} vendorId=${auth.vendorId || "none"}`);
+        console.log(
+          `[INIT] Registering vendor tools for role=${auth.role} vendorId=${auth.vendorId || "none"}`
+        );
         registerVendorTools(this.server, db, auth);
       }
       if (auth.role === "PROMOTER" || auth.role === "ADMIN") {
@@ -137,9 +152,8 @@ function getCorsOrigin(request: Request): string {
 // Legacy stateless handler for mmatf_ Bearer tokens
 // ---------------------------------------------------------------------------
 async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Response> {
-  const { WebStandardStreamableHTTPServerTransport } = await import(
-    "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js"
-  );
+  const { WebStandardStreamableHTTPServerTransport } =
+    await import("@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js");
 
   const corsOrigin = getCorsOrigin(request);
 
@@ -148,7 +162,8 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       headers: {
         "Access-Control-Allow-Origin": corsOrigin,
         "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
         "Access-Control-Expose-Headers": "mcp-session-id",
       },
     });
