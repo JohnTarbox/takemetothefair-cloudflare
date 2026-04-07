@@ -4,9 +4,11 @@ import { Search, Calendar, MapPin, Users, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventList } from "@/components/events/event-list";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters } from "@/lib/db/schema";
-import { and, gte, eq } from "drizzle-orm";
+import { events, venues, promoters, blogPosts, users } from "@/lib/db/schema";
+import { and, gte, eq, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { BlogPostCard } from "@/components/blog/blog-post-card";
+import { extractFirstImage } from "@/lib/markdown-utils";
 
 import type { Metadata } from "next";
 
@@ -85,10 +87,44 @@ async function getUpcomingEvents() {
   }
 }
 
+async function getRecentBlogPosts() {
+  try {
+    const db = getCloudflareDb();
+    const posts = await db
+      .select({
+        title: blogPosts.title,
+        slug: blogPosts.slug,
+        excerpt: blogPosts.excerpt,
+        body: blogPosts.body,
+        featuredImageUrl: blogPosts.featuredImageUrl,
+        authorName: users.name,
+        tags: blogPosts.tags,
+        categories: blogPosts.categories,
+        status: blogPosts.status,
+        publishDate: blogPosts.publishDate,
+      })
+      .from(blogPosts)
+      .leftJoin(users, eq(blogPosts.authorId, users.id))
+      .where(eq(blogPosts.status, "PUBLISHED"))
+      .orderBy(desc(blogPosts.publishDate))
+      .limit(3);
+
+    return posts.map((p) => ({
+      ...p,
+      tags: JSON.parse(p.tags || "[]") as string[],
+      categories: JSON.parse(p.categories || "[]") as string[],
+      featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export default async function HomePage() {
-  const [featuredEvents, upcomingEvents] = await Promise.all([
+  const [featuredEvents, upcomingEvents, recentPosts] = await Promise.all([
     getFeaturedEvents(),
     getUpcomingEvents(),
+    getRecentBlogPosts(),
   ]);
 
   return (
@@ -283,6 +319,28 @@ export default async function HomePage() {
           <EventList events={upcomingEvents} emptyMessage="No upcoming events. Check back soon!" />
         </div>
       </section>
+
+      {/* Latest from the Blog */}
+      {recentPosts.length > 0 && (
+        <section className="py-16">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Latest from the Blog</h2>
+              <Link
+                href="/blog"
+                className="text-royal hover:text-navy font-medium flex items-center"
+              >
+                View All <ArrowRight className="w-4 h-4 ml-1" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {recentPosts.map((post) => (
+                <BlogPostCard key={post.slug} post={post} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* CTA Section */}
       <section className="py-16 bg-navy">
