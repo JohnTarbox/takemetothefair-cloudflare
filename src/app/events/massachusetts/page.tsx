@@ -17,12 +17,20 @@ export const metadata: Metadata = {
       "Discover upcoming fairs, festivals, craft shows, and markets across Massachusetts.",
     url: "https://meetmeatthefair.com/events/massachusetts",
     siteName: "Meet Me at the Fair",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Fairs & Festivals in Massachusetts" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Fairs & Festivals in Massachusetts",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Fairs & Festivals in Massachusetts",
-    description: "Discover upcoming fairs, festivals, craft shows, and markets across Massachusetts.",
+    description:
+      "Discover upcoming fairs, festivals, craft shows, and markets across Massachusetts.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -30,10 +38,8 @@ export const metadata: Metadata = {
 export default async function MassachusettsEventsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; includePast?: string }>;
 }) {
   const params = await searchParams;
-  return (
-    <StateEventsPage stateSlug="massachusetts" searchParams={params} />
-  );
+  return <StateEventsPage stateSlug="massachusetts" searchParams={params} />;
 }

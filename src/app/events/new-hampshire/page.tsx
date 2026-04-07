@@ -17,12 +17,20 @@ export const metadata: Metadata = {
       "Discover upcoming fairs, festivals, craft shows, and markets across New Hampshire.",
     url: "https://meetmeatthefair.com/events/new-hampshire",
     siteName: "Meet Me at the Fair",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Fairs & Festivals in New Hampshire" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Fairs & Festivals in New Hampshire",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Fairs & Festivals in New Hampshire",
-    description: "Discover upcoming fairs, festivals, craft shows, and markets across New Hampshire.",
+    description:
+      "Discover upcoming fairs, festivals, craft shows, and markets across New Hampshire.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -30,7 +38,7 @@ export const metadata: Metadata = {
 export default async function NewHampshireEventsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; includePast?: string }>;
 }) {
   const params = await searchParams;
   return <StateEventsPage stateSlug="new-hampshire" searchParams={params} />;

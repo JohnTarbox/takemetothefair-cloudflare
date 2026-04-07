@@ -28,7 +28,7 @@ import {
   users,
   eventDays,
 } from "@/lib/db/schema";
-import { eq, and, sql, ne, gte, like } from "drizzle-orm";
+import { eq, and, sql, ne, gte, lt, like } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
@@ -167,14 +167,18 @@ async function getEvent(slug: string) {
   }
 }
 
-async function getRelatedEvents(eventId: string, venueId: string | null, categories: string[]) {
+async function getRelatedEvents(
+  eventId: string,
+  venueId: string | null,
+  categories: string[],
+  isPastEvent: boolean
+) {
   const db = getCloudflareDb();
   try {
-    const baseConditions = [
-      ne(events.id, eventId),
-      isPublicEventStatus(),
-      gte(events.endDate, new Date()),
-    ];
+    const dateCondition = isPastEvent
+      ? lt(events.endDate, new Date())
+      : gte(events.endDate, new Date());
+    const baseConditions = [ne(events.id, eventId), isPublicEventStatus(), dateCondition];
 
     // Try same venue first
     if (venueId) {
@@ -278,10 +282,12 @@ export default async function EventDetailPage({ params }: Props) {
   const session = await auth();
   const vendorInfo = await getUserVendorInfo(session?.user?.id, event.id);
   const isAdmin = session?.user?.role === "ADMIN";
+  const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
   const relatedEvents = await getRelatedEvents(
     event.id,
     event.venueId,
-    parseJsonArray(event.categories)
+    parseJsonArray(event.categories),
+    isPastEvent
   );
 
   return (
@@ -741,6 +747,13 @@ export default async function EventDetailPage({ params }: Props) {
               <EventCard key={relEvent.id} event={relEvent} />
             ))}
           </div>
+          {isPastEvent && (
+            <div className="mt-6 text-center">
+              <Link href="/events" className="text-royal hover:text-navy text-sm font-medium">
+                Browse upcoming events &rarr;
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

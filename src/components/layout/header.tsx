@@ -35,7 +35,9 @@ export function Header() {
   ];
 
   return (
-    <header className={`bg-white border-b border-gray-200 transition-shadow ${scrolled ? "shadow-sm" : ""}`}>
+    <header
+      className={`bg-white border-b border-gray-200 transition-shadow ${scrolled ? "shadow-sm" : ""}`}
+    >
       {/* Skip navigation link for accessibility */}
       <a
         href="#main-content"
@@ -47,9 +49,7 @@ export function Header() {
         <div className="flex h-16 justify-between items-center">
           <div className="flex items-center">
             <Link href="/" className="flex items-center space-x-2">
-              <span className="text-xl font-bold text-navy">
-                Meet Me at the Fair
-              </span>
+              <span className="text-xl font-bold text-navy">Meet Me at the Fair</span>
             </Link>
           </div>
 
@@ -90,9 +90,7 @@ export function Header() {
                       <User className="w-4 h-4 text-royal" />
                     )}
                   </div>
-                  <span className="font-medium">
-                    {session.user.name || session.user.email}
-                  </span>
+                  <span className="font-medium">{session.user.name || session.user.email}</span>
                 </button>
 
                 {userMenuOpen && (
@@ -108,21 +106,14 @@ export function Header() {
                         {item.name}
                       </Link>
                     ))}
-                    {(session.user.role === "ADMIN" ||
-                      session.user.role === "PROMOTER") && (
+                    {(session.user.role === "ADMIN" || session.user.role === "PROMOTER") && (
                       <Link
-                        href={
-                          session.user.role === "ADMIN"
-                            ? "/admin"
-                            : "/promoter/events"
-                        }
+                        href={session.user.role === "ADMIN" ? "/admin" : "/promoter/events"}
                         className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <Calendar className="w-4 h-4 mr-2" />
-                        {session.user.role === "ADMIN"
-                          ? "Admin Panel"
-                          : "My Events"}
+                        {session.user.role === "ADMIN" ? "Admin Panel" : "My Events"}
                       </Link>
                     )}
                     {session.user.role === "VENDOR" && (
@@ -164,11 +155,7 @@ export function Header() {
               className="text-gray-600 hover:text-gray-900 p-2.5 -mr-2.5"
               aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
             >
-              {mobileMenuOpen ? (
-                <X className="w-6 h-6" />
-              ) : (
-                <Menu className="w-6 h-6" />
-              )}
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
           </div>
         </div>
@@ -179,15 +166,25 @@ export function Header() {
               {navigation.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
                 return (
-                  <Link
-                    key={item.name}
-                    href={item.href}
-                    aria-current={isActive ? "page" : undefined}
-                    className={`block px-3 py-2 rounded-lg ${isActive ? "text-royal bg-brand-blue-light font-medium" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
-                    onClick={() => setMobileMenuOpen(false)}
-                  >
-                    {item.name}
-                  </Link>
+                  <div key={item.name}>
+                    <Link
+                      href={item.href}
+                      aria-current={isActive ? "page" : undefined}
+                      className={`block px-3 py-2 rounded-lg ${isActive ? "text-royal bg-brand-blue-light font-medium" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
+                      onClick={() => setMobileMenuOpen(false)}
+                    >
+                      {item.name}
+                    </Link>
+                    {item.href === "/events" && (
+                      <Link
+                        href="/events/past"
+                        className="block px-6 py-1.5 text-sm text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        Past Events
+                      </Link>
+                    )}
+                  </div>
                 );
               })}
               {!session && (

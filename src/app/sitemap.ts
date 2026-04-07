@@ -126,16 +126,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
     // Get approved events
     const eventResults = await db
-      .select({ slug: events.slug, updatedAt: events.updatedAt })
+      .select({ slug: events.slug, updatedAt: events.updatedAt, endDate: events.endDate })
       .from(events)
       .where(isPublicEventStatus());
 
-    const eventPages: MetadataRoute.Sitemap = eventResults.map((event) => ({
-      url: `${baseUrl}/events/${event.slug}`,
-      lastModified: event.updatedAt || new Date(),
-      changeFrequency: "weekly" as const,
-      priority: 0.7,
-    }));
+    const now = new Date();
+    const eventPages: MetadataRoute.Sitemap = eventResults.map((event) => {
+      const isPast = event.endDate && new Date(event.endDate) < now;
+      return {
+        url: `${baseUrl}/events/${event.slug}`,
+        lastModified: event.updatedAt || new Date(),
+        changeFrequency: isPast ? ("monthly" as const) : ("weekly" as const),
+        priority: isPast ? 0.5 : 0.7,
+      };
+    });
 
     // Get active venues
     const venueResults = await db

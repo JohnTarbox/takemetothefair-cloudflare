@@ -13,11 +13,17 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Fairs & Festivals in Maine",
-    description:
-      "Discover upcoming fairs, festivals, craft shows, and markets across Maine.",
+    description: "Discover upcoming fairs, festivals, craft shows, and markets across Maine.",
     url: "https://meetmeatthefair.com/events/maine",
     siteName: "Meet Me at the Fair",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Fairs & Festivals in Maine" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Fairs & Festivals in Maine",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
@@ -30,7 +36,7 @@ export const metadata: Metadata = {
 export default async function MaineEventsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; includePast?: string }>;
 }) {
   const params = await searchParams;
   return <StateEventsPage stateSlug="maine" searchParams={params} />;

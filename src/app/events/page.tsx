@@ -4,7 +4,15 @@ import Link from "next/link";
 import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors, userFavorites, eventDays } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  promoters,
+  eventVendors,
+  vendors,
+  userFavorites,
+  eventDays,
+} from "@/lib/db/schema";
 import { eq, and, gte, or, count, inArray, sql, like, isNull, asc, desc } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -17,24 +25,33 @@ export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {
   title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
-  description: "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
+  description:
+    "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
   alternates: { canonical: "https://meetmeatthefair.com/events" },
   openGraph: {
     title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
-    description: "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
+    description:
+      "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
     url: "https://meetmeatthefair.com/events",
     siteName: "Meet Me at the Fair",
     type: "website",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
-    description: "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
+    description:
+      "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
-
 
 interface SearchParams {
   query?: string;
@@ -59,7 +76,10 @@ function parseView(view?: string): ViewMode {
 }
 
 // Get favorite IDs for a user
-async function getUserFavoriteIds(userId: string, type: "EVENT" | "VENUE" | "VENDOR"): Promise<string[]> {
+async function getUserFavoriteIds(
+  userId: string,
+  type: "EVENT" | "VENUE" | "VENDOR"
+): Promise<string[]> {
   try {
     const db = getCloudflareDb();
     const favorites = await db
@@ -97,14 +117,18 @@ async function getVendorEventIds(vendorId: string): Promise<string[]> {
       .select({ eventId: eventVendors.eventId })
       .from(eventVendors)
       .where(eq(eventVendors.vendorId, vendorId));
-    return results.map(r => r.eventId);
+    return results.map((r) => r.eventId);
   } catch (error) {
     console.error("Failed to fetch vendor event IDs", { error, vendorId });
     return [];
   }
 }
 
-async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], favoriteIds?: string[]) {
+async function getEvents(
+  searchParams: SearchParams,
+  vendorEventIds?: string[],
+  favoriteIds?: string[]
+) {
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
   const page = parseInt(searchParams.page || "1");
@@ -115,23 +139,15 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
   const db = getCloudflareDb();
 
   try {
-
     // Build conditions
-    const conditions = [
-      isPublicEventStatus(),
-    ];
+    const conditions = [isPublicEventStatus()];
 
     // Date filtering logic:
     // - includePast=true: show all events (past, future, and TBD)
     // - default: show future events AND events with null dates (TBD)
     if (searchParams.includePast !== "true") {
       // Show future events OR events with null end dates (TBD)
-      conditions.push(
-        or(
-          gte(events.endDate, new Date()),
-          isNull(events.endDate)
-        )!
-      );
+      conditions.push(or(gte(events.endDate, new Date()), isNull(events.endDate))!);
     }
 
     if (searchParams.query) {
@@ -159,14 +175,12 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
         const minMatches = Math.max(2, Math.floor(trigrams.length * 0.6));
 
         // Build a condition that counts matching trigrams
-        const trigramConditions = trigrams.map(t =>
-          sql`(CASE WHEN LOWER(${events.name}) LIKE ${'%' + t + '%'} THEN 1 ELSE 0 END)`
+        const trigramConditions = trigrams.map(
+          (t) => sql`(CASE WHEN LOWER(${events.name}) LIKE ${"%" + t + "%"} THEN 1 ELSE 0 END)`
         );
 
         if (trigramConditions.length > 0) {
-          searchConditions.push(
-            sql`(${sql.join(trigramConditions, sql` + `)}) >= ${minMatches}`
-          );
+          searchConditions.push(sql`(${sql.join(trigramConditions, sql` + `)}) >= ${minMatches}`);
         }
       }
 
@@ -188,7 +202,10 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     // Filter by vendor's events if myEvents is true
     if (searchParams.myEvents === "true" && vendorEventIds && vendorEventIds.length > 0) {
       conditions.push(inArray(events.id, vendorEventIds));
-    } else if (searchParams.myEvents === "true" && (!vendorEventIds || vendorEventIds.length === 0)) {
+    } else if (
+      searchParams.myEvents === "true" &&
+      (!vendorEventIds || vendorEventIds.length === 0)
+    ) {
       // Vendor has no events, return empty
       return { events: [], total: 0, page, limit };
     }
@@ -212,7 +229,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
       "date-desc": desc(events.startDate),
       "name-asc": asc(events.name),
       "name-desc": desc(events.name),
-      "popular": desc(events.viewCount),
+      popular: desc(events.viewCount),
     };
     const orderBy = orderByMap[sort] || asc(events.startDate);
 
@@ -240,7 +257,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     const results = await query;
 
     // Get all event IDs from results
-    const eventIds = results.map(r => r.events.id);
+    const eventIds = results.map((r) => r.events.id);
 
     // Single query: Fetch all vendors for all events at once
     const allEventVendors: {
@@ -268,12 +285,7 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
           })
           .from(eventVendors)
           .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-          .where(
-            and(
-              inArray(eventVendors.eventId, batch),
-              isPublicVendorStatus()
-            )
-          );
+          .where(and(inArray(eventVendors.eventId, batch), isPublicVendorStatus()));
         allEventVendors.push(...batchResults);
       }
     }
@@ -290,8 +302,8 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     const daysByEvent = new Map<string, string[]>();
     if (isCalendarView) {
       const discontinuousIds = results
-        .filter(r => r.events.discontinuousDates)
-        .map(r => r.events.id);
+        .filter((r) => r.events.discontinuousDates)
+        .map((r) => r.events.id);
 
       if (discontinuousIds.length > 0) {
         const BATCH_SIZE = 50;
@@ -311,11 +323,11 @@ async function getEvents(searchParams: SearchParams, vendorEventIds?: string[], 
     }
 
     // Combine events with their vendors
-    const eventsWithVendors = results.map(r => ({
+    const eventsWithVendors = results.map((r) => ({
       ...r.events,
       venue: r.venues,
       promoter: r.promoters,
-      vendors: (vendorsByEvent.get(r.events.id) || []).map(ev => ({
+      vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
         id: ev.vendorId,
         businessName: ev.businessName,
         slug: ev.slug,
@@ -416,9 +428,7 @@ function EventsFilter({
 
   return (
     <form className="bg-white p-4 rounded-lg border border-gray-200 space-y-4">
-      {searchParams.view && (
-        <input type="hidden" name="view" value={searchParams.view} />
-      )}
+      {searchParams.view && <input type="hidden" name="view" value={searchParams.view} />}
 
       {/* Vendor-only filter */}
       {isVendor && (
@@ -443,9 +453,7 @@ function EventsFilter({
       )}
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Search
-        </label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
@@ -459,9 +467,7 @@ function EventsFilter({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Category
-        </label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
         <select
           name="category"
           defaultValue={searchParams.category}
@@ -477,9 +483,7 @@ function EventsFilter({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          State
-        </label>
+        <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
         <select
           name="state"
           defaultValue={searchParams.state}
@@ -588,8 +592,11 @@ export default async function EventsPage({
   }
 
   const viewMode = parseView(params.view);
-  const [{ events: eventsList, total, page, limit }, categories, states] =
-    await Promise.all([getEvents(params, vendorEventIds, favoriteIds), getCategories(), getStates()]);
+  const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
+    getEvents(params, vendorEventIds, favoriteIds),
+    getCategories(),
+    getStates(),
+  ]);
 
   const totalPages = Math.ceil(total / limit);
 
@@ -641,10 +648,15 @@ export default async function EventsPage({
             total={total}
             myEvents={params.myEvents === "true"}
           />
-          <div className="mt-8 text-center print:hidden">
+          <div className="mt-8 bg-gray-50 rounded-lg p-6 text-center border border-gray-200 print:hidden">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Looking for past events?</h3>
+            <p className="text-sm text-gray-600 mb-3">
+              Browse fairs and festivals from previous seasons, including event details and vendor
+              information.
+            </p>
             <Link
               href="/events/past"
-              className="text-royal hover:text-navy transition-colors text-sm font-medium"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-lg hover:bg-navy transition-colors text-sm font-medium"
             >
               Browse past events &rarr;
             </Link>
