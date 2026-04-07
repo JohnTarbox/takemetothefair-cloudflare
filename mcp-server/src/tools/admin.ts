@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, like, inArray } from "drizzle-orm";
+import { eq, and, like, inArray, isNull } from "drizzle-orm";
 import { events, eventVendors, vendors, venues, promoters, users, eventDays } from "../schema.js";
 import {
   formatDateRange,
@@ -27,12 +27,43 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   if (auth.role !== "ADMIN") return;
 
   // ── list_all_events ────────────────────────────────────────────
+  // Whitelist of event fields that can be filtered for NULL values
+  const MISSING_FIELD_MAP: Record<string, any> = {
+    venue_id: events.venueId,
+    description: events.description,
+    image_url: events.imageUrl,
+    start_date: events.startDate,
+    end_date: events.endDate,
+    ticket_url: events.ticketUrl,
+    source_url: events.sourceUrl,
+    categories: events.categories,
+    tags: events.tags,
+  };
+
   server.tool(
     "list_all_events",
-    "Browse/search all events regardless of promoter ownership. Admin only.",
+    "Browse/search all events regardless of promoter ownership. Use missing_fields to find events with incomplete data (e.g. no venue, no image). Admin only.",
     {
       status: z.enum(EVENT_STATUS_ENUM).optional().describe("Filter by event status"),
       search: z.string().optional().describe("Search events by name (partial match)"),
+      missing_fields: z
+        .array(
+          z.enum([
+            "venue_id",
+            "description",
+            "image_url",
+            "start_date",
+            "end_date",
+            "ticket_url",
+            "source_url",
+            "categories",
+            "tags",
+          ])
+        )
+        .optional()
+        .describe(
+          "Filter for events where these fields are NULL/missing. E.g. ['venue_id','image_url'] returns events with no venue AND no image."
+        ),
       limit: z
         .number()
         .int()
@@ -54,6 +85,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (params.search) {
         conditions.push(like(events.name, `%${escapeLike(params.search)}%`));
+      }
+      if (params.missing_fields) {
+        for (const field of params.missing_fields) {
+          const column = MISSING_FIELD_MAP[field];
+          if (column) {
+            conditions.push(isNull(column));
+          }
+        }
       }
 
       const limit = params.limit ?? 20;
