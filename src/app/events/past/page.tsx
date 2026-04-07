@@ -19,8 +19,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://meetmeatthefair.com/events/past" },
   openGraph: {
     title: "Past Fairs & Festivals | Meet Me at the Fair",
-    description:
-      "Browse past fairs, festivals, and community events across New England.",
+    description: "Browse past fairs, festivals, and community events across New England.",
     url: "https://meetmeatthefair.com/events/past",
     siteName: "Meet Me at the Fair",
     type: "website",
@@ -40,10 +39,7 @@ async function getPastEvents(searchParams: SearchParams) {
 
   const db = getCloudflareDb();
 
-  const conditions = [
-    isPublicEventStatus(),
-    lt(events.endDate, new Date()),
-  ];
+  const conditions = [isPublicEventStatus(), lt(events.endDate, new Date())];
 
   if (searchParams.state) {
     conditions.push(eq(venues.state, searchParams.state) as ReturnType<typeof eq>);
@@ -99,9 +95,7 @@ async function getPastEvents(searchParams: SearchParams) {
         })
         .from(eventVendors)
         .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-        .where(
-          and(inArray(eventVendors.eventId, batch), isPublicVendorStatus())
-        );
+        .where(and(inArray(eventVendors.eventId, batch), isPublicVendorStatus()));
       allEventVendors.push(...batchResults);
     }
   }
@@ -139,7 +133,8 @@ export default async function PastEventsPage({
   const totalPages = Math.ceil(total / limit);
 
   const stateLabel = params.state
-    ? { ME: "Maine", VT: "Vermont", NH: "New Hampshire", MA: "Massachusetts" }[params.state] || params.state
+    ? { ME: "Maine", VT: "Vermont", NH: "New Hampshire", MA: "Massachusetts" }[params.state] ||
+      params.state
     : null;
 
   return (
@@ -152,6 +147,7 @@ export default async function PastEventsPage({
           url: `https://meetmeatthefair.com/events/${e.slug}`,
           image: e.imageUrl,
         }))}
+        totalCount={total}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/events/past"
       />

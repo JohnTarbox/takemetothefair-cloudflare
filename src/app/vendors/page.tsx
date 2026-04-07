@@ -270,6 +270,7 @@ export default async function VendorsPage({
           url: `https://meetmeatthefair.com/vendors/${v.slug}`,
           image: v.logoUrl,
         }))}
+        totalCount={vendorList.length}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/vendors"
       />

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, Store, RefreshCw } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, Store, RefreshCw, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,8 @@ export default function AdminEventsPage() {
     direction: "asc",
   });
   const [rescrapingId, setRescrapingId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [venueFilter, setVenueFilter] = useState<string>("all");
 
   useEffect(() => {
     fetchEvents();
@@ -53,7 +55,7 @@ export default function AdminEventsPage() {
   const fetchEvents = async () => {
     try {
       const res = await fetch("/api/admin/events");
-      const data = await res.json() as Event[];
+      const data = (await res.json()) as Event[];
       setEvents(data);
     } catch (error) {
       console.error("Failed to fetch events:", error);
@@ -83,7 +85,9 @@ export default function AdminEventsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event_ids: [id] }),
       });
-      const data = await res.json() as { details?: { status: string; fieldsUpdated?: string[] }[] };
+      const data = (await res.json()) as {
+        details?: { status: string; fieldsUpdated?: string[] }[];
+      };
       const detail = data.details?.[0];
       if (detail?.status === "updated") {
         alert(`Updated: ${detail.fieldsUpdated?.join(", ")}`);
@@ -108,7 +112,14 @@ export default function AdminEventsPage() {
     setSortConfig(getNextSortDirection(sortConfig, column));
   };
 
-  const sortedEvents = sortData(events, sortConfig, {
+  const filteredEvents = events.filter((e) => {
+    if (statusFilter !== "all" && e.status !== statusFilter) return false;
+    if (venueFilter === "no-venue" && e.venue !== null) return false;
+    if (venueFilter === "has-venue" && e.venue === null) return false;
+    return true;
+  });
+
+  const sortedEvents = sortData(filteredEvents, sortConfig, {
     name: (e) => e.name.toLowerCase(),
     venue: (e) => e.venue?.name?.toLowerCase() || "",
     promoter: (e) => e.promoter?.companyName?.toLowerCase() || "",
@@ -137,9 +148,49 @@ export default function AdminEventsPage() {
         </Link>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+        >
+          <option value="all">All Statuses</option>
+          <option value="APPROVED">Approved</option>
+          <option value="TENTATIVE">Tentative</option>
+          <option value="PENDING">Pending</option>
+          <option value="DRAFT">Draft</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="CANCELLED">Cancelled</option>
+        </select>
+        <select
+          value={venueFilter}
+          onChange={(e) => setVenueFilter(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+        >
+          <option value="all">All Venues</option>
+          <option value="no-venue">No Venue</option>
+          <option value="has-venue">Has Venue</option>
+        </select>
+        {(statusFilter !== "all" || venueFilter !== "all") && (
+          <button
+            onClick={() => {
+              setStatusFilter("all");
+              setVenueFilter("all");
+            }}
+            className="text-sm text-royal hover:underline"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">{events.length} events total</p>
+          <p className="text-sm text-gray-600">
+            {filteredEvents.length === events.length
+              ? `${events.length} events total`
+              : `${filteredEvents.length} of ${events.length} events`}
+          </p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -194,19 +245,22 @@ export default function AdminEventsPage() {
                         )}
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {event.venue?.name || "-"}
+                    <td className="py-3 px-4">
+                      {event.venue?.name ? (
+                        <span className="text-gray-600">{event.venue.name}</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-amber-600">
+                          <MapPin className="w-3.5 h-3.5" />
+                          No venue
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
                       {event.promoter?.companyName || "-"}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {formatDate(event.startDate)}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{formatDate(event.startDate)}</td>
                     <td className="py-3 px-4">
-                      <Badge variant={statusColors[event.status]}>
-                        {event.status}
-                      </Badge>
+                      <Badge variant={statusColors[event.status]}>{event.status}</Badge>
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
@@ -216,7 +270,11 @@ export default function AdminEventsPage() {
                           </Button>
                         </Link>
                         <Link href={`/admin/events/${event.id}/vendors`}>
-                          <Button variant="ghost" size="sm" aria-label={`Manage vendors for ${event.name}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Manage vendors for ${event.name}`}
+                          >
                             <Store className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
@@ -232,7 +290,10 @@ export default function AdminEventsPage() {
                           disabled={rescrapingId === event.id}
                           aria-label={`Re-scrape ${event.name}`}
                         >
-                          <RefreshCw className={`w-4 h-4 ${rescrapingId === event.id ? "animate-spin text-blue-500" : ""}`} aria-hidden="true" />
+                          <RefreshCw
+                            className={`w-4 h-4 ${rescrapingId === event.id ? "animate-spin text-blue-500" : ""}`}
+                            aria-hidden="true"
+                          />
                         </Button>
                         <Button
                           variant="ghost"

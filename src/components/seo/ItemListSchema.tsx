@@ -10,19 +10,28 @@ interface ItemListSchemaProps {
   name: string;
   description?: string;
   items: Array<{ name: string; url: string; image?: string | null }>;
+  totalCount?: number;
   order?: ItemListOrder;
   asCollectionPage?: boolean;
   pageUrl?: string;
 }
 
-export function ItemListSchema({ name, description, items, order = "ascending", asCollectionPage, pageUrl }: ItemListSchemaProps) {
+export function ItemListSchema({
+  name,
+  description,
+  items,
+  totalCount,
+  order = "ascending",
+  asCollectionPage,
+  pageUrl,
+}: ItemListSchemaProps) {
   const capped = items.slice(0, 30);
 
   const itemList = {
     "@type": "ItemList",
     name,
     description: description || undefined,
-    numberOfItems: capped.length,
+    numberOfItems: totalCount ?? capped.length,
     itemListOrder: itemListOrderMap[order],
     itemListElement: capped.map((item, index) => ({
       "@type": "ListItem",

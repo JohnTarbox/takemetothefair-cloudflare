@@ -6,6 +6,7 @@ export function Footer() {
   const footerLinks = {
     discover: [
       { name: "Events", href: "/events" },
+      { name: "All Events", href: "/events/all" },
       { name: "Maine Fairs", href: "/events/maine" },
       { name: "Vermont Fairs", href: "/events/vermont" },
       { name: "NH Fairs", href: "/events/new-hampshire" },
@@ -38,22 +39,17 @@ export function Footer() {
               Meet Me at the Fair
             </Link>
             <p className="mt-4 text-sm text-gray-400">
-              Discover local fairs, festivals, and community events. Connect
-              with vendors and promoters in your area.
+              Discover local fairs, festivals, and community events. Connect with vendors and
+              promoters in your area.
             </p>
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
-              Discover
-            </h3>
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Discover</h3>
             <ul className="mt-4 space-y-2">
               {footerLinks.discover.map((link) => (
                 <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm hover:text-white transition-colors"
-                  >
+                  <Link href={link.href} className="text-sm hover:text-white transition-colors">
                     {link.name}
                   </Link>
                 </li>
@@ -68,10 +64,7 @@ export function Footer() {
             <ul className="mt-4 space-y-2">
               {footerLinks.forBusiness.map((link) => (
                 <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm hover:text-white transition-colors"
-                  >
+                  <Link href={link.href} className="text-sm hover:text-white transition-colors">
                     {link.name}
                   </Link>
                 </li>
@@ -80,16 +73,11 @@ export function Footer() {
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
-              Company
-            </h3>
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Company</h3>
             <ul className="mt-4 space-y-2">
               {footerLinks.company.map((link) => (
                 <li key={link.name}>
-                  <Link
-                    href={link.href}
-                    className="text-sm hover:text-white transition-colors"
-                  >
+                  <Link href={link.href} className="text-sm hover:text-white transition-colors">
                     {link.name}
                   </Link>
                 </li>

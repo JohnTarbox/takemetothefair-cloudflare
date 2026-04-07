@@ -223,6 +223,7 @@ export default async function VenuesPage({
           url: `https://meetmeatthefair.com/venues/${v.slug}`,
           image: v.imageUrl,
         }))}
+        totalCount={venueList.length}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/venues"
       />

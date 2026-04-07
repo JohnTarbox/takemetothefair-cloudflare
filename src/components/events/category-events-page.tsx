@@ -168,6 +168,7 @@ export async function CategoryEventsPage({ categorySlug, searchParams }: Categor
           url: `https://meetmeatthefair.com/events/${e.slug}`,
           image: e.imageUrl,
         }))}
+        totalCount={total}
         asCollectionPage
         pageUrl={`https://meetmeatthefair.com/events/${categorySlug}`}
       />

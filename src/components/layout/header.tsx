@@ -56,6 +56,41 @@ export function Header() {
           <div className="hidden md:flex md:items-center md:space-x-8">
             {navigation.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+              if (item.href === "/events") {
+                return (
+                  <div key={item.name} className="relative group">
+                    <Link
+                      href={item.href}
+                      aria-current={isActive ? "page" : undefined}
+                      className={`font-medium transition-colors ${isActive ? "text-royal" : "text-gray-600 hover:text-gray-900"}`}
+                    >
+                      {item.name}
+                    </Link>
+                    <div className="absolute left-0 top-full pt-2 hidden group-hover:block group-focus-within:block z-50">
+                      <div className="bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[160px]">
+                        <Link
+                          href="/events"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          Upcoming Events
+                        </Link>
+                        <Link
+                          href="/events/past"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          Past Events
+                        </Link>
+                        <Link
+                          href="/events/all"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        >
+                          All Events
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <Link
                   key={item.name}
