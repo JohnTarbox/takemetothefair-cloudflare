@@ -3,28 +3,57 @@ import { Search, UserCircle, ClipboardList, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "For Vendors | Meet Me at the Fair",
-  description: "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+  description:
+    "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
   alternates: { canonical: "https://meetmeatthefair.com/for-vendors" },
+  openGraph: {
+    title: "For Vendors | Meet Me at the Fair",
+    description:
+      "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+    url: "https://meetmeatthefair.com/for-vendors",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — For Vendors",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "For Vendors | Meet Me at the Fair",
+    description:
+      "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+    images: ["https://meetmeatthefair.com/og-default.png"],
+  },
 };
 
 export default function ForVendorsPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "For Vendors", url: "https://meetmeatthefair.com/for-vendors" },
+        ]}
+      />
       <WebPageSchema
         name="For Vendors | Meet Me at the Fair"
         description="Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair."
         url="https://meetmeatthefair.com/for-vendors"
       />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          For Vendors
-        </h1>
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">For Vendors</h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
           Find events, showcase your business, and grow your customer base
         </p>
@@ -32,15 +61,13 @@ export default function ForVendorsPage() {
 
       <div className="prose prose-gray max-w-none mb-12">
         <p className="text-lg text-gray-600 leading-relaxed">
-          Meet Me at the Fair connects vendors with the fairs, festivals, and
-          community events where their products and services will shine. Browse
-          upcoming events, apply to participate, and get discovered by
-          event-goers who are eager to find what you offer.
+          Meet Me at the Fair connects vendors with the fairs, festivals, and community events where
+          their products and services will shine. Browse upcoming events, apply to participate, and
+          get discovered by event-goers who are eager to find what you offer.
         </p>
         <p className="text-lg text-gray-600 leading-relaxed">
-          Build a profile that highlights your business, track the events
-          you&apos;ve applied to, and let promoters find you when they&apos;re
-          looking for the perfect vendor lineup.
+          Build a profile that highlights your business, track the events you&apos;ve applied to,
+          and let promoters find you when they&apos;re looking for the perfect vendor lineup.
         </p>
       </div>
 
@@ -54,8 +81,8 @@ export default function ForVendorsPage() {
               <h2 className="text-xl font-semibold text-gray-900">Find Events</h2>
             </div>
             <p className="text-gray-600">
-              Discover fairs, festivals, and markets that are the perfect fit
-              for your products and services.
+              Discover fairs, festivals, and markets that are the perfect fit for your products and
+              services.
             </p>
           </CardContent>
         </Card>
@@ -69,8 +96,8 @@ export default function ForVendorsPage() {
               <h2 className="text-xl font-semibold text-gray-900">Build Your Profile</h2>
             </div>
             <p className="text-gray-600">
-              Showcase your business with photos, descriptions, and product
-              categories so promoters and attendees can find you.
+              Showcase your business with photos, descriptions, and product categories so promoters
+              and attendees can find you.
             </p>
           </CardContent>
         </Card>
@@ -84,8 +111,8 @@ export default function ForVendorsPage() {
               <h2 className="text-xl font-semibold text-gray-900">Apply to Events</h2>
             </div>
             <p className="text-gray-600">
-              Submit applications to events you&apos;re interested in and track
-              your approval status from your dashboard.
+              Submit applications to events you&apos;re interested in and track your approval status
+              from your dashboard.
             </p>
           </CardContent>
         </Card>
@@ -99,20 +126,18 @@ export default function ForVendorsPage() {
               <h2 className="text-xl font-semibold text-gray-900">Grow Your Business</h2>
             </div>
             <p className="text-gray-600">
-              Expand your reach by participating in more events and connecting
-              with new customers across the region.
+              Expand your reach by participating in more events and connecting with new customers
+              across the region.
             </p>
           </CardContent>
         </Card>
       </div>
 
       <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">
-          Ready to Find Your Next Event?
-        </h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Ready to Find Your Next Event?</h2>
         <p className="text-gray-600 mb-6">
-          Join Meet Me at the Fair and start connecting with the events and
-          customers that will help your business grow.
+          Join Meet Me at the Fair and start connecting with the events and customers that will help
+          your business grow.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <a

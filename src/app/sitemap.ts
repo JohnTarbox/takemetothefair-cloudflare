@@ -54,6 +54,42 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.85,
     },
     {
+      url: `${baseUrl}/events/fairs`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/events/festivals`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/events/craft-shows`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/events/craft-fairs`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/events/markets`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/events/farmers-markets`,
+      lastModified: new Date(),
+      changeFrequency: "daily",
+      priority: 0.8,
+    },
+    {
       url: `${baseUrl}/venues`,
       lastModified: new Date(),
       changeFrequency: "weekly",

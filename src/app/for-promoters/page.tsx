@@ -2,26 +2,37 @@ import { CalendarPlus, Users, Megaphone, BarChart3 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "For Promoters | Meet Me at the Fair",
-  description: "List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair.",
+  description:
+    "List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair.",
   alternates: { canonical: "https://meetmeatthefair.com/for-promoters" },
   openGraph: {
     title: "For Promoters | Meet Me at the Fair",
-    description: "List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair.",
+    description:
+      "List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair.",
     url: "https://meetmeatthefair.com/for-promoters",
     siteName: "Meet Me at the Fair",
     type: "website",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "For Promoters | Meet Me at the Fair",
-    description: "List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair.",
+    description:
+      "List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -29,15 +40,19 @@ export const metadata: Metadata = {
 export default function ForPromotersPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "For Promoters", url: "https://meetmeatthefair.com/for-promoters" },
+        ]}
+      />
       <WebPageSchema
         name="For Promoters | Meet Me at the Fair"
         description="List and manage your events, reach thousands of attendees, and grow your fair or festival with Meet Me at the Fair."
         url="https://meetmeatthefair.com/for-promoters"
       />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          For Promoters
-        </h1>
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">For Promoters</h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
           List your events, manage vendors, and reach thousands of attendees
         </p>
@@ -45,15 +60,13 @@ export default function ForPromotersPage() {
 
       <div className="prose prose-gray max-w-none mb-12">
         <p className="text-lg text-gray-600 leading-relaxed">
-          Meet Me at the Fair gives event promoters the tools to showcase their
-          fairs, festivals, and community events to a growing audience of
-          enthusiastic attendees. Whether you&apos;re organizing a county fair or
-          a craft festival, our platform helps you get the word out.
+          Meet Me at the Fair gives event promoters the tools to showcase their fairs, festivals,
+          and community events to a growing audience of enthusiastic attendees. Whether you&apos;re
+          organizing a county fair or a craft festival, our platform helps you get the word out.
         </p>
         <p className="text-lg text-gray-600 leading-relaxed">
-          Manage vendor applications, share event details, and connect with the
-          people who are looking for exactly what you offer — all from one
-          easy-to-use dashboard.
+          Manage vendor applications, share event details, and connect with the people who are
+          looking for exactly what you offer — all from one easy-to-use dashboard.
         </p>
       </div>
 
@@ -67,8 +80,8 @@ export default function ForPromotersPage() {
               <h2 className="text-xl font-semibold text-gray-900">List Events</h2>
             </div>
             <p className="text-gray-600">
-              Create detailed event listings with dates, venues, categories, and
-              descriptions to attract the right audience.
+              Create detailed event listings with dates, venues, categories, and descriptions to
+              attract the right audience.
             </p>
           </CardContent>
         </Card>
@@ -82,8 +95,8 @@ export default function ForPromotersPage() {
               <h2 className="text-xl font-semibold text-gray-900">Manage Vendors</h2>
             </div>
             <p className="text-gray-600">
-              Review and approve vendor applications, coordinate lineups, and
-              build the perfect mix for your event.
+              Review and approve vendor applications, coordinate lineups, and build the perfect mix
+              for your event.
             </p>
           </CardContent>
         </Card>
@@ -97,8 +110,8 @@ export default function ForPromotersPage() {
               <h2 className="text-xl font-semibold text-gray-900">Reach Attendees</h2>
             </div>
             <p className="text-gray-600">
-              Get your event in front of thousands of people actively searching
-              for fairs, festivals, and local happenings.
+              Get your event in front of thousands of people actively searching for fairs,
+              festivals, and local happenings.
             </p>
           </CardContent>
         </Card>
@@ -112,20 +125,18 @@ export default function ForPromotersPage() {
               <h2 className="text-xl font-semibold text-gray-900">Track Performance</h2>
             </div>
             <p className="text-gray-600">
-              Monitor interest in your events and understand your audience to
-              make every event better than the last.
+              Monitor interest in your events and understand your audience to make every event
+              better than the last.
             </p>
           </CardContent>
         </Card>
       </div>
 
       <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">
-          Ready to Promote Your Event?
-        </h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Ready to Promote Your Event?</h2>
         <p className="text-gray-600 mb-6">
-          Join Meet Me at the Fair and start reaching attendees who are looking
-          for their next great experience.
+          Join Meet Me at the Fair and start reaching attendees who are looking for their next great
+          experience.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <a

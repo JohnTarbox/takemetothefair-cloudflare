@@ -10,26 +10,37 @@ import { auth } from "@/lib/auth";
 import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
 
 export const metadata: Metadata = {
   title: "Fair & Festival Vendors | Meet Me at the Fair",
-  description: "Meet the artisans, food vendors, and businesses participating in fairs and festivals.",
+  description:
+    "Meet the artisans, food vendors, and businesses participating in fairs and festivals.",
   alternates: { canonical: "https://meetmeatthefair.com/vendors" },
   openGraph: {
     title: "Fair & Festival Vendors | Meet Me at the Fair",
-    description: "Meet the artisans, food vendors, and businesses participating in fairs and festivals.",
+    description:
+      "Meet the artisans, food vendors, and businesses participating in fairs and festivals.",
     url: "https://meetmeatthefair.com/vendors",
     siteName: "Meet Me at the Fair",
     type: "website",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Fair & Festival Vendors | Meet Me at the Fair",
-    description: "Meet the artisans, food vendors, and businesses participating in fairs and festivals.",
+    description:
+      "Meet the artisans, food vendors, and businesses participating in fairs and festivals.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -69,7 +80,6 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
   const db = getCloudflareDb();
 
   try {
-
     // Build conditions
     const conditions: ReturnType<typeof eq>[] = [];
     if (searchParams.type) {
@@ -103,10 +113,11 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
     // Filter by search query if provided
     if (searchParams.q) {
       const lowerQuery = searchParams.q.toLowerCase();
-      vendorResults = vendorResults.filter(v =>
-        v.vendors.businessName.toLowerCase().includes(lowerQuery) ||
-        v.vendors.description?.toLowerCase().includes(lowerQuery) ||
-        v.vendors.vendorType?.toLowerCase().includes(lowerQuery)
+      vendorResults = vendorResults.filter(
+        (v) =>
+          v.vendors.businessName.toLowerCase().includes(lowerQuery) ||
+          v.vendors.description?.toLowerCase().includes(lowerQuery) ||
+          v.vendors.vendorType?.toLowerCase().includes(lowerQuery)
       );
     }
 
@@ -115,7 +126,7 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
     }
 
     // Query 2: Get all upcoming events for all vendors in a single query
-    const vendorIds = vendorResults.map(v => v.vendors.id);
+    const vendorIds = vendorResults.map((v) => v.vendors.id);
     const allVendorEvents = await db
       .select({
         vendorId: eventVendors.vendorId,
@@ -150,7 +161,7 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
     }
 
     // Combine vendors with their events
-    let result = vendorResults.map(v => ({
+    let result = vendorResults.map((v) => ({
       id: v.vendors.id,
       businessName: v.vendors.businessName,
       slug: v.vendors.slug,
@@ -163,24 +174,26 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
       commercial: v.vendors.commercial,
       city: v.vendors.city,
       state: v.vendors.state,
-      events: (eventsByVendor.get(v.vendors.id) || []).map(e => ({
+      events: (eventsByVendor.get(v.vendors.id) || []).map((e) => ({
         id: e.eventId,
         name: e.eventName,
         slug: e.eventSlug,
         startDate: e.startDate,
         endDate: e.endDate,
         imageUrl: e.imageUrl,
-        venue: e.venueName ? {
-          name: e.venueName,
-          city: e.venueCity,
-          state: e.venueState,
-        } : null,
+        venue: e.venueName
+          ? {
+              name: e.venueName,
+              city: e.venueCity,
+              state: e.venueState,
+            }
+          : null,
       })),
     }));
 
     // Filter by hasEvents if requested
     if (searchParams.hasEvents === "true") {
-      result = result.filter(v => v.events.length > 0);
+      result = result.filter((v) => v.events.length > 0);
     }
 
     return result;
@@ -243,6 +256,12 @@ export default async function VendorsPage({
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Vendors", url: "https://meetmeatthefair.com/vendors" },
+        ]}
+      />
       <ItemListSchema
         name="Fair & Festival Vendors"
         description="Artisans, food vendors, and businesses at fairs and festivals"
@@ -268,9 +287,7 @@ export default async function VendorsPage({
             <div>
               <h3 className="font-medium text-gray-900 mb-3">Search</h3>
               <form method="GET" action="/vendors">
-                {params.type && (
-                  <input type="hidden" name="type" value={params.type} />
-                )}
+                {params.type && <input type="hidden" name="type" value={params.type} />}
                 {params.hasEvents && (
                   <input type="hidden" name="hasEvents" value={params.hasEvents} />
                 )}

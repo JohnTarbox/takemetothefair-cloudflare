@@ -1,12 +1,7 @@
-import {
-  HelpCircle,
-  Users,
-  Store,
-  Calendar,
-  Settings,
-} from "lucide-react";
+import { HelpCircle, Users, Store, Calendar, Settings } from "lucide-react";
 import type { Metadata } from "next";
 import { FAQSchema } from "@/components/seo/FAQSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import {
   Accordion,
   AccordionContent,
@@ -22,6 +17,29 @@ export const metadata: Metadata = {
   description:
     "Find answers to common questions about Meet Me at the Fair - how to find events, become a vendor, list your event, and more.",
   alternates: { canonical: "https://meetmeatthefair.com/faq" },
+  openGraph: {
+    title: "FAQ | Meet Me at the Fair",
+    description:
+      "Find answers to common questions about Meet Me at the Fair - how to find events, become a vendor, list your event, and more.",
+    url: "https://meetmeatthefair.com/faq",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — FAQ",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "FAQ | Meet Me at the Fair",
+    description:
+      "Find answers to common questions about Meet Me at the Fair - how to find events, become a vendor, list your event, and more.",
+    images: ["https://meetmeatthefair.com/og-default.png"],
+  },
 };
 
 const faqCategories = [
@@ -183,13 +201,17 @@ const allFaqItems = faqCategories.flatMap((category) => category.items);
 export default function FAQPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "FAQ", url: "https://meetmeatthefair.com/faq" },
+        ]}
+      />
       <FAQSchema items={allFaqItems} />
 
       {/* Hero Section */}
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          Frequently Asked Questions
-        </h1>
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">Frequently Asked Questions</h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
           Find answers to common questions about using Meet Me at the Fair
         </p>
@@ -203,14 +225,9 @@ export default function FAQPage() {
               <div
                 className={`w-10 h-10 ${category.iconBg} rounded-lg flex items-center justify-center`}
               >
-                <category.icon
-                  className={`w-5 h-5 ${category.iconColor}`}
-                  aria-hidden="true"
-                />
+                <category.icon className={`w-5 h-5 ${category.iconColor}`} aria-hidden="true" />
               </div>
-              <h2 className="text-2xl font-semibold text-gray-900">
-                {category.title}
-              </h2>
+              <h2 className="text-2xl font-semibold text-gray-900">{category.title}</h2>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-6">
@@ -220,9 +237,7 @@ export default function FAQPage() {
                     key={`${category.title}-${index}`}
                     value={`${category.title}-${index}`}
                   >
-                    <AccordionTrigger className="text-base">
-                      {item.question}
-                    </AccordionTrigger>
+                    <AccordionTrigger className="text-base">{item.question}</AccordionTrigger>
                     <AccordionContent>{item.answer}</AccordionContent>
                   </AccordionItem>
                 ))}
@@ -234,9 +249,7 @@ export default function FAQPage() {
 
       {/* CTA Section */}
       <div className="bg-gray-50 rounded-xl p-8 text-center mt-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">
-          Still Have Questions?
-        </h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Still Have Questions?</h2>
         <p className="text-gray-600 mb-6">
           Can&apos;t find what you&apos;re looking for? We&apos;re here to help.
         </p>

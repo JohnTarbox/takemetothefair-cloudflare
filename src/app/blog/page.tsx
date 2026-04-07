@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { Badge } from "@/components/ui/badge";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { extractFirstImage } from "@/lib/markdown-utils";
 
 export const runtime = "edge";
@@ -15,7 +16,8 @@ export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Blog | Meet Me at the Fair",
-  description: "Stories, tips, and news about fairs, festivals, and community events across New England.",
+  description:
+    "Stories, tips, and news about fairs, festivals, and community events across New England.",
   alternates: {
     canonical: "https://meetmeatthefair.com/blog",
     types: {
@@ -24,16 +26,25 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Blog | Meet Me at the Fair",
-    description: "Stories, tips, and news about fairs, festivals, and community events across New England.",
+    description:
+      "Stories, tips, and news about fairs, festivals, and community events across New England.",
     url: "https://meetmeatthefair.com/blog",
     siteName: "Meet Me at the Fair",
     type: "website",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair Blog" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair Blog",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Blog | Meet Me at the Fair",
-    description: "Stories, tips, and news about fairs, festivals, and community events across New England.",
+    description:
+      "Stories, tips, and news about fairs, festivals, and community events across New England.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -45,11 +56,7 @@ interface SearchParams {
 
 const POSTS_PER_PAGE = 12;
 
-export default async function BlogPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
+export default async function BlogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
@@ -110,14 +117,23 @@ export default async function BlogPage({
   // Collect all unique tags for the filter sidebar
   const allTagsResult = isAdmin
     ? await db.select({ tags: blogPosts.tags }).from(blogPosts)
-    : await db.select({ tags: blogPosts.tags }).from(blogPosts).where(eq(blogPosts.status, "PUBLISHED"));
+    : await db
+        .select({ tags: blogPosts.tags })
+        .from(blogPosts)
+        .where(eq(blogPosts.status, "PUBLISHED"));
 
-  const allTags = [...new Set(
-    allTagsResult.flatMap((r) => JSON.parse(r.tags || "[]") as string[])
-  )].sort();
+  const allTags = [
+    ...new Set(allTagsResult.flatMap((r) => JSON.parse(r.tags || "[]") as string[])),
+  ].sort();
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Blog", url: "https://meetmeatthefair.com/blog" },
+        ]}
+      />
       {parsedPosts.length > 0 && (
         <ItemListSchema
           name="Blog | Meet Me at the Fair"

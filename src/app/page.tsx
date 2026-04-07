@@ -14,8 +14,30 @@ export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {
-  alternates: {
-    canonical: "https://meetmeatthefair.com",
+  title: "Meet Me at the Fair - Discover Local Fairs, Festivals & Events in New England",
+  description:
+    "Find fairs, festivals, craft shows, and community events across Maine, Vermont, New Hampshire, and Massachusetts. Browse events, venues, and vendors.",
+  alternates: { canonical: "https://meetmeatthefair.com" },
+  openGraph: {
+    title: "Meet Me at the Fair - Discover Local Fairs & Events",
+    description: "Find fairs, festivals, craft shows, and community events across New England.",
+    url: "https://meetmeatthefair.com",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Meet Me at the Fair - Discover Local Fairs & Events",
+    description: "Find fairs, festivals, craft shows, and community events across New England.",
+    images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
 
@@ -27,13 +49,7 @@ async function getFeaturedEvents() {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(
-        and(
-          isPublicEventStatus(),
-          eq(events.featured, true),
-          gte(events.endDate, new Date())
-        )
-      )
+      .where(and(isPublicEventStatus(), eq(events.featured, true), gte(events.endDate, new Date())))
       .orderBy(events.startDate)
       .limit(6);
 
@@ -55,12 +71,7 @@ async function getUpcomingEvents() {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(
-        and(
-          isPublicEventStatus(),
-          gte(events.endDate, new Date())
-        )
-      )
+      .where(and(isPublicEventStatus(), gte(events.endDate, new Date())))
       .orderBy(events.startDate)
       .limit(6);
 
@@ -91,8 +102,8 @@ export default async function HomePage() {
               Discover Local Fairs & Events
             </h1>
             <p className="mt-6 text-lg md:text-xl text-gray-300">
-              Find the best fairs, festivals, and community events across New England.
-              Connect with vendors and never miss an experience.
+              Find the best fairs, festivals, and community events across New England. Connect with
+              vendors and never miss an experience.
             </p>
             <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/events">
@@ -143,42 +154,98 @@ export default async function HomePage() {
       <section className="py-16 bg-gray-50">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="text-center p-6">
+            <Link
+              href="/events"
+              className="text-center p-6 rounded-lg hover:bg-white transition-colors group"
+            >
               <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
                 <Calendar className="w-6 h-6 text-royal" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold text-gray-900">
+              <h2 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
                 Find Events
               </h2>
               <p className="mt-2 text-gray-600">
-                Browse upcoming fairs, festivals, and markets by date, location,
-                or category.
+                Browse upcoming fairs, festivals, and markets by date, location, or category.
               </p>
-            </div>
-            <div className="text-center p-6">
+            </Link>
+            <Link
+              href="/venues"
+              className="text-center p-6 rounded-lg hover:bg-white transition-colors group"
+            >
               <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
                 <MapPin className="w-6 h-6 text-royal" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold text-gray-900">
+              <h2 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
                 Explore Venues
               </h2>
               <p className="mt-2 text-gray-600">
-                Discover amazing venues and fairgrounds hosting events in your
-                region.
+                Discover amazing venues and fairgrounds hosting events in your region.
               </p>
-            </div>
-            <div className="text-center p-6">
+            </Link>
+            <Link
+              href="/vendors"
+              className="text-center p-6 rounded-lg hover:bg-white transition-colors group"
+            >
               <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
                 <Users className="w-6 h-6 text-royal" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold text-gray-900">
+              <h2 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
                 Connect with Vendors
               </h2>
               <p className="mt-2 text-gray-600">
-                Meet local artisans, food vendors, and businesses participating
-                in events.
+                Meet local artisans, food vendors, and businesses participating in events.
               </p>
-            </div>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Browse by State */}
+      <section className="py-12">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6 text-center">
+            Browse Events by State
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { name: "Maine", slug: "maine", code: "ME" },
+              { name: "Vermont", slug: "vermont", code: "VT" },
+              { name: "New Hampshire", slug: "new-hampshire", code: "NH" },
+              { name: "Massachusetts", slug: "massachusetts", code: "MA" },
+            ].map((state) => (
+              <Link
+                key={state.slug}
+                href={`/events/${state.slug}`}
+                className="flex items-center justify-center gap-2 p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all text-center group"
+              >
+                <MapPin className="w-4 h-4 text-gray-400 group-hover:text-royal" />
+                <span className="font-medium text-gray-900 group-hover:text-royal">
+                  {state.name}
+                </span>
+              </Link>
+            ))}
+          </div>
+
+          <h3 className="text-lg font-semibold text-gray-900 mt-8 mb-4 text-center">
+            Browse by Event Type
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+            {[
+              { name: "Fairs", slug: "fairs" },
+              { name: "Festivals", slug: "festivals" },
+              { name: "Craft Shows", slug: "craft-shows" },
+              { name: "Craft Fairs", slug: "craft-fairs" },
+              { name: "Markets", slug: "markets" },
+              { name: "Farmers Markets", slug: "farmers-markets" },
+            ].map((cat) => (
+              <Link
+                key={cat.slug}
+                href={`/events/${cat.slug}`}
+                className="px-3 py-2 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all text-center text-sm font-medium text-gray-700 hover:text-royal"
+              >
+                {cat.name}
+              </Link>
+            ))}
           </div>
         </div>
       </section>
@@ -188,9 +255,7 @@ export default async function HomePage() {
         <section className="py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
-              <h2 className="text-2xl md:text-3xl font-bold text-gray-900">
-                Featured Events
-              </h2>
+              <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Featured Events</h2>
               <Link
                 href="/events?featured=true"
                 className="text-royal hover:text-navy font-medium flex items-center"
@@ -207,9 +272,7 @@ export default async function HomePage() {
       <section className="py-16 bg-gray-50">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between mb-8">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900">
-              Upcoming Events
-            </h2>
+            <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Upcoming Events</h2>
             <Link
               href="/events"
               className="text-royal hover:text-navy font-medium flex items-center"
@@ -217,22 +280,17 @@ export default async function HomePage() {
               View All <ArrowRight className="w-4 h-4 ml-1" />
             </Link>
           </div>
-          <EventList
-            events={upcomingEvents}
-            emptyMessage="No upcoming events. Check back soon!"
-          />
+          <EventList events={upcomingEvents} emptyMessage="No upcoming events. Check back soon!" />
         </div>
       </section>
 
       {/* CTA Section */}
       <section className="py-16 bg-navy">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-2xl md:text-3xl font-bold text-white">
-            Ready to Share Your Event?
-          </h2>
+          <h2 className="text-2xl md:text-3xl font-bold text-white">Ready to Share Your Event?</h2>
           <p className="mt-4 text-lg text-gray-300 max-w-2xl mx-auto">
-            Whether you&apos;re a promoter organizing fairs or a vendor looking
-            to participate, we&apos;ve got you covered.
+            Whether you&apos;re a promoter organizing fairs or a vendor looking to participate,
+            we&apos;ve got you covered.
           </p>
           <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
             <Link href="/register?role=promoter">
@@ -262,25 +320,20 @@ export default async function HomePage() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 text-center">
             <p className="text-gray-600">Need help getting started?</p>
             <div className="flex gap-4">
-              <Link
-                href="/faq"
-                className="text-royal hover:text-navy font-medium"
-              >
+              <Link href="/faq" className="text-royal hover:text-navy font-medium">
                 FAQ
               </Link>
               <span className="text-gray-300">|</span>
-              <Link
-                href="/search-visibility"
-                className="text-royal hover:text-navy font-medium"
-              >
+              <Link href="/search-visibility" className="text-royal hover:text-navy font-medium">
                 Search Visibility
               </Link>
               <span className="text-gray-300">|</span>
-              <Link
-                href="/contact"
-                className="text-royal hover:text-navy font-medium"
-              >
+              <Link href="/contact" className="text-royal hover:text-navy font-medium">
                 Contact Us
+              </Link>
+              <span className="text-gray-300">|</span>
+              <Link href="/blog" className="text-royal hover:text-navy font-medium">
+                Blog
               </Link>
             </div>
           </div>

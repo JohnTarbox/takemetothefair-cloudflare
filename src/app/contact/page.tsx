@@ -3,26 +3,37 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { FAQSchema } from "@/components/seo/FAQSchema";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 86400;
 
 export const metadata: Metadata = {
   title: "Contact Us | Meet Me at the Fair",
-  description: "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
+  description:
+    "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
   alternates: { canonical: "https://meetmeatthefair.com/contact" },
   openGraph: {
     title: "Contact Us | Meet Me at the Fair",
-    description: "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
+    description:
+      "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
     url: "https://meetmeatthefair.com/contact",
     siteName: "Meet Me at the Fair",
     type: "website",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Contact Us | Meet Me at the Fair",
-    description: "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
+    description:
+      "Get in touch with the Meet Me at the Fair team. We're here to help with questions about events, vendor applications, and more.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -30,25 +41,35 @@ export const metadata: Metadata = {
 const faqItems = [
   {
     question: "How do I list my event?",
-    answer: "Event promoters can create an account and submit events for approval. Once approved, your event will appear in our calendar and search results.",
+    answer:
+      "Event promoters can create an account and submit events for approval. Once approved, your event will appear in our calendar and search results.",
   },
   {
     question: "How can I become a vendor at an event?",
-    answer: "Create a vendor profile, browse available events, and submit applications to the events you're interested in. Event promoters will review and respond to your application.",
+    answer:
+      "Create a vendor profile, browse available events, and submit applications to the events you're interested in. Event promoters will review and respond to your application.",
   },
   {
     question: "Is it free to list events?",
-    answer: "Basic event listings are free. Contact us for information about featured listings and promotional opportunities.",
+    answer:
+      "Basic event listings are free. Contact us for information about featured listings and promotional opportunities.",
   },
   {
     question: "How do I report an issue with an event listing?",
-    answer: "If you notice incorrect information or have concerns about a listing, please email us at support@meetmeatthefair.com with details.",
+    answer:
+      "If you notice incorrect information or have concerns about a listing, please email us at support@meetmeatthefair.com with details.",
   },
 ];
 
 export default function ContactPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Contact", url: "https://meetmeatthefair.com/contact" },
+        ]}
+      />
       <WebPageSchema
         type="ContactPage"
         name="Contact Us | Meet Me at the Fair"
@@ -57,9 +78,7 @@ export default function ContactPage() {
       />
       <FAQSchema items={faqItems} />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          Contact Us
-        </h1>
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">Contact Us</h1>
         <p className="text-xl text-gray-600 max-w-2xl mx-auto">
           Have questions? We&apos;d love to hear from you.
         </p>
@@ -76,9 +95,7 @@ export default function ContactPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-600 mb-4">
-              For general inquiries, support, or feedback:
-            </p>
+            <p className="text-gray-600 mb-4">For general inquiries, support, or feedback:</p>
             <a
               href="mailto:hello@meetmeatthefair.com"
               className="text-royal hover:text-navy font-medium"
@@ -98,9 +115,7 @@ export default function ContactPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-600 mb-4">
-              Need help with your account or listing?
-            </p>
+            <p className="text-gray-600 mb-4">Need help with your account or listing?</p>
             <a
               href="mailto:support@meetmeatthefair.com"
               className="text-royal hover:text-navy font-medium"
@@ -117,12 +132,10 @@ export default function ContactPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
-            <h3 className="font-semibold text-gray-900 mb-2">
-              How do I list my event?
-            </h3>
+            <h3 className="font-semibold text-gray-900 mb-2">How do I list my event?</h3>
             <p className="text-gray-600">
-              Event promoters can create an account and submit events for approval.
-              Once approved, your event will appear in our calendar and search results.
+              Event promoters can create an account and submit events for approval. Once approved,
+              your event will appear in our calendar and search results.
             </p>
           </div>
           <div>
@@ -130,18 +143,16 @@ export default function ContactPage() {
               How can I become a vendor at an event?
             </h3>
             <p className="text-gray-600">
-              Create a vendor profile, browse available events, and submit applications
-              to the events you&apos;re interested in. Event promoters will review and
-              respond to your application.
+              Create a vendor profile, browse available events, and submit applications to the
+              events you&apos;re interested in. Event promoters will review and respond to your
+              application.
             </p>
           </div>
           <div>
-            <h3 className="font-semibold text-gray-900 mb-2">
-              Is it free to list events?
-            </h3>
+            <h3 className="font-semibold text-gray-900 mb-2">Is it free to list events?</h3>
             <p className="text-gray-600">
-              Basic event listings are free. Contact us for information about
-              featured listings and promotional opportunities.
+              Basic event listings are free. Contact us for information about featured listings and
+              promotional opportunities.
             </p>
           </div>
           <div>
@@ -149,20 +160,18 @@ export default function ContactPage() {
               How do I report an issue with an event listing?
             </h3>
             <p className="text-gray-600">
-              If you notice incorrect information or have concerns about a listing,
-              please email us at support@meetmeatthefair.com with details.
+              If you notice incorrect information or have concerns about a listing, please email us
+              at support@meetmeatthefair.com with details.
             </p>
           </div>
         </CardContent>
       </Card>
 
       <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">
-          Partnership Opportunities
-        </h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">Partnership Opportunities</h2>
         <p className="text-gray-600 mb-6">
-          Interested in partnering with Meet Me at the Fair? We&apos;re always
-          looking for ways to better serve our community.
+          Interested in partnering with Meet Me at the Fair? We&apos;re always looking for ways to
+          better serve our community.
         </p>
         <a
           href="mailto:partnerships@meetmeatthefair.com"

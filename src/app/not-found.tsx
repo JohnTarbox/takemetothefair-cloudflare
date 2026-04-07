@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { Home, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Page Not Found | Meet Me at the Fair",
+};
 
 export default function NotFound() {
   return (
@@ -9,12 +14,10 @@ export default function NotFound() {
         <div className="mb-6">
           <span className="text-8xl font-bold text-gray-200">404</span>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-          Page Not Found
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Page Not Found</h1>
         <p className="text-gray-600 mb-8">
-          Sorry, we couldn&apos;t find the page you&apos;re looking for.
-          It may have been moved or no longer exists.
+          Sorry, we couldn&apos;t find the page you&apos;re looking for. It may have been moved or
+          no longer exists.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center">

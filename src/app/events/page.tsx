@@ -19,6 +19,7 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -602,6 +603,12 @@ export default async function EventsPage({
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 print:max-w-none print:px-0 print:py-0">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Events", url: "https://meetmeatthefair.com/events" },
+        ]}
+      />
       <ItemListSchema
         name="Upcoming Fairs & Festivals"
         description="Browse upcoming fairs, festivals, and community events"

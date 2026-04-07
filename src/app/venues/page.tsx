@@ -8,26 +8,37 @@ import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
+import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
 
 export const metadata: Metadata = {
   title: "Fair & Festival Venues | Meet Me at the Fair",
-  description: "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
+  description:
+    "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
   alternates: { canonical: "https://meetmeatthefair.com/venues" },
   openGraph: {
     title: "Fair & Festival Venues | Meet Me at the Fair",
-    description: "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
+    description:
+      "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
     url: "https://meetmeatthefair.com/venues",
     siteName: "Meet Me at the Fair",
     type: "website",
-    images: [{ url: "https://meetmeatthefair.com/og-default.png", width: 1200, height: 630, alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events" }],
+    images: [
+      {
+        url: "https://meetmeatthefair.com/og-default.png",
+        width: 1200,
+        height: 630,
+        alt: "Meet Me at the Fair — Discover Local Fairs, Festivals & Events",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Fair & Festival Venues | Meet Me at the Fair",
-    description: "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
+    description:
+      "Discover fairgrounds and event spaces hosting upcoming fairs, festivals, and community events.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -68,7 +79,6 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
   const db = getCloudflareDb();
 
   try {
-
     // Build conditions
     const conditions = [eq(venues.status, "ACTIVE")];
 
@@ -78,7 +88,7 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
 
     if (searchParams.q) {
       conditions.push(
-        sql`(${venues.name} LIKE ${'%' + searchParams.q + '%'} OR ${venues.city} LIKE ${'%' + searchParams.q + '%'})`
+        sql`(${venues.name} LIKE ${"%" + searchParams.q + "%"} OR ${venues.city} LIKE ${"%" + searchParams.q + "%"})`
       );
     }
 
@@ -118,13 +128,13 @@ async function getVenues(searchParams: SearchParams, favoriteIds?: string[]) {
         amenities: venues.amenities,
         imageUrl: venues.imageUrl,
         website: venues.website,
-        eventCount: eventCountSubquery.as('event_count'),
+        eventCount: eventCountSubquery.as("event_count"),
       })
       .from(venues)
       .where(and(...conditions))
       .orderBy(venues.name);
 
-    return venuesWithCounts.map(venue => ({
+    return venuesWithCounts.map((venue) => ({
       id: venue.id,
       name: venue.name,
       slug: venue.slug,
@@ -189,18 +199,22 @@ export default async function VenuesPage({
     favoriteIds = await getUserFavoriteIds(session.user.id);
   }
 
-  const [venueList, states] = await Promise.all([
-    getVenues(params, favoriteIds),
-    getStates(),
-  ]);
+  const [venueList, states] = await Promise.all([getVenues(params, favoriteIds), getStates()]);
 
-  const hasFilters = params.state || params.q || params.favorites || params.hasEvents || params.missingGoogle;
+  const hasFilters =
+    params.state || params.q || params.favorites || params.hasEvents || params.missingGoogle;
   const showingFavorites = params.favorites === "true";
   const showingWithEvents = params.hasEvents === "true";
   const showingMissingGoogle = params.missingGoogle === "true";
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <BreadcrumbSchema
+        items={[
+          { name: "Home", url: "https://meetmeatthefair.com" },
+          { name: "Venues", url: "https://meetmeatthefair.com/venues" },
+        ]}
+      />
       <ItemListSchema
         name="Fair & Festival Venues"
         description="Fairgrounds and event spaces hosting upcoming events"
@@ -226,9 +240,7 @@ export default async function VenuesPage({
             <div>
               <h3 className="font-medium text-gray-900 mb-3">Search</h3>
               <form method="GET" action="/venues">
-                {params.state && (
-                  <input type="hidden" name="state" value={params.state} />
-                )}
+                {params.state && <input type="hidden" name="state" value={params.state} />}
                 {params.hasEvents && (
                   <input type="hidden" name="hasEvents" value={params.hasEvents} />
                 )}
