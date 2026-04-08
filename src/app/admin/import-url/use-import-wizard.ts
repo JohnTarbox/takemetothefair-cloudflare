@@ -79,6 +79,13 @@ const EMPTY_EXTRACTED_DATA: ExtractedEventData = {
   ticketPriceMin: null,
   ticketPriceMax: null,
   imageUrl: null,
+  vendorFeeMin: null,
+  vendorFeeMax: null,
+  vendorFeeNotes: null,
+  indoorOutdoor: null,
+  estimatedAttendance: null,
+  applicationUrl: null,
+  walkInsAllowed: null,
 };
 
 // --- State ---
@@ -231,7 +238,11 @@ function reducer(state: WizardState, action: Action): WizardState {
     case "SET_DUPLICATE_WARNING":
       return { ...state, duplicateWarning: action.warning };
     case "SET_MANUAL_PASTE":
-      return { ...state, manualPaste: action.manualPaste, pastedContent: action.manualPaste ? state.pastedContent : "" };
+      return {
+        ...state,
+        manualPaste: action.manualPaste,
+        pastedContent: action.manualPaste ? state.pastedContent : "",
+      };
     case "SET_PASTED_CONTENT":
       return { ...state, pastedContent: action.pastedContent };
     case "FETCH_SUCCESS":
@@ -307,6 +318,13 @@ function reducer(state: WizardState, action: Action): WizardState {
           ticketPriceMin: action.event.ticketPriceMin,
           ticketPriceMax: action.event.ticketPriceMax,
           imageUrl: action.event.imageUrl,
+          vendorFeeMin: action.event.vendorFeeMin,
+          vendorFeeMax: action.event.vendorFeeMax,
+          vendorFeeNotes: action.event.vendorFeeNotes,
+          indoorOutdoor: action.event.indoorOutdoor,
+          estimatedAttendance: action.event.estimatedAttendance,
+          applicationUrl: action.event.applicationUrl,
+          walkInsAllowed: action.event.walkInsAllowed,
         },
         confidence: action.confidence,
         datesConfirmed: true,
@@ -348,6 +366,13 @@ function reducer(state: WizardState, action: Action): WizardState {
           ticketPriceMin: action.firstEvent.ticketPriceMin,
           ticketPriceMax: action.firstEvent.ticketPriceMax,
           imageUrl: action.firstEvent.imageUrl,
+          vendorFeeMin: action.firstEvent.vendorFeeMin,
+          vendorFeeMax: action.firstEvent.vendorFeeMax,
+          vendorFeeNotes: action.firstEvent.vendorFeeNotes,
+          indoorOutdoor: action.firstEvent.indoorOutdoor,
+          estimatedAttendance: action.firstEvent.estimatedAttendance,
+          applicationUrl: action.firstEvent.applicationUrl,
+          walkInsAllowed: action.firstEvent.walkInsAllowed,
         },
         confidence: action.firstEventConfidence,
         datesConfirmed: true,
@@ -391,6 +416,13 @@ function reducer(state: WizardState, action: Action): WizardState {
           ticketPriceMin: action.event.ticketPriceMin,
           ticketPriceMax: action.event.ticketPriceMax,
           imageUrl: action.event.imageUrl,
+          vendorFeeMin: action.event.vendorFeeMin,
+          vendorFeeMax: action.event.vendorFeeMax,
+          vendorFeeNotes: action.event.vendorFeeNotes,
+          indoorOutdoor: action.event.indoorOutdoor,
+          estimatedAttendance: action.event.estimatedAttendance,
+          applicationUrl: action.event.applicationUrl,
+          walkInsAllowed: action.event.walkInsAllowed,
         },
         confidence: action.confidence,
         datesConfirmed: true,
@@ -449,8 +481,8 @@ function reducer(state: WizardState, action: Action): WizardState {
     case "RETRY_FAILED": {
       // Re-run save with only the failed events
       const failedNames = new Set(state.batchErrors.map((e) => e.eventName));
-      const failedEvents = state.eventsToImport.filter(
-        (e) => failedNames.has(e.name || "Unnamed Event")
+      const failedEvents = state.eventsToImport.filter((e) =>
+        failedNames.has(e.name || "Unnamed Event")
       );
       if (failedEvents.length === 0) return state;
       return {
@@ -577,7 +609,14 @@ export function useImportWizard() {
       // Detect HTML content and preprocess: extract metadata + clean text
       const looksLikeHtml = /<(?:html|head|body|meta|div|script)\b/i.test(state.pastedContent);
       let content = state.pastedContent;
-      let metadata: { title?: string; description?: string; ogImage?: string; jsonLd?: Record<string, unknown> } | undefined;
+      let metadata:
+        | {
+            title?: string;
+            description?: string;
+            ogImage?: string;
+            jsonLd?: Record<string, unknown>;
+          }
+        | undefined;
 
       if (looksLikeHtml) {
         const extracted = extractMetadata(state.pastedContent);
@@ -599,10 +638,9 @@ export function useImportWizard() {
     dispatch({ type: "SET_STEP", step: "fetching" });
 
     try {
-      const res = await fetch(
-        `/api/admin/import-url/fetch?url=${encodeURIComponent(state.url)}`,
-        { signal }
-      );
+      const res = await fetch(`/api/admin/import-url/fetch?url=${encodeURIComponent(state.url)}`, {
+        signal,
+      });
       const data = (await res.json()) as FetchResponse;
 
       if (!data.success) {
@@ -617,12 +655,16 @@ export function useImportWizard() {
         jsonLd: data.jsonLd,
       });
       dispatch({ type: "SET_STEP", step: "extracting" });
-      await handleExtract(data.content || "", {
-        title: data.title,
-        description: data.description,
-        ogImage: data.ogImage,
-        jsonLd: data.jsonLd,
-      }, signal);
+      await handleExtract(
+        data.content || "",
+        {
+          title: data.title,
+          description: data.description,
+          ogImage: data.ogImage,
+          jsonLd: data.jsonLd,
+        },
+        signal
+      );
     } catch (err) {
       if ((err as Error).name === "AbortError") return;
       dispatch({
@@ -631,7 +673,7 @@ export function useImportWizard() {
       });
       dispatch({ type: "SET_STEP", step: "url-input" });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.url, state.manualPaste, state.pastedContent]);
 
   const handleExtract = async (
@@ -697,7 +739,7 @@ export function useImportWizard() {
     dispatch({ type: "SET_ERROR", error: "" });
     dispatch({ type: "SET_STEP", step: "extracting" });
     await handleExtract(state.fetchedContent);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.fetchedContent]);
 
   const handleProceedToReview = useCallback(() => {
@@ -709,9 +751,7 @@ export function useImportWizard() {
       return;
     }
 
-    const selected = state.extractedEvents.filter((e) =>
-      state.selectedEventIds.has(e._extractId)
-    );
+    const selected = state.extractedEvents.filter((e) => state.selectedEventIds.has(e._extractId));
     const firstEvent = selected[0];
     dispatch({
       type: "PROCEED_TO_REVIEW",
@@ -771,7 +811,12 @@ export function useImportWizard() {
     } else {
       dispatch({ type: "SET_STEP", step: "promoter" });
     }
-  }, [state.extractedData.name, state.currentEventIndex, state.eventsToImport, state.eventConfidence]);
+  }, [
+    state.extractedData.name,
+    state.currentEventIndex,
+    state.eventsToImport,
+    state.eventConfidence,
+  ]);
 
   const goToPreviousEvent = useCallback(() => {
     dispatch({ type: "SAVE_CURRENT_EVENT_EDITS" });
@@ -790,7 +835,12 @@ export function useImportWizard() {
     } else {
       dispatch({ type: "SET_STEP", step: "url-input" });
     }
-  }, [state.currentEventIndex, state.eventsToImport, state.eventConfidence, state.extractedEvents.length]);
+  }, [
+    state.currentEventIndex,
+    state.eventsToImport,
+    state.eventConfidence,
+    state.extractedEvents.length,
+  ]);
 
   const goToPromoter = useCallback(() => {
     if (state.selectedVenueId) {
@@ -813,7 +863,13 @@ export function useImportWizard() {
       dispatch({ type: "SET_VENUE_OPTION", option: { type: "none" } });
     }
     dispatch({ type: "SET_STEP", step: "promoter" });
-  }, [state.selectedVenueId, state.newVenueName, state.newVenueAddress, state.newVenueCity, state.newVenueState]);
+  }, [
+    state.selectedVenueId,
+    state.newVenueName,
+    state.newVenueAddress,
+    state.newVenueCity,
+    state.newVenueState,
+  ]);
 
   const goToPreview = useCallback(() => {
     if (!state.selectedPromoterId) {
@@ -898,22 +954,27 @@ export function useImportWizard() {
       created,
       batchErrors,
     });
-  }, [state.venueOption, state.eventsToImport, state.datesConfirmed, state.selectedPromoterId, state.url, state.fetchedJsonLd]);
+  }, [
+    state.venueOption,
+    state.eventsToImport,
+    state.datesConfirmed,
+    state.selectedPromoterId,
+    state.url,
+    state.fetchedJsonLd,
+  ]);
 
   const retryFailed = useCallback(async () => {
     dispatch({ type: "RETRY_FAILED" });
     // The retry will be triggered by handleSave when state updates
     // We need to immediately kick off save with the failed events
     const failedNames = new Set(state.batchErrors.map((e) => e.eventName));
-    const failedEvents = state.eventsToImport.filter(
-      (e) => failedNames.has(e.name || "Unnamed Event")
+    const failedEvents = state.eventsToImport.filter((e) =>
+      failedNames.has(e.name || "Unnamed Event")
     );
     if (failedEvents.length === 0) return;
 
     dispatch({ type: "SET_STEP", step: "saving" });
-    const created: Array<{ id: string; slug: string; name: string }> = [
-      ...state.createdEvents,
-    ];
+    const created: Array<{ id: string; slug: string; name: string }> = [...state.createdEvents];
     const batchErrors: Array<{ eventName: string; error: string }> = [];
     let currentVenueOption: VenueOption = state.venueOption;
     const total = failedEvents.length;
@@ -958,7 +1019,16 @@ export function useImportWizard() {
     }
 
     dispatch({ type: "SAVE_COMPLETE", created, batchErrors });
-  }, [state.batchErrors, state.eventsToImport, state.createdEvents, state.venueOption, state.datesConfirmed, state.selectedPromoterId, state.url, state.fetchedJsonLd]);
+  }, [
+    state.batchErrors,
+    state.eventsToImport,
+    state.createdEvents,
+    state.venueOption,
+    state.datesConfirmed,
+    state.selectedPromoterId,
+    state.url,
+    state.fetchedJsonLd,
+  ]);
 
   const resetWizard = useCallback(() => {
     dispatch({ type: "RESET" });

@@ -3,7 +3,16 @@
  */
 
 import { z } from "zod";
-import { VALIDATION, EVENT_STATUS, VENUE_STATUS, EVENT_VENDOR_STATUS, PAYMENT_STATUS, BLOG_POST_STATUS } from "@/lib/constants";
+import {
+  VALIDATION,
+  EVENT_STATUS,
+  VENUE_STATUS,
+  EVENT_VENDOR_STATUS,
+  PAYMENT_STATUS,
+  BLOG_POST_STATUS,
+  INDOOR_OUTDOOR,
+  EVENT_SCALE,
+} from "@/lib/constants";
 
 // Common field schemas
 const nameSchema = z.string().min(VALIDATION.NAME_MIN_LENGTH).max(VALIDATION.NAME_MAX_LENGTH);
@@ -36,7 +45,10 @@ export const venueCreateSchema = z.object({
   googleTypes: z.string().optional().nullable(),
   accessibility: z.string().optional().nullable(),
   parking: z.string().optional().nullable(),
-  status: z.enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE]).optional().default(VENUE_STATUS.ACTIVE),
+  status: z
+    .enum([VENUE_STATUS.ACTIVE, VENUE_STATUS.INACTIVE])
+    .optional()
+    .default(VENUE_STATUS.ACTIVE),
 });
 
 export const venueUpdateSchema = venueCreateSchema.partial();
@@ -76,6 +88,9 @@ export const vendorCreateSchema = z.object({
   city: z.string().max(VALIDATION.CITY_MAX_LENGTH).optional().nullable(),
   state: z.string().max(VALIDATION.STATE_MAX_LENGTH).optional().nullable(),
   zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
+  // Geolocation
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
   // Business Details
   yearEstablished: z.number().int().min(1800).max(new Date().getFullYear()).optional().nullable(),
   paymentMethods: z.array(z.string()).optional().default([]),
@@ -113,18 +128,41 @@ const eventBaseSchema = z.object({
   imageUrl: urlSchema,
   featured: z.boolean().optional().default(false),
   commercialVendorsAllowed: z.boolean().optional().default(true),
-  status: z.enum([
-    EVENT_STATUS.DRAFT,
-    EVENT_STATUS.PENDING,
-    EVENT_STATUS.TENTATIVE,
-    EVENT_STATUS.APPROVED,
-    EVENT_STATUS.REJECTED,
-    EVENT_STATUS.CANCELLED,
-  ]).optional().default(EVENT_STATUS.DRAFT),
+  // Vendor decision-support fields
+  vendorFeeMin: z.number().min(0).optional().nullable(),
+  vendorFeeMax: z.number().min(0).optional().nullable(),
+  vendorFeeNotes: z.string().max(500).optional().nullable(),
+  indoorOutdoor: z
+    .enum([INDOOR_OUTDOOR.INDOOR, INDOOR_OUTDOOR.OUTDOOR, INDOOR_OUTDOOR.MIXED])
+    .optional()
+    .nullable(),
+  estimatedAttendance: z.number().int().positive().optional().nullable(),
+  eventScale: z
+    .enum([EVENT_SCALE.SMALL, EVENT_SCALE.MEDIUM, EVENT_SCALE.LARGE, EVENT_SCALE.MAJOR])
+    .optional()
+    .nullable(),
+  applicationDeadline: z.string().datetime().optional().nullable(),
+  applicationUrl: z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable(),
+  applicationInstructions: z.string().max(2000).optional().nullable(),
+  walkInsAllowed: z.boolean().optional().nullable(),
+  status: z
+    .enum([
+      EVENT_STATUS.DRAFT,
+      EVENT_STATUS.PENDING,
+      EVENT_STATUS.TENTATIVE,
+      EVENT_STATUS.APPROVED,
+      EVENT_STATUS.REJECTED,
+      EVENT_STATUS.CANCELLED,
+    ])
+    .optional()
+    .default(EVENT_STATUS.DRAFT),
   sourceName: z.string().optional().nullable(),
   sourceUrl: urlSchema,
   sourceId: z.string().optional().nullable(),
-  eventDays: z.array(eventDaySchema).max(100, "Maximum 100 days allowed for daily schedules").optional(),
+  eventDays: z
+    .array(eventDaySchema)
+    .max(100, "Maximum 100 days allowed for daily schedules")
+    .optional(),
 });
 
 // Event create schema with cross-field validation
@@ -155,6 +193,18 @@ export const eventCreateSchema = eventBaseSchema
   )
   .refine(
     (data) => {
+      if (data.vendorFeeMin != null && data.vendorFeeMax != null) {
+        return data.vendorFeeMax >= data.vendorFeeMin;
+      }
+      return true;
+    },
+    {
+      message: "Maximum vendor fee must be greater than or equal to minimum fee",
+      path: ["vendorFeeMax"],
+    }
+  )
+  .refine(
+    (data) => {
       if (data.discontinuousDates) {
         return data.eventDays && data.eventDays.length >= 1;
       }
@@ -166,7 +216,8 @@ export const eventCreateSchema = eventBaseSchema
     }
   );
 
-export const eventUpdateSchema = eventBaseSchema.partial()
+export const eventUpdateSchema = eventBaseSchema
+  .partial()
   .refine(
     (data) => {
       if (data.startDate && data.endDate) {
@@ -189,6 +240,18 @@ export const eventUpdateSchema = eventBaseSchema.partial()
     {
       message: "Maximum ticket price must be greater than or equal to minimum price",
       path: ["ticketPriceMax"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.vendorFeeMin != null && data.vendorFeeMax != null) {
+        return data.vendorFeeMax >= data.vendorFeeMin;
+      }
+      return true;
+    },
+    {
+      message: "Maximum vendor fee must be greater than or equal to minimum fee",
+      path: ["vendorFeeMax"],
     }
   );
 
@@ -259,6 +322,8 @@ export const vendorProfileUpdateSchema = z.object({
   city: z.string().max(VALIDATION.CITY_MAX_LENGTH).optional().nullable(),
   state: z.string().max(VALIDATION.STATE_MAX_LENGTH).optional().nullable(),
   zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
   yearEstablished: z.number().int().min(1800).max(new Date().getFullYear()).optional().nullable(),
   paymentMethods: z.array(z.string()).optional(),
   licenseInfo: z.string().max(500).optional().nullable(),
@@ -266,54 +331,90 @@ export const vendorProfileUpdateSchema = z.object({
 });
 
 // Promoter event creation
-export const promoterEventCreateSchema = z.object({
-  name: nameSchema,
-  description: descriptionSchema,
-  venueId: z.string().min(1).optional().nullable(),
-  startDate: z.string().min(1).optional().nullable(),
-  endDate: z.string().min(1).optional().nullable(),
-  discontinuousDates: z.boolean().optional().default(false),
-  categories: z.array(z.string()).optional().default([]),
-  tags: z.array(z.string()).optional().default([]),
-  ticketUrl: urlSchema,
-  ticketPriceMin: z.number().min(0).optional().nullable(),
-  ticketPriceMax: z.number().min(0).optional().nullable(),
-  imageUrl: urlSchema,
-  eventDays: z.array(eventDaySchema).max(100, "Maximum 100 days allowed for daily schedules").optional(),
-}).refine(
-  (data) => {
-    if (data.startDate && data.endDate) {
-      return new Date(data.endDate) >= new Date(data.startDate);
+export const promoterEventCreateSchema = z
+  .object({
+    name: nameSchema,
+    description: descriptionSchema,
+    venueId: z.string().min(1).optional().nullable(),
+    startDate: z.string().min(1).optional().nullable(),
+    endDate: z.string().min(1).optional().nullable(),
+    discontinuousDates: z.boolean().optional().default(false),
+    categories: z.array(z.string()).optional().default([]),
+    tags: z.array(z.string()).optional().default([]),
+    ticketUrl: urlSchema,
+    ticketPriceMin: z.number().min(0).optional().nullable(),
+    ticketPriceMax: z.number().min(0).optional().nullable(),
+    imageUrl: urlSchema,
+    eventDays: z
+      .array(eventDaySchema)
+      .max(100, "Maximum 100 days allowed for daily schedules")
+      .optional(),
+    // Vendor decision-support fields
+    vendorFeeMin: z.number().min(0).optional().nullable(),
+    vendorFeeMax: z.number().min(0).optional().nullable(),
+    vendorFeeNotes: z.string().max(500).optional().nullable(),
+    indoorOutdoor: z
+      .enum([INDOOR_OUTDOOR.INDOOR, INDOOR_OUTDOOR.OUTDOOR, INDOOR_OUTDOOR.MIXED])
+      .optional()
+      .nullable(),
+    estimatedAttendance: z.number().int().positive().optional().nullable(),
+    eventScale: z
+      .enum([EVENT_SCALE.SMALL, EVENT_SCALE.MEDIUM, EVENT_SCALE.LARGE, EVENT_SCALE.MAJOR])
+      .optional()
+      .nullable(),
+    applicationDeadline: z.string().datetime().optional().nullable(),
+    applicationUrl: z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable(),
+    applicationInstructions: z.string().max(2000).optional().nullable(),
+    walkInsAllowed: z.boolean().optional().nullable(),
+  })
+  .refine(
+    (data) => {
+      if (data.startDate && data.endDate) {
+        return new Date(data.endDate) >= new Date(data.startDate);
+      }
+      return true;
+    },
+    {
+      message: "End date must be on or after start date",
+      path: ["endDate"],
     }
-    return true;
-  },
-  {
-    message: "End date must be on or after start date",
-    path: ["endDate"],
-  }
-).refine(
-  (data) => {
-    if (data.ticketPriceMin != null && data.ticketPriceMax != null) {
-      return data.ticketPriceMax >= data.ticketPriceMin;
+  )
+  .refine(
+    (data) => {
+      if (data.ticketPriceMin != null && data.ticketPriceMax != null) {
+        return data.ticketPriceMax >= data.ticketPriceMin;
+      }
+      return true;
+    },
+    {
+      message: "Maximum ticket price must be greater than or equal to minimum price",
+      path: ["ticketPriceMax"],
     }
-    return true;
-  },
-  {
-    message: "Maximum ticket price must be greater than or equal to minimum price",
-    path: ["ticketPriceMax"],
-  }
-).refine(
-  (data) => {
-    if (data.discontinuousDates) {
-      return data.eventDays && data.eventDays.length >= 1;
+  )
+  .refine(
+    (data) => {
+      if (data.vendorFeeMin != null && data.vendorFeeMax != null) {
+        return data.vendorFeeMax >= data.vendorFeeMin;
+      }
+      return true;
+    },
+    {
+      message: "Maximum vendor fee must be greater than or equal to minimum fee",
+      path: ["vendorFeeMax"],
     }
-    return true;
-  },
-  {
-    message: "Discontinuous date events must have at least one date",
-    path: ["eventDays"],
-  }
-);
+  )
+  .refine(
+    (data) => {
+      if (data.discontinuousDates) {
+        return data.eventDays && data.eventDays.length >= 1;
+      }
+      return true;
+    },
+    {
+      message: "Discontinuous date events must have at least one date",
+      path: ["eventDays"],
+    }
+  );
 
 // User profile update
 export const userProfileUpdateSchema = z.object({
@@ -335,25 +436,33 @@ export const blogPostCreateSchema = z.object({
   tags: z.array(z.string()).optional().default([]),
   categories: z.array(z.string()).optional().default([]),
   featuredImageUrl: urlSchema,
-  status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional().default(BLOG_POST_STATUS.DRAFT),
+  status: z
+    .enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED])
+    .optional()
+    .default(BLOG_POST_STATUS.DRAFT),
   publishDate: z.string().datetime().optional().nullable(),
   metaTitle: z.string().max(70).optional().nullable(),
   metaDescription: z.string().max(160).optional().nullable(),
 });
 
-export const blogPostUpdateSchema = blogPostCreateSchema.partial().omit({ authorId: true }).extend({
-  // Override fields that have .default() on the create schema — partial() doesn't
-  // remove defaults, so omitted fields would get filled with default values on update.
-  tags: z.array(z.string()).optional(),
-  categories: z.array(z.string()).optional(),
-  status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
-});
+export const blogPostUpdateSchema = blogPostCreateSchema
+  .partial()
+  .omit({ authorId: true })
+  .extend({
+    // Override fields that have .default() on the create schema — partial() doesn't
+    // remove defaults, so omitted fields would get filled with default values on update.
+    tags: z.array(z.string()).optional(),
+    categories: z.array(z.string()).optional(),
+    status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
+  });
 
 // Helper function to validate and parse request body
 export async function validateRequestBody<T extends z.ZodType>(
   request: Request,
   schema: T
-): Promise<{ success: true; data: z.infer<T> } | { success: false; error: string; issues: z.ZodIssue[] }> {
+): Promise<
+  { success: true; data: z.infer<T> } | { success: false; error: string; issues: z.ZodIssue[] }
+> {
   try {
     const body = await request.json();
     const result = schema.safeParse(body);
@@ -361,7 +470,7 @@ export async function validateRequestBody<T extends z.ZodType>(
     if (!result.success) {
       return {
         success: false,
-        error: result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(", "),
+        error: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", "),
         issues: result.error.issues,
       };
     }

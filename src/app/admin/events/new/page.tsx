@@ -49,7 +49,7 @@ export default function NewEventPage() {
         console.error("Failed to fetch venues:", res.status);
         return;
       }
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       if (Array.isArray(data)) {
         setVenues(data);
       }
@@ -65,7 +65,7 @@ export default function NewEventPage() {
         console.error("Failed to fetch promoters:", res.status);
         return;
       }
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       if (Array.isArray(data)) {
         setPromoters(data);
       }
@@ -90,11 +90,12 @@ export default function NewEventPage() {
     let endDateISO: string | null;
 
     if (discontinuousDates && eventDays.length > 0) {
-      const sorted = eventDays.map(d => d.date).sort();
+      const sorted = eventDays.map((d) => d.date).sort();
       startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
       endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
     } else {
-      startDateISO = datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
+      startDateISO =
+        datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
       endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
     }
 
@@ -115,13 +116,35 @@ export default function NewEventPage() {
       datesConfirmed: !datesTBD,
       discontinuousDates,
       ticketUrl: formData.get("ticketUrl") || null,
-      ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
-      ticketPriceMax: formData.get("ticketPriceMax") ? parseFloat(formData.get("ticketPriceMax") as string) : null,
+      ticketPriceMin: formData.get("ticketPriceMin")
+        ? parseFloat(formData.get("ticketPriceMin") as string)
+        : null,
+      ticketPriceMax: formData.get("ticketPriceMax")
+        ? parseFloat(formData.get("ticketPriceMax") as string)
+        : null,
       imageUrl: formData.get("imageUrl") || null,
       featured: formData.get("featured") === "on",
       commercialVendorsAllowed: formData.get("commercialVendorsAllowed") === "on",
       status: formData.get("status") || "APPROVED",
       eventDays: eventDays.length > 0 ? eventDays : [],
+      vendorFeeMin: formData.get("vendorFeeMin")
+        ? parseFloat(formData.get("vendorFeeMin") as string)
+        : null,
+      vendorFeeMax: formData.get("vendorFeeMax")
+        ? parseFloat(formData.get("vendorFeeMax") as string)
+        : null,
+      vendorFeeNotes: formData.get("vendorFeeNotes") || null,
+      indoorOutdoor: formData.get("indoorOutdoor") || null,
+      estimatedAttendance: formData.get("estimatedAttendance")
+        ? parseInt(formData.get("estimatedAttendance") as string, 10)
+        : null,
+      eventScale: formData.get("eventScale") || null,
+      applicationDeadline: formData.get("applicationDeadline")
+        ? new Date((formData.get("applicationDeadline") as string) + "T00:00:00").toISOString()
+        : null,
+      applicationUrl: formData.get("applicationUrl") || null,
+      applicationInstructions: formData.get("applicationInstructions") || null,
+      walkInsAllowed: formData.get("walkInsAllowed") === "on" ? true : null,
     };
 
     try {
@@ -132,7 +155,7 @@ export default function NewEventPage() {
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to create event");
       }
 
@@ -162,9 +185,7 @@ export default function NewEventPage() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -380,6 +401,124 @@ export default function NewEventPage() {
                   <Label htmlFor="commercialVendorsAllowed" className="font-normal">
                     Commercial Vendors Allowed
                   </Label>
+                </div>
+              </div>
+
+              {/* Vendor Information */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Information</h3>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="vendorFeeMin">Min Vendor/Booth Fee ($)</Label>
+                      <Input
+                        id="vendorFeeMin"
+                        name="vendorFeeMin"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="vendorFeeMax">Max Vendor/Booth Fee ($)</Label>
+                      <Input
+                        id="vendorFeeMax"
+                        name="vendorFeeMax"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="vendorFeeNotes">Fee Details</Label>
+                    <Input
+                      id="vendorFeeNotes"
+                      name="vendorFeeNotes"
+                      placeholder='e.g., "$50 for 10x10, $75 for 10x20"'
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="indoorOutdoor">Indoor/Outdoor</Label>
+                      <select
+                        id="indoorOutdoor"
+                        name="indoorOutdoor"
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Not specified</option>
+                        <option value="INDOOR">Indoor</option>
+                        <option value="OUTDOOR">Outdoor</option>
+                        <option value="MIXED">Mixed (Indoor &amp; Outdoor)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label htmlFor="eventScale">Event Scale</Label>
+                      <select
+                        id="eventScale"
+                        name="eventScale"
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Not specified</option>
+                        <option value="SMALL">Small (community event)</option>
+                        <option value="MEDIUM">Medium (regional)</option>
+                        <option value="LARGE">Large (state-level)</option>
+                        <option value="MAJOR">Major (multi-state/national)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="estimatedAttendance">Estimated Attendance</Label>
+                    <Input
+                      id="estimatedAttendance"
+                      name="estimatedAttendance"
+                      type="number"
+                      min="1"
+                      placeholder="Expected number of attendees"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="walkInsAllowed"
+                      name="walkInsAllowed"
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="walkInsAllowed" className="font-normal">
+                      Walk-in Vendors Accepted
+                    </Label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Application Information */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Application</h3>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="applicationDeadline">Application Deadline</Label>
+                    <Input id="applicationDeadline" name="applicationDeadline" type="date" />
+                  </div>
+                  <div>
+                    <Label htmlFor="applicationUrl">Application URL</Label>
+                    <Input
+                      id="applicationUrl"
+                      name="applicationUrl"
+                      type="url"
+                      placeholder="https://example.com/apply"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="applicationInstructions">Application Instructions</Label>
+                    <Textarea
+                      id="applicationInstructions"
+                      name="applicationInstructions"
+                      rows={3}
+                      placeholder="How to apply, requirements, contact info..."
+                    />
+                  </div>
                 </div>
               </div>
             </div>

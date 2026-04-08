@@ -9,7 +9,6 @@ import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   const session = await auth();
@@ -30,7 +29,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(vendor[0]);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch vendor profile", error, source: "api/vendor/profile", request });
+    await logError(db, {
+      message: "Failed to fetch vendor profile",
+      error,
+      source: "api/vendor/profile",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch profile" }, { status: 500 });
   }
 }
@@ -48,10 +52,25 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
     const {
-      businessName, description, vendorType, products, website, logoUrl,
-      contactName, contactEmail, contactPhone,
-      address, city, state, zip,
-      yearEstablished, paymentMethods, licenseInfo, insuranceInfo
+      businessName,
+      description,
+      vendorType,
+      products,
+      website,
+      logoUrl,
+      contactName,
+      contactEmail,
+      contactPhone,
+      address,
+      city,
+      state,
+      zip,
+      latitude,
+      longitude,
+      yearEstablished,
+      paymentMethods,
+      licenseInfo,
+      insuranceInfo,
     } = validation.data;
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
@@ -73,16 +92,16 @@ export async function PATCH(request: NextRequest) {
     if (city !== undefined) updateData.city = city;
     if (state !== undefined) updateData.state = state;
     if (zip !== undefined) updateData.zip = zip;
+    // Geolocation
+    if (latitude !== undefined) updateData.latitude = latitude;
+    if (longitude !== undefined) updateData.longitude = longitude;
     // Business Details
     if (yearEstablished !== undefined) updateData.yearEstablished = yearEstablished;
     if (paymentMethods) updateData.paymentMethods = JSON.stringify(paymentMethods);
     if (licenseInfo !== undefined) updateData.licenseInfo = licenseInfo;
     if (insuranceInfo !== undefined) updateData.insuranceInfo = insuranceInfo;
 
-    await db
-      .update(vendors)
-      .set(updateData)
-      .where(eq(vendors.userId, session.user.id));
+    await db.update(vendors).set(updateData).where(eq(vendors.userId, session.user.id));
 
     const updatedVendor = await db
       .select()
@@ -92,7 +111,12 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json(updatedVendor[0]);
   } catch (error) {
-    await logError(db, { message: "Failed to update vendor profile", error, source: "api/vendor/profile", request });
+    await logError(db, {
+      message: "Failed to update vendor profile",
+      error,
+      source: "api/vendor/profile",
+      request,
+    });
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
   }
 }

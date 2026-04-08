@@ -41,6 +41,15 @@ const submitEventSchema = z.object({
   ticketPriceMin: z.number().nullable().optional(),
   ticketPriceMax: z.number().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
+  // Vendor decision-support fields
+  vendorFeeMin: z.number().nullable().optional(),
+  vendorFeeMax: z.number().nullable().optional(),
+  vendorFeeNotes: z.string().nullable().optional(),
+  indoorOutdoor: z.enum(["INDOOR", "OUTDOOR", "MIXED"]).nullable().optional(),
+  estimatedAttendance: z.number().int().nullable().optional(),
+  eventScale: z.enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"]).nullable().optional(),
+  applicationUrl: z.string().nullable().optional(),
+  walkInsAllowed: z.boolean().nullable().optional(),
   sourceUrl: z.string().url().optional(),
   suggesterEmail: z.string().email().optional().or(z.literal("")),
   jsonLd: z.record(z.string(), z.unknown()).optional(),
@@ -80,10 +89,7 @@ export async function POST(request: NextRequest) {
 
     // Verify Turnstile token for anonymous users
     if (!rateLimitResult.isAuthenticated) {
-      const turnstileResult = await verifyTurnstileToken(
-        data.turnstileToken || "",
-        request
-      );
+      const turnstileResult = await verifyTurnstileToken(data.turnstileToken || "", request);
       if (!turnstileResult.success) {
         return NextResponse.json(
           {
@@ -122,9 +128,7 @@ export async function POST(request: NextRequest) {
       const existingSlug = await db
         .select()
         .from(events)
-        .where(
-          eq(events.slug, slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug)
-        )
+        .where(eq(events.slug, slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
         .limit(1);
       if (existingSlug.length === 0) break;
       slugSuffix++;
@@ -162,9 +166,10 @@ export async function POST(request: NextRequest) {
 
     // Determine status: vendor submissions get TENTATIVE (publicly visible), others get PENDING
     const eventStatus = data.source === "vendor" ? "TENTATIVE" : "PENDING";
-    const tagList = data.source === "vendor"
-      ? ["community-suggestion", "vendor-submission"]
-      : ["community-suggestion"];
+    const tagList =
+      data.source === "vendor"
+        ? ["community-suggestion", "vendor-submission"]
+        : ["community-suggestion"];
 
     // Create the event
     const newEventId = crypto.randomUUID();
@@ -192,6 +197,14 @@ export async function POST(request: NextRequest) {
       lastSyncedAt: new Date(),
       suggesterEmail: data.suggesterEmail || null,
       submittedByUserId: data.submittedByUserId || null,
+      vendorFeeMin: data.vendorFeeMin ?? null,
+      vendorFeeMax: data.vendorFeeMax ?? null,
+      vendorFeeNotes: data.vendorFeeNotes ?? null,
+      indoorOutdoor: data.indoorOutdoor ?? null,
+      estimatedAttendance: data.estimatedAttendance ?? null,
+      eventScale: data.eventScale ?? null,
+      applicationUrl: data.applicationUrl ?? null,
+      walkInsAllowed: data.walkInsAllowed ?? null,
     });
 
     // Insert event days if provided
@@ -260,7 +273,12 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    await logError(db, { message: "Error submitting event suggestion", error, source: "api/suggest-event/submit", request });
+    await logError(db, {
+      message: "Error submitting event suggestion",
+      error,
+      source: "api/suggest-event/submit",
+      request,
+    });
     return NextResponse.json(
       { success: false, error: "Failed to submit event suggestion. Please try again." },
       { status: 500 }

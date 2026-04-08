@@ -57,6 +57,16 @@ interface Event {
   sourceName?: string | null;
   sourceUrl?: string | null;
   lastSyncedAt?: string | null;
+  vendorFeeMin?: number | null;
+  vendorFeeMax?: number | null;
+  vendorFeeNotes?: string | null;
+  indoorOutdoor?: string | null;
+  estimatedAttendance?: number | null;
+  eventScale?: string | null;
+  applicationDeadline?: string | null;
+  applicationUrl?: string | null;
+  applicationInstructions?: string | null;
+  walkInsAllowed?: boolean | null;
 }
 
 export default function EditEventPage({ params }: { params: Promise<{ id: string }> }) {
@@ -84,7 +94,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     try {
       const res = await fetch(`/api/admin/events/${id}`);
       if (!res.ok) throw new Error("Event not found");
-      const data = await res.json() as Event;
+      const data = (await res.json()) as Event;
       setEvent(data);
       setDatesTBD(!data.startDate || !data.datesConfirmed);
       setDiscontinuousDates(data.discontinuousDates ?? false);
@@ -96,13 +106,15 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       }
       // Convert existing eventDays to input format
       if (data.eventDays && data.eventDays.length > 0) {
-        setEventDays(data.eventDays.map((d) => ({
-          date: d.date,
-          openTime: d.openTime,
-          closeTime: d.closeTime,
-          notes: d.notes || "",
-          closed: d.closed,
-        })));
+        setEventDays(
+          data.eventDays.map((d) => ({
+            date: d.date,
+            openTime: d.openTime,
+            closeTime: d.closeTime,
+            notes: d.notes || "",
+            closed: d.closed,
+          }))
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load event");
@@ -118,7 +130,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         console.error("Failed to fetch venues:", res.status);
         return;
       }
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       if (Array.isArray(data)) {
         setVenues(data);
       }
@@ -134,7 +146,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         console.error("Failed to fetch promoters:", res.status);
         return;
       }
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       if (Array.isArray(data)) {
         setPromoters(data);
       }
@@ -165,11 +177,12 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     let endDateISO: string | null;
 
     if (discontinuousDates && eventDays.length > 0) {
-      const sorted = eventDays.map(d => d.date).sort();
+      const sorted = eventDays.map((d) => d.date).sort();
       startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
       endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
     } else {
-      startDateISO = datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
+      startDateISO =
+        datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
       endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
     }
 
@@ -182,13 +195,35 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       datesConfirmed: !datesTBD,
       discontinuousDates,
       ticketUrl: formData.get("ticketUrl") || null,
-      ticketPriceMin: formData.get("ticketPriceMin") ? parseFloat(formData.get("ticketPriceMin") as string) : null,
-      ticketPriceMax: formData.get("ticketPriceMax") ? parseFloat(formData.get("ticketPriceMax") as string) : null,
+      ticketPriceMin: formData.get("ticketPriceMin")
+        ? parseFloat(formData.get("ticketPriceMin") as string)
+        : null,
+      ticketPriceMax: formData.get("ticketPriceMax")
+        ? parseFloat(formData.get("ticketPriceMax") as string)
+        : null,
       imageUrl: formData.get("imageUrl") || null,
       featured: formData.get("featured") === "on",
       commercialVendorsAllowed: formData.get("commercialVendorsAllowed") === "on",
       status: formData.get("status"),
       eventDays: eventDays.length > 0 ? eventDays : [],
+      vendorFeeMin: formData.get("vendorFeeMin")
+        ? parseFloat(formData.get("vendorFeeMin") as string)
+        : null,
+      vendorFeeMax: formData.get("vendorFeeMax")
+        ? parseFloat(formData.get("vendorFeeMax") as string)
+        : null,
+      vendorFeeNotes: formData.get("vendorFeeNotes") || null,
+      indoorOutdoor: formData.get("indoorOutdoor") || null,
+      estimatedAttendance: formData.get("estimatedAttendance")
+        ? parseInt(formData.get("estimatedAttendance") as string, 10)
+        : null,
+      eventScale: formData.get("eventScale") || null,
+      applicationDeadline: formData.get("applicationDeadline")
+        ? new Date((formData.get("applicationDeadline") as string) + "T00:00:00").toISOString()
+        : null,
+      applicationUrl: formData.get("applicationUrl") || null,
+      applicationInstructions: formData.get("applicationInstructions") || null,
+      walkInsAllowed: formData.get("walkInsAllowed") === "on" ? true : null,
     };
 
     try {
@@ -199,7 +234,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to update event");
       }
 
@@ -255,9 +290,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -479,6 +512,139 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   </Label>
                 </div>
               </div>
+
+              {/* Vendor Information */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Information</h3>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="vendorFeeMin">Min Vendor/Booth Fee ($)</Label>
+                      <Input
+                        id="vendorFeeMin"
+                        name="vendorFeeMin"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        defaultValue={event.vendorFeeMin ?? ""}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="vendorFeeMax">Max Vendor/Booth Fee ($)</Label>
+                      <Input
+                        id="vendorFeeMax"
+                        name="vendorFeeMax"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        defaultValue={event.vendorFeeMax ?? ""}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="vendorFeeNotes">Fee Details</Label>
+                    <Input
+                      id="vendorFeeNotes"
+                      name="vendorFeeNotes"
+                      defaultValue={event.vendorFeeNotes ?? ""}
+                      placeholder='e.g., "$50 for 10x10, $75 for 10x20"'
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="indoorOutdoor">Indoor/Outdoor</Label>
+                      <select
+                        id="indoorOutdoor"
+                        name="indoorOutdoor"
+                        defaultValue={event.indoorOutdoor ?? ""}
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Not specified</option>
+                        <option value="INDOOR">Indoor</option>
+                        <option value="OUTDOOR">Outdoor</option>
+                        <option value="MIXED">Mixed (Indoor &amp; Outdoor)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <Label htmlFor="eventScale">Event Scale</Label>
+                      <select
+                        id="eventScale"
+                        name="eventScale"
+                        defaultValue={event.eventScale ?? ""}
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="">Not specified</option>
+                        <option value="SMALL">Small (community event)</option>
+                        <option value="MEDIUM">Medium (regional)</option>
+                        <option value="LARGE">Large (state-level)</option>
+                        <option value="MAJOR">Major (multi-state/national)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="estimatedAttendance">Estimated Attendance</Label>
+                    <Input
+                      id="estimatedAttendance"
+                      name="estimatedAttendance"
+                      type="number"
+                      min="1"
+                      defaultValue={event.estimatedAttendance ?? ""}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="walkInsAllowed"
+                      name="walkInsAllowed"
+                      type="checkbox"
+                      defaultChecked={event.walkInsAllowed ?? false}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="walkInsAllowed" className="font-normal">
+                      Walk-in Vendors Accepted
+                    </Label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Application Information */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Application</h3>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="applicationDeadline">Application Deadline</Label>
+                    <Input
+                      id="applicationDeadline"
+                      name="applicationDeadline"
+                      type="date"
+                      defaultValue={
+                        event.applicationDeadline
+                          ? formatDateForInput(event.applicationDeadline)
+                          : ""
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="applicationUrl">Application URL</Label>
+                    <Input
+                      id="applicationUrl"
+                      name="applicationUrl"
+                      type="url"
+                      defaultValue={event.applicationUrl ?? ""}
+                      placeholder="https://example.com/apply"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="applicationInstructions">Application Instructions</Label>
+                    <Textarea
+                      id="applicationInstructions"
+                      name="applicationInstructions"
+                      rows={3}
+                      defaultValue={event.applicationInstructions ?? ""}
+                      placeholder="How to apply, requirements, contact info..."
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-4">
@@ -506,10 +672,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             onRescrapeComplete={() => fetchEvent()}
           />
         )}
-        <SchemaOrgPanel
-          eventId={id}
-          onFieldsApplied={handleSchemaOrgFieldsApplied}
-        />
+        <SchemaOrgPanel eventId={id} onFieldsApplied={handleSchemaOrgFieldsApplied} />
       </div>
     </div>
   );

@@ -119,6 +119,17 @@ export const events = sqliteTable(
     lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
     // Discontinuous dates: when true, eventDays hold arbitrary (non-contiguous) dates
     discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),
+    // Vendor decision-support fields
+    vendorFeeMin: real("vendor_fee_min"),
+    vendorFeeMax: real("vendor_fee_max"),
+    vendorFeeNotes: text("vendor_fee_notes"),
+    indoorOutdoor: text("indoor_outdoor"), // INDOOR, OUTDOOR, MIXED
+    estimatedAttendance: integer("estimated_attendance"),
+    eventScale: text("event_scale"), // SMALL, MEDIUM, LARGE, MAJOR
+    applicationDeadline: integer("application_deadline", { mode: "timestamp" }),
+    applicationUrl: text("application_url"),
+    applicationInstructions: text("application_instructions"),
+    walkInsAllowed: integer("walk_ins_allowed", { mode: "boolean" }),
     // Suggester email for community-suggested events
     suggesterEmail: text("suggester_email"),
     // Tracks who submitted the event (vendor, community user, etc.)
@@ -164,6 +175,9 @@ export const vendors = sqliteTable("vendors", {
   city: text("city"),
   state: text("state"),
   zip: text("zip"),
+  // Geolocation (auto-populated from Google Places)
+  latitude: real("latitude"),
+  longitude: real("longitude"),
   // Business Details
   yearEstablished: integer("year_established"),
   paymentMethods: text("payment_methods").default("[]"), // JSON array

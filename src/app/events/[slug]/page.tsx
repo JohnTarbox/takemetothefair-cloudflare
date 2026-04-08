@@ -13,6 +13,12 @@ import {
   Pencil,
   UserPlus,
   Eye,
+  DollarSign,
+  Home,
+  Trees,
+  Users,
+  FileText,
+  CheckCircle,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -611,6 +617,108 @@ export default async function EventDetailPage({ params }: Props) {
                   </p>
                 </div>
               </div>
+
+              {/* Vendor Decision Fields */}
+              {(event.vendorFeeMin != null || event.vendorFeeMax != null) && (
+                <div className="flex items-start gap-3">
+                  <DollarSign className="w-5 h-5 text-green-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-gray-500">Vendor/Booth Fee</p>
+                    <p className="font-medium text-gray-900">
+                      {formatPrice(event.vendorFeeMin, event.vendorFeeMax)}
+                    </p>
+                    {event.vendorFeeNotes && (
+                      <p className="text-xs text-gray-500 mt-0.5">{event.vendorFeeNotes}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {event.indoorOutdoor && (
+                <div className="flex items-start gap-3">
+                  {event.indoorOutdoor === "INDOOR" ? (
+                    <Home className="w-5 h-5 text-blue-500 mt-0.5" />
+                  ) : (
+                    <Trees className="w-5 h-5 text-green-500 mt-0.5" />
+                  )}
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {event.indoorOutdoor === "INDOOR"
+                        ? "Indoor"
+                        : event.indoorOutdoor === "OUTDOOR"
+                          ? "Outdoor"
+                          : "Indoor & Outdoor"}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {(event.estimatedAttendance || event.eventScale) && (
+                <div className="flex items-start gap-3">
+                  <Users className="w-5 h-5 text-purple-500 mt-0.5" />
+                  <div>
+                    {event.estimatedAttendance && (
+                      <p className="font-medium text-gray-900">
+                        ~{event.estimatedAttendance.toLocaleString()} attendees
+                      </p>
+                    )}
+                    {event.eventScale && (
+                      <p className="text-sm text-gray-500">
+                        {event.eventScale === "SMALL"
+                          ? "Small community event"
+                          : event.eventScale === "MEDIUM"
+                            ? "Regional event"
+                            : event.eventScale === "LARGE"
+                              ? "Large state-level event"
+                              : "Major multi-state event"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {event.walkInsAllowed && (
+                <div className="flex items-start gap-3">
+                  <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-gray-900">Walk-in Vendors Welcome</p>
+                  </div>
+                </div>
+              )}
+
+              {(event.applicationDeadline ||
+                event.applicationUrl ||
+                event.applicationInstructions) && (
+                <div className="flex items-start gap-3">
+                  <FileText className="w-5 h-5 text-amber-500 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-gray-500">Vendor Applications</p>
+                    {event.applicationDeadline && (
+                      <p
+                        className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-red-600" : "text-gray-900"}`}
+                      >
+                        Deadline: {new Date(event.applicationDeadline).toLocaleDateString()}
+                        {new Date(event.applicationDeadline) < new Date() && " (Passed)"}
+                      </p>
+                    )}
+                    {event.applicationInstructions && (
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {event.applicationInstructions}
+                      </p>
+                    )}
+                    {event.applicationUrl && (
+                      <a
+                        href={event.applicationUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 hover:underline mt-1 inline-block"
+                      >
+                        Apply Now →
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {event.ticketUrl && (
                 <TrackedLink

@@ -64,6 +64,8 @@ interface SearchParams {
   includeTBD?: string;
   myEvents?: string;
   favorites?: string;
+  indoorOutdoor?: string;
+  scale?: string;
   page?: string;
   view?: string;
   sort?: string;
@@ -198,6 +200,14 @@ async function getEvents(
 
     if (searchParams.commercialVendors === "true") {
       conditions.push(eq(events.commercialVendorsAllowed, true));
+    }
+
+    if (searchParams.indoorOutdoor) {
+      conditions.push(eq(events.indoorOutdoor, searchParams.indoorOutdoor));
+    }
+
+    if (searchParams.scale) {
+      conditions.push(eq(events.eventScale, searchParams.scale));
     }
 
     // Filter by vendor's events if myEvents is true
@@ -496,6 +506,35 @@ function EventsFilter({
               {state}
             </option>
           ))}
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Indoor/Outdoor</label>
+        <select
+          name="indoorOutdoor"
+          defaultValue={searchParams.indoorOutdoor}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+        >
+          <option value="">Any</option>
+          <option value="INDOOR">Indoor</option>
+          <option value="OUTDOOR">Outdoor</option>
+          <option value="MIXED">Mixed</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Event Scale</label>
+        <select
+          name="scale"
+          defaultValue={searchParams.scale}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+        >
+          <option value="">Any size</option>
+          <option value="SMALL">Small</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="LARGE">Large</option>
+          <option value="MAJOR">Major</option>
         </select>
       </div>
 

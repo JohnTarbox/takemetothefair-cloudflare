@@ -1,11 +1,20 @@
-import type { ExtractedEventData, ExtractedEvent, FieldConfidence, EventConfidence, PageMetadata } from "./types";
+import type {
+  ExtractedEventData,
+  ExtractedEvent,
+  FieldConfidence,
+  EventConfidence,
+  PageMetadata,
+} from "./types";
 import { withTimeout } from "@/lib/fetch-timeout";
 
 const SYSTEM_PROMPT = `You are an expert at extracting event information from webpage text. You always respond with valid JSON only, no explanations.`;
 
 const MULTI_EVENT_SYSTEM_PROMPT = `You are an expert at extracting multiple event listings from webpage text. You find ALL events mentioned and return them as a JSON array. You always respond with valid JSON only, no explanations.`;
 
-const buildMultiEventPrompt = (content: string, contextInfo: string) => `Extract ALL events from this webpage. The page may contain one event or multiple events. Return a JSON array of events.
+const buildMultiEventPrompt = (
+  content: string,
+  contextInfo: string
+) => `Extract ALL events from this webpage. The page may contain one event or multiple events. Return a JSON array of events.
 
 ${contextInfo}
 WEBPAGE CONTENT:
@@ -32,7 +41,14 @@ Return a JSON array where each event has these fields (use null for fields not f
     "ticketUrl": "URL for tickets",
     "ticketPriceMin": number or null,
     "ticketPriceMax": number or null,
-    "imageUrl": "image URL"
+    "imageUrl": "image URL",
+    "vendorFeeMin": number or null - minimum booth/vendor fee in dollars,
+    "vendorFeeMax": number or null - maximum booth/vendor fee in dollars,
+    "vendorFeeNotes": "details about vendor/booth fees (e.g., '$50 for 10x10, $75 for 10x20')",
+    "indoorOutdoor": "INDOOR" or "OUTDOOR" or "MIXED" or null,
+    "estimatedAttendance": number or null - expected attendance count,
+    "applicationUrl": "URL for vendor applications",
+    "walkInsAllowed": true/false/null - whether walk-in vendors are accepted
   }
 ]
 
@@ -46,13 +62,19 @@ IMPORTANT RULES:
 7. Look for event listings, schedules, calendars, or multiple date entries
 8. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
 9. If an event runs on scattered/non-consecutive dates (e.g., "June 5, July 3, August 7" or "first Friday of each month"), put them in specificDates instead of startDate/endDate
+10. Look for vendor/booth fee information (e.g., "booth space: $50", "vendor fee: $100-$200")
+11. Determine if the event is indoor, outdoor, or mixed based on venue description or mentions of tents, buildings, etc.
+12. Look for expected attendance figures or past attendance numbers
 
 EXAMPLE - if the page says "Springfield County Fair, June 12-15, 2025, Springfield Fairgrounds, 10am-8pm, $5-$10":
-[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null}]
+[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null,"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":null,"estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}]
 
 JSON array response:`;
 
-const buildUserPrompt = (content: string, contextInfo: string) => `Extract event details from this webpage content. Return ONLY a JSON object.
+const buildUserPrompt = (
+  content: string,
+  contextInfo: string
+) => `Extract event details from this webpage content. Return ONLY a JSON object.
 
 ${contextInfo}
 WEBPAGE CONTENT:
@@ -78,7 +100,14 @@ Find and extract these fields. Use null for any field not found:
   "ticketUrl": "URL for tickets",
   "ticketPriceMin": number or null,
   "ticketPriceMax": number or null,
-  "imageUrl": "image URL"
+  "imageUrl": "image URL",
+  "vendorFeeMin": number or null - minimum booth/vendor fee in dollars,
+  "vendorFeeMax": number or null - maximum booth/vendor fee in dollars,
+  "vendorFeeNotes": "details about vendor/booth fees (e.g., '$50 for 10x10, $75 for 10x20')",
+  "indoorOutdoor": "INDOOR" or "OUTDOOR" or "MIXED" or null,
+  "estimatedAttendance": number or null - expected attendance count,
+  "applicationUrl": "URL for vendor applications",
+  "walkInsAllowed": true/false/null - whether walk-in vendors are accepted
 }
 
 IMPORTANT PARSING RULES:
@@ -92,9 +121,12 @@ IMPORTANT PARSING RULES:
 5. Extract the event NAME only (not dates or venue) for the "name" field
 6. If hours vary by day (e.g., "Friday 5-9pm, Saturday 10am-6pm"), set hoursVaryByDay=true and put details in hoursNotes
 7. If the event runs on scattered/non-consecutive dates (e.g., "June 5, July 3, August 7"), put them in specificDates instead of startDate/endDate
+8. Look for vendor/booth fee information (e.g., "booth space: $50", "vendor fee: $100-$200")
+9. Determine if the event is indoor, outdoor, or mixed based on venue description
+10. Look for expected attendance figures or past attendance numbers
 
 EXAMPLE - if the page says "Blue Hill Fair, Sept 4-7, 2025, Blue Hill Fairgrounds, Blue Hill ME, gates open 8am, closes 10pm":
-{"name":"Blue Hill Fair","description":"Annual fair in Blue Hill, Maine","startDate":"2025-09-04","endDate":"2025-09-07","startTime":"08:00","endTime":"22:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Blue Hill Fairgrounds","venueAddress":null,"venueCity":"Blue Hill","venueState":"ME","ticketUrl":null,"ticketPriceMin":null,"ticketPriceMax":null,"imageUrl":null}
+{"name":"Blue Hill Fair","description":"Annual fair in Blue Hill, Maine","startDate":"2025-09-04","endDate":"2025-09-07","startTime":"08:00","endTime":"22:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Blue Hill Fairgrounds","venueAddress":null,"venueCity":"Blue Hill","venueState":"ME","ticketUrl":null,"ticketPriceMin":null,"ticketPriceMax":null,"imageUrl":null,"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":null,"estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}
 
 JSON response:`;
 
@@ -127,9 +159,8 @@ export async function extractEventData(
   }
 
   // Truncate content if too long (keep first 20KB to match multi-event)
-  const truncatedContent = content.length > 20000
-    ? content.substring(0, 20000) + "\n[Content truncated...]"
-    : content;
+  const truncatedContent =
+    content.length > 20000 ? content.substring(0, 20000) + "\n[Content truncated...]" : content;
 
   const userPrompt = buildUserPrompt(truncatedContent, contextInfo);
 
@@ -140,7 +171,7 @@ export async function extractEventData(
     ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt }
+        { role: "user", content: userPrompt },
       ],
       max_tokens: 1024,
       temperature: 0.1, // Low temperature for consistent structured output
@@ -150,9 +181,8 @@ export async function extractEventData(
   );
 
   // Log raw response for debugging
-  const responseText = typeof response === "string"
-    ? response
-    : (response as { response?: string }).response || "";
+  const responseText =
+    typeof response === "string" ? response : (response as { response?: string }).response || "";
   console.log("[AI Extractor] Raw AI response:", responseText.substring(0, 1500));
 
   // Parse the response
@@ -194,9 +224,8 @@ export async function extractMultipleEvents(
   }
 
   // Truncate content if too long (keep first 20KB for multi-event to capture more listings)
-  const truncatedContent = content.length > 20000
-    ? content.substring(0, 20000) + "\n[Content truncated...]"
-    : content;
+  const truncatedContent =
+    content.length > 20000 ? content.substring(0, 20000) + "\n[Content truncated...]" : content;
 
   const userPrompt = buildMultiEventPrompt(truncatedContent, contextInfo);
 
@@ -207,7 +236,7 @@ export async function extractMultipleEvents(
     ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
       messages: [
         { role: "system", content: MULTI_EVENT_SYSTEM_PROMPT },
-        { role: "user", content: userPrompt }
+        { role: "user", content: userPrompt },
       ],
       max_tokens: 4096, // More tokens for multiple events
       temperature: 0.1,
@@ -217,9 +246,8 @@ export async function extractMultipleEvents(
   );
 
   // Log raw response for debugging
-  const responseText = typeof response === "string"
-    ? response
-    : (response as { response?: string }).response || "";
+  const responseText =
+    typeof response === "string" ? response : (response as { response?: string }).response || "";
   console.log("[AI Extractor Multi] Raw AI response:", responseText.substring(0, 2000));
 
   // Parse the response as array
@@ -239,9 +267,7 @@ function parseMultiEventResponse(
   metadata: PageMetadata
 ): ExtractedEvent[] {
   const responseText =
-    typeof response === "string"
-      ? response
-      : (response as { response?: string }).response || "";
+    typeof response === "string" ? response : (response as { response?: string }).response || "";
 
   if (!responseText) {
     // Fallback to single event from metadata
@@ -332,9 +358,23 @@ function sanitizeEventData(
     venueCity: sanitizeString(item.venueCity || item.venue_city || item.city),
     venueState: sanitizeState(item.venueState || item.venue_state || item.state),
     ticketUrl: sanitizeUrl(item.ticketUrl || item.ticket_url || item.url || item.link),
-    ticketPriceMin: sanitizePrice(item.ticketPriceMin || item.ticket_price_min || item.price_min || item.price),
+    ticketPriceMin: sanitizePrice(
+      item.ticketPriceMin || item.ticket_price_min || item.price_min || item.price
+    ),
     ticketPriceMax: sanitizePrice(item.ticketPriceMax || item.ticket_price_max || item.price_max),
     imageUrl: sanitizeUrl(item.imageUrl || item.image_url || item.image),
+    vendorFeeMin: sanitizePrice(item.vendorFeeMin || item.vendor_fee_min),
+    vendorFeeMax: sanitizePrice(item.vendorFeeMax || item.vendor_fee_max),
+    vendorFeeNotes: sanitizeString(item.vendorFeeNotes || item.vendor_fee_notes, 500),
+    indoorOutdoor: sanitizeIndoorOutdoor(item.indoorOutdoor || item.indoor_outdoor),
+    estimatedAttendance: sanitizePositiveInt(item.estimatedAttendance || item.estimated_attendance),
+    applicationUrl: sanitizeUrl(item.applicationUrl || item.application_url),
+    walkInsAllowed:
+      item.walkInsAllowed === true || item.walk_ins_allowed === true
+        ? true
+        : item.walkInsAllowed === false || item.walk_ins_allowed === false
+          ? false
+          : null,
   };
 
   // Apply metadata fallbacks for first event
@@ -383,6 +423,13 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: metadata.ogImage || null,
+    vendorFeeMin: null,
+    vendorFeeMax: null,
+    vendorFeeNotes: null,
+    indoorOutdoor: null,
+    estimatedAttendance: null,
+    applicationUrl: null,
+    walkInsAllowed: null,
   };
 
   // Extract from JSON-LD if available
@@ -463,13 +510,18 @@ function parseAiResponse(
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: null,
+    vendorFeeMin: null,
+    vendorFeeMax: null,
+    vendorFeeNotes: null,
+    indoorOutdoor: null,
+    estimatedAttendance: null,
+    applicationUrl: null,
+    walkInsAllowed: null,
   };
 
   // Get the response text
   const responseText =
-    typeof response === "string"
-      ? response
-      : (response as { response?: string }).response || "";
+    typeof response === "string" ? response : (response as { response?: string }).response || "";
 
   if (!responseText) {
     return fallbackFromMetadata(defaultData, metadata);
@@ -525,6 +577,14 @@ function parseAiResponse(
       ticketPriceMin: sanitizePrice(parsed.ticketPriceMin),
       ticketPriceMax: sanitizePrice(parsed.ticketPriceMax),
       imageUrl: sanitizeUrl(parsed.imageUrl),
+      vendorFeeMin: sanitizePrice(parsed.vendorFeeMin),
+      vendorFeeMax: sanitizePrice(parsed.vendorFeeMax),
+      vendorFeeNotes: sanitizeString(parsed.vendorFeeNotes, 500),
+      indoorOutdoor: sanitizeIndoorOutdoor(parsed.indoorOutdoor),
+      estimatedAttendance: sanitizePositiveInt(parsed.estimatedAttendance),
+      applicationUrl: sanitizeUrl(parsed.applicationUrl),
+      walkInsAllowed:
+        parsed.walkInsAllowed === true ? true : parsed.walkInsAllowed === false ? false : null,
     };
 
     // Apply metadata fallbacks
@@ -611,7 +671,11 @@ function fallbackFromMetadata(
       if (typeof image === "string") {
         data.imageUrl = sanitizeUrl(image);
       } else if (Array.isArray(image) && image[0]) {
-        data.imageUrl = sanitizeUrl(typeof image[0] === "string" ? image[0] : (image[0] as Record<string, unknown>).url as string);
+        data.imageUrl = sanitizeUrl(
+          typeof image[0] === "string"
+            ? image[0]
+            : ((image[0] as Record<string, unknown>).url as string)
+        );
       } else if ((image as Record<string, unknown>).url) {
         data.imageUrl = sanitizeUrl(String((image as Record<string, unknown>).url));
       }
@@ -648,10 +712,7 @@ function fallbackFromMetadata(
 /**
  * Calculate confidence levels for extracted fields
  */
-function calculateConfidence(
-  data: ExtractedEventData,
-  metadata: PageMetadata
-): FieldConfidence {
+function calculateConfidence(data: ExtractedEventData, metadata: PageMetadata): FieldConfidence {
   const confidence: FieldConfidence = {};
 
   // Higher confidence if data matches JSON-LD
@@ -720,18 +781,30 @@ function sanitizeDate(value: unknown): string | null {
 
     // Handle "Month Day, Year" format (e.g., "January 15, 2025")
     const monthNames: Record<string, string> = {
-      january: "01", jan: "01",
-      february: "02", feb: "02",
-      march: "03", mar: "03",
-      april: "04", apr: "04",
+      january: "01",
+      jan: "01",
+      february: "02",
+      feb: "02",
+      march: "03",
+      mar: "03",
+      april: "04",
+      apr: "04",
       may: "05",
-      june: "06", jun: "06",
-      july: "07", jul: "07",
-      august: "08", aug: "08",
-      september: "09", sep: "09", sept: "09",
-      october: "10", oct: "10",
-      november: "11", nov: "11",
-      december: "12", dec: "12",
+      june: "06",
+      jun: "06",
+      july: "07",
+      jul: "07",
+      august: "08",
+      aug: "08",
+      september: "09",
+      sep: "09",
+      sept: "09",
+      october: "10",
+      oct: "10",
+      november: "11",
+      nov: "11",
+      december: "12",
+      dec: "12",
     };
 
     const monthDayYear = str.match(/^([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})$/i);
@@ -913,6 +986,23 @@ function sanitizeTime(value: unknown): string | null {
   return null;
 }
 
+function sanitizeIndoorOutdoor(value: unknown): "INDOOR" | "OUTDOOR" | "MIXED" | null {
+  if (value === null || value === undefined) return null;
+  const str = String(value).trim().toUpperCase();
+  if (str === "INDOOR" || str === "OUTDOOR" || str === "MIXED") return str;
+  if (str.includes("INDOOR") && str.includes("OUTDOOR")) return "MIXED";
+  if (str.includes("INDOOR") || str.includes("INSIDE")) return "INDOOR";
+  if (str.includes("OUTDOOR") || str.includes("OUTSIDE")) return "OUTDOOR";
+  return null;
+}
+
+function sanitizePositiveInt(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const num = typeof value === "number" ? value : parseInt(String(value), 10);
+  if (isNaN(num) || num <= 0) return null;
+  return Math.round(num);
+}
+
 /**
  * Extract time from an ISO datetime string if present
  */
@@ -926,7 +1016,13 @@ function extractTimeFromDatetime(value: unknown): string | null {
     const hours = parseInt(isoMatch[1], 10);
     const minutes = parseInt(isoMatch[2], 10);
     // Only return if it's not midnight (which is often a default placeholder)
-    if ((hours !== 0 || minutes !== 0) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+    if (
+      (hours !== 0 || minutes !== 0) &&
+      hours >= 0 &&
+      hours <= 23 &&
+      minutes >= 0 &&
+      minutes <= 59
+    ) {
       return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
     }
   }

@@ -21,10 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { trackEvent } from "@/lib/analytics";
-import type {
-  ExtractedEventData,
-  FieldConfidence,
-} from "@/lib/url-import/types";
+import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
 export const runtime = "edge";
 
@@ -119,12 +116,25 @@ export default function VendorSuggestEventPage() {
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: null,
+    vendorFeeMin: null,
+    vendorFeeMax: null,
+    vendorFeeNotes: null,
+    indoorOutdoor: null,
+    estimatedAttendance: null,
+    applicationUrl: null,
+    walkInsAllowed: null,
   });
   const [confidence, setConfidence] = useState<FieldConfidence>({});
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
   const [error, setError] = useState("");
-  const [createdEvent, setCreatedEvent] = useState<{ id: string; slug: string; name: string } | null>(null);
-  const [duplicateEvent, setDuplicateEvent] = useState<DuplicateCheckResponse["existingEvent"] | null>(null);
+  const [createdEvent, setCreatedEvent] = useState<{
+    id: string;
+    slug: string;
+    name: string;
+  } | null>(null);
+  const [duplicateEvent, setDuplicateEvent] = useState<
+    DuplicateCheckResponse["existingEvent"] | null
+  >(null);
   const [duplicateMatchType, setDuplicateMatchType] = useState<string | null>(null);
   const [matchedVenue, setMatchedVenue] = useState<VenueMatch | null>(null);
   const [alternativeVenues, setAlternativeVenues] = useState<VenueMatch[]>([]);
@@ -148,11 +158,16 @@ export default function VendorSuggestEventPage() {
       if (!data.success) {
         if (res.status === 429) {
           const minutes = Math.ceil((data.retryAfter || 3600) / 60);
-          setError(`Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+          setError(
+            `Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`
+          );
           setStep("url-input");
           return;
         }
-        setError(data.error || "Failed to fetch URL. You can paste the content manually or fill in the details.");
+        setError(
+          data.error ||
+            "Failed to fetch URL. You can paste the content manually or fill in the details."
+        );
         setManualPaste(true);
         setStep("url-input");
         return;
@@ -168,10 +183,12 @@ export default function VendorSuggestEventPage() {
 
       // Auto-extract
       setStep("extracting");
-      await handleExtract(
-        data.content || "",
-        { title: data.title, description: data.description, ogImage: data.ogImage, jsonLd: data.jsonLd }
-      );
+      await handleExtract(data.content || "", {
+        title: data.title,
+        description: data.description,
+        ogImage: data.ogImage,
+        jsonLd: data.jsonLd,
+      });
     } catch {
       setError("Failed to fetch URL. You can paste the content manually or fill in the details.");
       setManualPaste(true);
@@ -182,7 +199,12 @@ export default function VendorSuggestEventPage() {
   // Step: Extract event data from content
   const handleExtract = async (
     content: string,
-    metadata?: { title?: string; description?: string; ogImage?: string; jsonLd?: Record<string, unknown> }
+    metadata?: {
+      title?: string;
+      description?: string;
+      ogImage?: string;
+      jsonLd?: Record<string, unknown>;
+    }
   ) => {
     try {
       const res = await fetch("/api/suggest-event/extract", {
@@ -317,7 +339,9 @@ export default function VendorSuggestEventPage() {
         if (res.status === 429) {
           const retryAfter = data.retryAfter || 3600;
           const minutes = Math.ceil(retryAfter / 60);
-          setError(`Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+          setError(
+            `Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`
+          );
         } else {
           setError(data.error || "Failed to submit event");
         }
@@ -327,7 +351,10 @@ export default function VendorSuggestEventPage() {
 
       setCreatedEvent(data.event || null);
       setStep("success");
-      trackEvent("event_suggest", { category: "conversion", label: extractedData.name || undefined });
+      trackEvent("event_suggest", {
+        category: "conversion",
+        label: extractedData.name || undefined,
+      });
     } catch {
       setError("Failed to submit event. Please try again.");
       setStep("review");
@@ -360,6 +387,13 @@ export default function VendorSuggestEventPage() {
       ticketPriceMin: null,
       ticketPriceMax: null,
       imageUrl: null,
+      vendorFeeMin: null,
+      vendorFeeMax: null,
+      vendorFeeNotes: null,
+      indoorOutdoor: null,
+      estimatedAttendance: null,
+      applicationUrl: null,
+      walkInsAllowed: null,
     });
     setConfidence({});
     setEventDays([]);
@@ -422,11 +456,12 @@ export default function VendorSuggestEventPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Suggest an Event</h1>
         <p className="text-gray-600 mt-1">
-          Know about an upcoming fair, festival, or market? Submit it here and it will appear
-          on the site with a &ldquo;Tentative&rdquo; badge until verified by our team.
+          Know about an upcoming fair, festival, or market? Submit it here and it will appear on the
+          site with a &ldquo;Tentative&rdquo; badge until verified by our team.
         </p>
         <p className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 mt-3">
-          It&apos;s OK if details are incomplete — admins will verify and fill in missing information.
+          It&apos;s OK if details are incomplete — admins will verify and fill in missing
+          information.
         </p>
       </div>
 
@@ -449,8 +484,8 @@ export default function VendorSuggestEventPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-gray-600">
-              Paste a link to the event page and we&apos;ll automatically extract the details.
-              Or skip this step to fill in the details manually.
+              Paste a link to the event page and we&apos;ll automatically extract the details. Or
+              skip this step to fill in the details manually.
             </p>
 
             {!manualPaste ? (
@@ -499,9 +534,7 @@ export default function VendorSuggestEventPage() {
             ) : (
               <>
                 <div>
-                  <Label htmlFor="paste">
-                    Paste the event page content below
-                  </Label>
+                  <Label htmlFor="paste">Paste the event page content below</Label>
                   <textarea
                     id="paste"
                     rows={8}
@@ -592,9 +625,7 @@ export default function VendorSuggestEventPage() {
             </div>
 
             <div className="flex gap-2">
-              <Button onClick={proceedAnyway}>
-                Submit Anyway
-              </Button>
+              <Button onClick={proceedAnyway}>Submit Anyway</Button>
               <Button variant="outline" onClick={resetWizard}>
                 Cancel
               </Button>
@@ -637,7 +668,9 @@ export default function VendorSuggestEventPage() {
                     onClick={() => confirmVenue(v.id)}
                   >
                     <p className="text-sm font-medium text-gray-900">{v.name}</p>
-                    <p className="text-xs text-gray-600">{v.city}, {v.state}</p>
+                    <p className="text-xs text-gray-600">
+                      {v.city}, {v.state}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -687,7 +720,9 @@ export default function VendorSuggestEventPage() {
                 rows={4}
                 className="w-full p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 value={extractedData.description || ""}
-                onChange={(e) => setExtractedData((prev) => ({ ...prev, description: e.target.value }))}
+                onChange={(e) =>
+                  setExtractedData((prev) => ({ ...prev, description: e.target.value }))
+                }
                 placeholder="Brief description of the event"
               />
             </div>
@@ -702,7 +737,9 @@ export default function VendorSuggestEventPage() {
                   id="startDate"
                   type="date"
                   value={extractedData.startDate || ""}
-                  onChange={(e) => setExtractedData((prev) => ({ ...prev, startDate: e.target.value || null }))}
+                  onChange={(e) =>
+                    setExtractedData((prev) => ({ ...prev, startDate: e.target.value || null }))
+                  }
                 />
               </div>
               <div>
@@ -714,7 +751,9 @@ export default function VendorSuggestEventPage() {
                   id="endDate"
                   type="date"
                   value={extractedData.endDate || ""}
-                  onChange={(e) => setExtractedData((prev) => ({ ...prev, endDate: e.target.value || null }))}
+                  onChange={(e) =>
+                    setExtractedData((prev) => ({ ...prev, endDate: e.target.value || null }))
+                  }
                 />
               </div>
             </div>
@@ -729,7 +768,9 @@ export default function VendorSuggestEventPage() {
                   id="startTime"
                   type="time"
                   value={extractedData.startTime || ""}
-                  onChange={(e) => setExtractedData((prev) => ({ ...prev, startTime: e.target.value || null }))}
+                  onChange={(e) =>
+                    setExtractedData((prev) => ({ ...prev, startTime: e.target.value || null }))
+                  }
                 />
               </div>
               <div>
@@ -741,7 +782,9 @@ export default function VendorSuggestEventPage() {
                   id="endTime"
                   type="time"
                   value={extractedData.endTime || ""}
-                  onChange={(e) => setExtractedData((prev) => ({ ...prev, endTime: e.target.value || null }))}
+                  onChange={(e) =>
+                    setExtractedData((prev) => ({ ...prev, endTime: e.target.value || null }))
+                  }
                 />
               </div>
             </div>
@@ -788,7 +831,9 @@ export default function VendorSuggestEventPage() {
                     <Input
                       id="venueName"
                       value={extractedData.venueName || ""}
-                      onChange={(e) => setExtractedData((prev) => ({ ...prev, venueName: e.target.value }))}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({ ...prev, venueName: e.target.value }))
+                      }
                       placeholder="e.g. Fryeburg Fairgrounds"
                     />
                   </div>
@@ -797,7 +842,9 @@ export default function VendorSuggestEventPage() {
                     <Input
                       id="venueAddress"
                       value={extractedData.venueAddress || ""}
-                      onChange={(e) => setExtractedData((prev) => ({ ...prev, venueAddress: e.target.value }))}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({ ...prev, venueAddress: e.target.value }))
+                      }
                     />
                   </div>
                   <div>
@@ -805,7 +852,9 @@ export default function VendorSuggestEventPage() {
                     <Input
                       id="venueCity"
                       value={extractedData.venueCity || ""}
-                      onChange={(e) => setExtractedData((prev) => ({ ...prev, venueCity: e.target.value }))}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({ ...prev, venueCity: e.target.value }))
+                      }
                     />
                   </div>
                   <div>
@@ -813,7 +862,9 @@ export default function VendorSuggestEventPage() {
                     <Input
                       id="venueState"
                       value={extractedData.venueState || ""}
-                      onChange={(e) => setExtractedData((prev) => ({ ...prev, venueState: e.target.value }))}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({ ...prev, venueState: e.target.value }))
+                      }
                     />
                   </div>
                 </div>
@@ -832,7 +883,9 @@ export default function VendorSuggestEventPage() {
                     id="ticketUrl"
                     type="url"
                     value={extractedData.ticketUrl || ""}
-                    onChange={(e) => setExtractedData((prev) => ({ ...prev, ticketUrl: e.target.value }))}
+                    onChange={(e) =>
+                      setExtractedData((prev) => ({ ...prev, ticketUrl: e.target.value }))
+                    }
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -878,7 +931,9 @@ export default function VendorSuggestEventPage() {
                 id="imageUrl"
                 type="url"
                 value={extractedData.imageUrl || ""}
-                onChange={(e) => setExtractedData((prev) => ({ ...prev, imageUrl: e.target.value }))}
+                onChange={(e) =>
+                  setExtractedData((prev) => ({ ...prev, imageUrl: e.target.value }))
+                }
               />
             </div>
 
@@ -937,9 +992,7 @@ export default function VendorSuggestEventPage() {
                 Submit Another
               </Button>
               <Link href="/vendor/submissions">
-                <Button variant="outline">
-                  View My Submissions
-                </Button>
+                <Button variant="outline">View My Submissions</Button>
               </Link>
             </div>
           </CardContent>

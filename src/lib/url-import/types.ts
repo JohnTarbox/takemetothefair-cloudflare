@@ -16,6 +16,14 @@ export interface ExtractedEventData {
   ticketPriceMin: number | null;
   ticketPriceMax: number | null;
   imageUrl: string | null;
+  // Vendor decision-support fields
+  vendorFeeMin: number | null;
+  vendorFeeMax: number | null;
+  vendorFeeNotes: string | null;
+  indoorOutdoor: "INDOOR" | "OUTDOOR" | "MIXED" | null;
+  estimatedAttendance: number | null;
+  applicationUrl: string | null;
+  walkInsAllowed: boolean | null;
 }
 
 // Extended event data with unique ID for tracking in multi-event selection

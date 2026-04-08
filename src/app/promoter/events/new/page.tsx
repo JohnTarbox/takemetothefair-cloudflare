@@ -38,6 +38,16 @@ export default function CreateEventPage() {
     ticketPriceMin: "",
     ticketPriceMax: "",
     imageUrl: "",
+    vendorFeeMin: "",
+    vendorFeeMax: "",
+    vendorFeeNotes: "",
+    indoorOutdoor: "",
+    estimatedAttendance: "",
+    eventScale: "",
+    applicationDeadline: "",
+    applicationUrl: "",
+    applicationInstructions: "",
+    walkInsAllowed: false,
   });
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
 
@@ -48,7 +58,7 @@ export default function CreateEventPage() {
   const fetchVenues = async () => {
     try {
       const res = await fetch("/api/venues");
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
       setVenues(data);
     } catch (error) {
       console.error("Failed to fetch venues:", error);
@@ -56,9 +66,7 @@ export default function CreateEventPage() {
   };
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
-    >
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     setFormData((prev) => ({
       ...prev,
@@ -81,7 +89,7 @@ export default function CreateEventPage() {
       let endDateISO: string;
 
       if (discontinuousDates && eventDays.length > 0) {
-        const sorted = eventDays.map(d => d.date).sort();
+        const sorted = eventDays.map((d) => d.date).sort();
         startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
         endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
       } else {
@@ -108,18 +116,28 @@ export default function CreateEventPage() {
             .map((t) => t.trim())
             .filter(Boolean),
           ticketUrl: formData.ticketUrl || null,
-          ticketPriceMin: formData.ticketPriceMin
-            ? parseFloat(formData.ticketPriceMin)
-            : null,
-          ticketPriceMax: formData.ticketPriceMax
-            ? parseFloat(formData.ticketPriceMax)
-            : null,
+          ticketPriceMin: formData.ticketPriceMin ? parseFloat(formData.ticketPriceMin) : null,
+          ticketPriceMax: formData.ticketPriceMax ? parseFloat(formData.ticketPriceMax) : null,
           imageUrl: formData.imageUrl || null,
           eventDays: eventDays.length > 0 ? eventDays : [],
+          vendorFeeMin: formData.vendorFeeMin ? parseFloat(formData.vendorFeeMin) : null,
+          vendorFeeMax: formData.vendorFeeMax ? parseFloat(formData.vendorFeeMax) : null,
+          vendorFeeNotes: formData.vendorFeeNotes || null,
+          indoorOutdoor: formData.indoorOutdoor || null,
+          estimatedAttendance: formData.estimatedAttendance
+            ? parseInt(formData.estimatedAttendance, 10)
+            : null,
+          eventScale: formData.eventScale || null,
+          applicationDeadline: formData.applicationDeadline
+            ? new Date(formData.applicationDeadline + "T00:00:00").toISOString()
+            : null,
+          applicationUrl: formData.applicationUrl || null,
+          applicationInstructions: formData.applicationInstructions || null,
+          walkInsAllowed: formData.walkInsAllowed || null,
         }),
       });
 
-      const data = await res.json() as any;
+      const data = (await res.json()) as any;
 
       if (!res.ok) {
         setError(data.error || "Failed to create event");
@@ -135,12 +153,10 @@ export default function CreateEventPage() {
   };
 
   // Build datetime-local string for DailyScheduleInput
-  const startDateTimeStr = formData.startDate && formData.startTime
-    ? `${formData.startDate}T${formData.startTime}`
-    : null;
-  const endDateTimeStr = formData.endDate && formData.endTime
-    ? `${formData.endDate}T${formData.endTime}`
-    : null;
+  const startDateTimeStr =
+    formData.startDate && formData.startTime ? `${formData.startDate}T${formData.startTime}` : null;
+  const endDateTimeStr =
+    formData.endDate && formData.endTime ? `${formData.endDate}T${formData.endTime}` : null;
 
   return (
     <div className="max-w-2xl">
@@ -170,9 +186,7 @@ export default function CreateEventPage() {
             />
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
               <textarea
                 name="description"
                 value={formData.description}
@@ -318,15 +332,136 @@ export default function CreateEventPage() {
               placeholder="https://..."
             />
 
+            {/* Vendor Information */}
+            <div className="border-t pt-4 mt-2">
+              <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Information</h3>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <Input
+                  label="Min Booth Fee ($)"
+                  type="number"
+                  name="vendorFeeMin"
+                  value={formData.vendorFeeMin}
+                  onChange={handleChange}
+                  placeholder="0.00"
+                />
+                <Input
+                  label="Max Booth Fee ($)"
+                  type="number"
+                  name="vendorFeeMax"
+                  value={formData.vendorFeeMax}
+                  onChange={handleChange}
+                  placeholder="0.00"
+                />
+              </div>
+              <Input
+                label="Fee Details"
+                name="vendorFeeNotes"
+                value={formData.vendorFeeNotes}
+                onChange={handleChange}
+                placeholder='e.g., "$50 for 10x10, $75 for 10x20"'
+              />
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Indoor/Outdoor
+                  </label>
+                  <select
+                    name="indoorOutdoor"
+                    value={formData.indoorOutdoor}
+                    onChange={handleChange}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Not specified</option>
+                    <option value="INDOOR">Indoor</option>
+                    <option value="OUTDOOR">Outdoor</option>
+                    <option value="MIXED">Mixed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Event Scale
+                  </label>
+                  <select
+                    name="eventScale"
+                    value={formData.eventScale}
+                    onChange={handleChange}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Not specified</option>
+                    <option value="SMALL">Small</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="LARGE">Large</option>
+                    <option value="MAJOR">Major</option>
+                  </select>
+                </div>
+              </div>
+              <div className="mt-3">
+                <Input
+                  label="Estimated Attendance"
+                  type="number"
+                  name="estimatedAttendance"
+                  value={formData.estimatedAttendance}
+                  onChange={handleChange}
+                  placeholder="Expected attendees"
+                />
+              </div>
+              <div className="flex items-center gap-2 mt-3">
+                <input
+                  id="walkInsAllowed"
+                  name="walkInsAllowed"
+                  type="checkbox"
+                  checked={!!formData.walkInsAllowed}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, walkInsAllowed: e.target.checked }))
+                  }
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <label htmlFor="walkInsAllowed" className="text-sm font-normal text-gray-700">
+                  Walk-in Vendors Accepted
+                </label>
+              </div>
+            </div>
+
+            {/* Vendor Application */}
+            <div className="border-t pt-4 mt-2">
+              <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Application</h3>
+              <Input
+                label="Application Deadline"
+                type="date"
+                name="applicationDeadline"
+                value={formData.applicationDeadline}
+                onChange={handleChange}
+              />
+              <div className="mt-3">
+                <Input
+                  label="Application URL"
+                  type="url"
+                  name="applicationUrl"
+                  value={formData.applicationUrl}
+                  onChange={handleChange}
+                  placeholder="https://example.com/apply"
+                />
+              </div>
+              <div className="mt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Application Instructions
+                </label>
+                <textarea
+                  name="applicationInstructions"
+                  value={formData.applicationInstructions}
+                  onChange={handleChange}
+                  rows={3}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  placeholder="How to apply, requirements, contact info..."
+                />
+              </div>
+            </div>
+
             <div className="flex gap-3">
               <Button type="submit" isLoading={loading} disabled={loading}>
                 Submit for Approval
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.back()}
-              >
+              <Button type="button" variant="outline" onClick={() => router.back()}>
                 Cancel
               </Button>
             </div>

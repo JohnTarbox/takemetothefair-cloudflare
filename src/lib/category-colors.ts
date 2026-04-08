@@ -40,6 +40,46 @@ const CATEGORY_COLORS: Record<string, CategoryColors> = {
     icon: "text-emerald-400",
     badge: "bg-emerald-100 text-emerald-700",
   },
+  "Agricultural Fair": {
+    bg: "bg-yellow-50",
+    icon: "text-yellow-500",
+    badge: "bg-yellow-100 text-yellow-700",
+  },
+  "Art Walk": {
+    bg: "bg-rose-50",
+    icon: "text-rose-400",
+    badge: "bg-rose-100 text-rose-700",
+  },
+  "Flea Market": {
+    bg: "bg-orange-50",
+    icon: "text-orange-400",
+    badge: "bg-orange-100 text-orange-700",
+  },
+  "Food Festival": {
+    bg: "bg-red-50",
+    icon: "text-red-400",
+    badge: "bg-red-100 text-red-700",
+  },
+  "Holiday Market": {
+    bg: "bg-teal-50",
+    icon: "text-teal-400",
+    badge: "bg-teal-100 text-teal-700",
+  },
+  "Home Show": {
+    bg: "bg-slate-50",
+    icon: "text-slate-400",
+    badge: "bg-slate-100 text-slate-700",
+  },
+  "Music Festival": {
+    bg: "bg-indigo-50",
+    icon: "text-indigo-400",
+    badge: "bg-indigo-100 text-indigo-700",
+  },
+  "Trade Show": {
+    bg: "bg-cyan-50",
+    icon: "text-cyan-400",
+    badge: "bg-cyan-100 text-cyan-700",
+  },
 };
 
 const DEFAULT_COLORS: CategoryColors = {

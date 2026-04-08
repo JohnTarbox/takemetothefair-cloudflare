@@ -26,10 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { trackEvent } from "@/lib/analytics";
-import type {
-  ExtractedEventData,
-  FieldConfidence,
-} from "@/lib/url-import/types";
+import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
 export const runtime = "edge";
 
@@ -156,12 +153,21 @@ export default function SuggestEventPage() {
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: null,
+    vendorFeeMin: null,
+    vendorFeeMax: null,
+    vendorFeeNotes: null,
+    indoorOutdoor: null,
+    estimatedAttendance: null,
+    applicationUrl: null,
+    walkInsAllowed: null,
   });
   const [confidence, setConfidence] = useState<FieldConfidence>({});
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
 
   // Duplicate check state
-  const [duplicateEvent, setDuplicateEvent] = useState<DuplicateCheckResponse["existingEvent"] | null>(null);
+  const [duplicateEvent, setDuplicateEvent] = useState<
+    DuplicateCheckResponse["existingEvent"] | null
+  >(null);
   const [duplicateMatchType, setDuplicateMatchType] = useState<string | null>(null);
 
   // Venue match state
@@ -173,7 +179,11 @@ export default function SuggestEventPage() {
   const [suggesterEmail, setSuggesterEmail] = useState("");
 
   // Success state
-  const [createdEvent, setCreatedEvent] = useState<{ id: string; slug: string; name: string } | null>(null);
+  const [createdEvent, setCreatedEvent] = useState<{
+    id: string;
+    slug: string;
+    name: string;
+  } | null>(null);
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string>("");
@@ -262,9 +272,7 @@ export default function SuggestEventPage() {
     setStep("fetching");
 
     try {
-      const res = await fetch(
-        `/api/suggest-event/fetch?url=${encodeURIComponent(url)}`
-      );
+      const res = await fetch(`/api/suggest-event/fetch?url=${encodeURIComponent(url)}`);
       const data = (await res.json()) as FetchResponse;
 
       if (!data.success) {
@@ -272,7 +280,9 @@ export default function SuggestEventPage() {
         if (res.status === 429) {
           const retryAfter = data.retryAfter || 3600;
           const minutes = Math.ceil(retryAfter / 60);
-          setError(`Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+          setError(
+            `Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`
+          );
         } else {
           setError(data.error || "Failed to fetch page");
         }
@@ -299,7 +309,12 @@ export default function SuggestEventPage() {
   // Step: AI Extract
   const handleExtract = async (
     content: string,
-    metadata?: { title?: string; description?: string; ogImage?: string; jsonLd?: Record<string, unknown> }
+    metadata?: {
+      title?: string;
+      description?: string;
+      ogImage?: string;
+      jsonLd?: Record<string, unknown>;
+    }
   ) => {
     try {
       const res = await fetch("/api/suggest-event/extract", {
@@ -446,7 +461,9 @@ export default function SuggestEventPage() {
         if (res.status === 429) {
           const retryAfter = data.retryAfter || 3600;
           const minutes = Math.ceil(retryAfter / 60);
-          setError(`Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`);
+          setError(
+            `Too many requests. Please try again in ${minutes} minute${minutes > 1 ? "s" : ""}.`
+          );
         } else {
           setError(data.error || "Failed to submit event");
         }
@@ -457,7 +474,10 @@ export default function SuggestEventPage() {
 
       setCreatedEvent(data.event || null);
       setStep("success");
-      trackEvent("event_suggest", { category: "conversion", label: extractedData.name || undefined });
+      trackEvent("event_suggest", {
+        category: "conversion",
+        label: extractedData.name || undefined,
+      });
     } catch {
       setError("Failed to submit event. Please try again.");
       resetTurnstile();
@@ -491,6 +511,13 @@ export default function SuggestEventPage() {
       ticketPriceMin: null,
       ticketPriceMax: null,
       imageUrl: null,
+      vendorFeeMin: null,
+      vendorFeeMax: null,
+      vendorFeeNotes: null,
+      indoorOutdoor: null,
+      estimatedAttendance: null,
+      applicationUrl: null,
+      walkInsAllowed: null,
     });
     setConfidence({});
     setEventDays([]);
@@ -575,18 +602,36 @@ export default function SuggestEventPage() {
       {/* Progress indicator */}
       {step !== "success" && (
         <div className="flex items-center gap-2 mb-6 text-sm">
-          <span className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-gray-400"}`}>
-            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "url-input" ? "bg-royal text-white" : ["review", "submitting"].includes(step) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>1</span>
+          <span
+            className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-gray-400"}`}
+          >
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "url-input" ? "bg-royal text-white" : ["review", "submitting"].includes(step) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+            >
+              1
+            </span>
             Source
           </span>
           <div className="flex-1 h-px bg-gray-200" />
-          <span className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-gray-400"}`}>
-            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "review" ? "bg-royal text-white" : step === "submitting" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>2</span>
+          <span
+            className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-gray-400"}`}
+          >
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "review" ? "bg-royal text-white" : step === "submitting" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+            >
+              2
+            </span>
             Review
           </span>
           <div className="flex-1 h-px bg-gray-200" />
-          <span className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-gray-400"}`}>
-            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-500`}>3</span>
+          <span
+            className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-gray-400"}`}
+          >
+            <span
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-500`}
+            >
+              3
+            </span>
             Submit
           </span>
         </div>
@@ -696,9 +741,7 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">
-              Fetching page content...
-            </h3>
+            <h3 className="text-lg font-medium text-gray-900">Fetching page content...</h3>
             <p className="text-gray-500 mt-2">This may take a few seconds</p>
           </CardContent>
         </Card>
@@ -709,12 +752,8 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Sparkles className="w-12 h-12 text-purple-600 mx-auto mb-4 animate-pulse" />
-            <h3 className="text-lg font-medium text-gray-900">
-              Analyzing page content...
-            </h3>
-            <p className="text-gray-500 mt-2">
-              AI is extracting event details
-            </p>
+            <h3 className="text-lg font-medium text-gray-900">Analyzing page content...</h3>
+            <p className="text-gray-500 mt-2">AI is extracting event details</p>
           </CardContent>
         </Card>
       )}
@@ -743,9 +782,7 @@ export default function SuggestEventPage() {
                   {formatDateForDisplay(duplicateEvent.startDate.toString())}
                 </p>
               )}
-              <p className="text-sm text-gray-500 mt-1">
-                Status: {duplicateEvent.status}
-              </p>
+              <p className="text-sm text-gray-500 mt-1">Status: {duplicateEvent.status}</p>
               <Link
                 href={`/events/${duplicateEvent.slug}`}
                 className="text-sm text-royal hover:underline mt-2 inline-flex items-center"
@@ -775,9 +812,7 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">
-              Checking for duplicates...
-            </h3>
+            <h3 className="text-lg font-medium text-gray-900">Checking for duplicates...</h3>
           </CardContent>
         </Card>
       )}
@@ -793,7 +828,8 @@ export default function SuggestEventPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-gray-700">
-              We found a venue that matches &quot;{extractedData.venueName}&quot;. Would you like to link this event to it?
+              We found a venue that matches &quot;{extractedData.venueName}&quot;. Would you like to
+              link this event to it?
             </p>
 
             <div className="p-4 bg-brand-blue-light border border-blue-200 rounded-lg">
@@ -855,9 +891,7 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">
-              Checking for matching venues...
-            </h3>
+            <h3 className="text-lg font-medium text-gray-900">Checking for matching venues...</h3>
           </CardContent>
         </Card>
       )}
@@ -899,9 +933,7 @@ export default function SuggestEventPage() {
                     id="eventName"
                     autoComplete="off"
                     value={extractedData.name || ""}
-                    onChange={(e) =>
-                      setExtractedData({ ...extractedData, name: e.target.value })
-                    }
+                    onChange={(e) => setExtractedData({ ...extractedData, name: e.target.value })}
                     className="mt-1"
                   />
                 </div>
@@ -1130,9 +1162,7 @@ export default function SuggestEventPage() {
                           onChange={(e) =>
                             setExtractedData({
                               ...extractedData,
-                              ticketPriceMin: e.target.value
-                                ? parseFloat(e.target.value)
-                                : null,
+                              ticketPriceMin: e.target.value ? parseFloat(e.target.value) : null,
                             })
                           }
                           className="pl-8"
@@ -1152,9 +1182,7 @@ export default function SuggestEventPage() {
                           onChange={(e) =>
                             setExtractedData({
                               ...extractedData,
-                              ticketPriceMax: e.target.value
-                                ? parseFloat(e.target.value)
-                                : null,
+                              ticketPriceMax: e.target.value ? parseFloat(e.target.value) : null,
                             })
                           }
                           className="pl-8"
@@ -1256,9 +1284,7 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">
-              Submitting your suggestion...
-            </h3>
+            <h3 className="text-lg font-medium text-gray-900">Submitting your suggestion...</h3>
             <p className="text-gray-500 mt-2">Please wait</p>
           </CardContent>
         </Card>
@@ -1272,9 +1298,7 @@ export default function SuggestEventPage() {
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Check className="w-8 h-8 text-green-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">
-                Thank You!
-              </h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Thank You!</h3>
               <p className="text-gray-600 mb-2">
                 Your event suggestion has been submitted for review.
                 {suggesterEmail && " We'll notify you once it's approved."}
@@ -1293,9 +1317,7 @@ export default function SuggestEventPage() {
               )}
 
               <div className="flex justify-center gap-4">
-                <Button onClick={resetWizard}>
-                  Suggest Another Event
-                </Button>
+                <Button onClick={resetWizard}>Suggest Another Event</Button>
                 <Link href="/events">
                   <Button variant="outline">
                     Browse Events

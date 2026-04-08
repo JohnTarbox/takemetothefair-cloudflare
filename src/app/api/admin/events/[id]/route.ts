@@ -9,7 +9,6 @@ import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -65,7 +64,12 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(event);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch event", error, source: "api/admin/events/[id]", request });
+    await logError(db, {
+      message: "Failed to fetch event",
+      error,
+      source: "api/admin/events/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch event" }, { status: 500 });
   }
 }
@@ -88,7 +92,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-
     // Get current event to check if slug needs updating
     const [currentEvent] = await db
       .select({ slug: events.slug })
@@ -114,10 +117,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           const existingSlug = await db
             .select({ id: events.id })
             .from(events)
-            .where(and(
-              eq(events.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
-              ne(events.id, id)
-            ))
+            .where(
+              and(
+                eq(events.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+                ne(events.id, id)
+              )
+            )
             .limit(1);
           if (existingSlug.length === 0) break;
           slugSuffix++;
@@ -134,11 +139,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       updateData.endDate = data.endDate ? new Date(data.endDate) : null;
     }
     if (data.datesConfirmed !== undefined) updateData.datesConfirmed = data.datesConfirmed;
-    if (data.discontinuousDates !== undefined) updateData.discontinuousDates = data.discontinuousDates;
+    if (data.discontinuousDates !== undefined)
+      updateData.discontinuousDates = data.discontinuousDates;
 
     // Auto-compute startDate/endDate from eventDays when discontinuous
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
-      const sorted = data.eventDays.map(d => d.date).sort();
+      const sorted = data.eventDays.map((d) => d.date).sort();
       updateData.startDate = new Date(sorted[0] + "T00:00:00");
       updateData.endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
     }
@@ -150,8 +156,24 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.ticketPriceMax !== undefined) updateData.ticketPriceMax = data.ticketPriceMax;
     if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
     if (data.featured !== undefined) updateData.featured = data.featured;
-    if (data.commercialVendorsAllowed !== undefined) updateData.commercialVendorsAllowed = data.commercialVendorsAllowed;
+    if (data.commercialVendorsAllowed !== undefined)
+      updateData.commercialVendorsAllowed = data.commercialVendorsAllowed;
     if (data.status) updateData.status = data.status;
+    if (data.vendorFeeMin !== undefined) updateData.vendorFeeMin = data.vendorFeeMin;
+    if (data.vendorFeeMax !== undefined) updateData.vendorFeeMax = data.vendorFeeMax;
+    if (data.vendorFeeNotes !== undefined) updateData.vendorFeeNotes = data.vendorFeeNotes;
+    if (data.indoorOutdoor !== undefined) updateData.indoorOutdoor = data.indoorOutdoor;
+    if (data.estimatedAttendance !== undefined)
+      updateData.estimatedAttendance = data.estimatedAttendance;
+    if (data.eventScale !== undefined) updateData.eventScale = data.eventScale;
+    if (data.applicationDeadline !== undefined)
+      updateData.applicationDeadline = data.applicationDeadline
+        ? new Date(data.applicationDeadline)
+        : null;
+    if (data.applicationUrl !== undefined) updateData.applicationUrl = data.applicationUrl;
+    if (data.applicationInstructions !== undefined)
+      updateData.applicationInstructions = data.applicationInstructions;
+    if (data.walkInsAllowed !== undefined) updateData.walkInsAllowed = data.walkInsAllowed;
 
     await db.update(events).set(updateData).where(eq(events.id, id));
 
@@ -181,15 +203,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
 
-    const [updatedEvent] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, id))
-      .limit(1);
+    const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
     return NextResponse.json(updatedEvent);
   } catch (error) {
-    await logError(db, { message: "Failed to update event", error, source: "api/admin/events/[id]", request });
+    await logError(db, {
+      message: "Failed to update event",
+      error,
+      source: "api/admin/events/[id]",
+      request,
+    });
     const message = error instanceof Error ? error.message : "Failed to update event";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -208,7 +231,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(events).where(eq(events.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to delete event", error, source: "api/admin/events/[id]", request });
+    await logError(db, {
+      message: "Failed to delete event",
+      error,
+      source: "api/admin/events/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to delete event" }, { status: 500 });
   }
 }

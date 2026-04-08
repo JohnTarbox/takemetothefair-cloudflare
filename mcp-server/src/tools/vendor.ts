@@ -48,6 +48,8 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
           contactPhone: v.contactPhone,
           city: v.city,
           state: v.state,
+          latitude: v.latitude,
+          longitude: v.longitude,
         }),
       ],
     };
@@ -67,6 +69,8 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
       contact_phone: z.string().optional().describe("Contact phone"),
       city: z.string().optional().describe("City"),
       state: z.string().optional().describe("State (2-letter code)"),
+      latitude: z.number().optional().describe("Home base latitude"),
+      longitude: z.number().optional().describe("Home base longitude"),
     },
     async (params) => {
       const updates: Record<string, unknown> = {};
@@ -79,6 +83,8 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
       if (params.contact_phone !== undefined) updates.contactPhone = params.contact_phone;
       if (params.city !== undefined) updates.city = params.city;
       if (params.state !== undefined) updates.state = params.state;
+      if (params.latitude !== undefined) updates.latitude = params.latitude;
+      if (params.longitude !== undefined) updates.longitude = params.longitude;
 
       if (Object.keys(updates).length === 0) {
         return { content: [{ type: "text", text: "No fields to update." }], isError: true };

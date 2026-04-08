@@ -9,7 +9,6 @@ import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   const session = await auth();
@@ -18,7 +17,6 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-
     const promoterResults = await db
       .select()
       .from(promoters)
@@ -45,7 +43,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(eventsList);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch events", error, source: "api/promoter/events", request });
+    await logError(db, {
+      message: "Failed to fetch events",
+      error,
+      source: "api/promoter/events",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
 }
@@ -58,7 +61,6 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-
     const promoterResults = await db
       .select()
       .from(promoters)
@@ -92,13 +94,23 @@ export async function POST(request: NextRequest) {
       ticketPriceMax,
       imageUrl,
       eventDays: eventDaysInput,
+      vendorFeeMin,
+      vendorFeeMax,
+      vendorFeeNotes,
+      indoorOutdoor,
+      estimatedAttendance,
+      eventScale,
+      applicationDeadline,
+      applicationUrl,
+      applicationInstructions,
+      walkInsAllowed,
     } = validation.data;
 
     // Auto-compute startDate/endDate from eventDays when discontinuous
     let startDate = rawStartDate;
     let endDate = rawEndDate;
     if (isDiscontinuous && eventDaysInput && eventDaysInput.length > 0) {
-      const sorted = eventDaysInput.map(d => d.date).sort();
+      const sorted = eventDaysInput.map((d) => d.date).sort();
       startDate = new Date(sorted[0] + "T00:00:00").toISOString();
       endDate = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
     }
@@ -107,7 +119,10 @@ export async function POST(request: NextRequest) {
 
     // Handle empty slug (e.g., name with only special characters)
     if (!baseSlug) {
-      return NextResponse.json({ error: "Event name must contain alphanumeric characters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Event name must contain alphanumeric characters" },
+        { status: 400 }
+      );
     }
 
     // Use string range comparison instead of LIKE to avoid "pattern too complex" errors
@@ -115,11 +130,13 @@ export async function POST(request: NextRequest) {
     const existingSlugs = await db
       .select({ slug: events.slug })
       .from(events)
-      .where(or(
-        eq(events.slug, baseSlug),
-        and(gt(events.slug, lowerBound), lt(events.slug, upperBound))
-      ));
-    const slug = findUniqueSlug(baseSlug, existingSlugs.map((r) => r.slug));
+      .where(
+        or(eq(events.slug, baseSlug), and(gt(events.slug, lowerBound), lt(events.slug, upperBound)))
+      );
+    const slug = findUniqueSlug(
+      baseSlug,
+      existingSlugs.map((r) => r.slug)
+    );
 
     const eventId = crypto.randomUUID();
 
@@ -140,6 +157,16 @@ export async function POST(request: NextRequest) {
       ticketPriceMax,
       imageUrl,
       status: "PENDING",
+      vendorFeeMin,
+      vendorFeeMax,
+      vendorFeeNotes,
+      indoorOutdoor,
+      estimatedAttendance,
+      eventScale,
+      applicationDeadline: applicationDeadline ? new Date(applicationDeadline) : null,
+      applicationUrl,
+      applicationInstructions,
+      walkInsAllowed,
     });
 
     // Insert event days if provided
@@ -157,15 +184,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const newEvent = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, eventId))
-      .limit(1);
+    const newEvent = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 
     return NextResponse.json(newEvent[0], { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create event", error, source: "api/promoter/events", request });
+    await logError(db, {
+      message: "Failed to create event",
+      error,
+      source: "api/promoter/events",
+      request,
+    });
     return NextResponse.json({ error: "Failed to create event" }, { status: 500 });
   }
 }

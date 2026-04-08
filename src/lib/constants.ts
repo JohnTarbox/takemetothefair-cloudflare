@@ -21,10 +21,7 @@ export const EVENT_STATUS = {
 } as const;
 
 // Statuses visible on public pages
-export const PUBLIC_EVENT_STATUSES = [
-  EVENT_STATUS.APPROVED,
-  EVENT_STATUS.TENTATIVE,
-] as const;
+export const PUBLIC_EVENT_STATUSES = [EVENT_STATUS.APPROVED, EVENT_STATUS.TENTATIVE] as const;
 
 // Venue statuses
 export const VENUE_STATUS = {
@@ -82,6 +79,38 @@ export const FAVORITABLE_TYPE = {
   PROMOTER: "PROMOTER",
 } as const;
 
+// Event categories (advisory taxonomy for dropdowns/filters)
+export const EVENT_CATEGORIES = [
+  "Agricultural Fair",
+  "Art Walk",
+  "Craft Fair",
+  "Craft Show",
+  "Farmers Market",
+  "Festival",
+  "Flea Market",
+  "Food Festival",
+  "Holiday Market",
+  "Home Show",
+  "Music Festival",
+  "Trade Show",
+  "Other",
+] as const;
+
+// Indoor/outdoor designation
+export const INDOOR_OUTDOOR = {
+  INDOOR: "INDOOR",
+  OUTDOOR: "OUTDOOR",
+  MIXED: "MIXED",
+} as const;
+
+// Event scale (rough size categories)
+export const EVENT_SCALE = {
+  SMALL: "SMALL",
+  MEDIUM: "MEDIUM",
+  LARGE: "LARGE",
+  MAJOR: "MAJOR",
+} as const;
+
 // Validation limits
 export const VALIDATION = {
   NAME_MIN_LENGTH: 1,
@@ -112,3 +141,6 @@ export type EventVendorStatus = (typeof EVENT_VENDOR_STATUS)[keyof typeof EVENT_
 export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
 export type FavoritableType = (typeof FAVORITABLE_TYPE)[keyof typeof FAVORITABLE_TYPE];
 export type BlogPostStatus = (typeof BLOG_POST_STATUS)[keyof typeof BLOG_POST_STATUS];
+export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+export type IndoorOutdoor = (typeof INDOOR_OUTDOOR)[keyof typeof INDOOR_OUTDOOR];
+export type EventScale = (typeof EVENT_SCALE)[keyof typeof EVENT_SCALE];

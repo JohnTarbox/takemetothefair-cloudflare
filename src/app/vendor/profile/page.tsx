@@ -29,6 +29,8 @@ interface VendorProfile {
   city: string | null;
   state: string | null;
   zip: string | null;
+  latitude: number | null;
+  longitude: number | null;
   // Business Details
   yearEstablished: number | null;
   paymentMethods: string | null;
@@ -58,6 +60,8 @@ export default function VendorProfilePage() {
     city: "",
     state: "",
     zip: "",
+    latitude: null as number | null,
+    longitude: null as number | null,
     // Business Details
     yearEstablished: "",
     paymentMethods: "",
@@ -73,7 +77,7 @@ export default function VendorProfilePage() {
     try {
       const res = await fetch("/api/vendor/profile");
       if (res.ok) {
-        const data = await res.json() as VendorProfile;
+        const data = (await res.json()) as VendorProfile;
         setProfile(data);
         // Parse paymentMethods from JSON string
         let paymentMethods: string[] = [];
@@ -101,6 +105,8 @@ export default function VendorProfilePage() {
           city: data.city || "",
           state: data.state || "",
           zip: data.zip || "",
+          latitude: data.latitude,
+          longitude: data.longitude,
           // Business Details
           yearEstablished: data.yearEstablished?.toString() || "",
           paymentMethods: paymentMethods.join(", "),
@@ -115,9 +121,7 @@ export default function VendorProfilePage() {
     }
   };
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
@@ -131,6 +135,8 @@ export default function VendorProfilePage() {
       city: place.city || prev.city,
       state: place.state || prev.state,
       zip: place.zip || prev.zip,
+      latitude: place.lat ?? prev.latitude,
+      longitude: place.lng ?? prev.longitude,
       website: place.website || prev.website,
       contactPhone: place.phone || prev.contactPhone,
       description: place.description || prev.description,
@@ -188,9 +194,7 @@ export default function VendorProfilePage() {
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <p className="text-gray-500">
-            No vendor profile found. Please contact support.
-          </p>
+          <p className="text-gray-500">No vendor profile found. Please contact support.</p>
         </CardContent>
       </Card>
     );
@@ -208,9 +212,7 @@ export default function VendorProfilePage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold text-gray-900">
-            Business Information
-          </h2>
+          <h2 className="text-lg font-semibold text-gray-900">Business Information</h2>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -235,9 +237,7 @@ export default function VendorProfilePage() {
             />
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Description
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
               <textarea
                 name="description"
                 value={formData.description}
@@ -347,12 +347,7 @@ export default function VendorProfilePage() {
                 />
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="col-span-2">
-                    <Input
-                      label="City"
-                      name="city"
-                      value={formData.city}
-                      onChange={handleChange}
-                    />
+                    <Input label="City" name="city" value={formData.city} onChange={handleChange} />
                   </div>
                   <Input
                     label="State"
@@ -370,6 +365,12 @@ export default function VendorProfilePage() {
                     placeholder="04101"
                   />
                 </div>
+                {formData.latitude && formData.longitude && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Coordinates: {formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)}{" "}
+                    (auto-detected from address)
+                  </p>
+                )}
               </div>
             </div>
 

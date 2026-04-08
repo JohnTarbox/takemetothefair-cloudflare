@@ -7,11 +7,15 @@ import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 
 // Users table
 export const users = sqliteTable("users", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash"),
   name: text("name"),
-  role: text("role", { enum: ["ADMIN", "PROMOTER", "VENDOR", "USER"] }).default("USER").notNull(),
+  role: text("role", { enum: ["ADMIN", "PROMOTER", "VENDOR", "USER"] })
+    .default("USER")
+    .notNull(),
   emailVerified: integer("email_verified", { mode: "timestamp" }),
   image: text("image"),
   oauthProvider: text("oauth_provider"),
@@ -21,7 +25,9 @@ export const users = sqliteTable("users", {
 
 // Venues table
 export const venues = sqliteTable("venues", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   address: text("address").notNull(),
@@ -45,15 +51,21 @@ export const venues = sqliteTable("venues", {
   googleTypes: text("google_types"),
   accessibility: text("accessibility"),
   parking: text("parking"),
-  status: text("status", { enum: ["ACTIVE", "INACTIVE"] }).default("ACTIVE").notNull(),
+  status: text("status", { enum: ["ACTIVE", "INACTIVE"] })
+    .default("ACTIVE")
+    .notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
 // Promoters table
 export const promoters = sqliteTable("promoters", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").unique().references(() => users.id, { onDelete: "set null" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .unique()
+    .references(() => users.id, { onDelete: "set null" }),
   companyName: text("company_name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
@@ -67,11 +79,15 @@ export const promoters = sqliteTable("promoters", {
 
 // Events table
 export const events = sqliteTable("events", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
-  promoterId: text("promoter_id").notNull().references(() => promoters.id, { onDelete: "cascade" }),
+  promoterId: text("promoter_id")
+    .notNull()
+    .references(() => promoters.id, { onDelete: "cascade" }),
   venueId: text("venue_id").references(() => venues.id, { onDelete: "set null" }),
   startDate: integer("start_date", { mode: "timestamp" }),
   endDate: integer("end_date", { mode: "timestamp" }),
@@ -84,8 +100,14 @@ export const events = sqliteTable("events", {
   ticketPriceMax: real("ticket_price_max"),
   imageUrl: text("image_url"),
   featured: integer("featured", { mode: "boolean" }).default(false),
-  commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(true),
-  status: text("status", { enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"] }).default("DRAFT").notNull(),
+  commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(
+    true
+  ),
+  status: text("status", {
+    enum: ["DRAFT", "PENDING", "TENTATIVE", "APPROVED", "REJECTED", "CANCELLED"],
+  })
+    .default("DRAFT")
+    .notNull(),
   viewCount: integer("view_count").default(0),
   sourceName: text("source_name"),
   sourceUrl: text("source_url"),
@@ -93,16 +115,33 @@ export const events = sqliteTable("events", {
   syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(true),
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
   discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),
+  vendorFeeMin: real("vendor_fee_min"),
+  vendorFeeMax: real("vendor_fee_max"),
+  vendorFeeNotes: text("vendor_fee_notes"),
+  indoorOutdoor: text("indoor_outdoor"),
+  estimatedAttendance: integer("estimated_attendance"),
+  eventScale: text("event_scale"),
+  applicationDeadline: integer("application_deadline", { mode: "timestamp" }),
+  applicationUrl: text("application_url"),
+  applicationInstructions: text("application_instructions"),
+  walkInsAllowed: integer("walk_ins_allowed", { mode: "boolean" }),
   suggesterEmail: text("suggester_email"),
-  submittedByUserId: text("submitted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  submittedByUserId: text("submitted_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
 // Vendors table
 export const vendors = sqliteTable("vendors", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
   businessName: text("business_name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
@@ -121,6 +160,8 @@ export const vendors = sqliteTable("vendors", {
   city: text("city"),
   state: text("state"),
   zip: text("zip"),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
   yearEstablished: integer("year_established"),
   paymentMethods: text("payment_methods").default("[]"),
   licenseInfo: text("license_info"),
@@ -131,19 +172,47 @@ export const vendors = sqliteTable("vendors", {
 
 // Event Vendors junction table
 export const eventVendors = sqliteTable("event_vendors", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  eventId: text("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
-  vendorId: text("vendor_id").notNull().references(() => vendors.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  vendorId: text("vendor_id")
+    .notNull()
+    .references(() => vendors.id, { onDelete: "cascade" }),
   boothInfo: text("booth_info"),
-  status: text("status", { enum: ["INVITED", "INTERESTED", "APPLIED", "WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"] }).default("APPLIED").notNull(),
-  paymentStatus: text("payment_status", { enum: ["NOT_REQUIRED", "PENDING", "PAID", "REFUNDED", "OVERDUE"] }).default("NOT_REQUIRED").notNull(),
+  status: text("status", {
+    enum: [
+      "INVITED",
+      "INTERESTED",
+      "APPLIED",
+      "WAITLISTED",
+      "APPROVED",
+      "CONFIRMED",
+      "REJECTED",
+      "WITHDRAWN",
+      "CANCELLED",
+    ],
+  })
+    .default("APPLIED")
+    .notNull(),
+  paymentStatus: text("payment_status", {
+    enum: ["NOT_REQUIRED", "PENDING", "PAID", "REFUNDED", "OVERDUE"],
+  })
+    .default("NOT_REQUIRED")
+    .notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
 // Event Days table
 export const eventDays = sqliteTable("event_days", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  eventId: text("event_id").notNull().references(() => events.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
   date: text("date").notNull(),
   openTime: text("open_time").notNull(),
   closeTime: text("close_time").notNull(),
@@ -154,17 +223,27 @@ export const eventDays = sqliteTable("event_days", {
 
 // User Favorites table
 export const userFavorites = sqliteTable("user_favorites", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  favoritableType: text("favoritable_type", { enum: ["EVENT", "VENUE", "VENDOR", "PROMOTER"] }).notNull(),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  favoritableType: text("favoritable_type", {
+    enum: ["EVENT", "VENUE", "VENDOR", "PROMOTER"],
+  }).notNull(),
   favoritableId: text("favoritable_id").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
 // API Tokens table
 export const apiTokens = sqliteTable("api_tokens", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   tokenHash: text("token_hash").notNull().unique(),
   name: text("name").notNull().default("Default"),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
@@ -173,8 +252,12 @@ export const apiTokens = sqliteTable("api_tokens", {
 
 // Notifications table
 export const notifications = sqliteTable("notifications", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
   title: text("title").notNull(),
   message: text("message").notNull(),
@@ -185,8 +268,12 @@ export const notifications = sqliteTable("notifications", {
 
 // NextAuth tables
 export const accounts = sqliteTable("accounts", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
   provider: text("provider").notNull(),
   providerAccountId: text("provider_account_id").notNull(),
@@ -200,8 +287,12 @@ export const accounts = sqliteTable("accounts", {
 });
 
 export const sessions = sqliteTable("sessions", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   sessionToken: text("session_token").notNull().unique(),
   expires: integer("expires", { mode: "timestamp" }).notNull(),
 });
@@ -214,8 +305,13 @@ export const verificationTokens = sqliteTable("verification_tokens", {
 
 // Event Schema.org Data table — stores fetched schema.org markup from ticket URLs
 export const eventSchemaOrg = sqliteTable("event_schema_org", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  eventId: text("event_id").notNull().unique().references(() => events.id, { onDelete: "cascade" }),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  eventId: text("event_id")
+    .notNull()
+    .unique()
+    .references(() => events.id, { onDelete: "cascade" }),
   ticketUrl: text("ticket_url"),
   rawJsonLd: text("raw_json_ld"),
   schemaName: text("schema_name"),
@@ -235,7 +331,9 @@ export const eventSchemaOrg = sqliteTable("event_schema_org", {
   schemaEventStatus: text("schema_event_status"),
   schemaOrganizerName: text("schema_organizer_name"),
   schemaOrganizerUrl: text("schema_organizer_url"),
-  status: text("status", { enum: ["pending", "available", "not_found", "invalid", "error"] }).default("pending").notNull(),
+  status: text("status", { enum: ["pending", "available", "not_found", "invalid", "error"] })
+    .default("pending")
+    .notNull(),
   lastFetchedAt: integer("last_fetched_at", { mode: "timestamp" }),
   lastError: text("last_error"),
   fetchCount: integer("fetch_count").default(0),
@@ -245,16 +343,22 @@ export const eventSchemaOrg = sqliteTable("event_schema_org", {
 
 // Blog Posts table
 export const blogPosts = sqliteTable("blog_posts", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
   title: text("title").notNull(),
   slug: text("slug").notNull().unique(),
   body: text("body").notNull(), // Markdown content
   excerpt: text("excerpt"),
-  authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  authorId: text("author_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   tags: text("tags").default("[]"),
   categories: text("categories").default("[]"),
   featuredImageUrl: text("featured_image_url"),
-  status: text("status", { enum: ["DRAFT", "PUBLISHED"] }).default("DRAFT").notNull(),
+  status: text("status", { enum: ["DRAFT", "PUBLISHED"] })
+    .default("DRAFT")
+    .notNull(),
   publishDate: integer("publish_date", { mode: "timestamp" }),
   metaTitle: text("meta_title"),
   metaDescription: text("meta_description"),

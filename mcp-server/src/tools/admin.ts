@@ -38,6 +38,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     source_url: events.sourceUrl,
     categories: events.categories,
     tags: events.tags,
+    vendor_fee: events.vendorFeeMin,
+    indoor_outdoor: events.indoorOutdoor,
+    event_scale: events.eventScale,
+    application_url: events.applicationUrl,
   };
 
   server.tool(
@@ -58,6 +62,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             "source_url",
             "categories",
             "tags",
+            "vendor_fee",
+            "indoor_outdoor",
+            "event_scale",
+            "application_url",
           ])
         )
         .optional()
@@ -252,6 +260,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .boolean()
         .optional()
         .describe("Whether commercial vendors are allowed"),
+      vendor_fee_min: z.number().optional().describe("Minimum vendor/booth fee"),
+      vendor_fee_max: z.number().optional().describe("Maximum vendor/booth fee"),
+      vendor_fee_notes: z.string().optional().describe("Details about vendor/booth fees"),
+      indoor_outdoor: z
+        .enum(["INDOOR", "OUTDOOR", "MIXED"])
+        .optional()
+        .describe("Indoor/outdoor designation"),
+      estimated_attendance: z.number().int().optional().describe("Expected attendance count"),
+      event_scale: z
+        .enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"])
+        .optional()
+        .describe("Event scale category"),
+      application_deadline: z
+        .string()
+        .optional()
+        .describe("Vendor application deadline (ISO 8601)"),
+      application_url: z.string().optional().describe("URL for vendor applications"),
+      application_instructions: z.string().optional().describe("How to apply as a vendor"),
+      walk_ins_allowed: z.boolean().optional().describe("Whether walk-in vendors are accepted"),
       source_url: z.string().optional().describe("Original source URL"),
       source_id: z.string().optional().describe("ID in the source system"),
       source_name: z
@@ -289,6 +316,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "image_url", column: "imageUrl" },
         { param: "featured", column: "featured" },
         { param: "commercial_vendors_allowed", column: "commercialVendorsAllowed" },
+        { param: "vendor_fee_min", column: "vendorFeeMin" },
+        { param: "vendor_fee_max", column: "vendorFeeMax" },
+        { param: "vendor_fee_notes", column: "vendorFeeNotes" },
+        { param: "indoor_outdoor", column: "indoorOutdoor" },
+        { param: "estimated_attendance", column: "estimatedAttendance" },
+        { param: "event_scale", column: "eventScale" },
+        {
+          param: "application_deadline",
+          column: "applicationDeadline",
+          transform: (v: string) => new Date(v),
+        },
+        { param: "application_url", column: "applicationUrl" },
+        { param: "application_instructions", column: "applicationInstructions" },
+        { param: "walk_ins_allowed", column: "walkInsAllowed" },
         { param: "source_url", column: "sourceUrl" },
         { param: "source_id", column: "sourceId" },
         { param: "source_name", column: "sourceName" },

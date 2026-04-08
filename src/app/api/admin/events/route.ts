@@ -28,7 +28,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(eventsList);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch events", error, source: "api/admin/events", request });
+    await logError(db, {
+      message: "Failed to fetch events",
+      error,
+      source: "api/admin/events",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
 }
@@ -54,7 +59,10 @@ export async function POST(request: NextRequest) {
 
     // Handle empty slug (e.g., name with only special characters)
     if (!baseSlug) {
-      return NextResponse.json({ error: "Event name must contain alphanumeric characters" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Event name must contain alphanumeric characters" },
+        { status: 400 }
+      );
     }
 
     // Use string range comparison instead of LIKE to avoid "pattern too complex" errors
@@ -62,17 +70,19 @@ export async function POST(request: NextRequest) {
     const existing = await db
       .select({ slug: events.slug })
       .from(events)
-      .where(or(
-        eq(events.slug, baseSlug),
-        and(gt(events.slug, lowerBound), lt(events.slug, upperBound))
-      ));
-    const slug = findUniqueSlug(baseSlug, existing.map((r) => r.slug));
+      .where(
+        or(eq(events.slug, baseSlug), and(gt(events.slug, lowerBound), lt(events.slug, upperBound)))
+      );
+    const slug = findUniqueSlug(
+      baseSlug,
+      existing.map((r) => r.slug)
+    );
 
     // Auto-compute startDate/endDate from eventDays when discontinuous
     let startDate = data.startDate ? new Date(data.startDate) : null;
     let endDate = data.endDate ? new Date(data.endDate) : null;
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
-      const sorted = data.eventDays.map(d => d.date).sort();
+      const sorted = data.eventDays.map((d) => d.date).sort();
       startDate = new Date(sorted[0] + "T00:00:00");
       endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
     }
@@ -100,6 +110,16 @@ export async function POST(request: NextRequest) {
       sourceName: data.sourceName,
       sourceUrl: data.sourceUrl,
       sourceId: data.sourceId,
+      vendorFeeMin: data.vendorFeeMin,
+      vendorFeeMax: data.vendorFeeMax,
+      vendorFeeNotes: data.vendorFeeNotes,
+      indoorOutdoor: data.indoorOutdoor,
+      estimatedAttendance: data.estimatedAttendance,
+      eventScale: data.eventScale,
+      applicationDeadline: data.applicationDeadline ? new Date(data.applicationDeadline) : null,
+      applicationUrl: data.applicationUrl,
+      applicationInstructions: data.applicationInstructions,
+      walkInsAllowed: data.walkInsAllowed,
     });
 
     // Insert event days if provided (batch to avoid SQLite variable limit)
@@ -122,18 +142,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const [newEvent] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, eventId))
-      .limit(1);
+    const [newEvent] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 
     return NextResponse.json(newEvent, { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create event", error, source: "api/admin/events", request });
+    await logError(db, {
+      message: "Failed to create event",
+      error,
+      source: "api/admin/events",
+      request,
+    });
     const message = error instanceof Error ? error.message : "";
     if (message.includes("UNIQUE constraint failed") || message.includes("unique")) {
-      return NextResponse.json({ error: "An event with this name already exists" }, { status: 409 });
+      return NextResponse.json(
+        { error: "An event with this name already exists" },
+        { status: 409 }
+      );
     }
     if (message.includes("FOREIGN KEY constraint failed")) {
       return NextResponse.json({ error: "Invalid promoter or venue selected" }, { status: 400 });
