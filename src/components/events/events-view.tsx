@@ -3,10 +3,26 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { LayoutGrid, Table, Calendar as CalendarIcon, MapPin, ExternalLink, Download, ChevronLeft, ChevronRight, Printer } from "lucide-react";
+import {
+  LayoutGrid,
+  Table,
+  Calendar as CalendarIcon,
+  MapPin,
+  ExternalLink,
+  Download,
+  ChevronLeft,
+  ChevronRight,
+  Printer,
+} from "lucide-react";
 import { EventCard } from "./event-card";
-import { SortableHeader, SortConfig, sortData, getNextSortDirection } from "@/components/ui/sortable-table";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 import { formatDateRange } from "@/lib/utils";
+import { haversineDistance } from "@/lib/geo";
 import type { events, venues, promoters } from "@/lib/db/schema";
 
 type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
@@ -42,6 +58,8 @@ interface EventsViewProps {
   myEvents?: boolean;
   /** Base path for pagination links. Defaults to "/events". */
   basePath?: string;
+  /** Vendor home coordinates for distance calculation */
+  vendorCoords?: { lat: number; lng: number } | null;
 }
 
 const SORT_OPTIONS = [
@@ -50,6 +68,7 @@ const SORT_OPTIONS = [
   { value: "name-asc", label: "Name (A–Z)" },
   { value: "name-desc", label: "Name (Z–A)" },
   { value: "popular", label: "Most viewed" },
+  { value: "nearest", label: "Nearest first" },
 ] as const;
 
 function getCalendarPeriodSummary(
@@ -99,7 +118,11 @@ function getCalendarPeriodSummary(
         const end = e.endDate ? new Date(e.endDate) : start;
         return isDateInRange(currentDate, start, end);
       });
-      const dayLabel = currentDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+      const dayLabel = currentDate.toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      });
       return { count: filtered.length, label: `on ${dayLabel}` };
     }
     case "year": {
@@ -199,7 +222,12 @@ function getWeekStart(date: Date): Date {
 }
 
 function formatFullDate(date: Date): string {
-  return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function formatShortMonth(date: Date): string {
@@ -220,7 +248,13 @@ function getEventsForDate(events: EventWithRelations[], date: Date): EventWithRe
   });
 }
 
-function CalendarView({ events, currentDate, onDateChange, calendarViewType, onViewTypeChange }: CalendarViewProps) {
+function CalendarView({
+  events,
+  currentDate,
+  onDateChange,
+  calendarViewType,
+  onViewTypeChange,
+}: CalendarViewProps) {
   const setCurrentDate = onDateChange;
   const setCalendarViewType = onViewTypeChange;
   const [selectedEvent, setSelectedEvent] = useState<EventWithRelations | null>(null);
@@ -294,8 +328,12 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
     return (
       <div className="border-t border-gray-200">
         <div className="text-center py-2 border-b border-gray-200 bg-gray-50">
-          <div className="text-sm text-gray-500">{currentDate.toLocaleDateString("en-US", { weekday: "long" })}</div>
-          <div className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-royal" : "text-gray-900"}`}>
+          <div className="text-sm text-gray-500">
+            {currentDate.toLocaleDateString("en-US", { weekday: "long" })}
+          </div>
+          <div
+            className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-royal" : "text-gray-900"}`}
+          >
             {currentDate.getDate()}
           </div>
         </div>
@@ -348,9 +386,16 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
         {/* Week day headers */}
         <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
           {days.map((day, i) => (
-            <div key={i} className="py-2 print:py-1 text-center border-r border-gray-200 last:border-r-0">
-              <div className="text-xs print:text-[0.6rem] text-gray-500 uppercase">{weekDays[i]}</div>
-              <div className={`text-lg print:text-sm font-semibold ${isSameDay(day, today) ? "bg-royal text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}>
+            <div
+              key={i}
+              className="py-2 print:py-1 text-center border-r border-gray-200 last:border-r-0"
+            >
+              <div className="text-xs print:text-[0.6rem] text-gray-500 uppercase">
+                {weekDays[i]}
+              </div>
+              <div
+                className={`text-lg print:text-sm font-semibold ${isSameDay(day, today) ? "bg-royal text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}
+              >
                 {day.getDate()}
               </div>
             </div>
@@ -369,7 +414,9 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                       key={event.id}
                       href={`/events/${event.slug}`}
                       className={`block px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
-                      title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
+                      title={
+                        event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name
+                      }
                     >
                       {event.name}
                     </Link>
@@ -420,7 +467,10 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
         {/* Week Day Headers */}
         <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
           {weekDays.map((day) => (
-            <div key={day} className="py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <div
+              key={day}
+              className="py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
+            >
               {day}
             </div>
           ))}
@@ -429,7 +479,8 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
         <div className="grid grid-cols-7">
           {calendarDays.map((day, index) => {
             const isToday = day !== null && isSameDay(new Date(year, month, day), today);
-            const dayEvents = day !== null ? getEventsForDate(events, new Date(year, month, day)) : [];
+            const dayEvents =
+              day !== null ? getEventsForDate(events, new Date(year, month, day)) : [];
             const isCurrentMonth = day !== null;
 
             return (
@@ -444,7 +495,9 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                     <div className="flex justify-center mb-1 print:mb-0">
                       <span
                         className={`inline-flex items-center justify-center w-7 h-7 print:w-4 print:h-4 text-sm print:text-[0.6rem] ${
-                          isToday ? "bg-royal text-white rounded-full font-semibold" : "text-gray-700"
+                          isToday
+                            ? "bg-royal text-white rounded-full font-semibold"
+                            : "text-gray-700"
                         }`}
                       >
                         {day}
@@ -457,7 +510,9 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                           key={event.id}
                           href={`/events/${event.slug}`}
                           className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
-                          title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
+                          title={
+                            event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name
+                          }
                         >
                           {event.name}
                         </Link>
@@ -510,7 +565,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
             if (!startDate) return false;
             const monthStart = new Date(year, monthIndex, 1);
             const monthEnd = new Date(year, monthIndex + 1, 0);
-            return (startDate <= monthEnd && (endDate || startDate) >= monthStart);
+            return startDate <= monthEnd && (endDate || startDate) >= monthStart;
           });
 
           const miniDays: (number | null)[] = [];
@@ -531,22 +586,33 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                   {monthDate.toLocaleDateString("en-US", { month: "long" })}
                 </div>
                 {monthEvents.length > 0 && (
-                  <div className="text-xs text-royal">{monthEvents.length} event{monthEvents.length !== 1 ? "s" : ""}</div>
+                  <div className="text-xs text-royal">
+                    {monthEvents.length} event{monthEvents.length !== 1 ? "s" : ""}
+                  </div>
                 )}
               </div>
               <div className="p-2">
                 <div className="grid grid-cols-7 gap-0.5 text-center">
                   {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                    <div key={i} className="text-[10px] text-gray-400 font-medium">{d}</div>
+                    <div key={i} className="text-[10px] text-gray-400 font-medium">
+                      {d}
+                    </div>
                   ))}
                   {miniDays.slice(0, 42).map((day, i) => {
-                    const hasEvent = day !== null && getEventsForDate(events, new Date(year, monthIndex, day)).length > 0;
-                    const isCurrentDay = day !== null && isSameDay(new Date(year, monthIndex, day), today);
+                    const hasEvent =
+                      day !== null &&
+                      getEventsForDate(events, new Date(year, monthIndex, day)).length > 0;
+                    const isCurrentDay =
+                      day !== null && isSameDay(new Date(year, monthIndex, day), today);
                     return (
                       <div
                         key={i}
                         className={`text-[10px] w-5 h-5 flex items-center justify-center rounded-full ${
-                          isCurrentDay ? "bg-royal text-white" : hasEvent ? "bg-brand-blue-light text-royal" : "text-gray-700"
+                          isCurrentDay
+                            ? "bg-royal text-white"
+                            : hasEvent
+                              ? "bg-brand-blue-light text-royal"
+                              : "text-gray-700"
                         }`}
                       >
                         {day}
@@ -570,7 +636,10 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
         const startDate = event.startDate ? utcDateOnly(new Date(event.startDate)) : null;
         if (!startDate) return false;
         const viewStart = new Date(year, month, 1);
-        return startDate >= viewStart || (event.endDate && utcDateOnly(new Date(event.endDate)) >= viewStart);
+        return (
+          startDate >= viewStart ||
+          (event.endDate && utcDateOnly(new Date(event.endDate)) >= viewStart)
+        );
       })
       .sort((a, b) => {
         const aDate = a.startDate ? new Date(a.startDate).getTime() : Infinity;
@@ -590,7 +659,9 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
       }
     });
 
-    const sortedDates = Object.keys(groupedEvents).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    const sortedDates = Object.keys(groupedEvents).sort(
+      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+    );
 
     return (
       <div className="max-h-[600px] overflow-y-auto print:max-h-none print:overflow-visible">
@@ -603,13 +674,19 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
               const isCurrentDay = isSameDay(date, today);
               return (
                 <div key={dateKey}>
-                  <div className={`sticky top-0 px-4 py-2 bg-gray-50 border-b border-gray-100 ${isCurrentDay ? "bg-brand-blue-light" : ""}`}>
+                  <div
+                    className={`sticky top-0 px-4 py-2 bg-gray-50 border-b border-gray-100 ${isCurrentDay ? "bg-brand-blue-light" : ""}`}
+                  >
                     <div className="flex items-center gap-3">
-                      <div className={`text-2xl font-bold ${isCurrentDay ? "text-royal" : "text-gray-900"}`}>
+                      <div
+                        className={`text-2xl font-bold ${isCurrentDay ? "text-royal" : "text-gray-900"}`}
+                      >
                         {date.getDate()}
                       </div>
                       <div>
-                        <div className={`text-sm font-medium ${isCurrentDay ? "text-royal" : "text-gray-900"}`}>
+                        <div
+                          className={`text-sm font-medium ${isCurrentDay ? "text-royal" : "text-gray-900"}`}
+                        >
                           {date.toLocaleDateString("en-US", { weekday: "long" })}
                         </div>
                         <div className="text-xs text-gray-500">
@@ -626,7 +703,9 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
                         className="block px-4 py-3 hover:bg-gray-50 transition-colors"
                       >
                         <div className="flex items-start gap-3">
-                          <div className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`} />
+                          <div
+                            className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`}
+                          />
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-gray-900">{event.name}</div>
                             <div className="text-sm text-gray-500 mt-1">
@@ -683,9 +762,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
               <ChevronRight className="w-5 h-5" />
             </button>
           </div>
-          <h2 className="text-lg font-semibold text-gray-900 ml-2">
-            {getTitle()}
-          </h2>
+          <h2 className="text-lg font-semibold text-gray-900 ml-2">{getTitle()}</h2>
         </div>
 
         {/* View Type Selector */}
@@ -716,10 +793,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
       {/* Event Details Modal */}
       {selectedEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setSelectedEvent(null)}
-          />
+          <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedEvent(null)} />
           <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
             <button
               onClick={() => setSelectedEvent(null)}
@@ -727,9 +801,7 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
             >
               ×
             </button>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              {selectedEvent.name}
-            </h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">{selectedEvent.name}</h3>
             <div className="space-y-2 text-sm text-gray-600">
               <div className="flex items-center gap-2">
                 <CalendarIcon className="w-4 h-4" />
@@ -738,7 +810,8 @@ function CalendarView({ events, currentDate, onDateChange, calendarViewType, onV
               {selectedEvent.venue && (
                 <div className="flex items-center gap-2">
                   <MapPin className="w-4 h-4" />
-                  {selectedEvent.venue.name}, {selectedEvent.venue.city}, {selectedEvent.venue.state}
+                  {selectedEvent.venue.name}, {selectedEvent.venue.city},{" "}
+                  {selectedEvent.venue.state}
                 </div>
               )}
             </div>
@@ -776,6 +849,7 @@ export function EventsView({
   total,
   myEvents = false,
   basePath = "/events",
+  vendorCoords = null,
 }: EventsViewProps) {
   const currentSearchParams = useSearchParams();
   const viewMode = view;
@@ -817,15 +891,46 @@ export function EventsView({
     window.location.href = exportUrl;
   };
 
+  // Compute distances from vendor home base (or browser location)
+  const [browserCoords, setBrowserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const activeCoords = vendorCoords || browserCoords;
+
+  const distanceMap = new Map<string, number>();
+  if (activeCoords) {
+    for (const event of events) {
+      if (event.venue?.latitude && event.venue?.longitude) {
+        distanceMap.set(
+          event.id,
+          haversineDistance(
+            activeCoords.lat,
+            activeCoords.lng,
+            event.venue.latitude,
+            event.venue.longitude
+          )
+        );
+      }
+    }
+  }
+
   const sortedEvents = sortData(events, sortConfig, {
     name: (e) => e.name.toLowerCase(),
     venue: (e) => e.venue?.name?.toLowerCase() || "",
     city: (e) => e.venue?.city?.toLowerCase() || "",
     state: (e) => e.venue?.state || "",
     // Put null dates at the end by using Infinity for asc sort
-    startDate: (e) => e.startDate ? new Date(e.startDate).getTime() : Infinity,
-    endDate: (e) => e.endDate ? new Date(e.endDate).getTime() : Infinity,
+    startDate: (e) => (e.startDate ? new Date(e.startDate).getTime() : Infinity),
+    endDate: (e) => (e.endDate ? new Date(e.endDate).getTime() : Infinity),
   });
+
+  // Apply client-side "nearest" sort when selected
+  const displayEvents =
+    currentSort === "nearest" && activeCoords
+      ? [...events].sort((a, b) => {
+          const distA = distanceMap.get(a.id) ?? Infinity;
+          const distB = distanceMap.get(b.id) ?? Infinity;
+          return distA - distB;
+        })
+      : sortedEvents;
 
   if (events.length === 0) {
     return (
@@ -853,19 +958,36 @@ export function EventsView({
   return (
     <div>
       {/* Summary Text */}
-      {summaryText && (
-        <p className="text-sm text-gray-600 mb-4 print:hidden">{summaryText}</p>
-      )}
+      {summaryText && <p className="text-sm text-gray-600 mb-4 print:hidden">{summaryText}</p>}
 
       {/* Sort, View Toggle, and Download */}
       <div className="flex justify-end items-center gap-3 mb-4 print:hidden">
         <select
           value={currentSort}
-          onChange={(e) => switchSort(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (val === "nearest" && !activeCoords) {
+              // Request browser geolocation then apply sort
+              navigator.geolocation?.getCurrentPosition(
+                (pos) => {
+                  setBrowserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                  switchSort("nearest");
+                },
+                () => {
+                  // Geolocation denied — fall back
+                  switchSort("date-asc");
+                }
+              );
+              return;
+            }
+            switchSort(val);
+          }}
           className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent mr-auto"
         >
           {SORT_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
           ))}
         </select>
         {viewMode === "table" && (
@@ -890,9 +1012,7 @@ export function EventsView({
           <button
             onClick={() => switchView("cards")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "cards"
-                ? "bg-royal text-white"
-                : "text-gray-600 hover:bg-gray-100"
+              viewMode === "cards" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <LayoutGrid className="w-4 h-4" />
@@ -901,9 +1021,7 @@ export function EventsView({
           <button
             onClick={() => switchView("table")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "table"
-                ? "bg-royal text-white"
-                : "text-gray-600 hover:bg-gray-100"
+              viewMode === "table" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <Table className="w-4 h-4" />
@@ -912,9 +1030,7 @@ export function EventsView({
           <button
             onClick={() => switchView("calendar")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "calendar"
-                ? "bg-royal text-white"
-                : "text-gray-600 hover:bg-gray-100"
+              viewMode === "calendar" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <CalendarIcon className="w-4 h-4" />
@@ -926,8 +1042,13 @@ export function EventsView({
       {/* Cards View */}
       {viewMode === "cards" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {sortedEvents.map((event, index) => (
-            <EventCard key={event.id} event={event} priority={index < 3} />
+          {displayEvents.map((event, index) => (
+            <EventCard
+              key={event.id}
+              event={event}
+              priority={index < 3}
+              distance={distanceMap.get(event.id)}
+            />
           ))}
         </div>
       )}
@@ -996,15 +1117,9 @@ export function EventsView({
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">
-                      {event.venue?.name || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">
-                      {event.venue?.city || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">
-                      {event.venue?.state || "-"}
-                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.name || "-"}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.city || "-"}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.state || "-"}</td>
                     <td className="py-3 px-4 text-sm text-gray-600 whitespace-nowrap">
                       <div className="flex items-center gap-1">
                         <CalendarIcon className="w-4 h-4 text-gray-400" />

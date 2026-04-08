@@ -3,10 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Calendar, MapPin, Tag, Store } from "lucide-react";
+import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateRange, formatPrice } from "@/lib/utils";
+import { formatDistance } from "@/lib/geo";
 import { parseJsonArray } from "@/types";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
@@ -33,9 +34,11 @@ interface EventCardProps {
   };
   /** Set to true for above-the-fold images to enable priority loading */
   priority?: boolean;
+  /** Distance in miles from vendor home base (if available) */
+  distance?: number;
 }
 
-export function EventCard({ event, priority = false }: EventCardProps) {
+export function EventCard({ event, priority = false, distance }: EventCardProps) {
   const [imgError, setImgError] = useState(false);
   const categories = parseJsonArray(event.categories);
   const vendors = event.vendors || [];
@@ -51,9 +54,26 @@ export function EventCard({ event, priority = false }: EventCardProps) {
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
       {/* Top accent bar */}
-      <div className={`h-1 ${colors.bg.replace("-50", "-400").replace("-100", "-500")}`} style={{ backgroundColor: colors.icon.includes("blue") ? "#3B6FD4" : colors.icon.includes("purple") ? "#9333ea" : colors.icon.includes("amber") ? "#E8960C" : colors.icon.includes("green") ? "#16a34a" : colors.icon.includes("emerald") ? "#059669" : "#9ca3af" }} />
+      <div
+        className={`h-1 ${colors.bg.replace("-50", "-400").replace("-100", "-500")}`}
+        style={{
+          backgroundColor: colors.icon.includes("blue")
+            ? "#3B6FD4"
+            : colors.icon.includes("purple")
+              ? "#9333ea"
+              : colors.icon.includes("amber")
+                ? "#E8960C"
+                : colors.icon.includes("green")
+                  ? "#16a34a"
+                  : colors.icon.includes("emerald")
+                    ? "#059669"
+                    : "#9ca3af",
+        }}
+      />
       <Link href={`/events/${event.slug}`} className="block">
-        <div className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-gray-100" : colors.bg}`}>
+        <div
+          className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-gray-100" : colors.bg}`}
+        >
           {event.imageUrl && !imgError ? (
             <Image
               src={event.imageUrl}
@@ -77,16 +97,8 @@ export function EventCard({ event, priority = false }: EventCardProps) {
             </div>
           )}
           <div className="absolute top-3 left-3 flex gap-1">
-            {event.featured && (
-              <Badge variant="warning">
-                Featured
-              </Badge>
-            )}
-            {event.status === "TENTATIVE" && (
-              <Badge variant="info">
-                Tentative
-              </Badge>
-            )}
+            {event.featured && <Badge variant="warning">Featured</Badge>}
+            {event.status === "TENTATIVE" && <Badge variant="info">Tentative</Badge>}
           </div>
           <FavoriteButton
             type="EVENT"
@@ -96,9 +108,7 @@ export function EventCard({ event, priority = false }: EventCardProps) {
           />
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-lg text-gray-900 line-clamp-2">
-            {event.name}
-          </h3>
+          <h3 className="font-semibold text-lg text-gray-900 line-clamp-2">{event.name}</h3>
           <div className="mt-2 space-y-1 text-sm text-gray-600">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
@@ -108,7 +118,11 @@ export function EventCard({ event, priority = false }: EventCardProps) {
               <AddToCalendar
                 title={event.name}
                 description={event.description || undefined}
-                location={event.venue ? `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}` : undefined}
+                location={
+                  event.venue
+                    ? `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`
+                    : undefined
+                }
                 startDate={event.startDate}
                 endDate={event.endDate}
                 url={`https://meetmeatthefair.com/events/${event.slug}`}
@@ -116,22 +130,77 @@ export function EventCard({ event, priority = false }: EventCardProps) {
               />
             </div>
             {event.venue && (
-              <div className="flex items-center">
-                <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span className="truncate">
-                  {event.venue.name}, {event.venue.city}, {event.venue.state}
-                </span>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center min-w-0">
+                  <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">
+                    {event.venue.name}, {event.venue.city}, {event.venue.state}
+                  </span>
+                </div>
+                {distance != null && (
+                  <span className="ml-2 flex-shrink-0 text-xs font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                    {formatDistance(distance)}
+                  </span>
+                )}
               </div>
             )}
             {event.ticketPriceMin !== null && (
               <div className="flex items-center">
                 <Tag className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span>
-                  {formatPrice(event.ticketPriceMin, event.ticketPriceMax)}
-                </span>
+                <span>{formatPrice(event.ticketPriceMin, event.ticketPriceMax)}</span>
               </div>
             )}
           </div>
+          {/* Scale & Indoor/Outdoor indicators */}
+          {(event.eventScale || event.indoorOutdoor) && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+              {event.eventScale && (
+                <span
+                  className="flex items-center gap-0.5"
+                  title={
+                    event.eventScale === "SMALL"
+                      ? "Small community event"
+                      : event.eventScale === "MEDIUM"
+                        ? "Regional event"
+                        : event.eventScale === "LARGE"
+                          ? "Large state-level event"
+                          : "Major multi-state event"
+                  }
+                >
+                  <Users className="w-3 h-3" />
+                  {event.eventScale === "SMALL"
+                    ? "Small"
+                    : event.eventScale === "MEDIUM"
+                      ? "Medium"
+                      : event.eventScale === "LARGE"
+                        ? "Large"
+                        : "Major"}
+                </span>
+              )}
+              {event.indoorOutdoor && (
+                <span className="flex items-center gap-0.5">
+                  {event.indoorOutdoor === "INDOOR" ? (
+                    <>
+                      <Home className="w-3 h-3" /> Indoor
+                    </>
+                  ) : event.indoorOutdoor === "OUTDOOR" ? (
+                    <>
+                      <Trees className="w-3 h-3" /> Outdoor
+                    </>
+                  ) : (
+                    <>
+                      <Home className="w-3 h-3" /> Mixed
+                    </>
+                  )}
+                </span>
+              )}
+              {event.estimatedAttendance && (
+                <span title="Estimated attendance">
+                  ~{event.estimatedAttendance.toLocaleString()}
+                </span>
+              )}
+            </div>
+          )}
           {categories.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1">
               {categories.slice(0, 3).map((category) => (

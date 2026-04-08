@@ -96,18 +96,20 @@ async function getUserFavoriteIds(
   }
 }
 
-// Get the vendor ID for a user
-async function getVendorIdForUser(userId: string): Promise<string | null> {
+// Get the vendor ID and coordinates for a user
+async function getVendorForUser(
+  userId: string
+): Promise<{ id: string; latitude: number | null; longitude: number | null } | null> {
   try {
     const db = getCloudflareDb();
     const [vendor] = await db
-      .select({ id: vendors.id })
+      .select({ id: vendors.id, latitude: vendors.latitude, longitude: vendors.longitude })
       .from(vendors)
       .where(eq(vendors.userId, userId))
       .limit(1);
-    return vendor?.id || null;
+    return vendor || null;
   } catch (error) {
-    console.error("Failed to fetch vendor ID for user", { error, userId });
+    console.error("Failed to fetch vendor for user", { error, userId });
     return null;
   }
 }
@@ -616,12 +618,18 @@ export default async function EventsPage({
   const isVendor = session?.user?.role === "VENDOR";
   const isLoggedIn = !!session?.user?.id;
 
-  // Get vendor event IDs if the user is a vendor and wants to filter
+  // Get vendor info (ID + coordinates) if the user is a vendor
   let vendorEventIds: string[] | undefined;
-  if (isVendor && params.myEvents === "true") {
-    const vendorId = await getVendorIdForUser(session.user.id);
-    if (vendorId) {
-      vendorEventIds = await getVendorEventIds(vendorId);
+  let vendorCoords: { lat: number; lng: number } | null = null;
+  if (isVendor) {
+    const vendor = await getVendorForUser(session.user.id);
+    if (vendor) {
+      if (params.myEvents === "true") {
+        vendorEventIds = await getVendorEventIds(vendor.id);
+      }
+      if (vendor.latitude && vendor.longitude) {
+        vendorCoords = { lat: vendor.latitude, lng: vendor.longitude };
+      }
     }
   }
 
@@ -694,6 +702,7 @@ export default async function EventsPage({
             searchParams={params as Record<string, string>}
             total={total}
             myEvents={params.myEvents === "true"}
+            vendorCoords={vendorCoords}
           />
           <div className="mt-8 bg-gray-50 rounded-lg p-6 text-center border border-gray-200 print:hidden">
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Looking for past events?</h3>

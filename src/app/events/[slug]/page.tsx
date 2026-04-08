@@ -102,6 +102,56 @@ async function getUserVendorInfo(userId: string | undefined, eventId: string) {
   }
 }
 
+// Check if this event's dates conflict with vendor's other active applications
+async function getVendorDateConflicts(
+  vendorId: string,
+  eventId: string,
+  startDate: Date | null,
+  endDate: Date | null
+): Promise<string[]> {
+  if (!startDate || !endDate) return [];
+  const db = getCloudflareDb();
+  try {
+    const apps = await db
+      .select({
+        eventId: eventVendors.eventId,
+        status: eventVendors.status,
+        eventName: events.name,
+        eventStartDate: events.startDate,
+        eventEndDate: events.endDate,
+      })
+      .from(eventVendors)
+      .leftJoin(events, eq(eventVendors.eventId, events.id))
+      .where(eq(eventVendors.vendorId, vendorId));
+
+    const activeStatuses = new Set([
+      "INVITED",
+      "INTERESTED",
+      "APPLIED",
+      "WAITLISTED",
+      "APPROVED",
+      "CONFIRMED",
+    ]);
+    const conflicting: string[] = [];
+    const eStart = startDate.getTime();
+    const eEnd = endDate.getTime();
+
+    for (const app of apps) {
+      if (app.eventId === eventId) continue;
+      if (!activeStatuses.has(app.status)) continue;
+      if (!app.eventStartDate || !app.eventEndDate) continue;
+      const oStart = new Date(app.eventStartDate).getTime();
+      const oEnd = new Date(app.eventEndDate).getTime();
+      if (eStart <= oEnd && eEnd >= oStart) {
+        conflicting.push(app.eventName || "Unknown event");
+      }
+    }
+    return conflicting;
+  } catch {
+    return [];
+  }
+}
+
 async function getEvent(slug: string) {
   const db = getCloudflareDb();
 
@@ -315,6 +365,9 @@ export default async function EventDetailPage({ params }: Props) {
 
   const session = await auth();
   const vendorInfo = await getUserVendorInfo(session?.user?.id, event.id);
+  const dateConflicts = vendorInfo
+    ? await getVendorDateConflicts(vendorInfo.vendor.id, event.id, event.startDate, event.endDate)
+    : [];
   const isAdmin = session?.user?.role === "ADMIN";
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
   const eventCategories = parseJsonArray(event.categories);
@@ -807,11 +860,19 @@ export default async function EventDetailPage({ params }: Props) {
                     </p>
                   </div>
                 ) : (
-                  <VendorApplyButton
-                    eventId={event.id}
-                    eventName={event.name}
-                    canSelfConfirm={vendorInfo.vendor.canSelfConfirm ?? false}
-                  />
+                  <>
+                    {dateConflicts.length > 0 && (
+                      <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 rounded-md px-3 py-2 mb-3">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                        <span>Date conflict with: {dateConflicts.join(", ")}</span>
+                      </div>
+                    )}
+                    <VendorApplyButton
+                      eventId={event.id}
+                      eventName={event.name}
+                      canSelfConfirm={vendorInfo.vendor.canSelfConfirm ?? false}
+                    />
+                  </>
                 )}
               </CardContent>
             </Card>

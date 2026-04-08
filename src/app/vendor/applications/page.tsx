@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Calendar, MapPin, Clock } from "lucide-react";
+import { Calendar, MapPin, Clock, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateRange } from "@/lib/utils";
@@ -18,7 +18,6 @@ async function getApplications(userId: string) {
   const db = getCloudflareDb();
 
   try {
-
     // Get the vendor for this user
     const vendorResults = await db
       .select()
@@ -59,6 +58,50 @@ async function getApplications(userId: string) {
   }
 }
 
+// Active statuses that represent a real commitment (not rejected/withdrawn/cancelled)
+const ACTIVE_STATUSES = new Set([
+  "INVITED",
+  "INTERESTED",
+  "APPLIED",
+  "WAITLISTED",
+  "APPROVED",
+  "CONFIRMED",
+]);
+
+// Detect date conflicts between active applications
+function detectConflicts(
+  applications: Awaited<ReturnType<typeof getApplications>>
+): Map<string, string[]> {
+  const conflicts = new Map<string, string[]>();
+  const active = applications.filter((a) => ACTIVE_STATUSES.has(a.status));
+
+  for (let i = 0; i < active.length; i++) {
+    const a = active[i];
+    if (!a.event.startDate || !a.event.endDate) continue;
+    const aStart = new Date(a.event.startDate).getTime();
+    const aEnd = new Date(a.event.endDate).getTime();
+
+    for (let j = i + 1; j < active.length; j++) {
+      const b = active[j];
+      if (!b.event.startDate || !b.event.endDate) continue;
+      const bStart = new Date(b.event.startDate).getTime();
+      const bEnd = new Date(b.event.endDate).getTime();
+
+      // Overlap: A starts before B ends AND A ends after B starts
+      if (aStart <= bEnd && aEnd >= bStart) {
+        const aConflicts = conflicts.get(a.id) || [];
+        aConflicts.push(b.event.name);
+        conflicts.set(a.id, aConflicts);
+
+        const bConflicts = conflicts.get(b.id) || [];
+        bConflicts.push(a.event.name);
+        conflicts.set(b.id, bConflicts);
+      }
+    }
+  }
+  return conflicts;
+}
+
 export default async function VendorApplicationsPage() {
   const session = await auth();
 
@@ -67,26 +110,21 @@ export default async function VendorApplicationsPage() {
   }
 
   const applications = await getApplications(session.user.id);
+  const conflicts = detectConflicts(applications);
 
   return (
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Event Applications</h1>
-        <p className="mt-1 text-gray-600">
-          Track your applications to participate in events
-        </p>
+        <p className="mt-1 text-gray-600">Track your applications to participate in events</p>
       </div>
 
       {applications.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">
-              No applications yet
-            </h3>
-            <p className="mt-1 text-gray-500">
-              Browse events and apply to participate as a vendor
-            </p>
+            <h3 className="text-lg font-medium text-gray-900">No applications yet</h3>
+            <p className="mt-1 text-gray-500">Browse events and apply to participate as a vendor</p>
             <Link
               href="/events"
               className="mt-4 inline-block text-blue-600 hover:text-blue-700 font-medium"
@@ -109,7 +147,12 @@ export default async function VendorApplicationsPage() {
                       >
                         {app.event.name}
                       </Link>
-                      <Badge variant={STATUS_BADGE_VARIANTS[app.status as keyof typeof STATUS_BADGE_VARIANTS] ?? "default"}>
+                      <Badge
+                        variant={
+                          STATUS_BADGE_VARIANTS[app.status as keyof typeof STATUS_BADGE_VARIANTS] ??
+                          "default"
+                        }
+                      >
                         {STATUS_LABELS[app.status as keyof typeof STATUS_LABELS] ?? app.status}
                       </Badge>
                     </div>
@@ -129,8 +172,7 @@ export default async function VendorApplicationsPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin className="w-4 h-4" />
-                        {app.event.venue.name}, {app.event.venue.city},{" "}
-                        {app.event.venue.state}
+                        {app.event.venue.name}, {app.event.venue.city}, {app.event.venue.state}
                       </div>
                       {app.boothInfo && (
                         <div className="flex items-center gap-2">
@@ -139,6 +181,12 @@ export default async function VendorApplicationsPage() {
                         </div>
                       )}
                     </div>
+                    {conflicts.has(app.id) && (
+                      <div className="mt-2 flex items-start gap-2 text-sm text-amber-700 bg-amber-50 rounded-md px-3 py-2">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                        <span>Date conflict with: {conflicts.get(app.id)!.join(", ")}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardContent>
