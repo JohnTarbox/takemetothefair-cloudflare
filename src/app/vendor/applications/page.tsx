@@ -44,7 +44,7 @@ async function getApplications(userId: string) {
         ...a.event_vendors,
         event: {
           ...a.events!,
-          venue: a.venues!,
+          venue: a.venues ?? null,
         },
       }));
   } catch (e) {
@@ -163,7 +163,11 @@ export default async function VendorApplicationsPage() {
                         <AddToCalendar
                           title={app.event.name}
                           description={app.event.description || undefined}
-                          location={`${app.event.venue.name}, ${app.event.venue.address || ""}, ${app.event.venue.city}, ${app.event.venue.state} ${app.event.venue.zip || ""}`}
+                          location={
+                            app.event.venue
+                              ? `${app.event.venue.name}, ${app.event.venue.address || ""}, ${app.event.venue.city}, ${app.event.venue.state} ${app.event.venue.zip || ""}`
+                              : undefined
+                          }
                           startDate={app.event.startDate}
                           endDate={app.event.endDate}
                           url={`https://meetmeatthefair.com/events/${app.event.slug}`}
@@ -172,7 +176,9 @@ export default async function VendorApplicationsPage() {
                       </div>
                       <div className="flex items-center gap-2">
                         <MapPin className="w-4 h-4" />
-                        {app.event.venue.name}, {app.event.venue.city}, {app.event.venue.state}
+                        {app.event.venue
+                          ? `${app.event.venue.name}, ${app.event.venue.city}, ${app.event.venue.state}`
+                          : "Venue TBA"}
                       </div>
                       {app.boothInfo && (
                         <div className="flex items-center gap-2">
