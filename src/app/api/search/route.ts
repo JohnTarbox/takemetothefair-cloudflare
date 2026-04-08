@@ -24,8 +24,13 @@ export const GET = withErrorHandler(async (request: Request) => {
         name: events.name,
         slug: events.slug,
         startDate: events.startDate,
+        endDate: events.endDate,
+        venueName: venues.name,
+        venueCity: venues.city,
+        venueState: venues.state,
       })
       .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
       .where(
         and(
           isPublicEventStatus(),
@@ -82,7 +87,13 @@ export const GET = withErrorHandler(async (request: Request) => {
   ]);
 
   return NextResponse.json({
-    events: eventResults,
+    events: eventResults.map((e) => ({
+      name: e.name,
+      slug: e.slug,
+      startDate: e.startDate,
+      endDate: e.endDate,
+      venue: e.venueName ? { name: e.venueName, city: e.venueCity, state: e.venueState } : null,
+    })),
     venues: venueResults,
     vendors: vendorResults,
     blogPosts: blogResults,
