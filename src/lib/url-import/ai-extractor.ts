@@ -6,6 +6,7 @@ import type {
   PageMetadata,
 } from "./types";
 import { withTimeout } from "@/lib/fetch-timeout";
+import { EVENT_CATEGORIES } from "@/lib/constants";
 
 const SYSTEM_PROMPT = `You are an expert at extracting event information from webpage text. You always respond with valid JSON only, no explanations.`;
 
@@ -42,6 +43,7 @@ Return a JSON array where each event has these fields (use null for fields not f
     "ticketPriceMin": number or null,
     "ticketPriceMax": number or null,
     "imageUrl": "image URL",
+    "categories": ["category1", "category2"] or null - MUST be from this exact list: ${EVENT_CATEGORIES.filter((c) => c !== "Other").join(", ")}, Other,
     "vendorFeeMin": number or null - minimum booth/vendor fee in dollars,
     "vendorFeeMax": number or null - maximum booth/vendor fee in dollars,
     "vendorFeeNotes": "details about vendor/booth fees (e.g., '$50 for 10x10, $75 for 10x20')",
@@ -65,9 +67,10 @@ IMPORTANT RULES:
 10. Look for vendor/booth fee information (e.g., "booth space: $50", "vendor fee: $100-$200")
 11. Determine if the event is indoor, outdoor, or mixed based on venue description or mentions of tents, buildings, etc.
 12. Look for expected attendance figures or past attendance numbers
+13. Classify the event into one or more categories from the provided list. Use "Agricultural Fair" for county/state fairs with livestock/produce, "Craft Fair" or "Craft Show" for handmade goods, "Farmers Market" for produce markets, "Flea Market" for secondhand goods, "Home Show" for home improvement, etc.
 
 EXAMPLE - if the page says "Springfield County Fair, June 12-15, 2025, Springfield Fairgrounds, 10am-8pm, $5-$10":
-[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null,"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":null,"estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}]
+[{"name":"Springfield County Fair","description":"Annual county fair in Springfield","startDate":"2025-06-12","endDate":"2025-06-15","startTime":"10:00","endTime":"20:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Springfield Fairgrounds","venueAddress":null,"venueCity":"Springfield","venueState":null,"ticketUrl":null,"ticketPriceMin":5,"ticketPriceMax":10,"imageUrl":null,"categories":["Agricultural Fair"],"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":"OUTDOOR","estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}]
 
 JSON array response:`;
 
@@ -101,6 +104,7 @@ Find and extract these fields. Use null for any field not found:
   "ticketPriceMin": number or null,
   "ticketPriceMax": number or null,
   "imageUrl": "image URL",
+  "categories": ["category1", "category2"] or null - MUST be from this exact list: ${EVENT_CATEGORIES.filter((c) => c !== "Other").join(", ")}, Other,
   "vendorFeeMin": number or null - minimum booth/vendor fee in dollars,
   "vendorFeeMax": number or null - maximum booth/vendor fee in dollars,
   "vendorFeeNotes": "details about vendor/booth fees (e.g., '$50 for 10x10, $75 for 10x20')",
@@ -124,9 +128,10 @@ IMPORTANT PARSING RULES:
 8. Look for vendor/booth fee information (e.g., "booth space: $50", "vendor fee: $100-$200")
 9. Determine if the event is indoor, outdoor, or mixed based on venue description
 10. Look for expected attendance figures or past attendance numbers
+11. Classify the event into one or more categories from the provided list. Use "Agricultural Fair" for county/state fairs with livestock/produce, "Craft Fair" or "Craft Show" for handmade goods, "Farmers Market" for produce markets, "Flea Market" for secondhand goods, "Home Show" for home improvement, etc.
 
 EXAMPLE - if the page says "Blue Hill Fair, Sept 4-7, 2025, Blue Hill Fairgrounds, Blue Hill ME, gates open 8am, closes 10pm":
-{"name":"Blue Hill Fair","description":"Annual fair in Blue Hill, Maine","startDate":"2025-09-04","endDate":"2025-09-07","startTime":"08:00","endTime":"22:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Blue Hill Fairgrounds","venueAddress":null,"venueCity":"Blue Hill","venueState":"ME","ticketUrl":null,"ticketPriceMin":null,"ticketPriceMax":null,"imageUrl":null,"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":null,"estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}
+{"name":"Blue Hill Fair","description":"Annual fair in Blue Hill, Maine","startDate":"2025-09-04","endDate":"2025-09-07","startTime":"08:00","endTime":"22:00","hoursVaryByDay":false,"hoursNotes":null,"venueName":"Blue Hill Fairgrounds","venueAddress":null,"venueCity":"Blue Hill","venueState":"ME","ticketUrl":null,"ticketPriceMin":null,"ticketPriceMax":null,"imageUrl":null,"categories":["Agricultural Fair"],"vendorFeeMin":null,"vendorFeeMax":null,"vendorFeeNotes":null,"indoorOutdoor":"OUTDOOR","estimatedAttendance":null,"applicationUrl":null,"walkInsAllowed":null}
 
 JSON response:`;
 
@@ -363,6 +368,7 @@ function sanitizeEventData(
     ),
     ticketPriceMax: sanitizePrice(item.ticketPriceMax || item.ticket_price_max || item.price_max),
     imageUrl: sanitizeUrl(item.imageUrl || item.image_url || item.image),
+    categories: sanitizeCategories(item.categories),
     vendorFeeMin: sanitizePrice(item.vendorFeeMin || item.vendor_fee_min),
     vendorFeeMax: sanitizePrice(item.vendorFeeMax || item.vendor_fee_max),
     vendorFeeNotes: sanitizeString(item.vendorFeeNotes || item.vendor_fee_notes, 500),
@@ -423,6 +429,7 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: metadata.ogImage || null,
+    categories: null,
     vendorFeeMin: null,
     vendorFeeMax: null,
     vendorFeeNotes: null,
@@ -510,6 +517,7 @@ function parseAiResponse(
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: null,
+    categories: null,
     vendorFeeMin: null,
     vendorFeeMax: null,
     vendorFeeNotes: null,
@@ -577,6 +585,7 @@ function parseAiResponse(
       ticketPriceMin: sanitizePrice(parsed.ticketPriceMin),
       ticketPriceMax: sanitizePrice(parsed.ticketPriceMax),
       imageUrl: sanitizeUrl(parsed.imageUrl),
+      categories: sanitizeCategories(parsed.categories),
       vendorFeeMin: sanitizePrice(parsed.vendorFeeMin),
       vendorFeeMax: sanitizePrice(parsed.vendorFeeMax),
       vendorFeeNotes: sanitizeString(parsed.vendorFeeNotes, 500),
@@ -1001,6 +1010,25 @@ function sanitizePositiveInt(value: unknown): number | null {
   const num = typeof value === "number" ? value : parseInt(String(value), 10);
   if (isNaN(num) || num <= 0) return null;
   return Math.round(num);
+}
+
+/**
+ * Validate and filter categories against EVENT_CATEGORIES.
+ * Uses case-insensitive matching to handle AI variations.
+ */
+function sanitizeCategories(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+
+  const validSet = new Map<string, string>(EVENT_CATEGORIES.map((c) => [c.toLowerCase(), c]));
+
+  const result: string[] = [];
+  for (const v of value) {
+    if (typeof v !== "string") continue;
+    const match = validSet.get(v.toLowerCase().trim());
+    if (match) result.push(match);
+  }
+
+  return result.length > 0 ? result : null;
 }
 
 /**

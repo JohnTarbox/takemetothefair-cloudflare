@@ -14,6 +14,7 @@ import {
   DollarSign,
   Sparkles,
   AlertTriangle,
+  Store,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { trackEvent } from "@/lib/analytics";
+import { EVENT_CATEGORIES } from "@/lib/constants";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
 export const runtime = "edge";
@@ -116,6 +118,7 @@ export default function VendorSuggestEventPage() {
     ticketPriceMin: null,
     ticketPriceMax: null,
     imageUrl: null,
+    categories: null,
     vendorFeeMin: null,
     vendorFeeMax: null,
     vendorFeeNotes: null,
@@ -387,6 +390,7 @@ export default function VendorSuggestEventPage() {
       ticketPriceMin: null,
       ticketPriceMax: null,
       imageUrl: null,
+      categories: null,
       vendorFeeMin: null,
       vendorFeeMax: null,
       vendorFeeNotes: null,
@@ -727,6 +731,40 @@ export default function VendorSuggestEventPage() {
               />
             </div>
 
+            <div>
+              <Label>
+                Categories
+                <ConfidenceBadge field="categories" />
+              </Label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {EVENT_CATEGORIES.map((cat) => {
+                  const selected = extractedData.categories?.includes(cat) ?? false;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() =>
+                        setExtractedData((prev) => {
+                          const current = prev.categories || [];
+                          const next = selected
+                            ? current.filter((c) => c !== cat)
+                            : [...current, cat];
+                          return { ...prev, categories: next.length > 0 ? next : null };
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        selected
+                          ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="startDate">
@@ -922,6 +960,139 @@ export default function VendorSuggestEventPage() {
                     />
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
+              <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1 mb-3">
+                <Store className="w-4 h-4" />
+                Vendor Information
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                If you know details about vendor/booth fees or application process, fill them in
+                here.
+              </p>
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="vendorFeeMin">
+                      Vendor Fee Min ($)
+                      <ConfidenceBadge field="vendorFeeMin" />
+                    </Label>
+                    <Input
+                      id="vendorFeeMin"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={extractedData.vendorFeeMin ?? ""}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({
+                          ...prev,
+                          vendorFeeMin: e.target.value ? parseFloat(e.target.value) : null,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="vendorFeeMax">
+                      Vendor Fee Max ($)
+                      <ConfidenceBadge field="vendorFeeMax" />
+                    </Label>
+                    <Input
+                      id="vendorFeeMax"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={extractedData.vendorFeeMax ?? ""}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({
+                          ...prev,
+                          vendorFeeMax: e.target.value ? parseFloat(e.target.value) : null,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="vendorFeeNotes">Fee Details/Notes</Label>
+                  <Input
+                    id="vendorFeeNotes"
+                    value={extractedData.vendorFeeNotes || ""}
+                    onChange={(e) =>
+                      setExtractedData((prev) => ({ ...prev, vendorFeeNotes: e.target.value }))
+                    }
+                    placeholder="e.g. $50 for 10x10, $75 with electricity"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="indoorOutdoor">
+                      Indoor/Outdoor
+                      <ConfidenceBadge field="indoorOutdoor" />
+                    </Label>
+                    <select
+                      id="indoorOutdoor"
+                      value={extractedData.indoorOutdoor || ""}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({
+                          ...prev,
+                          indoorOutdoor: (e.target.value as "INDOOR" | "OUTDOOR" | "MIXED") || null,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Unknown</option>
+                      <option value="INDOOR">Indoor</option>
+                      <option value="OUTDOOR">Outdoor</option>
+                      <option value="MIXED">Mixed (Indoor & Outdoor)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label htmlFor="estimatedAttendance">
+                      Est. Attendance
+                      <ConfidenceBadge field="estimatedAttendance" />
+                    </Label>
+                    <Input
+                      id="estimatedAttendance"
+                      type="number"
+                      min="0"
+                      value={extractedData.estimatedAttendance ?? ""}
+                      onChange={(e) =>
+                        setExtractedData((prev) => ({
+                          ...prev,
+                          estimatedAttendance: e.target.value ? parseInt(e.target.value) : null,
+                        }))
+                      }
+                      placeholder="e.g. 5000"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="applicationUrl">
+                    Vendor Application URL
+                    <ConfidenceBadge field="applicationUrl" />
+                  </Label>
+                  <Input
+                    id="applicationUrl"
+                    type="url"
+                    value={extractedData.applicationUrl || ""}
+                    onChange={(e) =>
+                      setExtractedData((prev) => ({ ...prev, applicationUrl: e.target.value }))
+                    }
+                    placeholder="Link to vendor application form"
+                  />
+                </div>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={extractedData.walkInsAllowed || false}
+                    onChange={(e) =>
+                      setExtractedData((prev) => ({ ...prev, walkInsAllowed: e.target.checked }))
+                    }
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">Walk-in vendors welcome</span>
+                </label>
               </div>
             </div>
 

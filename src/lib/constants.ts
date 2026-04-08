@@ -82,11 +82,14 @@ export const FAVORITABLE_TYPE = {
 // Event categories (advisory taxonomy for dropdowns/filters)
 export const EVENT_CATEGORIES = [
   "Agricultural Fair",
+  "Antique Show",
   "Art Walk",
+  "Car Show",
   "Craft Fair",
   "Craft Show",
   "Farmers Market",
   "Festival",
+  "Fiber Arts Festival",
   "Flea Market",
   "Food Festival",
   "Holiday Market",

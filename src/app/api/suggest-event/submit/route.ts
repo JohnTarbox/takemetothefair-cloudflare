@@ -41,6 +41,7 @@ const submitEventSchema = z.object({
   ticketPriceMin: z.number().nullable().optional(),
   ticketPriceMax: z.number().nullable().optional(),
   imageUrl: z.string().nullable().optional(),
+  categories: z.array(z.string()).nullable().optional(),
   // Vendor decision-support fields
   vendorFeeMin: z.number().nullable().optional(),
   vendorFeeMax: z.number().nullable().optional(),
@@ -183,7 +184,9 @@ export async function POST(request: NextRequest) {
       startDate,
       endDate,
       datesConfirmed: startDate !== null,
-      categories: JSON.stringify(["Event"]),
+      categories: JSON.stringify(
+        Array.isArray(data.categories) && data.categories.length > 0 ? data.categories : ["Event"]
+      ),
       tags: JSON.stringify(tagList),
       ticketUrl: data.ticketUrl || data.sourceUrl || null,
       ticketPriceMin: data.ticketPriceMin ?? null,

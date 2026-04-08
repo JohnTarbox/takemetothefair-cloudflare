@@ -891,8 +891,9 @@ export function EventsView({
     window.location.href = exportUrl;
   };
 
-  // Compute distances from vendor home base (or browser location)
+  // Distance filter & computation
   const [browserCoords, setBrowserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [maxRadius, setMaxRadius] = useState<number | null>(null);
   const activeCoords = vendorCoords || browserCoords;
 
   const distanceMap = new Map<string, number>();
@@ -922,15 +923,25 @@ export function EventsView({
     endDate: (e) => (e.endDate ? new Date(e.endDate).getTime() : Infinity),
   });
 
-  // Apply client-side "nearest" sort when selected
+  // Apply client-side radius filter and "nearest" sort
+  const radiusFiltered =
+    maxRadius && activeCoords
+      ? (currentSort === "nearest" ? [...events] : sortedEvents).filter((e) => {
+          const dist = distanceMap.get(e.id);
+          return dist != null && dist <= maxRadius;
+        })
+      : currentSort === "nearest" && activeCoords
+        ? [...events]
+        : sortedEvents;
+
   const displayEvents =
     currentSort === "nearest" && activeCoords
-      ? [...events].sort((a, b) => {
+      ? radiusFiltered.sort((a, b) => {
           const distA = distanceMap.get(a.id) ?? Infinity;
           const distB = distanceMap.get(b.id) ?? Infinity;
           return distA - distB;
         })
-      : sortedEvents;
+      : radiusFiltered;
 
   if (events.length === 0) {
     return (
@@ -942,12 +953,16 @@ export function EventsView({
 
   const summaryText = (() => {
     const suffix = myEvents ? " you're participating in" : "";
+    const radiusSuffix = maxRadius && activeCoords ? ` within ${maxRadius} mi` : "";
     if (viewMode === "calendar") {
       const { count, label } = getCalendarPeriodSummary(events, calendarViewType, calendarDate);
       if (calendarViewType === "schedule") {
         return `Showing all ${count} event${count !== 1 ? "s" : ""}${suffix} ${label}`;
       }
       return `Showing ${count} event${count !== 1 ? "s" : ""}${suffix} ${label}`;
+    }
+    if (maxRadius && activeCoords && total !== undefined) {
+      return `Showing ${displayEvents.length} event${displayEvents.length !== 1 ? "s" : ""}${radiusSuffix}${suffix} (${total} total)`;
     }
     if (total !== undefined) {
       return `Showing ${events.length} of ${total} event${total !== 1 ? "s" : ""}${suffix}`;
@@ -982,13 +997,42 @@ export function EventsView({
             }
             switchSort(val);
           }}
-          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent mr-auto"
+          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent"
         >
           {SORT_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
             </option>
           ))}
+        </select>
+        <select
+          value={maxRadius ?? ""}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (!val) {
+              setMaxRadius(null);
+              return;
+            }
+            const radius = parseInt(val);
+            if (!activeCoords) {
+              navigator.geolocation?.getCurrentPosition(
+                (pos) => {
+                  setBrowserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                  setMaxRadius(radius);
+                },
+                () => setMaxRadius(null)
+              );
+              return;
+            }
+            setMaxRadius(radius);
+          }}
+          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent mr-auto"
+        >
+          <option value="">Any distance</option>
+          <option value="25">Within 25 mi</option>
+          <option value="50">Within 50 mi</option>
+          <option value="100">Within 100 mi</option>
+          <option value="200">Within 200 mi</option>
         </select>
         {viewMode === "table" && (
           <button

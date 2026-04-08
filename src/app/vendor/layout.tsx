@@ -1,21 +1,18 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Store, FileText, Settings, CalendarPlus, Send } from "lucide-react";
+import { Store, FileText, Settings, CalendarPlus, Send, Calendar } from "lucide-react";
 import { auth } from "@/lib/auth";
 
 const vendorNav = [
   { name: "My Profile", href: "/vendor/profile", icon: Store },
   { name: "Applications", href: "/vendor/applications", icon: FileText },
+  { name: "My Calendar", href: "/vendor/calendar", icon: Calendar },
   { name: "Suggest Event", href: "/vendor/suggest-event", icon: CalendarPlus },
   { name: "My Submissions", href: "/vendor/submissions", icon: Send },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
-export default async function VendorLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function VendorLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
 
   if (!session) {

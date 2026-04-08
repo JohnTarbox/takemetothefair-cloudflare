@@ -342,6 +342,163 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
       };
     }
   );
+
+  // ── check_date_conflicts ────────────────────────────────────────
+  server.tool(
+    "check_date_conflicts",
+    "Check if an event's dates conflict with your existing applications. Optionally provide dates to check a hypothetical event. Also returns distance from your home base if coordinates are available.",
+    {
+      event_slug: z.string().optional().describe("Slug of an event to check against your schedule"),
+      start_date: z
+        .string()
+        .optional()
+        .describe("Start date (YYYY-MM-DD) to check — used if event_slug is not provided"),
+      end_date: z
+        .string()
+        .optional()
+        .describe("End date (YYYY-MM-DD) to check — used if event_slug is not provided"),
+    },
+    async (params) => {
+      // Resolve date range to check
+      let checkStart: Date | null = null;
+      let checkEnd: Date | null = null;
+      let checkEventId: string | null = null;
+      let checkEventName: string | null = null;
+      let venueLat: number | null = null;
+      let venueLng: number | null = null;
+
+      if (params.event_slug) {
+        const eventRows = await db
+          .select({
+            id: events.id,
+            name: events.name,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            venueId: events.venueId,
+          })
+          .from(events)
+          .where(eq(events.slug, params.event_slug))
+          .limit(1);
+
+        if (eventRows.length === 0) {
+          return { content: [{ type: "text", text: "Event not found." }], isError: true };
+        }
+
+        const evt = eventRows[0];
+        checkStart = evt.startDate;
+        checkEnd = evt.endDate;
+        checkEventId = evt.id;
+        checkEventName = evt.name;
+
+        // Get venue coordinates for distance
+        if (evt.venueId) {
+          const venueRows = await db
+            .select({ latitude: venues.latitude, longitude: venues.longitude })
+            .from(venues)
+            .where(eq(venues.id, evt.venueId))
+            .limit(1);
+          if (venueRows.length > 0) {
+            venueLat = venueRows[0].latitude;
+            venueLng = venueRows[0].longitude;
+          }
+        }
+      } else if (params.start_date) {
+        checkStart = new Date(params.start_date);
+        if (isNaN(checkStart.getTime())) checkStart = null;
+        if (params.end_date) {
+          checkEnd = new Date(params.end_date);
+          if (isNaN(checkEnd.getTime())) checkEnd = null;
+        }
+        checkEnd = checkEnd || checkStart;
+      }
+
+      if (!checkStart || !checkEnd) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Could not determine date range. Provide event_slug or start_date/end_date.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Get vendor's active applications
+      const apps = await db
+        .select({
+          eventId: eventVendors.eventId,
+          status: eventVendors.status,
+          eventName: events.name,
+          eventSlug: events.slug,
+          eventStartDate: events.startDate,
+          eventEndDate: events.endDate,
+        })
+        .from(eventVendors)
+        .innerJoin(events, eq(eventVendors.eventId, events.id))
+        .where(eq(eventVendors.vendorId, vendorId));
+
+      const activeStatuses = new Set([
+        "INVITED",
+        "INTERESTED",
+        "APPLIED",
+        "WAITLISTED",
+        "APPROVED",
+        "CONFIRMED",
+      ]);
+
+      const eStart = checkStart.getTime();
+      const eEnd = checkEnd.getTime();
+
+      const conflicts = apps
+        .filter((a) => {
+          if (checkEventId && a.eventId === checkEventId) return false;
+          if (!activeStatuses.has(a.status)) return false;
+          if (!a.eventStartDate || !a.eventEndDate) return false;
+          const oStart = new Date(a.eventStartDate).getTime();
+          const oEnd = new Date(a.eventEndDate).getTime();
+          return eStart <= oEnd && eEnd >= oStart;
+        })
+        .map((a) => ({
+          eventName: a.eventName,
+          eventSlug: a.eventSlug,
+          dates: formatDateRange(a.eventStartDate, a.eventEndDate),
+          status: a.status,
+        }));
+
+      // Calculate distance if possible
+      let distanceMiles: number | null = null;
+      const vendorRows = await db
+        .select({ latitude: vendors.latitude, longitude: vendors.longitude })
+        .from(vendors)
+        .where(eq(vendors.id, vendorId))
+        .limit(1);
+
+      if (vendorRows[0]?.latitude && vendorRows[0]?.longitude && venueLat && venueLng) {
+        const R = 3959; // Earth radius in miles
+        const dLat = ((venueLat - vendorRows[0].latitude) * Math.PI) / 180;
+        const dLon = ((venueLng - vendorRows[0].longitude) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos((vendorRows[0].latitude * Math.PI) / 180) *
+            Math.cos((venueLat * Math.PI) / 180) *
+            Math.sin(dLon / 2) ** 2;
+        distanceMiles = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+      }
+
+      return {
+        content: [
+          jsonContent({
+            event: checkEventName || `${params.start_date} to ${params.end_date}`,
+            hasConflicts: conflicts.length > 0,
+            conflictCount: conflicts.length,
+            conflicts,
+            ...(distanceMiles != null ? { distanceMiles } : {}),
+          }),
+        ],
+      };
+    }
+  );
 }
 
 // ---------------------------------------------------------------------------

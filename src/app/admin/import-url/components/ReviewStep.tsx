@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConfidenceBadge } from "@/components/ui/confidence-badge";
 import type { ExtractedEventData, FieldConfidence, ExtractedEvent } from "@/lib/url-import/types";
+import { EVENT_CATEGORIES } from "@/lib/constants";
 
 interface ReviewStepProps {
   fetchedContent: string;
@@ -80,12 +81,7 @@ export function ReviewStep({
                   </span>
                 )}
                 {onReExtract && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={onReExtract}
-                    className="text-xs"
-                  >
+                  <Button variant="outline" size="sm" onClick={onReExtract} className="text-xs">
                     <RefreshCw className="w-3 h-3 mr-1" />
                     Re-extract
                   </Button>
@@ -118,10 +114,41 @@ export function ReviewStep({
                 id="description"
                 className="mt-1 w-full h-24 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                 value={extractedData.description || ""}
-                onChange={(e) =>
-                  onUpdateData({ description: e.target.value })
-                }
+                onChange={(e) => onUpdateData({ description: e.target.value })}
               />
+            </div>
+
+            {/* Categories */}
+            <div>
+              <Label>
+                Categories
+                <ConfidenceBadge field="categories" confidence={confidence} />
+              </Label>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {EVENT_CATEGORIES.map((cat) => {
+                  const selected = extractedData.categories?.includes(cat) ?? false;
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        const current = extractedData.categories || [];
+                        const next = selected
+                          ? current.filter((c) => c !== cat)
+                          : [...current, cat];
+                        onUpdateData({ categories: next.length > 0 ? next : null });
+                      }}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
+                        selected
+                          ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Dates */}
@@ -135,9 +162,7 @@ export function ReviewStep({
                   id="startDate"
                   type="date"
                   value={extractedData.startDate?.substring(0, 10) || ""}
-                  onChange={(e) =>
-                    onUpdateData({ startDate: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ startDate: e.target.value || null })}
                   className="mt-1"
                 />
               </div>
@@ -150,9 +175,7 @@ export function ReviewStep({
                   id="endDate"
                   type="date"
                   value={extractedData.endDate?.substring(0, 10) || ""}
-                  onChange={(e) =>
-                    onUpdateData({ endDate: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ endDate: e.target.value || null })}
                   className="mt-1"
                 />
               </div>
@@ -179,9 +202,7 @@ export function ReviewStep({
                   id="startTime"
                   type="time"
                   value={extractedData.startTime || ""}
-                  onChange={(e) =>
-                    onUpdateData({ startTime: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ startTime: e.target.value || null })}
                   className="mt-1"
                 />
               </div>
@@ -194,9 +215,7 @@ export function ReviewStep({
                   id="endTime"
                   type="time"
                   value={extractedData.endTime || ""}
-                  onChange={(e) =>
-                    onUpdateData({ endTime: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ endTime: e.target.value || null })}
                   className="mt-1"
                 />
               </div>
@@ -206,9 +225,7 @@ export function ReviewStep({
               <input
                 type="checkbox"
                 checked={extractedData.hoursVaryByDay}
-                onChange={(e) =>
-                  onUpdateData({ hoursVaryByDay: e.target.checked })
-                }
+                onChange={(e) => onUpdateData({ hoursVaryByDay: e.target.checked })}
                 className="rounded border-gray-300"
               />
               Hours vary by day
@@ -225,9 +242,7 @@ export function ReviewStep({
                   className="mt-1 w-full h-16 rounded-lg border border-gray-300 px-3 py-2 text-sm"
                   placeholder="e.g., Fri 5-9pm, Sat 10am-6pm, Sun 10am-4pm"
                   value={extractedData.hoursNotes || ""}
-                  onChange={(e) =>
-                    onUpdateData({ hoursNotes: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ hoursNotes: e.target.value || null })}
                 />
               </div>
             )}
@@ -256,7 +271,9 @@ export function ReviewStep({
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          const updated = (extractedData.specificDates || []).filter((_, i) => i !== index);
+                          const updated = (extractedData.specificDates || []).filter(
+                            (_, i) => i !== index
+                          );
                           onUpdateData({ specificDates: updated.length > 0 ? updated : null });
                         }}
                         className="text-gray-400 hover:text-red-600 p-1 h-8 w-8"
@@ -271,10 +288,15 @@ export function ReviewStep({
                     size="sm"
                     onClick={() => {
                       const dates = extractedData.specificDates || [];
-                      const lastDate = dates.length > 0 ? dates[dates.length - 1] : new Date().toISOString().substring(0, 10);
+                      const lastDate =
+                        dates.length > 0
+                          ? dates[dates.length - 1]
+                          : new Date().toISOString().substring(0, 10);
                       const next = new Date(lastDate + "T12:00:00");
                       next.setDate(next.getDate() + 7);
-                      onUpdateData({ specificDates: [...dates, next.toISOString().substring(0, 10)].sort() });
+                      onUpdateData({
+                        specificDates: [...dates, next.toISOString().substring(0, 10)].sort(),
+                      });
                     }}
                     className="text-xs"
                   >
@@ -302,9 +324,7 @@ export function ReviewStep({
                     value={extractedData.ticketPriceMin ?? ""}
                     onChange={(e) =>
                       onUpdateData({
-                        ticketPriceMin: e.target.value
-                          ? parseFloat(e.target.value)
-                          : null,
+                        ticketPriceMin: e.target.value ? parseFloat(e.target.value) : null,
                       })
                     }
                     className="pl-8"
@@ -326,9 +346,7 @@ export function ReviewStep({
                     value={extractedData.ticketPriceMax ?? ""}
                     onChange={(e) =>
                       onUpdateData({
-                        ticketPriceMax: e.target.value
-                          ? parseFloat(e.target.value)
-                          : null,
+                        ticketPriceMax: e.target.value ? parseFloat(e.target.value) : null,
                       })
                     }
                     className="pl-8"
@@ -344,9 +362,7 @@ export function ReviewStep({
                   id="ticketUrl"
                   type="url"
                   value={extractedData.ticketUrl || ""}
-                  onChange={(e) =>
-                    onUpdateData({ ticketUrl: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ ticketUrl: e.target.value || null })}
                   className="mt-1"
                 />
               </div>
@@ -363,9 +379,7 @@ export function ReviewStep({
                   id="imageUrl"
                   type="url"
                   value={extractedData.imageUrl || ""}
-                  onChange={(e) =>
-                    onUpdateData({ imageUrl: e.target.value || null })
-                  }
+                  onChange={(e) => onUpdateData({ imageUrl: e.target.value || null })}
                   className="flex-1"
                 />
                 {extractedData.imageUrl && (
@@ -398,9 +412,7 @@ export function ReviewStep({
                   <Input
                     id="venueName"
                     value={extractedData.venueName || ""}
-                    onChange={(e) =>
-                      onUpdateData({ venueName: e.target.value || null })
-                    }
+                    onChange={(e) => onUpdateData({ venueName: e.target.value || null })}
                     placeholder="e.g., Fairgrounds, Convention Center"
                     className="mt-1"
                   />
@@ -413,9 +425,7 @@ export function ReviewStep({
                   <Input
                     id="venueAddress"
                     value={extractedData.venueAddress || ""}
-                    onChange={(e) =>
-                      onUpdateData({ venueAddress: e.target.value || null })
-                    }
+                    onChange={(e) => onUpdateData({ venueAddress: e.target.value || null })}
                     placeholder="e.g., 123 Main Street"
                     className="mt-1"
                   />
@@ -428,9 +438,7 @@ export function ReviewStep({
                   <Input
                     id="venueCity"
                     value={extractedData.venueCity || ""}
-                    onChange={(e) =>
-                      onUpdateData({ venueCity: e.target.value || null })
-                    }
+                    onChange={(e) => onUpdateData({ venueCity: e.target.value || null })}
                     placeholder="e.g., Portland"
                     className="mt-1"
                   />
@@ -443,9 +451,7 @@ export function ReviewStep({
                   <Input
                     id="venueState"
                     value={extractedData.venueState || ""}
-                    onChange={(e) =>
-                      onUpdateData({ venueState: e.target.value || null })
-                    }
+                    onChange={(e) => onUpdateData({ venueState: e.target.value || null })}
                     placeholder="e.g., ME"
                     maxLength={2}
                     className="mt-1"
@@ -461,8 +467,8 @@ export function ReviewStep({
                 {currentEventIndex > 0
                   ? "Previous Event"
                   : extractedEventsCount > 1
-                  ? "Back to Selection"
-                  : "Back"}
+                    ? "Back to Selection"
+                    : "Back"}
               </Button>
               {eventsToImport.length > 1 ? (
                 <Button onClick={onGoToNextEvent}>

@@ -50,6 +50,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { buildEventMetaDescription } from "@/lib/seo-utils";
+import { haversineDistance, formatDistance } from "@/lib/geo";
 import { TrackedLink } from "@/components/TrackedLink";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
@@ -368,6 +369,19 @@ export default async function EventDetailPage({ params }: Props) {
   const dateConflicts = vendorInfo
     ? await getVendorDateConflicts(vendorInfo.vendor.id, event.id, event.startDate, event.endDate)
     : [];
+  // Compute distance from vendor home base to venue
+  const vendorDistance =
+    vendorInfo?.vendor.latitude &&
+    vendorInfo?.vendor.longitude &&
+    event.venue?.latitude &&
+    event.venue?.longitude
+      ? haversineDistance(
+          vendorInfo.vendor.latitude,
+          vendorInfo.vendor.longitude,
+          event.venue.latitude,
+          event.venue.longitude
+        )
+      : null;
   const isAdmin = session?.user?.role === "ADMIN";
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
   const eventCategories = parseJsonArray(event.categories);
@@ -651,6 +665,11 @@ export default async function EventDetailPage({ params }: Props) {
                       <ExternalLink className="w-3 h-3" />
                       View on Google Maps
                     </a>
+                    {vendorDistance != null && (
+                      <p className="text-sm text-purple-600 font-medium mt-1">
+                        {formatDistance(vendorDistance)} from your home base
+                      </p>
+                    )}
                   </div>
                 </div>
               ) : (

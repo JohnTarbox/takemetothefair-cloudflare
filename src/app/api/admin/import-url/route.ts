@@ -42,24 +42,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (!promoterId) {
-      return NextResponse.json(
-        { success: false, error: "Promoter is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Promoter is required" }, { status: 400 });
     }
 
     // Verify promoter exists
-    const promoter = await db
-      .select()
-      .from(promoters)
-      .where(eq(promoters.id, promoterId))
-      .limit(1);
+    const promoter = await db.select().from(promoters).where(eq(promoters.id, promoterId)).limit(1);
 
     if (promoter.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Promoter not found" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Promoter not found" }, { status: 400 });
     }
 
     // Handle venue
@@ -74,10 +64,7 @@ export async function POST(request: NextRequest) {
         .limit(1);
 
       if (existingVenue.length === 0) {
-        return NextResponse.json(
-          { success: false, error: "Venue not found" },
-          { status: 400 }
-        );
+        return NextResponse.json({ success: false, error: "Venue not found" }, { status: 400 });
       }
       venueId = venueOption.id;
     } else if (venueOption.type === "new") {
@@ -91,9 +78,7 @@ export async function POST(request: NextRequest) {
         const existingSlug = await db
           .select()
           .from(venues)
-          .where(
-            eq(venues.slug, slugSuffix > 0 ? `${venueSlug}-${slugSuffix}` : venueSlug)
-          )
+          .where(eq(venues.slug, slugSuffix > 0 ? `${venueSlug}-${slugSuffix}` : venueSlug))
           .limit(1);
         if (existingSlug.length === 0) break;
         slugSuffix++;
@@ -148,9 +133,7 @@ export async function POST(request: NextRequest) {
       const existingSlug = await db
         .select()
         .from(events)
-        .where(
-          eq(events.slug, slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug)
-        )
+        .where(eq(events.slug, slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
         .limit(1);
       if (existingSlug.length === 0) break;
       slugSuffix++;
@@ -193,9 +176,13 @@ export async function POST(request: NextRequest) {
       venueId,
       startDate,
       endDate,
-      datesConfirmed: event.datesConfirmed ?? (startDate !== null),
+      datesConfirmed: event.datesConfirmed ?? startDate !== null,
       discontinuousDates: hasSpecificDates || false,
-      categories: JSON.stringify(["Event"]),
+      categories: JSON.stringify(
+        Array.isArray(event.categories) && event.categories.length > 0
+          ? event.categories
+          : ["Event"]
+      ),
       tags: JSON.stringify(["imported", "url-import"]),
       ticketUrl: event.ticketUrl || sourceUrl || null,
       ticketPriceMin: event.ticketPriceMin,
@@ -317,7 +304,12 @@ export async function POST(request: NextRequest) {
       venueId, // Return venueId for reuse in batch imports
     });
   } catch (error) {
-    await logError(db, { message: "Error saving event", error, source: "api/admin/import-url", request });
+    await logError(db, {
+      message: "Error saving event",
+      error,
+      source: "api/admin/import-url",
+      request,
+    });
     return NextResponse.json(
       { success: false, error: "Failed to save event. Please try again." },
       { status: 500 }

@@ -16,6 +16,8 @@ export interface ExtractedEventData {
   ticketPriceMin: number | null;
   ticketPriceMax: number | null;
   imageUrl: string | null;
+  // Event taxonomy
+  categories: string[] | null; // From EVENT_CATEGORIES constant
   // Vendor decision-support fields
   vendorFeeMin: number | null;
   vendorFeeMax: number | null;
