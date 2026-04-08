@@ -17,8 +17,20 @@ import {
 // Common field schemas
 const nameSchema = z.string().min(VALIDATION.NAME_MIN_LENGTH).max(VALIDATION.NAME_MAX_LENGTH);
 const descriptionSchema = z.string().max(VALIDATION.DESCRIPTION_MAX_LENGTH).optional().nullable();
-const urlSchema = z.string().url().max(VALIDATION.URL_MAX_LENGTH).optional().nullable();
-const emailSchema = z.string().email().max(VALIDATION.EMAIL_MAX_LENGTH).optional().nullable();
+const urlSchema = z
+  .string()
+  .url()
+  .max(VALIDATION.URL_MAX_LENGTH)
+  .optional()
+  .nullable()
+  .or(z.literal(""));
+const emailSchema = z
+  .string()
+  .email()
+  .max(VALIDATION.EMAIL_MAX_LENGTH)
+  .optional()
+  .nullable()
+  .or(z.literal(""));
 const phoneSchema = z.string().max(VALIDATION.PHONE_MAX_LENGTH).optional().nullable();
 
 // Venue schemas
