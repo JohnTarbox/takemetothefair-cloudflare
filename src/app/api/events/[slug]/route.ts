@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors } from "@/lib/db/schema";
+import { events, venues, promoters, eventVendors, eventDays } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
@@ -30,10 +30,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
         vendorFeeMax: events.vendorFeeMax,
         vendorFeeNotes: events.vendorFeeNotes,
         indoorOutdoor: events.indoorOutdoor,
+        estimatedAttendance: events.estimatedAttendance,
         eventScale: events.eventScale,
         walkInsAllowed: events.walkInsAllowed,
+        datesConfirmed: events.datesConfirmed,
         applicationDeadline: events.applicationDeadline,
         applicationUrl: events.applicationUrl,
+        applicationInstructions: events.applicationInstructions,
         // Venue
         venueName: venues.name,
         venueSlug: venues.slug,
@@ -41,9 +44,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
         venueCity: venues.city,
         venueState: venues.state,
         venueZip: venues.zip,
+        venueContactEmail: venues.contactEmail,
+        venueContactPhone: venues.contactPhone,
         // Promoter
         promoterName: promoters.companyName,
         promoterSlug: promoters.slug,
+        promoterWebsite: promoters.website,
       })
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
@@ -57,11 +63,24 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
 
     const e = results[0];
 
-    // Count public vendors
-    const vendorCountResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(eventVendors)
-      .where(and(eq(eventVendors.eventId, e.id), isPublicVendorStatus()));
+    // Count public vendors and get event day schedule
+    const [vendorCountResult, dayResults] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(eventVendors)
+        .where(and(eq(eventVendors.eventId, e.id), isPublicVendorStatus())),
+      db
+        .select({
+          date: eventDays.date,
+          openTime: eventDays.openTime,
+          closeTime: eventDays.closeTime,
+          notes: eventDays.notes,
+          closed: eventDays.closed,
+        })
+        .from(eventDays)
+        .where(eq(eventDays.eventId, e.id))
+        .orderBy(eventDays.date),
+    ]);
 
     const vendorCount = vendorCountResult[0]?.count ?? 0;
 
@@ -81,16 +100,22 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       slug: e.slug,
       startDate: e.startDate,
       endDate: e.endDate,
+      datesConfirmed: e.datesConfirmed,
       description: e.description,
       categories: parseJsonArray(e.categories),
       imageUrl: e.imageUrl,
       status: e.status,
       indoorOutdoor: e.indoorOutdoor,
+      estimatedAttendance: e.estimatedAttendance,
       eventScale: e.eventScale,
+      vendorFeeMin: e.vendorFeeMin,
+      vendorFeeMax: e.vendorFeeMax,
+      vendorFeeNotes: e.vendorFeeNotes,
       walkInsAllowed: e.walkInsAllowed,
       boothFee,
       applicationDeadline: e.applicationDeadline,
       applicationUrl: e.applicationUrl,
+      applicationInstructions: e.applicationInstructions,
       venue: e.venueName
         ? {
             name: e.venueName,
@@ -99,15 +124,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
             city: e.venueCity,
             state: e.venueState,
             zip: e.venueZip,
+            contactEmail: e.venueContactEmail,
+            contactPhone: e.venueContactPhone,
           }
         : null,
       promoter: e.promoterName
         ? {
             name: e.promoterName,
             slug: e.promoterSlug,
+            website: e.promoterWebsite,
           }
         : null,
       vendorCount,
+      eventDays: dayResults.length > 0 ? dayResults : null,
     });
   } catch (error) {
     await logError(db, {
