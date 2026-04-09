@@ -52,6 +52,7 @@
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",
     "@hookform/resolvers": "^5.2.2",
+    "@mcw/calendar-grid": "file:../mcw-calendar-grid",
     "@next/third-parties": "^15.1.0",
     "@tailwindcss/typography": "^0.5.19",
     "clsx": "^2.1.1",

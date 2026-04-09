@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
+import { MonthCalendar, type CalendarDay } from "@mcw/calendar-grid";
 import { useSearchParams } from "next/navigation";
 import {
   LayoutGrid,
@@ -446,108 +447,78 @@ function CalendarView({
     );
   };
 
-  // Render Month View
-  const renderMonthView = () => {
-    const daysInMonth = getDaysInMonth(year, month);
-    const firstDayOfMonth = getFirstDayOfMonth(year, month);
+  // Render Month View — uses shared @mcw/calendar-grid package
+  const renderMonthDayContent = useCallback(
+    (day: CalendarDay) => {
+      if (!day.inMonth) return null;
+      const dayEvents = getEventsForDate(
+        events,
+        new Date(
+          parseInt(day.date.slice(0, 4)),
+          parseInt(day.date.slice(5, 7)) - 1,
+          parseInt(day.date.slice(8, 10))
+        )
+      );
+      if (dayEvents.length === 0) return null;
 
-    const calendarDays: (number | null)[] = [];
-    for (let i = 0; i < firstDayOfMonth; i++) {
-      calendarDays.push(null);
-    }
-    for (let day = 1; day <= daysInMonth; day++) {
-      calendarDays.push(day);
-    }
-    while (calendarDays.length % 7 !== 0) {
-      calendarDays.push(null);
-    }
-
-    return (
-      <div>
-        {/* Week Day Headers */}
-        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
-          {weekDays.map((day) => (
-            <div
-              key={day}
-              className="py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider"
-            >
-              {day}
-            </div>
-          ))}
-        </div>
-        {/* Calendar Grid */}
-        <div className="grid grid-cols-7">
-          {calendarDays.map((day, index) => {
-            const isToday = day !== null && isSameDay(new Date(year, month, day), today);
-            const dayEvents =
-              day !== null ? getEventsForDate(events, new Date(year, month, day)) : [];
-            const isCurrentMonth = day !== null;
-
-            return (
-              <div
-                key={index}
-                className={`min-h-[100px] print:min-h-0 border-b border-r border-gray-200 ${
-                  index % 7 === 0 ? "border-l-0" : ""
-                } ${!isCurrentMonth ? "bg-gray-50" : "bg-white"}`}
+      return (
+        <>
+          {/* Screen: capped at 3 events */}
+          <div className="space-y-0.5 print:hidden">
+            {dayEvents.slice(0, 3).map((event) => (
+              <Link
+                key={event.id}
+                href={`/events/${event.slug}`}
+                className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
               >
-                {day !== null && (
-                  <div className="p-1 print:p-px">
-                    <div className="flex justify-center mb-1 print:mb-0">
-                      <span
-                        className={`inline-flex items-center justify-center w-7 h-7 print:w-4 print:h-4 text-sm print:text-[0.6rem] ${
-                          isToday
-                            ? "bg-royal text-white rounded-full font-semibold"
-                            : "text-gray-700"
-                        }`}
-                      >
-                        {day}
-                      </span>
-                    </div>
-                    {/* Screen: capped at 3 events */}
-                    <div className="space-y-0.5 print:hidden">
-                      {dayEvents.slice(0, 3).map((event) => (
-                        <Link
-                          key={event.id}
-                          href={`/events/${event.slug}`}
-                          className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
-                          title={
-                            event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name
-                          }
-                        >
-                          {event.name}
-                        </Link>
-                      ))}
-                      {dayEvents.length > 3 && (
-                        <button
-                          onClick={() => setSelectedEvent(dayEvents[0])}
-                          className="block w-full text-left px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
-                        >
-                          +{dayEvents.length - 3} more
-                        </button>
-                      )}
-                    </div>
-                    {/* Print: show all events */}
-                    <div className="hidden print:block space-y-0">
-                      {dayEvents.map((event) => (
-                        <Link
-                          key={event.id}
-                          href={`/events/${event.slug}`}
-                          className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id)}`}
-                          title={event.name}
-                        >
-                          {event.name}
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
+                {event.name}
+              </Link>
+            ))}
+            {dayEvents.length > 3 && (
+              <button
+                onClick={() => setSelectedEvent(dayEvents[0])}
+                className="block w-full text-left px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+              >
+                +{dayEvents.length - 3} more
+              </button>
+            )}
+          </div>
+          {/* Print: show all events */}
+          <div className="hidden print:block space-y-0">
+            {dayEvents.map((event) => (
+              <Link
+                key={event.id}
+                href={`/events/${event.slug}`}
+                className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id)}`}
+                title={event.name}
+              >
+                {event.name}
+              </Link>
+            ))}
+          </div>
+        </>
+      );
+    },
+    [events, setSelectedEvent]
+  );
+
+  const handleMonthChange = useCallback((newYear: number, newMonth: number) => {
+    setCurrentDate(new Date(newYear, newMonth, 1));
+  }, []);
+
+  const renderMonthView = () => (
+    <MonthCalendar
+      hideHeader
+      year={year}
+      month={month}
+      onMonthChange={handleMonthChange}
+      renderDayContent={renderMonthDayContent}
+      cellMinHeight="100px"
+      todayClassName="rounded-full bg-royal text-white font-semibold"
+      className="border-0 rounded-none shadow-none"
+    />
+  );
 
   // Render Year View
   const renderYearView = () => {
