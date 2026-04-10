@@ -1,17 +1,14 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ slug: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const db = getCloudflareDb();
   try {
     const { slug } = await params;
@@ -50,12 +47,9 @@ export async function GET(
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
       .where(
-        and(
-          eq(eventVendors.vendorId, vendor.id),
-          isPublicVendorStatus(),
-          isPublicEventStatus()
-        )
-      );
+        and(eq(eventVendors.vendorId, vendor.id), isPublicVendorStatus(), isPublicEventStatus())
+      )
+      .orderBy(asc(events.startDate));
 
     // Format events with venue info
     const formattedEvents = eventResults
@@ -87,11 +81,13 @@ export async function GET(
       events: formattedEvents,
     });
   } catch (error) {
-    await logError(db, { message: "Error fetching vendor events", error, source: "api/vendors/[slug]/events", request });
-    return NextResponse.json(
-      { error: "Failed to fetch events" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error fetching vendor events",
+      error,
+      source: "api/vendors/[slug]/events",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
 }
 

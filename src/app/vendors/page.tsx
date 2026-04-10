@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, userFavorites } from "@/lib/db/schema";
-import { eq, and, gte, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, gte, asc, isNotNull, inArray } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -150,7 +150,8 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
           isPublicEventStatus(),
           gte(events.endDate, new Date())
         )
-      );
+      )
+      .orderBy(asc(events.startDate));
 
     // Group events by vendor ID in memory
     const eventsByVendor = new Map<string, typeof allVendorEvents>();

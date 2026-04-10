@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
@@ -62,7 +62,8 @@ async function getVendor(slug: string) {
       .from(eventVendors)
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(and(eq(eventVendors.vendorId, vendor.vendors.id), isPublicVendorStatus()));
+      .where(and(eq(eventVendors.vendorId, vendor.vendors.id), isPublicVendorStatus()))
+      .orderBy(asc(events.startDate));
 
     const vendorEvents = eventVendorResults
       .filter((ev) => ev.events !== null)
