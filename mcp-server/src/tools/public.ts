@@ -17,11 +17,19 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── search_events ──────────────────────────────────────────────
   server.tool(
     "search_events",
-    "Search events by name, category, state, or date range. Returns up to 20 results.",
+    "Search events by name, category, state, venue, promoter, or date range. Use venue_id or promoter_id to list all events for a specific venue or promoter. Returns up to 20 results.",
     {
       query: z.string().optional().describe("Search by event name (partial match)"),
       category: z.string().optional().describe("Filter by category"),
       state: z.string().optional().describe("Filter by venue state (2-letter code)"),
+      venue_id: z
+        .string()
+        .optional()
+        .describe("Filter by venue ID (UUID) — returns all events at a specific venue"),
+      promoter_id: z
+        .string()
+        .optional()
+        .describe("Filter by promoter ID (UUID) — returns all events by a specific promoter"),
       start_after: z.string().optional().describe("Events starting after this date (YYYY-MM-DD)"),
       start_before: z.string().optional().describe("Events starting before this date (YYYY-MM-DD)"),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
@@ -51,6 +59,14 @@ export function registerPublicTools(server: McpServer, db: Db) {
         conditions.push(eq(venues.state, params.state.toUpperCase()));
       }
 
+      if (params.venue_id) {
+        conditions.push(eq(events.venueId, params.venue_id));
+      }
+
+      if (params.promoter_id) {
+        conditions.push(eq(events.promoterId, params.promoter_id));
+      }
+
       const limit = params.limit ?? 20;
       const offset = params.offset ?? 0;
 
@@ -69,12 +85,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
           imageUrl: events.imageUrl,
           ticketPriceMin: events.ticketPriceMin,
           ticketPriceMax: events.ticketPriceMax,
+          venueId: events.venueId,
           venueName: venues.name,
           venueCity: venues.city,
           venueState: venues.state,
+          promoterId: events.promoterId,
+          promoterName: promoters.companyName,
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
         .where(and(...conditions))
         .limit(sqlLimit)
         .offset(offset);
@@ -95,7 +115,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
         name: r.name,
         slug: r.slug,
         dates: formatDateRange(r.startDate, r.endDate),
+        venue_id: r.venueId || null,
         location: [r.venueName, r.venueCity, r.venueState].filter(Boolean).join(", ") || "TBD",
+        promoter_id: r.promoterId,
+        promoter: r.promoterName || "Unknown",
         categories: parseJsonArray(r.categories),
         price: formatPrice(r.ticketPriceMin, r.ticketPriceMax),
         status: r.status,
@@ -118,7 +141,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── get_event_details ──────────────────────────────────────────
   server.tool(
     "get_event_details",
-    "Get full details for an event by its slug, including venue info and vendor count.",
+    "Get full details for an event by its slug, including venue, promoter, and vendor count.",
     {
       slug: z.string().describe("Event slug (URL-friendly name)"),
     },
@@ -146,9 +169,14 @@ export function registerPublicTools(server: McpServer, db: Db) {
           venueCity: venues.city,
           venueState: venues.state,
           venueZip: venues.zip,
+          promoterId: events.promoterId,
+          promoterName: promoters.companyName,
+          promoterSlug: promoters.slug,
+          promoterWebsite: promoters.website,
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
+        .leftJoin(promoters, eq(events.promoterId, promoters.id))
         .where(and(eq(events.slug, slug), inArray(events.status, [...PUBLIC_EVENT_STATUSES])))
         .limit(1);
 
@@ -196,6 +224,14 @@ export function registerPublicTools(server: McpServer, db: Db) {
                   city: event.venueCity,
                   state: event.venueState,
                   zip: event.venueZip,
+                }
+              : null,
+            promoter: event.promoterName
+              ? {
+                  id: event.promoterId,
+                  name: event.promoterName,
+                  slug: event.promoterSlug,
+                  website: event.promoterWebsite,
                 }
               : null,
             categories: parseJsonArray(event.categories),
