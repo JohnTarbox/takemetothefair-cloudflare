@@ -82,7 +82,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
       return NextResponse.json({ error: "eventId is required" }, { status: 400 });
     }
 
-    // Find the existing application
+    // Find existing application or create one
     const [existing] = await db
       .select()
       .from(eventVendors)
@@ -90,7 +90,27 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
       .limit(1);
 
     if (!existing) {
-      return NextResponse.json({ error: "Application not found" }, { status: 404 });
+      // Create new vendor-event record
+      const newStatus = (body.status ?? "CONFIRMED") as typeof eventVendors.$inferInsert.status;
+      const newPayment = (body.paymentStatus ??
+        "NOT_REQUIRED") as typeof eventVendors.$inferInsert.paymentStatus;
+
+      await db.insert(eventVendors).values({
+        eventId: body.eventId,
+        vendorId: auth.vendorId,
+        status: newStatus,
+        paymentStatus: newPayment,
+      });
+
+      return NextResponse.json(
+        {
+          eventId: body.eventId,
+          status: newStatus,
+          paymentStatus: newPayment,
+          created: true,
+        },
+        { status: 201 }
+      );
     }
 
     const updates: Record<string, string> = {};
