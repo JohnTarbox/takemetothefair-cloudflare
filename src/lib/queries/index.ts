@@ -55,10 +55,10 @@ export async function getVenuesWithEventCounts(db: Database): Promise<VenueWithC
     .groupBy(events.venueId);
 
   // Create a map for O(1) lookup
-  const countMap = new Map(eventCounts.map(ec => [ec.venueId, ec.count]));
+  const countMap = new Map(eventCounts.map((ec) => [ec.venueId, ec.count]));
 
   // Combine venues with their counts
-  return venueList.map(venue => ({
+  return venueList.map((venue) => ({
     ...venue,
     _count: { events: countMap.get(venue.id) || 0 },
   }));
@@ -93,10 +93,10 @@ export async function getVendorsWithCounts(db: Database): Promise<VendorWithCoun
     .groupBy(eventVendors.vendorId);
 
   // Create a map for O(1) lookup
-  const countMap = new Map(eventCounts.map(ec => [ec.vendorId, ec.count]));
+  const countMap = new Map(eventCounts.map((ec) => [ec.vendorId, ec.count]));
 
   // Combine vendors with their counts
-  return vendorList.map(v => ({
+  return vendorList.map((v) => ({
     ...v.vendor,
     user: v.user?.email ? { email: v.user.email, name: v.user.name } : null,
     _count: { events: countMap.get(v.vendor.id) || 0 },
@@ -132,10 +132,10 @@ export async function getPromotersWithCounts(db: Database): Promise<PromoterWith
     .groupBy(events.promoterId);
 
   // Create a map for O(1) lookup
-  const countMap = new Map(eventCounts.map(ec => [ec.promoterId, ec.count]));
+  const countMap = new Map(eventCounts.map((ec) => [ec.promoterId, ec.count]));
 
   // Combine promoters with their counts
-  return promoterList.map(p => ({
+  return promoterList.map((p) => ({
     ...p.promoter,
     user: p.user?.email ? { email: p.user.email, name: p.user.name } : null,
     _count: { events: countMap.get(p.promoter.id) || 0 },
@@ -205,24 +205,33 @@ export async function getEventsWithRelations(
       .from(eventVendors)
       .groupBy(eventVendors.eventId);
 
-    countMap = new Map(vendorCounts.map(vc => [vc.eventId, vc.count]));
+    countMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
   }
 
   // Batch-fetch submitter user info for events with submittedByUserId
-  const submitterIds = eventList
-    .map(e => e.event.submittedByUserId)
-    .filter((id): id is string => id != null);
-  let submitterMap = new Map<string, { name: string | null; email: string }>();
+  // D1 has a limit on SQL bind variables, so batch large arrays
+  const submitterIds = [
+    ...new Set(
+      eventList.map((e) => e.event.submittedByUserId).filter((id): id is string => id != null)
+    ),
+  ];
+  const submitterMap = new Map<string, { name: string | null; email: string }>();
   if (submitterIds.length > 0) {
-    const submitters = await db
-      .select({ id: users.id, name: users.name, email: users.email })
-      .from(users)
-      .where(inArray(users.id, submitterIds));
-    submitterMap = new Map(submitters.map(u => [u.id, { name: u.name, email: u.email }]));
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < submitterIds.length; i += BATCH_SIZE) {
+      const batch = submitterIds.slice(i, i + BATCH_SIZE);
+      const submitters = await db
+        .select({ id: users.id, name: users.name, email: users.email })
+        .from(users)
+        .where(inArray(users.id, batch));
+      for (const u of submitters) {
+        submitterMap.set(u.id, { name: u.name, email: u.email });
+      }
+    }
   }
 
   // Combine events with their relations and counts
-  return eventList.map(e => ({
+  return eventList.map((e) => ({
     ...e.event,
     venue: e.venue,
     promoter: e.promoter,
@@ -345,10 +354,7 @@ export async function findVenueByGooglePlaceId(
   googlePlaceId: string,
   excludeVenueId?: string
 ): Promise<{ id: string; name: string; city: string; state: string } | null> {
-  const conditions = [
-    eq(venues.googlePlaceId, googlePlaceId),
-    isNotNull(venues.googlePlaceId),
-  ];
+  const conditions = [eq(venues.googlePlaceId, googlePlaceId), isNotNull(venues.googlePlaceId)];
 
   if (excludeVenueId) {
     conditions.push(ne(venues.id, excludeVenueId));

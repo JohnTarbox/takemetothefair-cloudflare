@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, userFavorites } from "@/lib/db/schema";
-import { eq, and, gte, asc, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, gte, asc, isNotNull, inArray, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -62,21 +62,7 @@ interface SearchParams {
   q?: string;
 }
 
-async function getUserFavoriteIds(userId: string): Promise<string[]> {
-  try {
-    const db = getCloudflareDb();
-    const favorites = await db
-      .select({ favoritableId: userFavorites.favoritableId })
-      .from(userFavorites)
-      .where(and(eq(userFavorites.userId, userId), eq(userFavorites.favoritableType, "VENDOR")));
-    return favorites.map((f) => f.favoritableId);
-  } catch (error) {
-    console.error("Failed to fetch user favorite vendor IDs", { error, userId });
-    return [];
-  }
-}
-
-async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
+async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
   const db = getCloudflareDb();
 
   try {
@@ -85,9 +71,12 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
     if (searchParams.type) {
       conditions.push(eq(vendors.vendorType, searchParams.type));
     }
-    if (searchParams.favorites === "true" && favoriteIds && favoriteIds.length > 0) {
-      conditions.push(inArray(vendors.id, favoriteIds));
-    } else if (searchParams.favorites === "true" && (!favoriteIds || favoriteIds.length === 0)) {
+    // Use subquery for favorites filter (avoids D1 bind parameter limit)
+    if (searchParams.favorites === "true" && favoriteUserId) {
+      conditions.push(
+        sql`${vendors.id} IN (SELECT ${userFavorites.favoritableId} FROM ${userFavorites} WHERE ${userFavorites.userId} = ${favoriteUserId} AND ${userFavorites.favoritableType} = 'VENDOR')`
+      );
+    } else if (searchParams.favorites === "true" && !favoriteUserId) {
       return [];
     }
 
@@ -260,13 +249,10 @@ export default async function VendorsPage({
   const session = await auth();
   const isLoggedIn = !!session?.user?.id;
 
-  let favoriteIds: string[] | undefined;
-  if (isLoggedIn && params.favorites === "true") {
-    favoriteIds = await getUserFavoriteIds(session.user.id);
-  }
+  const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
   const [vendorList, vendorTypes] = await Promise.all([
-    getVendors(params, favoriteIds),
+    getVendors(params, favoriteUserId),
     getVendorTypes(),
   ]);
 

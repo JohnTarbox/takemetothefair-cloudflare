@@ -20,8 +20,16 @@ export async function POST(request: NextRequest) {
   const apiKey = env.GOOGLE_MAPS_API_KEY;
 
   try {
-    const body = await request.json().catch(() => ({})) as { venueIds?: string[] };
+    const body = (await request.json().catch(() => ({}))) as { venueIds?: string[] };
     const venueIds = body.venueIds;
+
+    // D1 has a limit on SQL bind variables, so cap the array
+    if (venueIds && venueIds.length > 50) {
+      return NextResponse.json(
+        { error: "Too many venue IDs. Maximum 50 per request." },
+        { status: 400 }
+      );
+    }
 
     const missingGoogle = await db
       .select()

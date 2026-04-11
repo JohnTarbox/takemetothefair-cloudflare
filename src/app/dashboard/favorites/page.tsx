@@ -10,12 +10,10 @@ import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-
 async function getFavorites(userId: string) {
   const db = getCloudflareDb();
 
   try {
-
     // Get all favorites for this user
     const favorites = await db
       .select()
@@ -33,30 +31,60 @@ async function getFavorites(userId: string) {
       .filter((f) => f.favoritableType === "VENDOR")
       .map((f) => f.favoritableId);
 
+    // D1 has a limit on SQL bind variables, so batch large arrays
+    const BATCH_SIZE = 50;
+
+    async function batchFetchEvents(ids: string[]) {
+      const results: {
+        events: typeof events.$inferSelect;
+        venues: typeof venues.$inferSelect | null;
+      }[] = [];
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const batchResults = await db
+          .select()
+          .from(events)
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(inArray(events.id, batch));
+        results.push(...batchResults);
+      }
+      return results;
+    }
+
+    async function batchFetchVenues(ids: string[]) {
+      const results: (typeof venues.$inferSelect)[] = [];
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const batchResults = await db.select().from(venues).where(inArray(venues.id, batch));
+        results.push(...batchResults);
+      }
+      return results;
+    }
+
+    async function batchFetchVendors(ids: string[]) {
+      const results: (typeof vendors.$inferSelect)[] = [];
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const batchResults = await db.select().from(vendors).where(inArray(vendors.id, batch));
+        results.push(...batchResults);
+      }
+      return results;
+    }
+
     // Get the actual items
     const [eventsList, venuesList, vendorsList] = await Promise.all([
-      eventIds.length > 0
-        ? db
-            .select()
-            .from(events)
-            .leftJoin(venues, eq(events.venueId, venues.id))
-            .where(inArray(events.id, eventIds))
-        : [],
-      venueIds.length > 0
-        ? db.select().from(venues).where(inArray(venues.id, venueIds))
-        : [],
-      vendorIds.length > 0
-        ? db.select().from(vendors).where(inArray(vendors.id, vendorIds))
-        : [],
+      eventIds.length > 0 ? batchFetchEvents(eventIds) : [],
+      venueIds.length > 0 ? batchFetchVenues(venueIds) : [],
+      vendorIds.length > 0 ? batchFetchVendors(vendorIds) : [],
     ]);
 
     return {
-      events: (eventsList as { events: typeof events.$inferSelect; venues: typeof venues.$inferSelect | null }[]).map((e) => ({
+      events: eventsList.map((e) => ({
         ...e.events,
         venue: e.venues!,
       })),
-      venues: venuesList as typeof venues.$inferSelect[],
-      vendors: vendorsList as typeof vendors.$inferSelect[],
+      venues: venuesList,
+      vendors: vendorsList,
       favorites,
     };
   } catch (e) {
@@ -77,16 +105,18 @@ export default async function FavoritesPage() {
     redirect("/login?callbackUrl=/dashboard/favorites");
   }
 
-  const { events: eventsList, venues: venuesList, vendors: vendorsList } = await getFavorites(session.user.id);
+  const {
+    events: eventsList,
+    venues: venuesList,
+    vendors: vendorsList,
+  } = await getFavorites(session.user.id);
   const totalFavorites = eventsList.length + venuesList.length + vendorsList.length;
 
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">My Favorites</h1>
-        <p className="mt-1 text-gray-600">
-          {totalFavorites} saved items
-        </p>
+        <p className="mt-1 text-gray-600">{totalFavorites} saved items</p>
       </div>
 
       {totalFavorites === 0 ? (
@@ -118,9 +148,7 @@ export default async function FavoritesPage() {
                           <Calendar className="w-8 h-8 text-royal" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">
-                            {event.name}
-                          </h3>
+                          <h3 className="font-medium text-gray-900">{event.name}</h3>
                           <p className="text-sm text-gray-500">
                             {event.venue.name}, {event.venue.city}
                           </p>
@@ -148,9 +176,7 @@ export default async function FavoritesPage() {
                           <MapPin className="w-8 h-8 text-green-600" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">
-                            {venue.name}
-                          </h3>
+                          <h3 className="font-medium text-gray-900">{venue.name}</h3>
                           <p className="text-sm text-gray-500">
                             {venue.city}, {venue.state}
                           </p>
@@ -178,12 +204,8 @@ export default async function FavoritesPage() {
                           <Store className="w-8 h-8 text-purple-600" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">
-                            {vendor.businessName}
-                          </h3>
-                          <p className="text-sm text-gray-500">
-                            {vendor.vendorType}
-                          </p>
+                          <h3 className="font-medium text-gray-900">{vendor.businessName}</h3>
+                          <p className="text-sm text-gray-500">{vendor.vendorType}</p>
                         </div>
                       </CardContent>
                     </Card>

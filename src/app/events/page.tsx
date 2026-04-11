@@ -78,24 +78,6 @@ function parseView(view?: string): ViewMode {
   return "cards";
 }
 
-// Get favorite IDs for a user
-async function getUserFavoriteIds(
-  userId: string,
-  type: "EVENT" | "VENUE" | "VENDOR"
-): Promise<string[]> {
-  try {
-    const db = getCloudflareDb();
-    const favorites = await db
-      .select({ favoritableId: userFavorites.favoritableId })
-      .from(userFavorites)
-      .where(and(eq(userFavorites.userId, userId), eq(userFavorites.favoritableType, type)));
-    return favorites.map((f) => f.favoritableId);
-  } catch (error) {
-    console.error("Failed to fetch user favorite IDs", { error, userId, type });
-    return [];
-  }
-}
-
 // Get the vendor ID and coordinates for a user
 async function getVendorForUser(
   userId: string
@@ -114,26 +96,7 @@ async function getVendorForUser(
   }
 }
 
-// Get event IDs where a vendor is participating
-async function getVendorEventIds(vendorId: string): Promise<string[]> {
-  try {
-    const db = getCloudflareDb();
-    const results = await db
-      .select({ eventId: eventVendors.eventId })
-      .from(eventVendors)
-      .where(eq(eventVendors.vendorId, vendorId));
-    return results.map((r) => r.eventId);
-  } catch (error) {
-    console.error("Failed to fetch vendor event IDs", { error, vendorId });
-    return [];
-  }
-}
-
-async function getEvents(
-  searchParams: SearchParams,
-  vendorEventIds?: string[],
-  favoriteIds?: string[]
-) {
+async function getEvents(searchParams: SearchParams, vendorId?: string, favoriteUserId?: string) {
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
   const page = parseInt(searchParams.page || "1");
@@ -212,21 +175,22 @@ async function getEvents(
       conditions.push(eq(events.eventScale, searchParams.scale));
     }
 
-    // Filter by vendor's events if myEvents is true
-    if (searchParams.myEvents === "true" && vendorEventIds && vendorEventIds.length > 0) {
-      conditions.push(inArray(events.id, vendorEventIds));
-    } else if (
-      searchParams.myEvents === "true" &&
-      (!vendorEventIds || vendorEventIds.length === 0)
-    ) {
+    // Filter by vendor's events using subquery (avoids D1 bind parameter limit)
+    if (searchParams.myEvents === "true" && vendorId) {
+      conditions.push(
+        sql`${events.id} IN (SELECT ${eventVendors.eventId} FROM ${eventVendors} WHERE ${eventVendors.vendorId} = ${vendorId})`
+      );
+    } else if (searchParams.myEvents === "true" && !vendorId) {
       // Vendor has no events, return empty
       return { events: [], total: 0, page, limit };
     }
 
-    // Filter by favorites if favorites is true
-    if (searchParams.favorites === "true" && favoriteIds && favoriteIds.length > 0) {
-      conditions.push(inArray(events.id, favoriteIds));
-    } else if (searchParams.favorites === "true" && (!favoriteIds || favoriteIds.length === 0)) {
+    // Filter by favorites using subquery (avoids D1 bind parameter limit)
+    if (searchParams.favorites === "true" && favoriteUserId) {
+      conditions.push(
+        sql`${events.id} IN (SELECT ${userFavorites.favoritableId} FROM ${userFavorites} WHERE ${userFavorites.userId} = ${favoriteUserId} AND ${userFavorites.favoritableType} = 'EVENT')`
+      );
+    } else if (searchParams.favorites === "true" && !favoriteUserId) {
       // User has no favorites, return empty
       return { events: [], total: 0, page, limit };
     }
@@ -619,13 +583,13 @@ export default async function EventsPage({
   const isLoggedIn = !!session?.user?.id;
 
   // Get vendor info (ID + coordinates) if the user is a vendor
-  let vendorEventIds: string[] | undefined;
+  let vendorId: string | undefined;
   let vendorCoords: { lat: number; lng: number } | null = null;
   if (isVendor) {
     const vendor = await getVendorForUser(session.user.id);
     if (vendor) {
       if (params.myEvents === "true") {
-        vendorEventIds = await getVendorEventIds(vendor.id);
+        vendorId = vendor.id;
       }
       if (vendor.latitude && vendor.longitude) {
         vendorCoords = { lat: vendor.latitude, lng: vendor.longitude };
@@ -633,15 +597,12 @@ export default async function EventsPage({
     }
   }
 
-  // Get favorite IDs if user wants to filter by favorites
-  let favoriteIds: string[] | undefined;
-  if (isLoggedIn && params.favorites === "true") {
-    favoriteIds = await getUserFavoriteIds(session.user.id, "EVENT");
-  }
+  // Pass userId for favorites subquery (avoids D1 bind parameter limit)
+  const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
   const viewMode = parseView(params.view);
   const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
-    getEvents(params, vendorEventIds, favoriteIds),
+    getEvents(params, vendorId, favoriteUserId),
     getCategories(),
     getStates(),
   ]);
