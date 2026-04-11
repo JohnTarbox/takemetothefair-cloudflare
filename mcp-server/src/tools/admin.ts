@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, like, inArray, isNull } from "drizzle-orm";
+import { eq, and, like, inArray, isNull, sql } from "drizzle-orm";
 import { events, eventVendors, vendors, venues, promoters, users, eventDays } from "../schema.js";
 import {
   formatDateRange,
@@ -49,6 +49,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Browse/search all events regardless of promoter ownership. Use missing_fields to find events with incomplete data (e.g. no venue, no image). Admin only.",
     {
       status: z.enum(EVENT_STATUS_ENUM).optional().describe("Filter by event status"),
+      state: z
+        .string()
+        .optional()
+        .describe("Filter by venue state (2-letter code, e.g. 'ME', 'VT')"),
       search: z.string().optional().describe("Search events by name (partial match)"),
       missing_fields: z
         .array(
@@ -93,6 +97,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (params.search) {
         conditions.push(like(events.name, `%${escapeLike(params.search)}%`));
+      }
+      if (params.state) {
+        conditions.push(sql`upper(${venues.state}) = upper(${params.state})`);
       }
       if (params.missing_fields) {
         for (const field of params.missing_fields) {
@@ -1206,7 +1213,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           and(
             eq(venues.name, params.name),
             eq(venues.city, params.city),
-            eq(venues.state, params.state.toUpperCase())
+            sql`upper(${venues.state}) = upper(${params.state})`
           )
         )
         .limit(1);

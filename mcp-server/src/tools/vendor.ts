@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, lte, sql } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
 import { parseJsonArray, formatDateRange, jsonContent } from "../helpers.js";
 import type { Db } from "../db.js";
@@ -522,6 +522,12 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         .string()
         .optional()
         .describe("Promoter ID. If omitted, defaults to 'Community Suggestions'."),
+      force_create: z
+        .boolean()
+        .optional()
+        .describe(
+          "Set to true to bypass duplicate detection and create the event even if potential duplicates exist at the same venue with overlapping dates."
+        ),
     },
     async (params) => {
       // Validate promoter FK if provided
@@ -667,12 +673,62 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
             slug: finalVenueSlug,
             address: "",
             city: params.venue_city || "",
-            state: params.venue_state || "",
+            state: (params.venue_state || "").toUpperCase(),
             zip: "",
             status: "ACTIVE",
           });
           venueId = newVenueId;
           venueResult = { matched: false, venueId: newVenueId, name: params.venue_name };
+        }
+      }
+
+      // ── Duplicate detection ──────────────────────────────────────
+      if (venueId && startDate && !params.force_create) {
+        const newEnd = endDate || startDate;
+
+        // Overlap: existing.start <= newEnd AND coalesce(existing.end, existing.start) >= newStart
+        const possibleDupes = await db
+          .select({
+            id: events.id,
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            status: events.status,
+          })
+          .from(events)
+          .where(
+            and(
+              eq(events.venueId, venueId),
+              lte(events.startDate, newEnd),
+              sql`coalesce(${events.endDate}, ${events.startDate}) >= ${startDate}`
+            )
+          );
+
+        if (possibleDupes.length > 0) {
+          return {
+            content: [
+              jsonContent({
+                created: false,
+                reason: "potential_duplicates_found",
+                message: `Found ${possibleDupes.length} existing event(s) at the same venue with overlapping dates. Use force_create: true to create anyway.`,
+                possible_duplicates: possibleDupes.map((d) => ({
+                  id: d.id,
+                  name: d.name,
+                  slug: d.slug,
+                  dates: formatDateRange(d.startDate, d.endDate),
+                  status: d.status,
+                })),
+                suggested_event: {
+                  name: params.name,
+                  venue_id: venueId,
+                  venue_name: venueResult?.name || params.venue_name,
+                  start_date: params.start_date,
+                  end_date: params.end_date,
+                },
+              }),
+            ],
+          };
         }
       }
 

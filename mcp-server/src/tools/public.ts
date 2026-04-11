@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, gte, lte, like, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, like, inArray, sql } from "drizzle-orm";
 import { events, venues, vendors, eventVendors, eventDays, promoters } from "../schema.js";
 import {
   parseJsonArray,
@@ -56,7 +56,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       // Push state filter into SQL — venue is already joined
       if (params.state) {
-        conditions.push(eq(venues.state, params.state.toUpperCase()));
+        conditions.push(sql`upper(${venues.state}) = upper(${params.state})`);
       }
 
       if (params.venue_id) {
@@ -418,7 +418,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         conditions.push(like(venues.city, `%${escapeLike(params.city)}%`));
       }
       if (params.state) {
-        conditions.push(eq(venues.state, params.state.toUpperCase()));
+        conditions.push(sql`upper(${venues.state}) = upper(${params.state})`);
       }
 
       const rows = await db
