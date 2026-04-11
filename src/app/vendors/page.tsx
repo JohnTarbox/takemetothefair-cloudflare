@@ -125,33 +125,52 @@ async function getVendors(searchParams: SearchParams, favoriteIds?: string[]) {
       return [];
     }
 
-    // Query 2: Get all upcoming events for all vendors in a single query
+    // Query 2: Get all upcoming events for all vendors
+    // D1 has a limit on SQL bind variables, so batch large arrays
     const vendorIds = vendorResults.map((v) => v.vendors.id);
-    const allVendorEvents = await db
-      .select({
-        vendorId: eventVendors.vendorId,
-        eventId: events.id,
-        eventName: events.name,
-        eventSlug: events.slug,
-        startDate: events.startDate,
-        endDate: events.endDate,
-        imageUrl: events.imageUrl,
-        venueName: venues.name,
-        venueCity: venues.city,
-        venueState: venues.state,
-      })
-      .from(eventVendors)
-      .innerJoin(events, eq(eventVendors.eventId, events.id))
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(
-        and(
-          inArray(eventVendors.vendorId, vendorIds),
-          isPublicVendorStatus(),
-          isPublicEventStatus(),
-          gte(events.endDate, new Date())
+    const BATCH_SIZE = 50;
+    const allVendorEvents: {
+      vendorId: string;
+      eventId: string;
+      eventName: string;
+      eventSlug: string;
+      startDate: Date | null;
+      endDate: Date | null;
+      imageUrl: string | null;
+      venueName: string | null;
+      venueCity: string | null;
+      venueState: string | null;
+    }[] = [];
+
+    for (let i = 0; i < vendorIds.length; i += BATCH_SIZE) {
+      const batch = vendorIds.slice(i, i + BATCH_SIZE);
+      const batchResults = await db
+        .select({
+          vendorId: eventVendors.vendorId,
+          eventId: events.id,
+          eventName: events.name,
+          eventSlug: events.slug,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          imageUrl: events.imageUrl,
+          venueName: venues.name,
+          venueCity: venues.city,
+          venueState: venues.state,
+        })
+        .from(eventVendors)
+        .innerJoin(events, eq(eventVendors.eventId, events.id))
+        .leftJoin(venues, eq(events.venueId, venues.id))
+        .where(
+          and(
+            inArray(eventVendors.vendorId, batch),
+            isPublicVendorStatus(),
+            isPublicEventStatus(),
+            gte(events.endDate, new Date())
+          )
         )
-      )
-      .orderBy(asc(events.startDate));
+        .orderBy(asc(events.startDate));
+      allVendorEvents.push(...batchResults);
+    }
 
     // Group events by vendor ID in memory
     const eventsByVendor = new Map<string, typeof allVendorEvents>();
