@@ -518,8 +518,29 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
       venue_state: z.string().optional().describe("Venue state (2-letter code)"),
       ticket_url: z.string().optional().describe("URL to purchase tickets"),
       source_url: z.string().optional().describe("URL with more information about the event"),
+      promoter_id: z
+        .string()
+        .optional()
+        .describe("Promoter ID. If omitted, defaults to 'Community Suggestions'."),
     },
     async (params) => {
+      // Validate promoter FK if provided
+      let eventPromoterId = COMMUNITY_PROMOTER_ID;
+      if (params.promoter_id) {
+        const promoterRows = await db
+          .select({ id: promoters.id })
+          .from(promoters)
+          .where(eq(promoters.id, params.promoter_id))
+          .limit(1);
+        if (promoterRows.length === 0) {
+          return {
+            content: [{ type: "text", text: `Promoter not found: ${params.promoter_id}` }],
+            isError: true,
+          };
+        }
+        eventPromoterId = params.promoter_id;
+      }
+
       // Ensure community promoter exists
       const promoterRows = await db
         .select({ id: promoters.id })
@@ -661,7 +682,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         name: params.name,
         slug: finalSlug,
         description,
-        promoterId: COMMUNITY_PROMOTER_ID,
+        promoterId: eventPromoterId,
         venueId,
         startDate,
         endDate,

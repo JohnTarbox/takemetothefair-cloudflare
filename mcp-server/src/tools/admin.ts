@@ -250,6 +250,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       end_date: z.string().optional().describe("End date as ISO 8601 string"),
       dates_confirmed: z.boolean().optional().describe("Whether dates are confirmed"),
       venue_id: z.string().optional().describe("Venue ID (FK to venues table)"),
+      promoter_id: z.string().optional().describe("Promoter ID (FK to promoters table)"),
       categories: z
         .array(z.string())
         .optional()
@@ -313,6 +314,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }> = [
         { param: "description", column: "description" },
         { param: "venue_id", column: "venueId" },
+        { param: "promoter_id", column: "promoterId" },
         { param: "dates_confirmed", column: "datesConfirmed" },
         { param: "ticket_url", column: "ticketUrl" },
         { param: "ticket_price_min", column: "ticketPriceMin" },
@@ -442,6 +444,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         if (venueRows.length === 0) {
           return {
             content: [{ type: "text", text: `Venue not found: ${params.venue_id}` }],
+            isError: true,
+          };
+        }
+      }
+
+      // Validate promoter FK exists if provided
+      if (params.promoter_id) {
+        const promoterRows = await db
+          .select({ id: promoters.id })
+          .from(promoters)
+          .where(eq(promoters.id, params.promoter_id))
+          .limit(1);
+        if (promoterRows.length === 0) {
+          return {
+            content: [{ type: "text", text: `Promoter not found: ${params.promoter_id}` }],
             isError: true,
           };
         }
@@ -1423,6 +1440,255 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           jsonContent({
             updated: true,
             vendor: { id: vendor.id, businessName: updates.businessName ?? vendor.businessName },
+            fieldsUpdated: requestedFields,
+            previousValues,
+            newValues,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── create_promoter ────────────────────────────────────────────
+  server.tool(
+    "create_promoter",
+    "Create a new promoter (event organizer) on the platform. Returns the promoter ID for use with update_event to link events. Admin only.",
+    {
+      name: z.string().min(1).max(200).describe("Company/organization name"),
+      website: z.string().optional().describe("Promoter website URL"),
+      description: z.string().max(500).optional().describe("Promoter description"),
+      city: z.string().optional().describe("City"),
+      state: z.string().optional().describe("State (2-letter code)"),
+      contact_email: z.string().optional().describe("Primary contact email address"),
+      contact_phone: z.string().optional().describe("Contact phone number"),
+      logo_url: z.string().optional().describe("URL to promoter logo image"),
+    },
+    async (params) => {
+      // Check for duplicate company name (exact match)
+      const existing = await db
+        .select({ id: promoters.id, slug: promoters.slug })
+        .from(promoters)
+        .where(eq(promoters.companyName, params.name))
+        .limit(1);
+
+      if (existing.length > 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `A promoter with the name "${params.name}" already exists (slug: ${existing[0].slug}). Use search_promoters to find it.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Generate unique slug
+      const baseSlug = createSlug(params.name);
+      if (!baseSlug) {
+        return {
+          content: [{ type: "text", text: "Could not generate a valid slug from the name." }],
+          isError: true,
+        };
+      }
+
+      let finalSlug = baseSlug;
+      let suffix = 0;
+      while (true) {
+        const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+        const slugCheck = await db
+          .select({ id: promoters.id })
+          .from(promoters)
+          .where(eq(promoters.slug, candidate))
+          .limit(1);
+        if (slugCheck.length === 0) {
+          finalSlug = candidate;
+          break;
+        }
+        suffix++;
+        if (suffix > 20) {
+          return {
+            content: [{ type: "text", text: "Too many slug collisions. Try a more unique name." }],
+            isError: true,
+          };
+        }
+      }
+
+      // Create placeholder user (promoters table has userId FK)
+      const placeholderEmail = `pending+promoter-${finalSlug}@meetmeatthefair.com`;
+      const userId = crypto.randomUUID();
+
+      await db.insert(users).values({
+        id: userId,
+        email: placeholderEmail,
+        role: "PROMOTER",
+      });
+
+      // Create promoter record
+      const promoterId = crypto.randomUUID();
+
+      await db.insert(promoters).values({
+        id: promoterId,
+        userId,
+        companyName: params.name,
+        slug: finalSlug,
+        description: params.description ?? null,
+        website: params.website ?? null,
+        logoUrl: params.logo_url ?? null,
+        city: params.city ?? null,
+        state: params.state ? params.state.toUpperCase() : null,
+        contactEmail: params.contact_email ?? null,
+        contactPhone: params.contact_phone ?? null,
+      });
+
+      return {
+        content: [
+          jsonContent({
+            created: true,
+            promoter_id: promoterId,
+            slug: finalSlug,
+            name: params.name,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── update_promoter ───────────────────────────────────────────
+  server.tool(
+    "update_promoter",
+    "Update any promoter's profile fields. Admin only.",
+    {
+      promoter_id: z.string().describe("Promoter ID (UUID)"),
+      name: z.string().optional().describe("Company name (also regenerates slug)"),
+      description: z.string().optional().describe("Promoter description"),
+      website: z.string().optional().describe("Website URL"),
+      city: z.string().optional().describe("City"),
+      state: z.string().optional().describe("State (2-letter code)"),
+      contact_email: z.string().optional().describe("Contact email"),
+      contact_phone: z.string().optional().describe("Contact phone"),
+      logo_url: z.string().optional().describe("Logo image URL"),
+      social_links: z.string().optional().describe("Social media links (JSON string)"),
+      verified: z.boolean().optional().describe("Verified status"),
+    },
+    async (params) => {
+      const fieldMap: Array<{
+        param: string;
+        column: string;
+        transform?: (v: any) => unknown;
+      }> = [
+        { param: "description", column: "description" },
+        { param: "website", column: "website" },
+        { param: "city", column: "city" },
+        { param: "state", column: "state", transform: (v: string) => v.toUpperCase() },
+        { param: "contact_email", column: "contactEmail" },
+        { param: "contact_phone", column: "contactPhone" },
+        { param: "logo_url", column: "logoUrl" },
+        { param: "social_links", column: "socialLinks" },
+        { param: "verified", column: "verified" },
+      ];
+
+      const updates: Record<string, unknown> = {};
+      const requestedFields: string[] = [];
+
+      for (const { param, column, transform } of fieldMap) {
+        const value = (params as Record<string, unknown>)[param];
+        if (value !== undefined) {
+          updates[column] = transform ? transform(value) : value;
+          requestedFields.push(param);
+        }
+      }
+
+      if (params.name !== undefined) {
+        updates.companyName = params.name;
+        requestedFields.push("name");
+      }
+
+      if (requestedFields.length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No fields provided to update. Supply at least one optional field.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Fetch current promoter
+      const promoterRows = await db
+        .select()
+        .from(promoters)
+        .where(eq(promoters.id, params.promoter_id))
+        .limit(1);
+
+      if (promoterRows.length === 0) {
+        return { content: [{ type: "text", text: "Promoter not found." }], isError: true };
+      }
+
+      const promoter = promoterRows[0];
+
+      // If name changed, regenerate slug
+      if (params.name !== undefined) {
+        const baseSlug = createSlug(params.name);
+        let finalSlug = baseSlug;
+        let suffix = 0;
+        while (true) {
+          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const existing = await db
+            .select({ id: promoters.id })
+            .from(promoters)
+            .where(eq(promoters.slug, candidate))
+            .limit(1);
+          if (existing.length === 0 || existing[0].id === promoter.id) {
+            finalSlug = candidate;
+            break;
+          }
+          suffix++;
+          if (suffix > 20) {
+            return {
+              content: [
+                { type: "text", text: "Too many slug collisions. Try a more unique name." },
+              ],
+              isError: true,
+            };
+          }
+        }
+        updates.slug = finalSlug;
+      }
+
+      updates.updatedAt = new Date();
+
+      // Capture previous values
+      const previousValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        if (field === "name") {
+          previousValues.name = promoter.companyName;
+          previousValues.slug = promoter.slug;
+          continue;
+        }
+        const mapping = fieldMap.find((f) => f.param === field);
+        if (mapping) {
+          previousValues[field] = (promoter as Record<string, unknown>)[mapping.column];
+        }
+      }
+
+      await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
+
+      const newValues: Record<string, unknown> = {};
+      for (const field of requestedFields) {
+        newValues[field] = (params as Record<string, unknown>)[field];
+      }
+      if (params.name !== undefined && updates.slug) {
+        newValues.slug = updates.slug;
+      }
+
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            promoter: { id: promoter.id, companyName: updates.companyName ?? promoter.companyName },
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
