@@ -422,7 +422,10 @@ export default async function EventDetailPage({ params }: Props) {
                 name: event.promoter.companyName,
                 url: event.promoter.website,
               }
-            : null
+            : {
+                name: "Meet Me at the Fair",
+                url: "https://meetmeatthefair.com",
+              }
         }
         ticketPriceMin={event.ticketPriceMin}
         ticketPriceMax={event.ticketPriceMax}

@@ -12,7 +12,7 @@ import { parseJsonArray } from "@/types";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
-import { getCategoryColors, getCategoryBadgeClass } from "@/lib/category-colors";
+import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -89,9 +89,13 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               onError={() => setImgError(true)}
             />
           ) : (
-            <div className={`w-full h-full flex items-center justify-center ${colors.icon}`}>
-              <Calendar className="w-12 h-12" />
-            </div>
+            <Image
+              src={getCategoryImage(categories)}
+              alt={`${categories[0] || "Event"} illustration`}
+              fill
+              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+              className="object-cover"
+            />
           )}
           {/* Date badge */}
           {monthAbbr && dayNum && (!event.imageUrl || imgError) && (

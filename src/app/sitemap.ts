@@ -1,7 +1,7 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, or, gte, isNull, count } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
 export const runtime = "edge";
@@ -221,7 +221,52 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    return [...staticPages, ...eventPages, ...venuePages, ...vendorPages, ...blogPages];
+    // Generate pagination URLs for listing pages to reduce orphan rate
+    const EVENTS_PER_PAGE = 30;
+    const paginationPages: MetadataRoute.Sitemap = [];
+
+    // Count future public events for /events pagination
+    const futureCountResult = await db
+      .select({ count: count() })
+      .from(events)
+      .where(and(isPublicEventStatus(), or(gte(events.endDate, now), isNull(events.endDate))));
+    const futureTotal = futureCountResult[0]?.count || 0;
+    const futureTotalPages = Math.ceil(futureTotal / EVENTS_PER_PAGE);
+
+    for (let page = 2; page <= futureTotalPages; page++) {
+      paginationPages.push({
+        url: `${baseUrl}/events?page=${page}`,
+        lastModified: new Date(),
+        changeFrequency: "daily" as const,
+        priority: 0.6,
+      });
+    }
+
+    // Count all public events for /events/all pagination
+    const allCountResult = await db
+      .select({ count: count() })
+      .from(events)
+      .where(isPublicEventStatus());
+    const allTotal = allCountResult[0]?.count || 0;
+    const allTotalPages = Math.ceil(allTotal / EVENTS_PER_PAGE);
+
+    for (let page = 2; page <= allTotalPages; page++) {
+      paginationPages.push({
+        url: `${baseUrl}/events/all?page=${page}`,
+        lastModified: new Date(),
+        changeFrequency: "weekly" as const,
+        priority: 0.5,
+      });
+    }
+
+    return [
+      ...staticPages,
+      ...paginationPages,
+      ...eventPages,
+      ...venuePages,
+      ...vendorPages,
+      ...blogPages,
+    ];
   } catch (error) {
     console.error("Error generating sitemap:", error);
     return staticPages;

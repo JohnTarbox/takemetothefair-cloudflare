@@ -148,7 +148,7 @@ export async function CategoryEventsPage({ categorySlug, searchParams }: Categor
   if (!cat) return null;
 
   const page = parseInt(searchParams.page || "1");
-  const limit = 24;
+  const limit = 30;
   const includePast = searchParams.includePast === "true";
   const { events: eventsList, total } = await getCategoryEvents(
     cat.category,

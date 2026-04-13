@@ -34,7 +34,7 @@ interface SearchParams {
 
 async function getPastEvents(searchParams: SearchParams) {
   const page = parseInt(searchParams.page || "1");
-  const limit = 24;
+  const limit = 30;
   const offset = (page - 1) * limit;
 
   const db = getCloudflareDb();

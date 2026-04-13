@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" fill="none">
+  <rect width="400" height="225" fill="#F9FAFB"/>
+  <!-- Calendar -->
+  <rect x="150" y="60" width="100" height="90" rx="8" fill="#E5E7EB"/>
+  <rect x="150" y="60" width="100" height="25" rx="8" fill="#6B7280"/>
+  <rect x="150" y="75" width="100" height="10" fill="#6B7280"/>
+  <!-- Calendar rings -->
+  <rect x="175" y="52" width="6" height="16" rx="3" fill="#4B5563"/>
+  <rect x="219" y="52" width="6" height="16" rx="3" fill="#4B5563"/>
+  <!-- Calendar dots -->
+  <circle cx="175" cy="105" r="5" fill="#9CA3AF"/>
+  <circle cx="200" cy="105" r="5" fill="#9CA3AF"/>
+  <circle cx="225" cy="105" r="5" fill="#9CA3AF"/>
+  <circle cx="175" cy="130" r="5" fill="#9CA3AF"/>
+  <circle cx="200" cy="130" r="5" fill="#3B82F6"/>
+  <circle cx="225" cy="130" r="5" fill="#9CA3AF"/>
+  <!-- Pin -->
+  <circle cx="300" cy="80" r="14" fill="#EF4444"/>
+  <circle cx="300" cy="78" r="5" fill="#FCA5A5"/>
+  <path d="M300 94 L300 115" stroke="#EF4444" stroke-width="3" stroke-linecap="round"/>
+  <!-- Star -->
+  <path d="M110 100 L114 112 L126 112 L116 119 L120 131 L110 124 L100 131 L104 119 L94 112 L106 112Z" fill="#FBBF24"/>
+</svg>

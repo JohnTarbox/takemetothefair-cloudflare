@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" fill="none">
+  <rect width="400" height="225" fill="#FAF5FF"/>
+  <!-- Paintbrush -->
+  <rect x="170" y="60" width="12" height="60" rx="2" fill="#7C3AED" transform="rotate(-20 176 90)"/>
+  <path d="M158 115 Q165 140 180 115" fill="#A855F7"/>
+  <rect x="168" y="50" width="16" height="20" rx="3" fill="#C4B5FD" transform="rotate(-20 176 60)"/>
+  <!-- Scissors -->
+  <circle cx="245" cy="90" r="15" stroke="#9333EA" stroke-width="3" fill="none"/>
+  <circle cx="245" cy="130" r="15" stroke="#9333EA" stroke-width="3" fill="none"/>
+  <line x1="245" y1="75" x2="220" y2="140" stroke="#9333EA" stroke-width="3"/>
+  <line x1="245" y1="145" x2="220" y2="80" stroke="#9333EA" stroke-width="3"/>
+  <!-- Thread spool -->
+  <ellipse cx="140" cy="160" rx="20" ry="10" fill="#DDD6FE"/>
+  <rect x="120" y="145" width="40" height="15" fill="#C4B5FD"/>
+  <ellipse cx="140" cy="145" rx="20" ry="10" fill="#DDD6FE"/>
+  <!-- Decorative dots -->
+  <circle cx="100" cy="50" r="4" fill="#E9D5FF"/>
+  <circle cx="300" cy="45" r="4" fill="#E9D5FF"/>
+  <circle cx="320" cy="170" r="4" fill="#E9D5FF"/>
+  <circle cx="85" cy="130" r="3" fill="#E9D5FF"/>
+</svg>

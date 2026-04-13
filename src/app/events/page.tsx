@@ -105,7 +105,7 @@ async function getEvents(
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
   const page = parseInt(searchParams.page || "1");
-  const limit = 24;
+  const limit = 30;
   const offset = (page - 1) * limit;
   const sort = searchParams.sort || "date-asc";
 

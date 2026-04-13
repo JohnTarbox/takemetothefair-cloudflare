@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" fill="none">
+  <rect width="400" height="225" fill="#FEF2F2"/>
+  <!-- Fork -->
+  <rect x="150" y="55" width="3" height="70" fill="#DC2626"/>
+  <rect x="143" y="55" width="3" height="25" rx="1" fill="#DC2626"/>
+  <rect x="150" y="55" width="3" height="25" rx="1" fill="#DC2626"/>
+  <rect x="157" y="55" width="3" height="25" rx="1" fill="#DC2626"/>
+  <rect x="143" y="78" width="17" height="4" rx="2" fill="#DC2626"/>
+  <!-- Plate -->
+  <ellipse cx="220" cy="130" rx="50" ry="35" fill="#FCA5A5"/>
+  <ellipse cx="220" cy="130" rx="35" ry="24" fill="#FECACA"/>
+  <!-- Steam -->
+  <path d="M200 85 Q195 75 200 65" stroke="#F87171" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M215 80 Q210 70 215 60" stroke="#F87171" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M230 85 Q225 75 230 65" stroke="#F87171" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <!-- Apple -->
+  <circle cx="310" cy="100" r="18" fill="#EF4444"/>
+  <path d="M310 82 Q315 72 320 78" stroke="#16A34A" stroke-width="2" fill="none"/>
+  <ellipse cx="308" cy="82" rx="4" ry="3" fill="#22C55E"/>
+</svg>

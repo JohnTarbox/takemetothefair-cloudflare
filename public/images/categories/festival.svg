@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" fill="none">
+  <rect width="400" height="225" fill="#EFF6FF"/>
+  <!-- Music notes -->
+  <circle cx="155" cy="120" r="12" fill="#3B82F6"/>
+  <rect x="165" y="65" width="4" height="55" fill="#3B82F6"/>
+  <path d="M169 65 Q190 55 190 75 Q190 85 169 80" fill="#3B82F6"/>
+  <circle cx="240" cy="110" r="12" fill="#6366F1"/>
+  <rect x="250" y="55" width="4" height="55" fill="#6366F1"/>
+  <path d="M254 55 Q275 45 275 65 Q275 75 254 70" fill="#6366F1"/>
+  <!-- Stars / sparkles -->
+  <path d="M120 50 L123 58 L131 58 L125 63 L127 71 L120 66 L113 71 L115 63 L109 58 L117 58Z" fill="#FBBF24"/>
+  <path d="M280 40 L282 46 L288 46 L283 49 L285 55 L280 52 L275 55 L277 49 L272 46 L278 46Z" fill="#FBBF24"/>
+  <path d="M310 90 L312 96 L318 96 L313 99 L315 105 L310 102 L305 105 L307 99 L302 96 L308 96Z" fill="#FBBF24"/>
+  <!-- Tent -->
+  <path d="M145 170 L200 135 L255 170" stroke="#3B82F6" stroke-width="3" fill="#DBEAFE"/>
+  <line x1="200" y1="135" x2="200" y2="170" stroke="#3B82F6" stroke-width="2"/>
+  <rect x="145" y="168" width="110" height="4" rx="1" fill="#2563EB"/>
+</svg>

@@ -104,3 +104,39 @@ export function getCategoryColors(categories: string[]): CategoryColors {
 export function getCategoryBadgeClass(category: string): string {
   return CATEGORY_COLORS[category]?.badge ?? DEFAULT_COLORS.badge;
 }
+
+/**
+ * Category-to-placeholder-image mapping. Groups 16 categories into 6 themed SVGs.
+ */
+const CATEGORY_IMAGES: Record<string, string> = {
+  "Agricultural Fair": "/images/categories/fair.svg",
+  Fair: "/images/categories/fair.svg",
+  Festival: "/images/categories/festival.svg",
+  "Music Festival": "/images/categories/festival.svg",
+  "Fiber Arts Festival": "/images/categories/festival.svg",
+  "Craft Show": "/images/categories/craft.svg",
+  "Craft Fair": "/images/categories/craft.svg",
+  "Art Walk": "/images/categories/craft.svg",
+  "Food Festival": "/images/categories/food.svg",
+  "Farmers Market": "/images/categories/market.svg",
+  Market: "/images/categories/market.svg",
+  "Flea Market": "/images/categories/market.svg",
+  "Holiday Market": "/images/categories/market.svg",
+  "Antique Show": "/images/categories/market.svg",
+  "Home Show": "/images/categories/other.svg",
+  "Trade Show": "/images/categories/other.svg",
+  "Car Show": "/images/categories/other.svg",
+  Other: "/images/categories/other.svg",
+};
+
+const DEFAULT_IMAGE = "/images/categories/other.svg";
+
+/**
+ * Get a category-appropriate placeholder image path for events without images.
+ */
+export function getCategoryImage(categories: string[]): string {
+  for (const cat of categories) {
+    if (CATEGORY_IMAGES[cat]) return CATEGORY_IMAGES[cat];
+  }
+  return DEFAULT_IMAGE;
+}

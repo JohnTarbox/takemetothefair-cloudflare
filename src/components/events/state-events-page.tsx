@@ -127,7 +127,7 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
   if (!state) return null;
 
   const page = parseInt(searchParams.page || "1");
-  const limit = 24;
+  const limit = 30;
   const includePast = searchParams.includePast === "true";
   const { events: eventsList, total } = await getStateEvents(state.code, page, limit, includePast);
   const totalPages = Math.ceil(total / limit);

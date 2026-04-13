@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" fill="none">
+  <rect width="400" height="225" fill="#FEF3C7"/>
+  <!-- Ferris wheel -->
+  <circle cx="200" cy="105" r="55" stroke="#D97706" stroke-width="3" fill="none"/>
+  <circle cx="200" cy="105" r="4" fill="#D97706"/>
+  <!-- Spokes -->
+  <line x1="200" y1="50" x2="200" y2="160" stroke="#D97706" stroke-width="2"/>
+  <line x1="152" y1="77" x2="248" y2="133" stroke="#D97706" stroke-width="2"/>
+  <line x1="152" y1="133" x2="248" y2="77" stroke="#D97706" stroke-width="2"/>
+  <line x1="145" y1="105" x2="255" y2="105" stroke="#D97706" stroke-width="2"/>
+  <!-- Gondolas -->
+  <rect x="193" y="44" width="14" height="10" rx="2" fill="#F59E0B"/>
+  <rect x="193" y="154" width="14" height="10" rx="2" fill="#F59E0B"/>
+  <rect x="139" y="99" width="14" height="10" rx="2" fill="#F59E0B"/>
+  <rect x="247" y="99" width="14" height="10" rx="2" fill="#F59E0B"/>
+  <!-- Support -->
+  <line x1="175" y1="165" x2="200" y2="160" stroke="#92400E" stroke-width="3"/>
+  <line x1="225" y1="165" x2="200" y2="160" stroke="#92400E" stroke-width="3"/>
+  <rect x="165" y="165" width="70" height="5" rx="2" fill="#92400E"/>
+  <!-- Bunting -->
+  <path d="M80 35 L110 55 L140 35 L170 55 L200 35 L230 55 L260 35 L290 55 L320 35" stroke="#EF4444" stroke-width="2" fill="none"/>
+</svg>
