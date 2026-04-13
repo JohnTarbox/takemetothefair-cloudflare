@@ -95,6 +95,8 @@ export const events = sqliteTable("events", {
   venueId: text("venue_id").references(() => venues.id, { onDelete: "set null" }),
   startDate: integer("start_date", { mode: "timestamp" }),
   endDate: integer("end_date", { mode: "timestamp" }),
+  publicStartDate: integer("public_start_date", { mode: "timestamp" }),
+  publicEndDate: integer("public_end_date", { mode: "timestamp" }),
   datesConfirmed: integer("dates_confirmed", { mode: "boolean" }).default(true),
   recurrenceRule: text("recurrence_rule"),
   categories: text("categories").default("[]"),
@@ -222,6 +224,7 @@ export const eventDays = sqliteTable("event_days", {
   closeTime: text("close_time").notNull(),
   notes: text("notes"),
   closed: integer("closed", { mode: "boolean" }).default(false),
+  vendorOnly: integer("vendor_only", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 

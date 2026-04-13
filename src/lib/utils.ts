@@ -58,7 +58,10 @@ export function formatDate(date: Date | string): string {
   });
 }
 
-export function formatDateRange(start: Date | string | null | undefined, end: Date | string | null | undefined): string {
+export function formatDateRange(
+  start: Date | string | null | undefined,
+  end: Date | string | null | undefined
+): string {
   if (!start) {
     return "TBD";
   }
@@ -77,7 +80,10 @@ export function formatDateRange(start: Date | string | null | undefined, end: Da
   }
 
   // Use UTC for comparison (event dates are midnight UTC)
-  if (startDate.toLocaleDateString("en-US", { timeZone: "UTC" }) === endDate.toLocaleDateString("en-US", { timeZone: "UTC" })) {
+  if (
+    startDate.toLocaleDateString("en-US", { timeZone: "UTC" }) ===
+    endDate.toLocaleDateString("en-US", { timeZone: "UTC" })
+  ) {
     return formatDate(startDate);
   }
 
@@ -91,6 +97,25 @@ export function formatDiscontinuousDates(days: { date: string }[]): string {
   const first = new Date(sorted[0].date + "T12:00:00");
   const last = new Date(sorted[sorted.length - 1].date + "T12:00:00");
   return `${formatDate(first)} — ${formatDate(last)} (${sorted.length} dates)`;
+}
+
+export function computePublicDates(eventDays: { date: string; vendorOnly?: boolean | null }[]): {
+  publicStartDate: Date | null;
+  publicEndDate: Date | null;
+} {
+  const publicDays = eventDays
+    .filter((d) => !d.vendorOnly)
+    .map((d) => d.date)
+    .sort();
+
+  if (publicDays.length === 0) {
+    return { publicStartDate: null, publicEndDate: null };
+  }
+
+  return {
+    publicStartDate: new Date(publicDays[0] + "T00:00:00"),
+    publicEndDate: new Date(publicDays[publicDays.length - 1] + "T00:00:00"),
+  };
 }
 
 export function formatPrice(min?: number | null, max?: number | null): string {
@@ -120,7 +145,10 @@ function formatDateForGoogle(date: Date): string {
 }
 
 function formatDateForICS(date: Date): string {
-  return date.toISOString().replace(/-|:|\.\d{3}/g, "").slice(0, -1);
+  return date
+    .toISOString()
+    .replace(/-|:|\.\d{3}/g, "")
+    .slice(0, -1);
 }
 
 export function generateGoogleCalendarUrl(params: CalendarEventParams): string {

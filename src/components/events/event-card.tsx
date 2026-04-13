@@ -44,8 +44,12 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   const vendors = event.vendors || [];
   const colors = getCategoryColors(categories);
 
+  // Use public dates for display (falls back to full dates if not set)
+  const displayStartDate = event.publicStartDate ?? event.startDate;
+  const displayEndDate = event.publicEndDate ?? event.endDate;
+
   // Parse start date for date badge
-  const startDate = event.startDate ? new Date(event.startDate) : null;
+  const startDate = displayStartDate ? new Date(displayStartDate) : null;
   const monthAbbr = startDate
     ? startDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()
     : null;
@@ -113,7 +117,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span>{formatDateRange(event.startDate, event.endDate)}</span>
+                <span>{formatDateRange(displayStartDate, displayEndDate)}</span>
               </div>
               <AddToCalendar
                 title={event.name}

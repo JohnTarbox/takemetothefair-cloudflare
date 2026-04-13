@@ -176,6 +176,8 @@ export async function POST(request: NextRequest) {
       venueId,
       startDate,
       endDate,
+      publicStartDate: startDate,
+      publicEndDate: endDate,
       datesConfirmed: event.datesConfirmed ?? startDate !== null,
       discontinuousDates: hasSpecificDates || false,
       categories: JSON.stringify(

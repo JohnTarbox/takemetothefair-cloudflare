@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug } from "@/lib/utils";
+import { createSlug, computePublicDates } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
@@ -21,6 +21,7 @@ const eventDaySchema = z.object({
   closeTime: z.string(), // HH:MM
   notes: z.string().optional(),
   closed: z.boolean().optional(),
+  vendorOnly: z.boolean().optional(),
 });
 
 const submitEventSchema = z.object({
@@ -183,6 +184,14 @@ export async function POST(request: NextRequest) {
       venueId: data.venueId || null, // Link to confirmed venue if provided
       startDate,
       endDate,
+      publicStartDate:
+        data.eventDays && data.eventDays.length > 0
+          ? computePublicDates(data.eventDays).publicStartDate
+          : startDate,
+      publicEndDate:
+        data.eventDays && data.eventDays.length > 0
+          ? computePublicDates(data.eventDays).publicEndDate
+          : endDate,
       datesConfirmed: startDate !== null,
       categories: JSON.stringify(
         Array.isArray(data.categories) && data.categories.length > 0 ? data.categories : ["Event"]
@@ -221,6 +230,7 @@ export async function POST(request: NextRequest) {
           closeTime: day.closeTime,
           notes: day.notes || null,
           closed: day.closed || false,
+          vendorOnly: day.vendorOnly || false,
         }))
       );
     }

@@ -383,6 +383,7 @@ export default async function EventDetailPage({ params }: Props) {
         )
       : null;
   const isAdmin = session?.user?.role === "ADMIN";
+  const isVendor = !!vendorInfo;
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
   const eventCategories = parseJsonArray(event.categories);
   const [relatedEvents, relatedBlogPosts] = await Promise.all([
@@ -602,8 +603,19 @@ export default async function EventDetailPage({ params }: Props) {
                   <div className="flex items-center justify-between">
                     <p className="font-medium text-gray-900">
                       {event.discontinuousDates && event.eventDays?.length
-                        ? formatDiscontinuousDates(event.eventDays)
-                        : formatDateRange(event.startDate, event.endDate)}
+                        ? formatDiscontinuousDates(
+                            isAdmin || isVendor
+                              ? event.eventDays
+                              : event.eventDays.filter((d: any) => !d.vendorOnly)
+                          )
+                        : formatDateRange(
+                            isAdmin || isVendor
+                              ? event.startDate
+                              : (event.publicStartDate ?? event.startDate),
+                            isAdmin || isVendor
+                              ? event.endDate
+                              : (event.publicEndDate ?? event.endDate)
+                          )}
                     </p>
                     <AddToCalendar
                       title={event.name}
@@ -625,6 +637,7 @@ export default async function EventDetailPage({ params }: Props) {
                       days={event.eventDays}
                       discontinuousDates={event.discontinuousDates ?? false}
                       className="mt-2"
+                      showVendorDays={isAdmin ? "all" : isVendor ? "badge" : "hide"}
                     />
                   ) : event.startDate ? (
                     <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">

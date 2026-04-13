@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventDays } from "@/lib/db/schema";
 import { eq, desc, or, gt, lt, and } from "drizzle-orm";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
+import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
@@ -115,6 +115,15 @@ export async function POST(request: NextRequest) {
       endDate = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
     }
 
+    // Auto-compute public date range (excluding vendor-only days)
+    const { publicStartDate, publicEndDate } =
+      eventDaysInput && eventDaysInput.length > 0
+        ? computePublicDates(eventDaysInput)
+        : {
+            publicStartDate: startDate ? new Date(startDate) : null,
+            publicEndDate: endDate ? new Date(endDate) : null,
+          };
+
     const baseSlug = createSlug(name);
 
     // Handle empty slug (e.g., name with only special characters)
@@ -149,6 +158,8 @@ export async function POST(request: NextRequest) {
       promoterId: promoter.id,
       startDate: startDate ? new Date(startDate) : null,
       endDate: endDate ? new Date(endDate) : null,
+      publicStartDate,
+      publicEndDate,
       discontinuousDates: isDiscontinuous || false,
       categories: JSON.stringify(categories || []),
       tags: JSON.stringify(tags || []),
@@ -180,6 +191,7 @@ export async function POST(request: NextRequest) {
           closeTime: day.closeTime,
           notes: day.notes || null,
           closed: day.closed || false,
+          vendorOnly: day.vendorOnly || false,
         }))
       );
     }

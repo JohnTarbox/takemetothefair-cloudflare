@@ -119,6 +119,7 @@ export const eventDaySchema = z.object({
   closeTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
   notes: z.string().max(200).optional().nullable(),
   closed: z.boolean().optional().default(false),
+  vendorOnly: z.boolean().optional().default(false),
 });
 
 // Event schemas - base fields

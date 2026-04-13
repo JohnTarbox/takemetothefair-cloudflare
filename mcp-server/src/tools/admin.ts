@@ -13,6 +13,7 @@ import {
   EVENT_STATUS_ENUM,
   VENDOR_STATUS_ENUM,
   PAYMENT_STATUS_ENUM,
+  computePublicDates,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -1731,6 +1732,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           closeTime: eventDays.closeTime,
           notes: eventDays.notes,
           closed: eventDays.closed,
+          vendorOnly: eventDays.vendorOnly,
         })
         .from(eventDays)
         .where(eq(eventDays.eventId, params.event_id));
@@ -1757,6 +1759,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       open_time: z.string().describe("Opening time (HH:MM)"),
       close_time: z.string().describe("Closing time (HH:MM)"),
       notes: z.string().optional().describe("Notes for this day"),
+      vendor_only: z
+        .boolean()
+        .optional()
+        .describe("Whether this is a vendor-only day (e.g., setup)"),
     },
     async (params) => {
       // Verify event exists
@@ -1779,7 +1785,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         openTime: params.open_time,
         closeTime: params.close_time,
         notes: params.notes ?? null,
+        vendorOnly: params.vendor_only ?? false,
       });
+
+      // Recompute public date range on parent event
+      const allDays = await db
+        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+        .from(eventDays)
+        .where(eq(eventDays.eventId, params.event_id));
+      const { publicStartDate, publicEndDate } = computePublicDates(allDays);
+      await db
+        .update(events)
+        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
+        .where(eq(events.id, params.event_id));
 
       return {
         content: [
@@ -1790,6 +1808,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             date: params.date,
             openTime: params.open_time,
             closeTime: params.close_time,
+            vendorOnly: params.vendor_only ?? false,
           }),
         ],
       };
@@ -1807,6 +1826,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       close_time: z.string().optional().describe("Closing time (HH:MM)"),
       notes: z.string().optional().describe("Notes for this day"),
       closed: z.boolean().optional().describe("Whether this day is cancelled/closed"),
+      vendor_only: z
+        .boolean()
+        .optional()
+        .describe("Whether this is a vendor-only day (e.g., setup)"),
     },
     async (params) => {
       const dayRows = await db
@@ -1825,6 +1848,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.close_time !== undefined) updates.closeTime = params.close_time;
       if (params.notes !== undefined) updates.notes = params.notes;
       if (params.closed !== undefined) updates.closed = params.closed;
+      if (params.vendor_only !== undefined) updates.vendorOnly = params.vendor_only;
 
       if (Object.keys(updates).length === 0) {
         return {
@@ -1834,6 +1858,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
+
+      // Recompute public date range on parent event
+      const eventId = dayRows[0].eventId;
+      const allDays = await db
+        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+        .from(eventDays)
+        .where(eq(eventDays.eventId, eventId));
+      const { publicStartDate, publicEndDate } = computePublicDates(allDays);
+      await db
+        .update(events)
+        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
+        .where(eq(events.id, eventId));
 
       return {
         content: [
@@ -1856,7 +1892,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     },
     async (params) => {
       const dayRows = await db
-        .select({ id: eventDays.id, date: eventDays.date })
+        .select({ id: eventDays.id, date: eventDays.date, eventId: eventDays.eventId })
         .from(eventDays)
         .where(eq(eventDays.id, params.day_id))
         .limit(1);
@@ -1865,7 +1901,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         return { content: [{ type: "text", text: "Event day not found." }], isError: true };
       }
 
+      const eventId = dayRows[0].eventId;
       await db.delete(eventDays).where(eq(eventDays.id, params.day_id));
+
+      // Recompute public date range on parent event
+      const remainingDays = await db
+        .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
+        .from(eventDays)
+        .where(eq(eventDays.eventId, eventId));
+      const { publicStartDate, publicEndDate } = computePublicDates(remainingDays);
+      await db
+        .update(events)
+        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
+        .where(eq(events.id, eventId));
 
       return {
         content: [jsonContent({ deleted: true, id: params.day_id, date: dayRows[0].date })],

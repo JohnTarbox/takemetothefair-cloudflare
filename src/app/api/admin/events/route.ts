@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDays } from "@/lib/db/schema";
 import { eq, or, gt, lt, and } from "drizzle-orm";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
+import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -87,6 +87,12 @@ export async function POST(request: NextRequest) {
       endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
     }
 
+    // Auto-compute public date range (excluding vendor-only days)
+    const { publicStartDate, publicEndDate } =
+      data.eventDays && data.eventDays.length > 0
+        ? computePublicDates(data.eventDays)
+        : { publicStartDate: startDate, publicEndDate: endDate };
+
     await db.insert(events).values({
       id: eventId,
       name: data.name,
@@ -96,6 +102,8 @@ export async function POST(request: NextRequest) {
       promoterId: data.promoterId,
       startDate,
       endDate,
+      publicStartDate,
+      publicEndDate,
       datesConfirmed: data.datesConfirmed,
       discontinuousDates: data.discontinuousDates || false,
       categories: JSON.stringify(data.categories),
@@ -133,6 +141,7 @@ export async function POST(request: NextRequest) {
         closeTime: day.closeTime,
         notes: day.notes || null,
         closed: day.closed || false,
+        vendorOnly: day.vendorOnly || false,
       }));
 
       // Insert in batches to avoid "too many SQL variables" error

@@ -313,6 +313,7 @@ export default function NewEventPage() {
                     onDiscontinuousChange={setDiscontinuousDates}
                     onChange={handleEventDaysChange}
                     disabled={loading}
+                    showVendorOnly
                   />
                 )}
               </div>

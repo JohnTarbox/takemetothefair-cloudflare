@@ -82,6 +82,26 @@ export function jsonContent(data: unknown): { type: "text"; text: string } {
   return { type: "text", text: JSON.stringify(data, null, 2) };
 }
 
+/** Compute public start/end dates from event days, excluding vendor-only days */
+export function computePublicDates(days: { date: string; vendorOnly?: boolean | null }[]): {
+  publicStartDate: Date | null;
+  publicEndDate: Date | null;
+} {
+  const publicDays = days
+    .filter((d) => !d.vendorOnly)
+    .map((d) => d.date)
+    .sort();
+
+  if (publicDays.length === 0) {
+    return { publicStartDate: null, publicEndDate: null };
+  }
+
+  return {
+    publicStartDate: new Date(publicDays[0] + "T00:00:00"),
+    publicEndDate: new Date(publicDays[publicDays.length - 1] + "T00:00:00"),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Status enums & transitions — shared between admin.ts and promoter.ts.
 // KEEP IN SYNC with:

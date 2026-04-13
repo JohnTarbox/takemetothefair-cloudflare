@@ -15,6 +15,7 @@ export interface EventDayInput {
   closeTime: string; // HH:MM
   notes: string;
   closed: boolean;
+  vendorOnly: boolean;
 }
 
 interface DailyScheduleInputProps {
@@ -26,6 +27,7 @@ interface DailyScheduleInputProps {
   onDiscontinuousChange?: (value: boolean) => void;
   onChange: (days: EventDayInput[]) => void;
   disabled?: boolean;
+  showVendorOnly?: boolean;
 }
 
 function formatDateDisplay(dateStr: string): string {
@@ -65,6 +67,7 @@ export function DailyScheduleInput({
   onDiscontinuousChange: _onDiscontinuousChange,
   onChange,
   disabled = false,
+  showVendorOnly = false,
 }: DailyScheduleInputProps) {
   // Use initialEnabled if provided, otherwise fall back to checking if initialDays has data
   const [enabled, setEnabled] = useState(initialEnabled ?? initialDays.length > 0);
@@ -126,6 +129,7 @@ export function DailyScheduleInput({
           closeTime: "18:00",
           notes: "",
           closed: false,
+          vendorOnly: false,
         };
       });
       setDays(newDays);
@@ -196,13 +200,17 @@ export function DailyScheduleInput({
     }
     const dateStr = defaultDate.toISOString().split("T")[0];
     setDays((prev) => {
-      const updated = [...prev, {
-        date: dateStr,
-        openTime: prev.length > 0 ? prev[0].openTime : "10:00",
-        closeTime: prev.length > 0 ? prev[0].closeTime : "18:00",
-        notes: "",
-        closed: false,
-      }];
+      const updated = [
+        ...prev,
+        {
+          date: dateStr,
+          openTime: prev.length > 0 ? prev[0].openTime : "10:00",
+          closeTime: prev.length > 0 ? prev[0].closeTime : "18:00",
+          notes: "",
+          closed: false,
+          vendorOnly: false,
+        },
+      ];
       // Sort chronologically
       return updated.sort((a, b) => a.date.localeCompare(b.date));
     });
@@ -249,6 +257,7 @@ export function DailyScheduleInput({
         closeTime: existing.closeTime,
         notes: existing.notes || "",
         closed: existing.closed,
+        vendorOnly: existing.vendorOnly ?? false,
       };
       setDays([newDay]);
       onChange([newDay]);
@@ -263,6 +272,7 @@ export function DailyScheduleInput({
         closeTime: "18:00",
         notes: "",
         closed: false,
+        vendorOnly: false,
       };
       setDays([newDay]);
       onChange([newDay]);
@@ -316,7 +326,7 @@ export function DailyScheduleInput({
                 <div
                   key={`${day.date}-${index}`}
                   className={`px-4 py-3 grid grid-cols-[160px_auto_1fr_32px] gap-3 items-center ${
-                    day.closed ? "bg-gray-50" : ""
+                    day.closed ? "bg-gray-50" : day.vendorOnly ? "bg-amber-50" : ""
                   }`}
                 >
                   <div>
@@ -340,6 +350,19 @@ export function DailyScheduleInput({
                       />
                       <span className="text-gray-600">Closed</span>
                     </label>
+
+                    {showVendorOnly && (
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={day.vendorOnly}
+                          onChange={(e) => handleDayChange(index, "vendorOnly", e.target.checked)}
+                          disabled={disabled}
+                          className="h-4 w-4 rounded border-amber-400 accent-amber-500"
+                        />
+                        <span className="text-amber-700">Vendor Only</span>
+                      </label>
+                    )}
 
                     {!day.closed && (
                       <div className="flex items-center gap-2">
@@ -396,13 +419,17 @@ export function DailyScheduleInput({
   // ── Single-day event: show simplified hours input ─────────────────
   if (isSingleDay && startDate) {
     const dateStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
-    const singleDay = days.length > 0 ? days[0] : {
-      date: dateStr,
-      openTime: "10:00",
-      closeTime: "18:00",
-      notes: "",
-      closed: false,
-    };
+    const singleDay =
+      days.length > 0
+        ? days[0]
+        : {
+            date: dateStr,
+            openTime: "10:00",
+            closeTime: "18:00",
+            notes: "",
+            closed: false,
+            vendorOnly: false,
+          };
 
     const handleSingleDayChange = (field: keyof EventDayInput, value: string | boolean) => {
       const updated = { ...singleDay, date: dateStr, [field]: value };
@@ -490,8 +517,9 @@ export function DailyScheduleInput({
           <div className="text-sm text-amber-800">
             <p className="font-medium">Date range exceeds {MAX_EVENT_DAYS} days</p>
             <p className="mt-1">
-              Daily schedules are limited to {MAX_EVENT_DAYS} days. Only the first {MAX_EVENT_DAYS} days
-              will have individual schedule entries. Consider reducing the date range or disabling daily schedules.
+              Daily schedules are limited to {MAX_EVENT_DAYS} days. Only the first {MAX_EVENT_DAYS}{" "}
+              days will have individual schedule entries. Consider reducing the date range or
+              disabling daily schedules.
             </p>
           </div>
         </div>
@@ -518,7 +546,7 @@ export function DailyScheduleInput({
               <div
                 key={day.date}
                 className={`px-4 py-3 grid grid-cols-[140px_auto_1fr] gap-4 items-center ${
-                  day.closed ? "bg-gray-50" : ""
+                  day.closed ? "bg-gray-50" : day.vendorOnly ? "bg-amber-50" : ""
                 }`}
               >
                 <div className="text-sm font-medium text-gray-700">
@@ -536,6 +564,19 @@ export function DailyScheduleInput({
                     />
                     <span className="text-gray-600">Closed</span>
                   </label>
+
+                  {showVendorOnly && (
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={day.vendorOnly}
+                        onChange={(e) => handleDayChange(index, "vendorOnly", e.target.checked)}
+                        disabled={disabled}
+                        className="h-4 w-4 rounded border-amber-400 accent-amber-500"
+                      />
+                      <span className="text-amber-700">Vendor Only</span>
+                    </label>
+                  )}
 
                   {!day.closed && (
                     <div className="flex items-center gap-2">

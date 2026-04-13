@@ -34,6 +34,7 @@ interface EventDay {
   closeTime: string;
   notes: string | null;
   closed: boolean;
+  vendorOnly?: boolean;
 }
 
 interface Event {
@@ -113,6 +114,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
             closeTime: d.closeTime,
             notes: d.notes || "",
             closed: d.closed,
+            vendorOnly: d.vendorOnly ?? false,
           }))
         );
       }
@@ -420,6 +422,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     onDiscontinuousChange={setDiscontinuousDates}
                     onChange={handleEventDaysChange}
                     disabled={saving}
+                    showVendorOnly
                   />
                 )}
               </div>

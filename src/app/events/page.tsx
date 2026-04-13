@@ -96,7 +96,12 @@ async function getVendorForUser(
   }
 }
 
-async function getEvents(searchParams: SearchParams, vendorId?: string, favoriteUserId?: string) {
+async function getEvents(
+  searchParams: SearchParams,
+  vendorId?: string,
+  favoriteUserId?: string,
+  includeVendorDays?: boolean
+) {
   const viewMode = parseView(searchParams.view);
   const isCalendarView = viewMode === "calendar";
   const page = parseInt(searchParams.page || "1");
@@ -286,10 +291,14 @@ async function getEvents(searchParams: SearchParams, vendorId?: string, favorite
         const BATCH_SIZE = 50;
         for (let i = 0; i < discontinuousIds.length; i += BATCH_SIZE) {
           const batch = discontinuousIds.slice(i, i + BATCH_SIZE);
+          const dayConditions = [inArray(eventDays.eventId, batch)];
+          if (!includeVendorDays) {
+            dayConditions.push(eq(eventDays.vendorOnly, false));
+          }
           const dayResults = await db
             .select({ eventId: eventDays.eventId, date: eventDays.date })
             .from(eventDays)
-            .where(inArray(eventDays.eventId, batch));
+            .where(and(...dayConditions));
           for (const row of dayResults) {
             const existing = daysByEvent.get(row.eventId) || [];
             existing.push(row.date);
@@ -602,7 +611,7 @@ export default async function EventsPage({
 
   const viewMode = parseView(params.view);
   const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
-    getEvents(params, vendorId, favoriteUserId),
+    getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
     getCategories(),
     getStates(),
   ]);

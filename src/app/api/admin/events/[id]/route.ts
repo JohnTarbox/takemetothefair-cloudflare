@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, eventDays } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
-import { createSlug } from "@/lib/utils";
+import { createSlug, computePublicDates } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
@@ -149,6 +149,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       updateData.endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
     }
 
+    // Auto-compute public date range (excluding vendor-only days)
+    if (data.eventDays !== undefined) {
+      if (data.eventDays && data.eventDays.length > 0) {
+        const { publicStartDate, publicEndDate } = computePublicDates(data.eventDays);
+        updateData.publicStartDate = publicStartDate;
+        updateData.publicEndDate = publicEndDate;
+      } else {
+        updateData.publicStartDate = null;
+        updateData.publicEndDate = null;
+      }
+    }
+
     if (data.categories) updateData.categories = JSON.stringify(data.categories);
     if (data.tags) updateData.tags = JSON.stringify(data.tags);
     if (data.ticketUrl !== undefined) updateData.ticketUrl = data.ticketUrl;
@@ -193,6 +205,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           closeTime: day.closeTime,
           notes: day.notes || null,
           closed: day.closed || false,
+          vendorOnly: day.vendorOnly || false,
         }));
 
         // Insert in batches to avoid "too many SQL variables" error
