@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { MonthCalendar, type CalendarDay } from "@mcw/calendar-grid";
 import { useSearchParams } from "next/navigation";
@@ -16,6 +16,7 @@ import {
   Printer,
 } from "lucide-react";
 import { EventCard } from "./event-card";
+import { EventPopover, DayEventsPopover } from "./event-popover";
 import {
   SortableHeader,
   SortConfig,
@@ -258,11 +259,38 @@ function CalendarView({
 }: CalendarViewProps) {
   const setCurrentDate = onDateChange;
   const setCalendarViewType = onViewTypeChange;
-  const [selectedEvent, setSelectedEvent] = useState<EventWithRelations | null>(null);
+  const [popoverEvent, setPopoverEvent] = useState<{
+    event: EventWithRelations;
+    anchor: { x: number; y: number };
+  } | null>(null);
+  const [dayEventsPopover, setDayEventsPopover] = useState<{
+    date: Date;
+    events: EventWithRelations[];
+    anchor: { x: number; y: number };
+  } | null>(null);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const today = new Date();
+
+  // Dismiss all popovers on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPopoverEvent(null);
+        setDayEventsPopover(null);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  const openEventPopover = useCallback((e: React.MouseEvent, event: EventWithRelations) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDayEventsPopover(null);
+    setPopoverEvent({ event, anchor: { x: e.clientX, y: e.clientY } });
+  }, []);
 
   // Navigation functions
   const navigate = (direction: "prev" | "next") => {
@@ -344,10 +372,10 @@ function CalendarView({
           ) : (
             <div className="divide-y divide-gray-200">
               {dayEvents.map((event) => (
-                <Link
+                <button
                   key={event.id}
-                  href={`/events/${event.slug}`}
-                  className="block p-4 hover:bg-gray-50 transition-colors"
+                  onClick={(e) => openEventPopover(e, event)}
+                  className="block w-full text-left p-4 hover:bg-gray-50 transition-colors"
                 >
                   <div className="flex items-start gap-3">
                     <div className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`} />
@@ -364,7 +392,7 @@ function CalendarView({
                       )}
                     </div>
                   </div>
-                </Link>
+                </button>
               ))}
             </div>
           )}
@@ -394,11 +422,15 @@ function CalendarView({
               <div className="text-xs print:text-[0.6rem] text-gray-500 uppercase">
                 {weekDays[i]}
               </div>
-              <div
-                className={`text-lg print:text-sm font-semibold ${isSameDay(day, today) ? "bg-royal text-white rounded-full w-8 h-8 flex items-center justify-center mx-auto" : "text-gray-900"}`}
+              <button
+                onClick={() => {
+                  setCurrentDate(day);
+                  setCalendarViewType("day");
+                }}
+                className={`text-lg print:text-sm font-semibold cursor-pointer hover:bg-gray-200 rounded-full w-8 h-8 flex items-center justify-center mx-auto transition-colors ${isSameDay(day, today) ? "bg-royal text-white hover:bg-navy" : "text-gray-900"}`}
               >
                 {day.getDate()}
-              </div>
+              </button>
             </div>
           ))}
         </div>
@@ -411,19 +443,32 @@ function CalendarView({
                 {/* Screen: capped at 5 events */}
                 <div className="space-y-1 print:hidden">
                   {dayEvents.slice(0, 5).map((event) => (
-                    <Link
+                    <button
                       key={event.id}
-                      href={`/events/${event.slug}`}
-                      className={`block px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                      onClick={(e) => openEventPopover(e, event)}
+                      className={`block w-full text-left px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
                       title={
                         event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name
                       }
                     >
                       {event.name}
-                    </Link>
+                    </button>
                   ))}
                   {dayEvents.length > 5 && (
-                    <div className="text-xs text-gray-500 px-1.5">+{dayEvents.length - 5} more</div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setDayEventsPopover({
+                          date: day,
+                          events: dayEvents,
+                          anchor: { x: rect.left, y: rect.bottom },
+                        });
+                      }}
+                      className="text-xs text-gray-500 px-1.5 hover:text-royal transition-colors"
+                    >
+                      +{dayEvents.length - 5} more
+                    </button>
                   )}
                 </div>
                 {/* Print: show all events */}
@@ -461,23 +506,37 @@ function CalendarView({
       );
       if (dayEvents.length === 0) return null;
 
+      const parsedDate = new Date(
+        parseInt(day.date.slice(0, 4)),
+        parseInt(day.date.slice(5, 7)) - 1,
+        parseInt(day.date.slice(8, 10))
+      );
+
       return (
         <>
           {/* Screen: capped at 3 events */}
           <div className="space-y-0.5 print:hidden">
             {dayEvents.slice(0, 3).map((event) => (
-              <Link
+              <button
                 key={event.id}
-                href={`/events/${event.slug}`}
-                className={`block px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                onClick={(e) => openEventPopover(e, event)}
+                className={`block w-full text-left px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
                 title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
               >
                 {event.name}
-              </Link>
+              </button>
             ))}
             {dayEvents.length > 3 && (
               <button
-                onClick={() => setSelectedEvent(dayEvents[0])}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setDayEventsPopover({
+                    date: parsedDate,
+                    events: dayEvents,
+                    anchor: { x: rect.left, y: rect.bottom },
+                  });
+                }}
                 className="block w-full text-left px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
               >
                 +{dayEvents.length - 3} more
@@ -500,12 +559,44 @@ function CalendarView({
         </>
       );
     },
-    [events, setSelectedEvent]
+    [events, openEventPopover, setDayEventsPopover]
   );
 
-  const handleMonthChange = useCallback((newYear: number, newMonth: number) => {
-    setCurrentDate(new Date(newYear, newMonth, 1));
-  }, []);
+  const handleMonthChange = useCallback(
+    (newYear: number, newMonth: number) => {
+      setCurrentDate(new Date(newYear, newMonth, 1));
+    },
+    [setCurrentDate]
+  );
+
+  const renderMonthDayNumber = useCallback(
+    (day: CalendarDay) => {
+      const dateObj = new Date(
+        parseInt(day.date.slice(0, 4)),
+        parseInt(day.date.slice(5, 7)) - 1,
+        parseInt(day.date.slice(8, 10))
+      );
+      return (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setCurrentDate(dateObj);
+            setCalendarViewType("day");
+          }}
+          className={`inline-flex h-6 w-6 items-center justify-center text-xs rounded-full transition-colors cursor-pointer ${
+            day.isToday
+              ? "bg-royal text-white font-semibold hover:bg-navy"
+              : day.inMonth
+                ? "font-medium text-gray-700 hover:bg-gray-200"
+                : "text-gray-400 hover:bg-gray-100"
+          }`}
+        >
+          {day.day}
+        </button>
+      );
+    },
+    [setCurrentDate, setCalendarViewType]
+  );
 
   const renderMonthView = () => (
     <MonthCalendar
@@ -514,6 +605,7 @@ function CalendarView({
       month={month}
       onMonthChange={handleMonthChange}
       renderDayContent={renderMonthDayContent}
+      renderDayNumber={renderMonthDayNumber}
       cellMinHeight="100px"
       todayClassName="rounded-full bg-royal text-white font-semibold"
       className="border-0 rounded-none shadow-none"
@@ -668,10 +760,10 @@ function CalendarView({
                   </div>
                   <div className="divide-y divide-gray-100">
                     {groupedEvents[dateKey].map((event) => (
-                      <Link
+                      <button
                         key={event.id}
-                        href={`/events/${event.slug}`}
-                        className="block px-4 py-3 hover:bg-gray-50 transition-colors"
+                        onClick={(e) => openEventPopover(e, event)}
+                        className="block w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
                       >
                         <div className="flex items-start gap-3">
                           <div
@@ -690,7 +782,7 @@ function CalendarView({
                             )}
                           </div>
                         </div>
-                      </Link>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -761,41 +853,33 @@ function CalendarView({
       {calendarViewType === "year" && renderYearView()}
       {calendarViewType === "schedule" && renderScheduleView()}
 
-      {/* Event Details Modal */}
-      {selectedEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedEvent(null)} />
-          <div className="relative bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <button
-              onClick={() => setSelectedEvent(null)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
-            >
-              ×
-            </button>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">{selectedEvent.name}</h3>
-            <div className="space-y-2 text-sm text-gray-600">
-              <div className="flex items-center gap-2">
-                <CalendarIcon className="w-4 h-4" />
-                {formatDateRange(selectedEvent.startDate, selectedEvent.endDate)}
-              </div>
-              {selectedEvent.venue && (
-                <div className="flex items-center gap-2">
-                  <MapPin className="w-4 h-4" />
-                  {selectedEvent.venue.name}, {selectedEvent.venue.city},{" "}
-                  {selectedEvent.venue.state}
-                </div>
-              )}
-            </div>
-            <div className="mt-4">
-              <Link
-                href={`/events/${selectedEvent.slug}`}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-lg hover:bg-navy transition-colors"
-              >
-                View Event Details
-              </Link>
-            </div>
-          </div>
-        </div>
+      {/* Event Popover */}
+      {popoverEvent && (
+        <EventPopover
+          event={popoverEvent.event}
+          anchor={popoverEvent.anchor}
+          onClose={() => setPopoverEvent(null)}
+          getEventColor={getEventColor}
+        />
+      )}
+
+      {/* Day Events Popover */}
+      {dayEventsPopover && (
+        <DayEventsPopover
+          date={dayEventsPopover.date}
+          events={dayEventsPopover.events}
+          anchor={dayEventsPopover.anchor}
+          onClose={() => setDayEventsPopover(null)}
+          onEventClick={(event, anchor) => {
+            setDayEventsPopover(null);
+            setPopoverEvent({ event, anchor });
+          }}
+          onViewDay={(date) => {
+            setCurrentDate(date);
+            setCalendarViewType("day");
+          }}
+          getEventColor={getEventColor}
+        />
       )}
 
       {/* Legend */}
@@ -803,7 +887,7 @@ function CalendarView({
         <p className="text-xs text-gray-500">
           {calendarViewType === "year"
             ? "Click on a month to view details. Highlighted days have events."
-            : "Click on an event to view details. Events spanning multiple days appear on each day."}
+            : "Click an event for a preview. Click a date number to view that day. Multi-day events appear on each day."}
         </p>
       </div>
     </div>
