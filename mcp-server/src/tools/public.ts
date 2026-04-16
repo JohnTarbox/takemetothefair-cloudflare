@@ -7,6 +7,7 @@ import {
   formatDateRange,
   formatPrice,
   escapeLike,
+  fuzzyTokenScore,
   PUBLIC_EVENT_STATUSES,
   PUBLIC_VENDOR_STATUSES,
   jsonContent,
@@ -17,15 +18,29 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── search_events ──────────────────────────────────────────────
   server.tool(
     "search_events",
-    "Search events by name, category, state, venue, promoter, or date range. Use venue_id or promoter_id to list all events for a specific venue or promoter. Returns up to 20 results.",
+    "Search events by name, category, state, venue, city, promoter, or date range. Supports fuzzy name matching to find events even when names differ slightly. Use venue_id or promoter_id to list all events for a specific venue or promoter. Returns up to 20 results.",
     {
-      query: z.string().optional().describe("Search by event name (partial match)"),
+      query: z
+        .string()
+        .optional()
+        .describe("Search by event name (partial match, or fuzzy when fuzzy=true)"),
+      fuzzy: z
+        .boolean()
+        .optional()
+        .describe(
+          "Enable fuzzy name matching (default false). Returns results sorted by match_score."
+        ),
       category: z.string().optional().describe("Filter by category"),
       state: z.string().optional().describe("Filter by venue state (2-letter code)"),
       venue_id: z
         .string()
         .optional()
         .describe("Filter by venue ID (UUID) — returns all events at a specific venue"),
+      venue_name: z
+        .string()
+        .optional()
+        .describe("Search by venue name (partial match). Ignored if venue_id is provided."),
+      city: z.string().optional().describe("Filter by venue city (partial match)"),
       promoter_id: z
         .string()
         .optional()
@@ -42,7 +57,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
     async (params) => {
       const conditions = [inArray(events.status, [...PUBLIC_EVENT_STATUSES])];
 
-      if (params.query) {
+      if (params.query && !params.fuzzy) {
         conditions.push(like(events.name, `%${escapeLike(params.query)}%`));
       }
 
@@ -63,6 +78,14 @@ export function registerPublicTools(server: McpServer, db: Db) {
         conditions.push(eq(events.venueId, params.venue_id));
       }
 
+      if (params.venue_name && !params.venue_id) {
+        conditions.push(like(venues.name, `%${escapeLike(params.venue_name)}%`));
+      }
+
+      if (params.city) {
+        conditions.push(like(venues.city, `%${escapeLike(params.city)}%`));
+      }
+
       if (params.promoter_id) {
         conditions.push(eq(events.promoterId, params.promoter_id));
       }
@@ -70,8 +93,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const limit = params.limit ?? 20;
       const offset = params.offset ?? 0;
 
-      // Over-fetch when category post-filter is needed (categories are JSON strings)
-      const sqlLimit = params.category ? limit * 5 : limit;
+      // Over-fetch when post-processing is needed (category filter or fuzzy scoring)
+      const needsOverfetch = params.category || params.fuzzy;
+      const sqlLimit = needsOverfetch ? Math.max(limit * 10, 200) : limit;
+      // Fuzzy reorders results, so SQL offset is meaningless — apply in JS instead
+      const sqlOffset = params.fuzzy ? 0 : offset;
 
       const query = db
         .select({
@@ -97,7 +123,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
         .where(and(...conditions))
         .limit(sqlLimit)
-        .offset(offset);
+        .offset(sqlOffset);
 
       const rows = await query;
 
@@ -105,12 +131,26 @@ export function registerPublicTools(server: McpServer, db: Db) {
       let results = rows;
       if (params.category) {
         const cat = params.category.toLowerCase();
-        results = results
-          .filter((r) => parseJsonArray(r.categories).some((c) => c.toLowerCase().includes(cat)))
-          .slice(0, limit);
+        results = results.filter((r) =>
+          parseJsonArray(r.categories).some((c) => c.toLowerCase().includes(cat))
+        );
       }
 
-      const output = results.map((r) => ({
+      // Fuzzy scoring: score, filter by threshold, sort by score, then paginate
+      type Row = (typeof results)[number];
+      type ScoredRow = Row & { matchScore?: number };
+      let scored: ScoredRow[];
+      if (params.fuzzy && params.query) {
+        scored = results
+          .map((r) => ({ ...r, matchScore: fuzzyTokenScore(params.query!, r.name) }))
+          .filter((r) => r.matchScore! >= 0.2)
+          .sort((a, b) => b.matchScore! - a.matchScore!)
+          .slice(offset, offset + limit);
+      } else {
+        scored = params.fuzzy ? results.slice(offset, offset + limit) : results.slice(0, limit);
+      }
+
+      const output = scored.map((r) => ({
         id: r.id,
         name: r.name,
         slug: r.slug,
@@ -123,6 +163,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         price: formatPrice(r.ticketPriceMin, r.ticketPriceMax),
         status: r.status,
         image_url: r.imageUrl || null,
+        ...(r.matchScore != null ? { match_score: r.matchScore } : {}),
       }));
 
       return {

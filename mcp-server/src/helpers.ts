@@ -150,3 +150,35 @@ export const PAYMENT_STATUS_ENUM = [
   "REFUNDED",
   "OVERDUE",
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Fuzzy token-overlap scoring for event name matching
+// ---------------------------------------------------------------------------
+
+const STOP_WORDS = new Set(["the", "a", "an", "of", "at", "in", "and", "for", "to"]);
+const YEAR_RE = /^(19|20)\d{2}$/;
+const ORDINAL_RE = /^\d+(st|nd|rd|th)$/i;
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 0 && !STOP_WORDS.has(t) && !YEAR_RE.test(t) && !ORDINAL_RE.test(t));
+}
+
+/** Score how well `query` matches `target` by keyword overlap (0.0–1.0).
+ *  A query token matches if it is a substring of any target token or vice-versa. */
+export function fuzzyTokenScore(query: string, target: string): number {
+  const qTokens = tokenize(query);
+  const tTokens = tokenize(target);
+  if (qTokens.length === 0) return 0;
+
+  let matched = 0;
+  for (const q of qTokens) {
+    if (tTokens.some((t) => t.includes(q) || q.includes(t))) {
+      matched++;
+    }
+  }
+  return matched / qTokens.length;
+}
