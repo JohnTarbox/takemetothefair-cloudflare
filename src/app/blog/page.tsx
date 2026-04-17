@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { extractFirstImage } from "@/lib/markdown-utils";
+import { formatAuthorName } from "@/lib/utils";
 
 export const runtime = "edge";
 export const revalidate = 300;
@@ -109,6 +110,7 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
 
   const parsedPosts = posts.map((p) => ({
     ...p,
+    authorName: formatAuthorName(p.authorName),
     tags: JSON.parse(p.tags || "[]") as string[],
     categories: JSON.parse(p.categories || "[]") as string[],
     featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),

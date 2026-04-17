@@ -2,6 +2,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { stripMarkdown } from "@/lib/markdown-utils";
+import { formatAuthorName } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -39,13 +40,14 @@ export async function GET() {
       const pubDate = post.publishDate
         ? new Date(post.publishDate).toUTCString()
         : new Date().toUTCString();
+      const cleanAuthor = formatAuthorName(post.authorName);
 
       return `    <item>
       <title>${escapeXml(post.title)}</title>
       <link>${baseUrl}/blog/${post.slug}</link>
       <guid isPermaLink="true">${baseUrl}/blog/${post.slug}</guid>
       <description>${escapeXml(description)}</description>
-      <pubDate>${pubDate}</pubDate>${post.authorName ? `\n      <author>${escapeXml(post.authorName)}</author>` : ""}
+      <pubDate>${pubDate}</pubDate>${cleanAuthor ? `\n      <author>${escapeXml(cleanAuthor)}</author>` : ""}
     </item>`;
     })
     .join("\n");

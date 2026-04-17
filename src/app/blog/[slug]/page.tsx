@@ -182,6 +182,7 @@ export default async function BlogPostPage({ params }: Props) {
   ]);
   const parsedRecentPosts = recentPosts.map((p) => ({
     ...p,
+    authorName: formatAuthorName(p.authorName),
     tags: JSON.parse(p.tags || "[]") as string[],
     categories: JSON.parse(p.categories || "[]") as string[],
     featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),

@@ -9,6 +9,7 @@ import { and, gte, eq, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
+import { formatAuthorName } from "@/lib/utils";
 
 import type { Metadata } from "next";
 
@@ -111,6 +112,7 @@ async function getRecentBlogPosts() {
 
     return posts.map((p) => ({
       ...p,
+      authorName: formatAuthorName(p.authorName),
       tags: JSON.parse(p.tags || "[]") as string[],
       categories: JSON.parse(p.categories || "[]") as string[],
       featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),
