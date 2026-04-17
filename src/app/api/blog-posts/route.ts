@@ -3,6 +3,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { isAuthorized, getAuthorizedSession } from "@/lib/api-auth";
 import { blogPostCreateSchema, validateRequestBody } from "@/lib/validations";
+import { findBrokenLinksInDb } from "@/lib/blog-links";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, desc, sql } from "drizzle-orm";
@@ -142,18 +143,24 @@ export async function POST(request: NextRequest) {
     const existing = await db
       .select({ slug: blogPosts.slug })
       .from(blogPosts)
-      .where(or(
-        eq(blogPosts.slug, baseSlug),
-        and(gt(blogPosts.slug, lowerBound), lt(blogPosts.slug, upperBound))
-      ));
-    const slug = findUniqueSlug(baseSlug, existing.map((r) => r.slug));
+      .where(
+        or(
+          eq(blogPosts.slug, baseSlug),
+          and(gt(blogPosts.slug, lowerBound), lt(blogPosts.slug, upperBound))
+        )
+      );
+    const slug = findUniqueSlug(
+      baseSlug,
+      existing.map((r) => r.slug)
+    );
 
     // If publishing with no explicit publishDate, set it to now
-    const publishDate = data.status === "PUBLISHED" && !data.publishDate
-      ? new Date()
-      : data.publishDate
-        ? new Date(data.publishDate)
-        : null;
+    const publishDate =
+      data.status === "PUBLISHED" && !data.publishDate
+        ? new Date()
+        : data.publishDate
+          ? new Date(data.publishDate)
+          : null;
 
     const id = crypto.randomUUID();
     await db.insert(blogPosts).values({
@@ -172,17 +179,22 @@ export async function POST(request: NextRequest) {
       metaDescription: data.metaDescription || null,
     });
 
-    const [created] = await db
-      .select()
-      .from(blogPosts)
-      .where(eq(blogPosts.id, id))
-      .limit(1);
+    const [created] = await db.select().from(blogPosts).where(eq(blogPosts.id, id)).limit(1);
+
+    let warnings: { brokenLinks: string[] } | undefined;
+    try {
+      const broken = await findBrokenLinksInDb(db, data.body);
+      if (broken.length > 0) warnings = { brokenLinks: broken };
+    } catch {
+      /* non-fatal */
+    }
 
     return NextResponse.json(
       {
         ...created,
         tags: JSON.parse(created.tags || "[]"),
         categories: JSON.parse(created.categories || "[]"),
+        ...(warnings ? { warnings } : {}),
       },
       { status: 201 }
     );
@@ -194,7 +206,10 @@ export async function POST(request: NextRequest) {
       request,
     });
     if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) {
-      return NextResponse.json({ error: "A blog post with this slug already exists" }, { status: 409 });
+      return NextResponse.json(
+        { error: "A blog post with this slug already exists" },
+        { status: 409 }
+      );
     }
     return NextResponse.json({ error: "Failed to create blog post" }, { status: 500 });
   }

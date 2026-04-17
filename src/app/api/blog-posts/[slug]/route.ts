@@ -6,6 +6,7 @@ import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, ne } from "drizzle-orm";
+import { findBrokenLinksInDb } from "@/lib/blog-links";
 
 export const runtime = "edge";
 
@@ -86,11 +87,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   try {
     // Fetch the existing post
-    const [existing] = await db
-      .select()
-      .from(blogPosts)
-      .where(eq(blogPosts.slug, slug))
-      .limit(1);
+    const [existing] = await db.select().from(blogPosts).where(eq(blogPosts.slug, slug)).limit(1);
 
     if (!existing) {
       return NextResponse.json({ error: "Blog post not found" }, { status: 404 });
@@ -108,14 +105,19 @@ export async function PUT(request: NextRequest, { params }: Params) {
         const existingSlugs = await db
           .select({ slug: blogPosts.slug })
           .from(blogPosts)
-          .where(and(
-            ne(blogPosts.id, existing.id),
-            or(
-              eq(blogPosts.slug, baseSlug),
-              and(gt(blogPosts.slug, lowerBound), lt(blogPosts.slug, upperBound))
+          .where(
+            and(
+              ne(blogPosts.id, existing.id),
+              or(
+                eq(blogPosts.slug, baseSlug),
+                and(gt(blogPosts.slug, lowerBound), lt(blogPosts.slug, upperBound))
+              )
             )
-          ));
-        updateData.slug = findUniqueSlug(baseSlug, existingSlugs.map((r) => r.slug));
+          );
+        updateData.slug = findUniqueSlug(
+          baseSlug,
+          existingSlugs.map((r) => r.slug)
+        );
       }
     }
 
@@ -139,10 +141,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       updateData.publishDate = data.publishDate ? new Date(data.publishDate) : null;
     }
 
-    await db
-      .update(blogPosts)
-      .set(updateData)
-      .where(eq(blogPosts.id, existing.id));
+    await db.update(blogPosts).set(updateData).where(eq(blogPosts.id, existing.id));
 
     // Fetch the updated post with author info
     const [updated] = await db
@@ -169,10 +168,26 @@ export async function PUT(request: NextRequest, { params }: Params) {
       .where(eq(blogPosts.id, existing.id))
       .limit(1);
 
+    // Run a broken-link check on the saved body and surface warnings in the
+    // response. Doesn't block the save — legitimate edits and cross-link
+    // refactors need room to land before the target slug exists.
+    let warnings: { brokenLinks: string[] } | undefined;
+    if (data.body !== undefined) {
+      try {
+        const broken = await findBrokenLinksInDb(db, data.body);
+        if (broken.length > 0) {
+          warnings = { brokenLinks: broken };
+        }
+      } catch {
+        /* non-fatal — skip warnings on query failure */
+      }
+    }
+
     return NextResponse.json({
       ...updated,
       tags: JSON.parse(updated.tags || "[]"),
       categories: JSON.parse(updated.categories || "[]"),
+      ...(warnings ? { warnings } : {}),
     });
   } catch (error) {
     await logError(db, {
