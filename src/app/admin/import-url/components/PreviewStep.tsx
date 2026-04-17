@@ -2,6 +2,7 @@ import {
   Calendar,
   Clock,
   MapPin,
+  MapPinPlus,
   DollarSign,
   ExternalLink,
   Check,
@@ -34,24 +35,48 @@ export function PreviewStep({
   onBack,
   onSave,
 }: PreviewStepProps) {
+  const eventCount = eventsToImport.length > 0 ? eventsToImport.length : 1;
   return (
     <Card>
       <CardHeader>
         <CardTitle>
-          {eventsToImport.length > 1
-            ? `Preview ${eventsToImport.length} Events`
-            : "Final Preview"}
+          {eventsToImport.length > 1 ? `Preview ${eventsToImport.length} Events` : "Final Preview"}
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {/* Side-effect preview: creating a new venue? */}
+        {venueOption.type === "new" && (
+          <div className="mb-6 rounded-lg border border-amber-dark/30 bg-amber-light p-4">
+            <div className="flex items-start gap-3">
+              <MapPinPlus className="w-5 h-5 text-amber-dark flex-shrink-0 mt-0.5" aria-hidden />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-stone-900">This will create a new venue</p>
+                <p className="text-sm text-stone-900 mt-0.5">
+                  <strong>{venueOption.name}</strong>
+                  {venueOption.address && <> · {venueOption.address}</>}
+                  {(venueOption.city || venueOption.state) && (
+                    <>
+                      {" · "}
+                      {venueOption.city}
+                      {venueOption.city && venueOption.state && ", "}
+                      {venueOption.state}
+                    </>
+                  )}
+                </p>
+                {eventCount > 1 && (
+                  <p className="text-xs text-stone-600 mt-1">
+                    All {eventCount} events in this batch will be attached to this new venue.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Multi-event preview list */}
         {eventsToImport.length > 1 ? (
           <div className="space-y-4 mb-6">
             {eventsToImport.map((event, index) => (
-              <div
-                key={event._extractId}
-                className="border rounded-lg p-4 flex gap-4"
-              >
+              <div key={event._extractId} className="border rounded-lg p-4 flex gap-4">
                 {event.imageUrl && (
                   <div className="w-24 h-16 rounded overflow-hidden flex-shrink-0 bg-gray-100">
                     <img
@@ -79,9 +104,7 @@ export function PreviewStep({
                     <div className="flex items-center text-sm text-gray-600 mt-1">
                       <Clock className="w-3 h-3 mr-1" />
                       {formatTimeForDisplay(event.startTime)}
-                      {event.endTime && (
-                        <> - {formatTimeForDisplay(event.endTime)}</>
-                      )}
+                      {event.endTime && <> - {formatTimeForDisplay(event.endTime)}</>}
                     </div>
                   )}
                   {event.venueName && (
@@ -96,9 +119,7 @@ export function PreviewStep({
             ))}
 
             {/* Source */}
-            {url && (
-              <SourceLink url={url} />
-            )}
+            {url && <SourceLink url={url} />}
           </div>
         ) : (
           /* Single event preview card */
@@ -118,24 +139,19 @@ export function PreviewStep({
             )}
 
             <div className="p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-2">
-                {extractedData.name}
-              </h2>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">{extractedData.name}</h2>
 
               {/* Dates */}
               <div className="flex items-center text-gray-600 mb-2">
                 <Calendar className="w-4 h-4 mr-2" />
                 <span>
                   {formatDateForDisplay(extractedData.startDate)}
-                  {extractedData.endDate &&
-                    extractedData.endDate !== extractedData.startDate && (
-                      <> - {formatDateForDisplay(extractedData.endDate)}</>
-                    )}
+                  {extractedData.endDate && extractedData.endDate !== extractedData.startDate && (
+                    <> - {formatDateForDisplay(extractedData.endDate)}</>
+                  )}
                 </span>
                 {!datesConfirmed && (
-                  <span className="ml-2 text-xs text-orange-600">
-                    (Tentative)
-                  </span>
+                  <span className="ml-2 text-xs text-orange-600">(Tentative)</span>
                 )}
               </div>
 
@@ -145,21 +161,16 @@ export function PreviewStep({
                   <Clock className="w-4 h-4 mr-2" />
                   <span>
                     {formatTimeForDisplay(extractedData.startTime)}
-                    {extractedData.endTime && (
-                      <> - {formatTimeForDisplay(extractedData.endTime)}</>
-                    )}
+                    {extractedData.endTime && <> - {formatTimeForDisplay(extractedData.endTime)}</>}
                   </span>
                   {extractedData.hoursVaryByDay && (
-                    <span className="ml-2 text-xs text-orange-600">
-                      (Hours vary by day)
-                    </span>
+                    <span className="ml-2 text-xs text-orange-600">(Hours vary by day)</span>
                   )}
                 </div>
               )}
 
               {/* Venue */}
-              {(venueOption.type === "existing" ||
-                venueOption.type === "new") && (
+              {(venueOption.type === "existing" || venueOption.type === "new") && (
                 <div className="flex items-center text-gray-600 mb-2">
                   <MapPin className="w-4 h-4 mr-2" />
                   {venueOption.type === "existing"
@@ -169,8 +180,7 @@ export function PreviewStep({
               )}
 
               {/* Price */}
-              {(extractedData.ticketPriceMin !== null ||
-                extractedData.ticketPriceMax !== null) && (
+              {(extractedData.ticketPriceMin !== null || extractedData.ticketPriceMax !== null) && (
                 <div className="flex items-center text-gray-600 mb-2">
                   <DollarSign className="w-4 h-4 mr-2" />
                   {extractedData.ticketPriceMin !== null &&
@@ -183,9 +193,7 @@ export function PreviewStep({
 
               {/* Description */}
               {extractedData.description && (
-                <p className="text-gray-700 mt-4 text-sm">
-                  {extractedData.description}
-                </p>
+                <p className="text-gray-700 mt-4 text-sm">{extractedData.description}</p>
               )}
 
               {/* Source */}
@@ -206,9 +214,7 @@ export function PreviewStep({
           </Button>
           <Button onClick={onSave}>
             <Check className="w-4 h-4 mr-1" />
-            {eventsToImport.length > 1
-              ? `Import ${eventsToImport.length} Events`
-              : "Import Event"}
+            {eventsToImport.length > 1 ? `Import ${eventsToImport.length} Events` : "Import Event"}
           </Button>
         </div>
       </CardContent>

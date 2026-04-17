@@ -77,9 +77,23 @@ export default function ImportUrlPage() {
 
       {/* Error Display */}
       {state.error && (
-        <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm flex items-center gap-2">
-          <AlertCircle className="w-4 h-4" />
-          {state.error}
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{state.error}</span>
+          </div>
+          {state.step === "url-input" && !state.manualPaste && (
+            <button
+              type="button"
+              onClick={() => {
+                dispatch({ type: "SET_ERROR", error: "" });
+                dispatch({ type: "SET_MANUAL_PASTE", manualPaste: true });
+              }}
+              className="inline-flex items-center px-3 py-1.5 rounded-md bg-amber text-navy text-xs font-semibold hover:bg-amber-dark transition-colors flex-shrink-0"
+            >
+              Paste content manually instead
+            </button>
+          )}
         </div>
       )}
 
@@ -108,9 +122,7 @@ export default function ImportUrlPage() {
         <SelectEventsStep
           extractedEvents={state.extractedEvents}
           selectedEventIds={state.selectedEventIds}
-          onToggleEvent={(id) =>
-            dispatch({ type: "TOGGLE_EVENT_SELECTION", eventId: id })
-          }
+          onToggleEvent={(id) => dispatch({ type: "TOGGLE_EVENT_SELECTION", eventId: id })}
           onToggleSelectAll={() => dispatch({ type: "TOGGLE_SELECT_ALL" })}
           onProceedToReview={handleProceedToReview}
           onBack={() => dispatch({ type: "SET_STEP", step: "url-input" })}
@@ -126,12 +138,8 @@ export default function ImportUrlPage() {
           eventsToImport={state.eventsToImport}
           currentEventIndex={state.currentEventIndex}
           extractedEventsCount={state.extractedEvents.length}
-          onUpdateData={(data) =>
-            dispatch({ type: "UPDATE_EXTRACTED_DATA", data })
-          }
-          onSetDatesConfirmed={(confirmed) =>
-            dispatch({ type: "SET_DATES_CONFIRMED", confirmed })
-          }
+          onUpdateData={(data) => dispatch({ type: "UPDATE_EXTRACTED_DATA", data })}
+          onSetDatesConfirmed={(confirmed) => dispatch({ type: "SET_DATES_CONFIRMED", confirmed })}
           onGoToPreviousEvent={goToPreviousEvent}
           onGoToNextEvent={goToNextEvent}
           onGoToVenue={goToVenue}
@@ -149,21 +157,12 @@ export default function ImportUrlPage() {
           newVenueAddress={state.newVenueAddress}
           newVenueCity={state.newVenueCity}
           newVenueState={state.newVenueState}
-          onSelectVenue={(id) =>
-            dispatch({ type: "SET_SELECTED_VENUE_ID", id })
-          }
-          onNewVenueName={(name) =>
-            dispatch({ type: "SET_NEW_VENUE_NAME", name })
-          }
-          onNewVenueAddress={(address) =>
-            dispatch({ type: "SET_NEW_VENUE_ADDRESS", address })
-          }
-          onNewVenueCity={(city) =>
-            dispatch({ type: "SET_NEW_VENUE_CITY", city })
-          }
-          onNewVenueState={(state: string) =>
-            dispatch({ type: "SET_NEW_VENUE_STATE", state })
-          }
+          eventsCount={state.eventsToImport.length}
+          onSelectVenue={(id) => dispatch({ type: "SET_SELECTED_VENUE_ID", id })}
+          onNewVenueName={(name) => dispatch({ type: "SET_NEW_VENUE_NAME", name })}
+          onNewVenueAddress={(address) => dispatch({ type: "SET_NEW_VENUE_ADDRESS", address })}
+          onNewVenueCity={(city) => dispatch({ type: "SET_NEW_VENUE_CITY", city })}
+          onNewVenueState={(state: string) => dispatch({ type: "SET_NEW_VENUE_STATE", state })}
           onSkipVenue={() => {
             dispatch({ type: "SET_SELECTED_VENUE_ID", id: "" });
             dispatch({ type: "SET_NEW_VENUE_NAME", name: "" });
@@ -178,9 +177,7 @@ export default function ImportUrlPage() {
           promoters={state.promoters}
           selectedPromoterId={state.selectedPromoterId}
           eventsCount={state.eventsToImport.length}
-          onSelectPromoter={(id) =>
-            dispatch({ type: "SET_SELECTED_PROMOTER_ID", id })
-          }
+          onSelectPromoter={(id) => dispatch({ type: "SET_SELECTED_PROMOTER_ID", id })}
           onBack={goBackFromPromoter}
           onContinue={goToPreview}
         />
@@ -200,10 +197,7 @@ export default function ImportUrlPage() {
       )}
 
       {state.step === "saving" && (
-        <SavingStep
-          eventsCount={state.eventsToImport.length}
-          progress={state.savingProgress}
-        />
+        <SavingStep eventsCount={state.eventsToImport.length} progress={state.savingProgress} />
       )}
 
       {state.step === "success" && (

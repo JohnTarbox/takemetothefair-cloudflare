@@ -15,6 +15,7 @@ interface VenueStepProps {
   newVenueAddress: string;
   newVenueCity: string;
   newVenueState: string;
+  eventsCount: number;
   onSelectVenue: (id: string) => void;
   onNewVenueName: (name: string) => void;
   onNewVenueAddress: (address: string) => void;
@@ -34,6 +35,7 @@ export function VenueStep({
   newVenueAddress,
   newVenueCity,
   newVenueState,
+  eventsCount,
   onSelectVenue,
   onNewVenueName,
   onNewVenueAddress,
@@ -52,21 +54,24 @@ export function VenueStep({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        {eventsCount > 1 && (
+          <div className="p-3 bg-stone-100 rounded-lg text-sm text-navy">
+            You are importing <strong>{eventsCount} events</strong>. All events will be assigned to
+            the selected (or newly created) venue.
+          </div>
+        )}
+
         {/* Extracted venue info */}
         {extractedData.venueName && (
-          <div className="p-4 bg-purple-50 rounded-lg">
-            <p className="text-sm font-medium text-purple-900 mb-1">
-              AI Extracted Venue:
-            </p>
-            <p className="text-purple-800">
+          <div className="p-4 bg-terracotta-light rounded-lg">
+            <p className="text-sm font-semibold text-stone-900 mb-1">AI Extracted Venue</p>
+            <p className="text-stone-900">
               {extractedData.venueName}
               {extractedData.venueCity && `, ${extractedData.venueCity}`}
               {extractedData.venueState && `, ${extractedData.venueState}`}
             </p>
             {extractedData.venueAddress && (
-              <p className="text-sm text-purple-700 mt-1">
-                {extractedData.venueAddress}
-              </p>
+              <p className="text-sm text-stone-900/80 mt-1">{extractedData.venueAddress}</p>
             )}
           </div>
         )}
@@ -74,17 +79,13 @@ export function VenueStep({
         {/* Similar venues */}
         {similarVenues.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">
-              Matching Existing Venues:
-            </p>
+            <p className="text-sm font-medium text-gray-700 mb-2">Matching Existing Venues:</p>
             <div className="space-y-2">
               {similarVenues.map((venue) => (
                 <label
                   key={venue.id}
                   className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedVenueId === venue.id
-                      ? "border-blue-500 bg-blue-50"
-                      : "hover:bg-gray-50"
+                    selectedVenueId === venue.id ? "border-blue-500 bg-blue-50" : "hover:bg-gray-50"
                   }`}
                 >
                   <input
@@ -126,9 +127,7 @@ export function VenueStep({
 
         {/* Create new venue */}
         <div className="border-t pt-4">
-          <p className="text-sm font-medium text-gray-700 mb-3">
-            Or Create New Venue:
-          </p>
+          <p className="text-sm font-medium text-gray-700 mb-3">Or Create New Venue:</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <Label htmlFor="newVenueName">Venue Name</Label>

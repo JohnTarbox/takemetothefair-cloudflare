@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ConfidenceBadge } from "@/components/ui/confidence-badge";
+import { ConfidenceLegend } from "./ConfidenceLegend";
 import type { ExtractedEventData, FieldConfidence, ExtractedEvent } from "@/lib/url-import/types";
 import { EVENT_CATEGORIES } from "@/lib/constants";
 
@@ -65,6 +66,7 @@ export function ReviewStep({
 
       {/* Right: Editable Form */}
       <div className="lg:col-span-3">
+        <ConfidenceLegend />
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between">
