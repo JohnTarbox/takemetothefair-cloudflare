@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Calendar, MapPin, Clock, AlertTriangle } from "lucide-react";
+import { Calendar, MapPin, Clock, AlertTriangle, FileText, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { formatDateRange } from "@/lib/utils";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -120,17 +121,30 @@ export default async function VendorApplicationsPage() {
       </div>
 
       {applications.length === 0 ? (
-        <Card>
+        <Card className="border-stone-100 bg-stone-50">
           <CardContent className="py-12 text-center">
-            <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No applications yet</h3>
-            <p className="mt-1 text-gray-500">Browse events and apply to participate as a vendor</p>
-            <Link
-              href="/events"
-              className="mt-4 inline-block text-blue-600 hover:text-blue-700 font-medium"
-            >
-              Browse Events
-            </Link>
+            <div className="w-14 h-14 mx-auto rounded-full bg-sage-50 flex items-center justify-center mb-4">
+              <FileText className="w-7 h-7 text-sage-700" aria-hidden />
+            </div>
+            <h3 className="text-lg font-semibold text-stone-900">No applications yet</h3>
+            <p className="mt-1 text-sm text-stone-600 max-w-md mx-auto">
+              Browse upcoming events and apply to participate as a vendor. Make sure your profile is
+              complete first — promoters look at it before accepting.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3 justify-center">
+              <Link href="/events">
+                <Button>
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Browse events
+                </Button>
+              </Link>
+              <Link href="/vendor/suggest-event">
+                <Button variant="outline">
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Suggest an event
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       ) : (

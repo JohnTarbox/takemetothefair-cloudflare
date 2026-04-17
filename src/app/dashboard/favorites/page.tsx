@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Calendar, MapPin, Store } from "lucide-react";
+import { Calendar, MapPin, Store, Heart } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
@@ -120,15 +121,29 @@ export default async function FavoritesPage() {
       </div>
 
       {totalFavorites === 0 ? (
-        <Card>
+        <Card className="border-stone-100 bg-stone-50">
           <CardContent className="py-12 text-center">
-            <p className="text-gray-500">You haven&apos;t saved any favorites yet.</p>
-            <Link
-              href="/events"
-              className="mt-4 inline-block text-royal hover:text-navy font-medium"
-            >
-              Browse Events
-            </Link>
+            <div className="w-14 h-14 mx-auto rounded-full bg-terracotta-light flex items-center justify-center mb-4">
+              <Heart className="w-7 h-7 text-terracotta" aria-hidden />
+            </div>
+            <h3 className="text-lg font-semibold text-stone-900">No favorites yet</h3>
+            <p className="mt-1 text-sm text-stone-600 max-w-md mx-auto">
+              Tap the heart on any event, venue, or vendor to save it here for quick access.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3 justify-center">
+              <Link href="/events">
+                <Button>
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Browse events
+                </Button>
+              </Link>
+              <Link href="/venues">
+                <Button variant="outline">
+                  <MapPin className="w-4 h-4 mr-2" />
+                  Explore venues
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       ) : (

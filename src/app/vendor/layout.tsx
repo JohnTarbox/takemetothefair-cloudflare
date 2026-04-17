@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Store, FileText, Settings, CalendarPlus, Send, Calendar } from "lucide-react";
 import { auth } from "@/lib/auth";
+import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
 
 const vendorNav = [
   { name: "My Profile", href: "/vendor/profile", icon: Store },
@@ -43,7 +44,10 @@ export default async function VendorLayout({ children }: { children: React.React
             ))}
           </nav>
         </aside>
-        <main className="flex-1 p-8">{children}</main>
+        <main className="flex-1 p-8">
+          {session.user.role === "VENDOR" && <VendorProfileCompleteness userId={session.user.id} />}
+          {children}
+        </main>
       </div>
     </div>
   );

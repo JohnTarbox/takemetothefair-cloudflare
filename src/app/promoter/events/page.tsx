@@ -14,7 +14,6 @@ import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",
   PENDING: "warning",
@@ -27,7 +26,6 @@ async function getPromoterEvents(userId: string) {
   const db = getCloudflareDb();
 
   try {
-
     // Get the promoter for this user
     const promoterResults = await db
       .select()
@@ -89,9 +87,7 @@ export default async function PromoterEventsPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">My Events</h1>
-          <p className="mt-1 text-gray-600">
-            Manage your events and track their status
-          </p>
+          <p className="mt-1 text-gray-600">Manage your events and track their status</p>
         </div>
         <Link href="/promoter/events/new">
           <Button>
@@ -102,19 +98,27 @@ export default async function PromoterEventsPage() {
       </div>
 
       {eventsList.length === 0 ? (
-        <Card>
+        <Card className="border-stone-100 bg-stone-50">
           <CardContent className="py-12 text-center">
-            <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No events yet</h3>
-            <p className="mt-1 text-gray-500">
-              Get started by creating your first event
+            <div className="w-14 h-14 mx-auto rounded-full bg-amber-light flex items-center justify-center mb-4">
+              <Calendar className="w-7 h-7 text-amber-dark" aria-hidden />
+            </div>
+            <h3 className="text-lg font-semibold text-stone-900">List your first event</h3>
+            <p className="mt-1 text-sm text-stone-600 max-w-md mx-auto">
+              Share your fair, festival, or show with vendors and attendees across New England. Your
+              event will be reviewed before it goes live.
             </p>
-            <Link href="/promoter/events/new" className="mt-4 inline-block">
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Event
-              </Button>
-            </Link>
+            <div className="mt-6 flex flex-wrap gap-3 justify-center">
+              <Link href="/promoter/events/new">
+                <Button>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create event
+                </Button>
+              </Link>
+              <Link href="/events">
+                <Button variant="outline">See example events</Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
       ) : (
@@ -125,19 +129,12 @@ export default async function PromoterEventsPage() {
           <CardContent>
             <div className="divide-y divide-gray-100">
               {eventsList.map((event) => (
-                <div
-                  key={event.id}
-                  className="py-4 flex items-center justify-between"
-                >
+                <div key={event.id} className="py-4 flex items-center justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-3">
                       <h3 className="font-medium text-gray-900">{event.name}</h3>
-                      <Badge variant={statusColors[event.status]}>
-                        {event.status}
-                      </Badge>
-                      {event.featured && (
-                        <Badge variant="warning">Featured</Badge>
-                      )}
+                      <Badge variant={statusColors[event.status]}>{event.status}</Badge>
+                      {event.featured && <Badge variant="warning">Featured</Badge>}
                     </div>
                     <div className="mt-1 flex items-center gap-4 text-sm text-gray-500">
                       <span>{event.venue.name}</span>

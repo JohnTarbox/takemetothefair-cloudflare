@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
+import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 
 export const runtime = "edge";
 
@@ -202,6 +203,11 @@ export default function VendorProfilePage() {
 
   return (
     <div className="max-w-2xl">
+      <WelcomeBanner
+        storageKey="mmatf.welcome.vendor"
+        title="Welcome to Meet Me at the Fair!"
+        body="Complete your vendor profile below so promoters have what they need to approve your event applications."
+      />
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Vendor Profile</h1>

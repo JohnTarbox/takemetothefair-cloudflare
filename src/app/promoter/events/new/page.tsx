@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { VenueComboSearch } from "@/components/venue-combo-search";
+import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 
 export const runtime = "edge";
 
@@ -160,6 +161,11 @@ export default function CreateEventPage() {
 
   return (
     <div className="max-w-2xl">
+      <WelcomeBanner
+        storageKey="mmatf.welcome.promoter"
+        title="Ready to list your first event?"
+        body="Fill in the details below — your event will be reviewed by our team before it goes live."
+      />
       <h1 className="text-2xl font-bold text-gray-900 mb-8">Create New Event</h1>
 
       <Card>
