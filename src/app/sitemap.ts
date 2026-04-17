@@ -208,9 +208,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    // Get published blog posts
+    // Get published blog posts (need `tags` for the tag-landing-page entries below)
     const blogResults = await db
-      .select({ slug: blogPosts.slug, updatedAt: blogPosts.updatedAt })
+      .select({
+        slug: blogPosts.slug,
+        updatedAt: blogPosts.updatedAt,
+        tags: blogPosts.tags,
+      })
       .from(blogPosts)
       .where(eq(blogPosts.status, "PUBLISHED"));
 
@@ -220,6 +224,39 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       changeFrequency: "weekly" as const,
       priority: 0.6,
     }));
+
+    // Collect every tag referenced by any published post and emit one URL per
+    // unique tag-slug. Slugging logic must mirror /blog/tag/[tag]/page.tsx.
+    const tagSlugToLastMod = new Map<string, Date>();
+    for (const post of blogResults) {
+      let tagsArr: string[] = [];
+      try {
+        tagsArr = JSON.parse(post.tags || "[]") as string[];
+      } catch {
+        tagsArr = [];
+      }
+      const postMod = post.updatedAt || new Date();
+      for (const raw of tagsArr) {
+        const slug = raw
+          .toLowerCase()
+          .replace(/[^\w\s-]/g, "")
+          .replace(/\s+/g, "-")
+          .replace(/-+/g, "-")
+          .replace(/^-|-$/g, "");
+        if (!slug) continue;
+        const existing = tagSlugToLastMod.get(slug);
+        if (!existing || postMod > existing) tagSlugToLastMod.set(slug, postMod);
+      }
+    }
+
+    const tagPages: MetadataRoute.Sitemap = Array.from(tagSlugToLastMod.entries()).map(
+      ([slug, lastMod]) => ({
+        url: `${baseUrl}/blog/tag/${slug}`,
+        lastModified: lastMod,
+        changeFrequency: "weekly" as const,
+        priority: 0.4,
+      })
+    );
 
     // Generate pagination URLs for listing pages to reduce orphan rate
     const EVENTS_PER_PAGE = 30;
@@ -266,6 +303,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       ...venuePages,
       ...vendorPages,
       ...blogPages,
+      ...tagPages,
     ];
   } catch (error) {
     console.error("Error generating sitemap:", error);

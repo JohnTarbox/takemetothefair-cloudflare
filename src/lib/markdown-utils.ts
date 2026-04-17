@@ -49,3 +49,49 @@ export function extractFirstImage(markdown: string | null | undefined): string |
 
   return null;
 }
+
+/**
+ * Slugify a heading into a stable anchor id. Must match the id generator
+ * wired into the MarkdownContent renderer so TOC anchors resolve.
+ */
+export function headingSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "") // strip punctuation
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+export interface MarkdownHeading {
+  level: 2 | 3;
+  text: string;
+  id: string;
+}
+
+/**
+ * Extract H2/H3 headings from a markdown body in document order.
+ *
+ * Ignores ATX-style headings inside fenced code blocks (```), which would
+ * otherwise get captured by the simple line-start regex.
+ */
+export function extractHeadings(markdown: string | null | undefined): MarkdownHeading[] {
+  if (!markdown) return [];
+  const lines = markdown.split("\n");
+  const out: MarkdownHeading[] = [];
+  let inFence = false;
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const m = line.match(/^(#{2,3})\s+(.+?)\s*#*$/);
+    if (!m) continue;
+    const level = m[1].length === 2 ? 2 : 3;
+    const text = m[2].trim();
+    out.push({ level: level as 2 | 3, text, id: headingSlug(text) });
+  }
+  return out;
+}

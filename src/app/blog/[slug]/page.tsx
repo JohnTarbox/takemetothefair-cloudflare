@@ -15,8 +15,14 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { BlogStatusButton } from "@/components/blog/blog-status-button";
 import { ArticleSchema } from "@/components/seo/ArticleSchema";
-import { extractFirstImage, estimateReadingTime, countWords } from "@/lib/markdown-utils";
+import {
+  extractFirstImage,
+  estimateReadingTime,
+  countWords,
+  extractHeadings,
+} from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
+import { TableOfContents } from "@/components/blog/table-of-contents";
 import type { Metadata } from "next";
 
 export const runtime = "edge";
@@ -175,6 +181,7 @@ export default async function BlogPostPage({ params }: Props) {
   const categories = JSON.parse(post.categories || "[]") as string[];
   const readingTime = estimateReadingTime(post.body);
   const wordCount = countWords(post.body);
+  const headings = extractHeadings(post.body);
   const postImage = post.featuredImageUrl || extractFirstImage(post.body);
   const [recentPosts, relatedEvents] = await Promise.all([
     getRecentPosts(post.id),
@@ -285,8 +292,8 @@ export default async function BlogPostPage({ params }: Props) {
               {tags.map((tag) => (
                 <Link
                   key={tag}
-                  href={`/blog?tag=${encodeURIComponent(tag)}`}
-                  className="inline-flex items-center gap-1 text-sm px-3 py-1 bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200 transition-colors"
+                  href={`/blog/tag/${encodeURIComponent(tag.toLowerCase().replace(/\s+/g, "-"))}`}
+                  className="inline-flex items-center gap-1 text-sm px-3 py-1 bg-stone-100 text-stone-900 rounded-full hover:bg-stone-300 transition-colors"
                 >
                   <Tag className="w-3 h-3" />
                   {tag}
@@ -303,6 +310,7 @@ export default async function BlogPostPage({ params }: Props) {
 
         {/* Sidebar */}
         <aside className="lg:col-span-1 space-y-6">
+          {headings.length >= 3 && <TableOfContents headings={headings} />}
           {/* Admin actions */}
           {isAdmin && (
             <Card>
