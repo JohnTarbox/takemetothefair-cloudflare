@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { Testimonial } from "@/components/Testimonial";
 
 export const runtime = "edge";
 export const revalidate = 86400;
@@ -130,6 +131,15 @@ export default function ForPromotersPage() {
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="my-12 max-w-3xl mx-auto">
+        <Testimonial
+          quote="Listing with Meet Me at the Fair brought in vendor applications from craftspeople across three states we'd never reached before. The wizard walked me through everything in one sitting."
+          author="Linda R."
+          role="Event Promoter"
+          location="Brattleboro, VT"
+        />
       </div>
 
       <div className="bg-gray-50 rounded-xl p-8 text-center">

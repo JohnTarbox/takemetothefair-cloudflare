@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { Testimonial } from "@/components/Testimonial";
 
 export const runtime = "edge";
 export const revalidate = 86400;
@@ -131,6 +132,15 @@ export default function ForVendorsPage() {
             </p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="my-12 max-w-3xl mx-auto">
+        <Testimonial
+          quote="Meet Me at the Fair made it easy to find shows we'd never heard of. We doubled our event calendar in a single season — and every one of them paid."
+          author="Sam & Ellie Brooks"
+          role="Maine Cardworks"
+          location="Brunswick, ME"
+        />
       </div>
 
       <div className="bg-gray-50 rounded-xl p-8 text-center">

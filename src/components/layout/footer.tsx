@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NewsletterSignup } from "./newsletter-signup";
 
 export function Footer() {
   const currentYear = new Date().getFullYear();
@@ -42,6 +43,9 @@ export function Footer() {
               Discover local fairs, festivals, and community events. Connect with vendors and
               promoters in your area.
             </p>
+            <div className="mt-6">
+              <NewsletterSignup />
+            </div>
           </div>
 
           <div>

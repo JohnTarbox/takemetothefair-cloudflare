@@ -59,6 +59,12 @@ export const RATE_LIMITS = {
     authenticatedLimit: 5,
     windowMs: 60 * 60 * 1000,
   },
+  // Newsletter signup from footer form
+  "newsletter-subscribe": {
+    anonymousLimit: 10,
+    authenticatedLimit: 10,
+    windowMs: 60 * 60 * 1000,
+  },
   // Export endpoints - authenticated only, moderate limits
   "export-events": {
     anonymousLimit: 0, // Must be authenticated

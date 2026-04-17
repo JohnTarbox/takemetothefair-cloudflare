@@ -325,6 +325,23 @@ export const verificationTokens = sqliteTable("verification_tokens", {
   expires: integer("expires", { mode: "timestamp" }).notNull(),
 });
 
+export const newsletterSubscribers = sqliteTable(
+  "newsletter_subscribers",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text("email").notNull().unique(),
+    source: text("source"),
+    confirmed: integer("confirmed", { mode: "boolean" }).default(false).notNull(),
+    unsubscribed: integer("unsubscribed", { mode: "boolean" }).default(false).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    emailIdx: index("idx_newsletter_email").on(table.email),
+  })
+);
+
 export const passwordResetTokens = sqliteTable(
   "password_reset_tokens",
   {

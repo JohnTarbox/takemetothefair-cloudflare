@@ -3,9 +3,10 @@ import Link from "next/link";
 import { Search, Calendar, MapPin, Users, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventList } from "@/components/events/event-list";
+import { EventCard } from "@/components/events/event-card";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters, blogPosts, users } from "@/lib/db/schema";
-import { and, gte, eq, desc } from "drizzle-orm";
+import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
+import { and, gte, eq, desc, count, lte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -88,6 +89,50 @@ async function getUpcomingEvents() {
   }
 }
 
+async function getWeekendEvents() {
+  try {
+    const db = getCloudflareDb();
+    const now = new Date();
+    const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const results = await db
+      .select()
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
+      .where(and(isPublicEventStatus(), gte(events.endDate, now), lte(events.startDate, horizon)))
+      .orderBy(events.startDate)
+      .limit(4);
+    return results.map((r) => ({
+      ...r.events,
+      venue: r.venues!,
+      promoter: r.promoters!,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function getPlatformCounts() {
+  try {
+    const db = getCloudflareDb();
+    const [eventsRow, venuesRow, vendorsRow] = await Promise.all([
+      db
+        .select({ n: count() })
+        .from(events)
+        .where(and(isPublicEventStatus(), gte(events.endDate, new Date()))),
+      db.select({ n: count() }).from(venues).where(eq(venues.status, "ACTIVE")),
+      db.select({ n: count() }).from(vendors),
+    ]);
+    return {
+      upcomingEvents: eventsRow[0]?.n ?? 0,
+      activeVenues: venuesRow[0]?.n ?? 0,
+      totalVendors: vendorsRow[0]?.n ?? 0,
+    };
+  } catch {
+    return { upcomingEvents: 0, activeVenues: 0, totalVendors: 0 };
+  }
+}
+
 async function getRecentBlogPosts() {
   try {
     const db = getCloudflareDb();
@@ -123,9 +168,11 @@ async function getRecentBlogPosts() {
 }
 
 export default async function HomePage() {
-  const [featuredEvents, upcomingEvents, recentPosts] = await Promise.all([
+  const [featuredEvents, upcomingEvents, weekendEvents, counts, recentPosts] = await Promise.all([
     getFeaturedEvents(),
     getUpcomingEvents(),
+    getWeekendEvents(),
+    getPlatformCounts(),
     getRecentBlogPosts(),
   ]);
 
@@ -163,80 +210,69 @@ export default async function HomePage() {
                 </Button>
               </Link>
             </div>
-            {/* Stat Callouts */}
+            {/* Stat Callouts — real counts, refreshed every 5 min via revalidate */}
             <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-8 text-sm">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <Calendar className="w-4 h-4 text-amber" />
                 </div>
-                <span className="text-white font-medium">248+ Events</span>
+                <span className="text-white font-medium">
+                  {counts.upcomingEvents.toLocaleString()} upcoming event
+                  {counts.upcomingEvents === 1 ? "" : "s"}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <MapPin className="w-4 h-4 text-amber" />
                 </div>
-                <span className="text-white font-medium">261 Venues</span>
+                <span className="text-white font-medium">
+                  {counts.activeVenues.toLocaleString()} venue
+                  {counts.activeVenues === 1 ? "" : "s"}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <Users className="w-4 h-4 text-amber" />
                 </div>
-                <span className="text-white font-medium">Growing Vendor Network</span>
+                <span className="text-white font-medium">
+                  {counts.totalVendors.toLocaleString()} vendor
+                  {counts.totalVendors === 1 ? "" : "s"} listed
+                </span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-16 bg-gray-50">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <Link
-              href="/events"
-              className="text-center p-6 rounded-lg hover:bg-white transition-colors group"
-            >
-              <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
-                <Calendar className="w-6 h-6 text-royal" />
+      {/* This Weekend — replaces the old intent-router cards which just
+          duplicated the top nav. Shows events happening in the next 7 days. */}
+      {weekendEvents.length > 0 && (
+        <section className="py-16 bg-gray-50">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="flex items-baseline justify-between mb-8">
+              <div>
+                <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+                  This weekend
+                </h2>
+                <p className="mt-1 text-gray-600">
+                  Events happening in the next 7 days across New England.
+                </p>
               </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
-                Find Events
-              </h3>
-              <p className="mt-2 text-gray-600">
-                Browse upcoming fairs, festivals, and markets by date, location, or category.
-              </p>
-            </Link>
-            <Link
-              href="/venues"
-              className="text-center p-6 rounded-lg hover:bg-white transition-colors group"
-            >
-              <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
-                <MapPin className="w-6 h-6 text-royal" />
-              </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
-                Explore Venues
-              </h3>
-              <p className="mt-2 text-gray-600">
-                Discover amazing venues and fairgrounds hosting events in your region.
-              </p>
-            </Link>
-            <Link
-              href="/vendors"
-              className="text-center p-6 rounded-lg hover:bg-white transition-colors group"
-            >
-              <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
-                <Users className="w-6 h-6 text-royal" />
-              </div>
-              <h3 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
-                Connect with Vendors
-              </h3>
-              <p className="mt-2 text-gray-600">
-                Meet local artisans, food vendors, and businesses participating in events.
-              </p>
-            </Link>
+              <Link
+                href="/events"
+                className="text-navy hover:underline font-medium flex items-center"
+              >
+                See all <ArrowRight className="w-4 h-4 ml-1" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {weekendEvents.map((event, i) => (
+                <EventCard key={event.id} event={event} priority={i < 2} />
+              ))}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Browse by State */}
       <section className="py-12">
