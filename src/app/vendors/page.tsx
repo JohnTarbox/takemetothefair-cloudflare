@@ -305,10 +305,13 @@ export default async function VendorsPage({
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <aside className="lg:col-span-1">
           <MobileFilterDrawer>
-            <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-6">
+            <div className="bg-stone-50 p-5 rounded-xl border border-stone-100 space-y-6 lg:sticky lg:top-24">
+              <h2 className="text-base font-semibold text-stone-900 pb-2 border-b border-stone-100">
+                Filter vendors
+              </h2>
               {/* Search */}
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Search</h3>
+                <h3 className="font-medium text-stone-900 mb-3">Search</h3>
                 <form method="GET" action="/vendors">
                   {params.type && <input type="hidden" name="type" value={params.type} />}
                   {params.hasEvents && (
@@ -338,7 +341,7 @@ export default async function VendorsPage({
                     href={`/vendors${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       !params.type
-                        ? "bg-brand-blue-light text-royal font-medium"
+                        ? "bg-amber-light text-amber-dark font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >
@@ -350,7 +353,7 @@ export default async function VendorsPage({
                       href={`/vendors${buildQueryString({ type, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                       className={`block px-3 py-2 rounded-lg text-sm ${
                         params.type === type
-                          ? "bg-brand-blue-light text-royal font-medium"
+                          ? "bg-amber-light text-amber-dark font-medium"
                           : "text-gray-600 hover:bg-gray-50"
                       }`}
                     >
