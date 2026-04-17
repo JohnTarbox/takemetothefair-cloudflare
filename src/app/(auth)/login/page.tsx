@@ -56,9 +56,7 @@ function LoginForm() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
-        <h1 className="text-2xl font-bold text-center text-gray-900">
-          Welcome Back
-        </h1>
+        <h1 className="text-2xl font-bold text-center text-gray-900">Welcome Back</h1>
         <p className="text-center text-gray-600 mt-2">Sign in to your account</p>
       </CardHeader>
       <CardContent>
@@ -87,12 +85,13 @@ function LoginForm() {
             required
           />
 
-          <Button
-            type="submit"
-            className="w-full"
-            isLoading={isLoading}
-            disabled={isLoading}
-          >
+          <div className="flex justify-end -mt-2">
+            <Link href="/forgot-password" className="text-sm text-navy hover:underline">
+              Forgot password?
+            </Link>
+          </div>
+
+          <Button type="submit" className="w-full" isLoading={isLoading} disabled={isLoading}>
             Sign In
           </Button>
         </form>
@@ -108,12 +107,7 @@ function LoginForm() {
           </div>
 
           <div className="mt-4 space-y-3">
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleGoogleSignIn}
-            >
+            <Button type="button" variant="outline" className="w-full" onClick={handleGoogleSignIn}>
               <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
                 <path
                   fill="currentColor"
@@ -154,10 +148,7 @@ function LoginForm() {
 
         <p className="mt-6 text-center text-sm text-gray-600">
           Don&apos;t have an account?{" "}
-          <Link
-            href="/register"
-            className="text-royal hover:text-navy font-medium"
-          >
+          <Link href="/register" className="text-royal hover:text-navy font-medium">
             Sign up
           </Link>
         </p>
@@ -170,9 +161,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
       <Suspense
-        fallback={
-          <div className="w-full max-w-md h-96 bg-gray-100 rounded-xl animate-pulse" />
-        }
+        fallback={<div className="w-full max-w-md h-96 bg-gray-100 rounded-xl animate-pulse" />}
       >
         <LoginForm />
       </Suspense>

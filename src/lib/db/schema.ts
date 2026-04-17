@@ -324,6 +324,22 @@ export const verificationTokens = sqliteTable("verification_tokens", {
   expires: integer("expires", { mode: "timestamp" }).notNull(),
 });
 
+export const passwordResetTokens = sqliteTable(
+  "password_reset_tokens",
+  {
+    token: text("token").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    expires: integer("expires", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    userIdIdx: index("idx_password_reset_tokens_user_id").on(table.userId),
+    expiresIdx: index("idx_password_reset_tokens_expires").on(table.expires),
+  })
+);
+
 // Event Schema.org Data table - stores fetched schema.org markup from ticket URLs
 export const eventSchemaOrg = sqliteTable("event_schema_org", {
   id: text("id")

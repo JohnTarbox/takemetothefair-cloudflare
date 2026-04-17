@@ -5,6 +5,7 @@ import "./globals.css";
 import { Providers } from "@/components/layout/providers";
 import { Header } from "@/components/layout/header";
 import { Footer } from "@/components/layout/footer";
+import { UnverifiedBanner } from "@/components/layout/unverified-banner";
 import { WebVitals } from "@/components/WebVitals";
 import { ErrorAnalyticsBridge } from "@/components/ErrorAnalyticsBridge";
 
@@ -70,6 +71,7 @@ export default function RootLayout({
           <WebVitals />
           <ErrorAnalyticsBridge />
           <Header />
+          <UnverifiedBanner />
           <main id="main-content" className="flex-1">
             {children}
           </main>

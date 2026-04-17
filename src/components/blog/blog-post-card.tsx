@@ -6,6 +6,7 @@ import Image from "next/image";
 import { Calendar, FileText, Tag } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { formatAuthorName } from "@/lib/utils";
 
 interface BlogPostCardProps {
   post: {
@@ -72,7 +73,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
                 {publishDate}
               </span>
             )}
-            {post.authorName && <span>{post.authorName}</span>}
+            {formatAuthorName(post.authorName) && <span>{formatAuthorName(post.authorName)}</span>}
           </div>
           {post.tags.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-1">

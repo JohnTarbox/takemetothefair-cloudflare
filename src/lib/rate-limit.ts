@@ -41,6 +41,24 @@ export const RATE_LIMITS = {
     authenticatedLimit: 5, // Already logged in users shouldn't register
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // Password reset request - strict to prevent enumeration + email spam
+  "auth-forgot-password": {
+    anonymousLimit: 5,
+    authenticatedLimit: 5,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
+  // Password reset completion - prevent token brute-force
+  "auth-reset-password": {
+    anonymousLimit: 10,
+    authenticatedLimit: 10,
+    windowMs: 60 * 60 * 1000,
+  },
+  // Email verification send/resend
+  "auth-verify-email-send": {
+    anonymousLimit: 3,
+    authenticatedLimit: 5,
+    windowMs: 60 * 60 * 1000,
+  },
   // Export endpoints - authenticated only, moderate limits
   "export-events": {
     anonymousLimit: 0, // Must be authenticated

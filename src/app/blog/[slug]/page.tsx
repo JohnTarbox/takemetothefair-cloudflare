@@ -16,6 +16,7 @@ import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { BlogStatusButton } from "@/components/blog/blog-status-button";
 import { ArticleSchema } from "@/components/seo/ArticleSchema";
 import { extractFirstImage, estimateReadingTime, countWords } from "@/lib/markdown-utils";
+import { formatAuthorName } from "@/lib/utils";
 import type { Metadata } from "next";
 
 export const runtime = "edge";
@@ -212,7 +213,7 @@ export default async function BlogPostPage({ params }: Props) {
         description={post.metaDescription || post.excerpt || post.title}
         datePublished={post.publishDate}
         dateModified={post.updatedAt}
-        authorName={post.authorName}
+        authorName={formatAuthorName(post.authorName)}
         image={postImage}
         url={url}
         wordCount={wordCount}
@@ -251,10 +252,10 @@ export default async function BlogPostPage({ params }: Props) {
                 {publishDate}
               </span>
             )}
-            {post.authorName && (
+            {formatAuthorName(post.authorName) && (
               <span className="flex items-center gap-1.5">
                 <User className="w-4 h-4" />
-                {post.authorName}
+                {formatAuthorName(post.authorName)}
               </span>
             )}
             <span>{readingTime} min read</span>

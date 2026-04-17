@@ -126,6 +126,24 @@ export function Header() {
                     )}
                   </div>
                   <span className="font-medium">{session.user.name || session.user.email}</span>
+                  {session.user.role !== "USER" && (
+                    <span
+                      className={`hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                        session.user.role === "ADMIN"
+                          ? "bg-terracotta-light text-stone-900"
+                          : session.user.role === "PROMOTER"
+                            ? "bg-amber-light text-amber-dark"
+                            : "bg-sage-50 text-sage-700"
+                      }`}
+                      aria-label={`Account role: ${session.user.role.toLowerCase()}`}
+                    >
+                      {session.user.role === "ADMIN"
+                        ? "Admin"
+                        : session.user.role === "PROMOTER"
+                          ? "Promoter"
+                          : "Vendor"}
+                    </span>
+                  )}
                 </button>
 
                 {userMenuOpen && (

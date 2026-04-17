@@ -130,6 +130,12 @@ export function truncate(text: string, length: number): string {
   return text.slice(0, length).trim() + "...";
 }
 
+export function formatAuthorName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/^\s*admin(?:\s*user)?\s*[-–—:]\s*/i, "").trim();
+  return cleaned || null;
+}
+
 // Calendar link generation utilities
 interface CalendarEventParams {
   title: string;

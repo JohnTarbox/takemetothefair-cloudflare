@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { users, promoters, vendors } from "@/lib/db/schema";
+import { users, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
+import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { emailVerificationTemplate } from "@/lib/email/templates";
 
 export const runtime = "edge";
-
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -46,10 +47,7 @@ export async function POST(request: NextRequest) {
       validation.data;
 
     // Verify Turnstile token (required for all registration attempts)
-    const turnstileResult = await verifyTurnstileToken(
-      turnstileToken || "",
-      request
-    );
+    const turnstileResult = await verifyTurnstileToken(turnstileToken || "", request);
     if (!turnstileResult.success) {
       return NextResponse.json(
         { error: getTurnstileErrorMessage(turnstileResult.errorCodes) },
@@ -57,11 +55,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const existingUser = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
+    const existingUser = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
     if (existingUser.length > 0) {
       return NextResponse.json(
@@ -99,6 +93,38 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Fire-and-forget email verification. If the send fails (e.g. no email
+    // provider yet), the token is still recorded and the user can request a
+    // resend from the in-app banner.
+    try {
+      const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, "");
+      const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      await db.insert(verificationTokens).values({
+        identifier: email,
+        token,
+        expires,
+      });
+      const tpl = emailVerificationTemplate({
+        verifyUrl: `${getSiteUrl(request)}/verify-email/${token}`,
+        name,
+      });
+      await sendEmail(db, {
+        to: email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+      });
+    } catch (mailErr) {
+      // Don't block signup on email issues
+      await logError(db, {
+        level: "warn",
+        message: "Failed to dispatch verification email at signup",
+        error: mailErr,
+        source: "api/auth/register:verification",
+        context: { email },
+      });
+    }
+
     return NextResponse.json(
       {
         message: "Account created successfully",
@@ -112,10 +138,12 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    await logError(db, { message: "Registration error", error, source: "api/auth/register", request });
-    return NextResponse.json(
-      { error: "An error occurred during registration" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Registration error",
+      error,
+      source: "api/auth/register",
+      request,
+    });
+    return NextResponse.json({ error: "An error occurred during registration" }, { status: 500 });
   }
 }
