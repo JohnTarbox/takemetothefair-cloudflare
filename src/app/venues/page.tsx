@@ -9,6 +9,9 @@ import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { Pagination } from "@/components/ui/pagination";
+
+const PAGE_SIZE = 50;
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
@@ -59,6 +62,7 @@ interface SearchParams {
   favorites?: string;
   hasEvents?: string;
   missingGoogle?: string;
+  page?: string;
 }
 
 async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
@@ -187,6 +191,11 @@ export default async function VenuesPage({
 
   const [venueList, states] = await Promise.all([getVenues(params, favoriteUserId), getStates()]);
 
+  const currentPage = Math.max(1, parseInt(params.page ?? "1", 10) || 1);
+  const totalCount = venueList.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const pageVenues = venueList.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   const hasFilters =
     params.state || params.q || params.favorites || params.hasEvents || params.missingGoogle;
   const showingFavorites = params.favorites === "true";
@@ -204,12 +213,12 @@ export default async function VenuesPage({
       <ItemListSchema
         name="Fair & Festival Venues"
         description="Fairgrounds and event spaces hosting upcoming events"
-        items={venueList.map((v) => ({
+        items={pageVenues.map((v) => ({
           name: v.name,
           url: `https://meetmeatthefair.com/venues/${v.slug}`,
           image: v.imageUrl,
         }))}
-        totalCount={venueList.length}
+        totalCount={totalCount}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/venues"
       />
@@ -217,6 +226,11 @@ export default async function VenuesPage({
         <h1 className="text-3xl font-bold text-gray-900">Venues</h1>
         <p className="mt-2 text-gray-600">
           Discover fairgrounds and event spaces hosting upcoming events
+          {totalCount > 0 && (
+            <span className="ml-1 text-gray-500">
+              ({totalCount.toLocaleString()} {totalCount === 1 ? "venue" : "venues"})
+            </span>
+          )}
         </p>
       </div>
 
@@ -365,7 +379,7 @@ export default async function VenuesPage({
 
         <main className="lg:col-span-3">
           <VenuesView
-            venues={venueList}
+            venues={pageVenues}
             emptyMessage={
               showingFavorites
                 ? "You haven't favorited any venues yet."
@@ -373,6 +387,18 @@ export default async function VenuesPage({
                   ? "No venues found matching your criteria."
                   : "No venues available at this time."
             }
+          />
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            basePath="/venues"
+            searchParams={{
+              state: params.state,
+              q: params.q,
+              favorites: params.favorites,
+              hasEvents: params.hasEvents,
+              missingGoogle: params.missingGoogle,
+            }}
           />
         </main>
       </div>

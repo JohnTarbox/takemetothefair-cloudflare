@@ -197,9 +197,9 @@ export default async function HomePage() {
               <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
                 <Calendar className="w-6 h-6 text-royal" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
+              <h3 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
                 Find Events
-              </h2>
+              </h3>
               <p className="mt-2 text-gray-600">
                 Browse upcoming fairs, festivals, and markets by date, location, or category.
               </p>
@@ -211,9 +211,9 @@ export default async function HomePage() {
               <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
                 <MapPin className="w-6 h-6 text-royal" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
+              <h3 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
                 Explore Venues
-              </h2>
+              </h3>
               <p className="mt-2 text-gray-600">
                 Discover amazing venues and fairgrounds hosting events in your region.
               </p>
@@ -225,9 +225,9 @@ export default async function HomePage() {
               <div className="w-12 h-12 bg-amber-light rounded-lg flex items-center justify-center mx-auto">
                 <Users className="w-6 h-6 text-royal" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
+              <h3 className="mt-4 text-lg font-semibold text-gray-900 group-hover:text-royal">
                 Connect with Vendors
-              </h2>
+              </h3>
               <p className="mt-2 text-gray-600">
                 Meet local artisans, food vendors, and businesses participating in events.
               </p>
@@ -239,7 +239,7 @@ export default async function HomePage() {
       {/* Browse by State */}
       <section className="py-12">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6 text-center">
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900 mb-6 text-center">
             Browse Events by State
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -291,7 +291,9 @@ export default async function HomePage() {
         <section className="py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
-              <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Featured Events</h2>
+              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+                Featured Events
+              </h2>
               <Link
                 href="/events?featured=true"
                 className="text-royal hover:text-navy font-medium flex items-center"
@@ -308,7 +310,9 @@ export default async function HomePage() {
       <section className="py-16 bg-gray-50">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between mb-8">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Upcoming Events</h2>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+              Upcoming Events
+            </h2>
             <Link
               href="/events"
               className="text-royal hover:text-navy font-medium flex items-center"
@@ -325,7 +329,9 @@ export default async function HomePage() {
         <section className="py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
-              <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Latest from the Blog</h2>
+              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+                Latest from the Blog
+              </h2>
               <Link
                 href="/blog"
                 className="text-royal hover:text-navy font-medium flex items-center"
@@ -345,7 +351,9 @@ export default async function HomePage() {
       {/* CTA Section */}
       <section className="py-16 bg-navy">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-2xl md:text-3xl font-bold text-white">Ready to Share Your Event?</h2>
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-white">
+            Ready to Share Your Event?
+          </h2>
           <p className="mt-4 text-lg text-gray-300 max-w-2xl mx-auto">
             Whether you&apos;re a promoter organizing fairs or a vendor looking to participate,
             we&apos;ve got you covered.

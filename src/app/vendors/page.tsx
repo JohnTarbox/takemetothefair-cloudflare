@@ -11,6 +11,9 @@ import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { Pagination } from "@/components/ui/pagination";
+
+const PAGE_SIZE = 50;
 
 export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
@@ -60,6 +63,7 @@ interface SearchParams {
   favorites?: string;
   hasEvents?: string;
   q?: string;
+  page?: string;
 }
 
 async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
@@ -256,6 +260,11 @@ export default async function VendorsPage({
     getVendorTypes(),
   ]);
 
+  const currentPage = Math.max(1, parseInt(params.page ?? "1", 10) || 1);
+  const totalCount = vendorList.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const pageVendors = vendorList.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
   const hasFilters = params.type || params.q || params.favorites || params.hasEvents;
   const showingFavorites = params.favorites === "true";
   const showingWithEvents = params.hasEvents === "true";
@@ -271,12 +280,12 @@ export default async function VendorsPage({
       <ItemListSchema
         name="Fair & Festival Vendors"
         description="Artisans, food vendors, and businesses at fairs and festivals"
-        items={vendorList.map((v) => ({
+        items={pageVendors.map((v) => ({
           name: v.businessName,
           url: `https://meetmeatthefair.com/vendors/${v.slug}`,
           image: v.logoUrl,
         }))}
-        totalCount={vendorList.length}
+        totalCount={totalCount}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/vendors"
       />
@@ -284,6 +293,11 @@ export default async function VendorsPage({
         <h1 className="text-3xl font-bold text-gray-900">Vendor Directory</h1>
         <p className="mt-2 text-gray-600">
           Meet the artisans, food vendors, and businesses at our events
+          {totalCount > 0 && (
+            <span className="ml-1 text-gray-500">
+              ({totalCount.toLocaleString()} {totalCount === 1 ? "vendor" : "vendors"})
+            </span>
+          )}
         </p>
       </div>
 
@@ -405,7 +419,7 @@ export default async function VendorsPage({
 
         <main className="lg:col-span-3">
           <VendorsView
-            vendors={vendorList}
+            vendors={pageVendors}
             emptyMessage={
               showingFavorites
                 ? "You haven't favorited any vendors yet."
@@ -413,6 +427,17 @@ export default async function VendorsPage({
                   ? "No vendors found matching your criteria."
                   : "No vendors available at this time."
             }
+          />
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            basePath="/vendors"
+            searchParams={{
+              type: params.type,
+              favorites: params.favorites,
+              hasEvents: params.hasEvents,
+              q: params.q,
+            }}
           />
         </main>
       </div>

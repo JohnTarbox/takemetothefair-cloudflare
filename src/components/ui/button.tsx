@@ -3,8 +3,7 @@
 import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
-export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "primary" | "secondary" | "outline" | "ghost" | "danger";
   size?: "sm" | "md" | "lg";
   isLoading?: boolean;
@@ -24,19 +23,14 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ref
   ) => {
     const baseStyles =
-      "inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none";
+      "inline-flex items-center justify-center font-medium rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none";
 
     const variants = {
-      primary:
-        "bg-royal text-white hover:bg-navy focus:ring-royal",
-      secondary:
-        "bg-gray-100 text-gray-900 hover:bg-gray-200 focus:ring-gray-500",
-      outline:
-        "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-royal",
-      ghost:
-        "text-gray-700 hover:bg-gray-100 focus:ring-gray-500",
-      danger:
-        "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500",
+      primary: "bg-amber text-navy hover:bg-amber-dark",
+      secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200",
+      outline: "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50",
+      ghost: "text-gray-700 hover:bg-gray-100",
+      danger: "bg-red-600 text-white hover:bg-red-700",
     };
 
     const sizes = {

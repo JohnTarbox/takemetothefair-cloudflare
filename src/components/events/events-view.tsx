@@ -23,6 +23,7 @@ import {
   sortData,
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
+import { Pagination } from "@/components/ui/pagination";
 import { formatDateRange } from "@/lib/utils";
 import { haversineDistance } from "@/lib/geo";
 import type { events, venues, promoters } from "@/lib/db/schema";
@@ -1266,66 +1267,13 @@ export function EventsView({
       )}
 
       {/* Pagination - only shown for cards/table views, not calendar */}
-      {viewMode !== "calendar" && totalPages > 1 && (
-        <div className="mt-8 flex justify-center flex-wrap gap-2">
-          {currentPage > 1 && (
-            <a
-              href={`${basePath}?${new URLSearchParams({
-                ...searchParams,
-                page: (currentPage - 1).toString(),
-              }).toString()}`}
-              className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
-            >
-              &laquo;
-            </a>
-          )}
-          {Array.from({ length: totalPages }, (_, i) => i + 1)
-            .filter((p) => {
-              // Show first, last, current, and 1 neighbor on each side
-              if (p === 1 || p === totalPages) return true;
-              if (Math.abs(p - currentPage) <= 1) return true;
-              return false;
-            })
-            .map((p, idx, arr) => {
-              const elements = [];
-              // Add ellipsis if gap between consecutive visible pages
-              if (idx > 0 && p - arr[idx - 1] > 1) {
-                elements.push(
-                  <span key={`ellipsis-${p}`} className="px-2 py-2 text-gray-400">
-                    ...
-                  </span>
-                );
-              }
-              elements.push(
-                <a
-                  key={p}
-                  href={`${basePath}?${new URLSearchParams({
-                    ...searchParams,
-                    page: p.toString(),
-                  }).toString()}`}
-                  className={`px-3 py-2 rounded-lg min-w-[40px] text-center ${
-                    p === currentPage
-                      ? "bg-royal text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  {p}
-                </a>
-              );
-              return elements;
-            })}
-          {currentPage < totalPages && (
-            <a
-              href={`${basePath}?${new URLSearchParams({
-                ...searchParams,
-                page: (currentPage + 1).toString(),
-              }).toString()}`}
-              className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
-            >
-              &raquo;
-            </a>
-          )}
-        </div>
+      {viewMode !== "calendar" && (
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          basePath={basePath}
+          searchParams={searchParams}
+        />
       )}
     </div>
   );

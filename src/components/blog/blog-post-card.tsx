@@ -61,12 +61,10 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
           )}
         </div>
         <div className="p-4 space-y-2">
-          <h2 className="text-lg font-semibold text-navy line-clamp-2 group-hover:text-royal">
+          <h3 className="text-lg font-semibold text-navy line-clamp-2 group-hover:text-royal">
             {post.title}
-          </h2>
-          {post.excerpt && (
-            <p className="text-sm text-gray-600 line-clamp-3">{post.excerpt}</p>
-          )}
+          </h3>
+          {post.excerpt && <p className="text-sm text-gray-600 line-clamp-3">{post.excerpt}</p>}
           <div className="flex items-center gap-3 text-xs text-gray-500 pt-1">
             {publishDate && (
               <span className="flex items-center gap-1">
@@ -74,9 +72,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
                 {publishDate}
               </span>
             )}
-            {post.authorName && (
-              <span>{post.authorName}</span>
-            )}
+            {post.authorName && <span>{post.authorName}</span>}
           </div>
           {post.tags.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-1">
