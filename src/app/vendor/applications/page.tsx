@@ -1,25 +1,22 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Calendar, MapPin, Clock, AlertTriangle, FileText, Sparkles } from "lucide-react";
+import { Calendar, FileText, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatDateRange } from "@/lib/utils";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { AddToCalendar } from "@/components/events/AddToCalendar";
-import { STATUS_BADGE_VARIANTS, STATUS_LABELS } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
+import { VendorApplicationRow } from "@/components/vendor/vendor-application-row";
+import type { VendorApplicationRowData } from "@/components/vendor/vendor-application-row";
 
 export const runtime = "edge";
 
-async function getApplications(userId: string) {
+async function getApplications(userId: string): Promise<VendorApplicationRowData[]> {
   const db = getCloudflareDb();
 
   try {
-    // Get the vendor for this user
     const vendorResults = await db
       .select()
       .from(vendors)
@@ -30,7 +27,6 @@ async function getApplications(userId: string) {
 
     const vendor = vendorResults[0];
 
-    // Get event applications with events and venues
     const applicationResults = await db
       .select()
       .from(eventVendors)
@@ -42,10 +38,24 @@ async function getApplications(userId: string) {
     return applicationResults
       .filter((a) => a.events !== null)
       .map((a) => ({
-        ...a.event_vendors,
+        id: a.event_vendors.id,
+        status: a.event_vendors.status,
+        boothInfo: a.event_vendors.boothInfo,
         event: {
-          ...a.events!,
-          venue: a.venues ?? null,
+          name: a.events!.name,
+          slug: a.events!.slug,
+          description: a.events!.description,
+          startDate: a.events!.startDate,
+          endDate: a.events!.endDate,
+          venue: a.venues
+            ? {
+                name: a.venues.name,
+                address: a.venues.address,
+                city: a.venues.city,
+                state: a.venues.state,
+                zip: a.venues.zip,
+              }
+            : null,
         },
       }));
   } catch (e) {
@@ -69,10 +79,7 @@ const ACTIVE_STATUSES = new Set([
   "CONFIRMED",
 ]);
 
-// Detect date conflicts between active applications
-function detectConflicts(
-  applications: Awaited<ReturnType<typeof getApplications>>
-): Map<string, string[]> {
+function detectConflicts(applications: VendorApplicationRowData[]): Map<string, string[]> {
   const conflicts = new Map<string, string[]>();
   const active = applications.filter((a) => ACTIVE_STATUSES.has(a.status));
 
@@ -88,7 +95,6 @@ function detectConflicts(
       const bStart = new Date(b.event.startDate).getTime();
       const bEnd = new Date(b.event.endDate).getTime();
 
-      // Overlap: A starts before B ends AND A ends after B starts
       if (aStart <= bEnd && aEnd >= bStart) {
         const aConflicts = conflicts.get(a.id) || [];
         aConflicts.push(b.event.name);
@@ -103,22 +109,82 @@ function detectConflicts(
   return conflicts;
 }
 
-export default async function VendorApplicationsPage() {
-  const session = await auth();
+// The set of filter tabs shown above the list. "ALL" is a pseudo-status that
+// means no filter applied.
+const TABS: Array<{ key: string; label: string; match?: (s: string) => boolean }> = [
+  { key: "ALL", label: "All" },
+  { key: "APPLIED", label: "Applied", match: (s) => s === "APPLIED" || s === "WAITLISTED" },
+  { key: "CONFIRMED", label: "Confirmed", match: (s) => s === "APPROVED" || s === "CONFIRMED" },
+  { key: "REJECTED", label: "Rejected", match: (s) => s === "REJECTED" },
+  { key: "WITHDRAWN", label: "Withdrawn", match: (s) => s === "WITHDRAWN" || s === "CANCELLED" },
+];
 
-  if (!session) {
-    redirect("/login");
-  }
+interface PageProps {
+  searchParams: Promise<{ status?: string; highlight?: string }>;
+}
+
+export default async function VendorApplicationsPage({ searchParams }: PageProps) {
+  const session = await auth();
+  if (!session) redirect("/login");
+
+  const params = await searchParams;
+  const activeTab = (params.status || "ALL").toUpperCase();
+  const highlightId = params.highlight || null;
 
   const applications = await getApplications(session.user.id);
   const conflicts = detectConflicts(applications);
 
+  // Filter based on active tab. Tab counts are computed from the unfiltered list.
+  const filtered = (() => {
+    const tab = TABS.find((t) => t.key === activeTab) ?? TABS[0];
+    if (!tab.match) return applications;
+    return applications.filter((a) => tab.match!(a.status));
+  })();
+
+  const tabCounts: Record<string, number> = Object.fromEntries(
+    TABS.map((t) => [
+      t.key,
+      t.match ? applications.filter((a) => t.match!(a.status)).length : applications.length,
+    ])
+  );
+
   return (
     <div>
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Event Applications</h1>
         <p className="mt-1 text-gray-600">Track your applications to participate in events</p>
       </div>
+
+      {applications.length > 0 && (
+        <div
+          role="tablist"
+          aria-label="Filter applications by status"
+          className="mb-6 flex flex-wrap gap-2 border-b border-stone-100 pb-2"
+        >
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const count = tabCounts[tab.key];
+            const href =
+              tab.key === "ALL" ? "/vendor/applications" : `/vendor/applications?status=${tab.key}`;
+            return (
+              <Link
+                key={tab.key}
+                href={href}
+                role="tab"
+                aria-selected={isActive}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  isActive ? "bg-navy text-white" : "bg-stone-100 text-stone-900 hover:bg-stone-300"
+                }`}
+              >
+                {tab.label}
+                <span className={`text-xs ${isActive ? "text-white/80" : "text-stone-600"}`}>
+                  {count}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
 
       {applications.length === 0 ? (
         <Card className="border-stone-100 bg-stone-50">
@@ -147,70 +213,26 @@ export default async function VendorApplicationsPage() {
             </div>
           </CardContent>
         </Card>
+      ) : filtered.length === 0 ? (
+        <Card className="border-stone-100 bg-stone-50">
+          <CardContent className="py-10 text-center text-stone-600">
+            <p className="text-sm">
+              No applications in this tab.{" "}
+              <Link href="/vendor/applications" className="text-navy hover:underline">
+                View all
+              </Link>
+            </p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="space-y-4">
-          {applications.map((app) => (
-            <Card key={app.id}>
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <Link
-                        href={`/events/${app.event.slug}`}
-                        className="text-lg font-semibold text-gray-900 hover:text-blue-600"
-                      >
-                        {app.event.name}
-                      </Link>
-                      <Badge
-                        variant={
-                          STATUS_BADGE_VARIANTS[app.status as keyof typeof STATUS_BADGE_VARIANTS] ??
-                          "default"
-                        }
-                      >
-                        {STATUS_LABELS[app.status as keyof typeof STATUS_LABELS] ?? app.status}
-                      </Badge>
-                    </div>
-                    <div className="mt-2 space-y-1 text-sm text-gray-600">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4" />
-                        {formatDateRange(app.event.startDate, app.event.endDate)}
-                        <AddToCalendar
-                          title={app.event.name}
-                          description={app.event.description || undefined}
-                          location={
-                            app.event.venue
-                              ? `${app.event.venue.name}, ${app.event.venue.address || ""}, ${app.event.venue.city}, ${app.event.venue.state} ${app.event.venue.zip || ""}`
-                              : undefined
-                          }
-                          startDate={app.event.startDate}
-                          endDate={app.event.endDate}
-                          url={`https://meetmeatthefair.com/events/${app.event.slug}`}
-                          variant="icon"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4" />
-                        {app.event.venue
-                          ? `${app.event.venue.name}, ${app.event.venue.city}, ${app.event.venue.state}`
-                          : "Venue TBA"}
-                      </div>
-                      {app.boothInfo && (
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4" />
-                          Booth: {app.boothInfo}
-                        </div>
-                      )}
-                    </div>
-                    {conflicts.has(app.id) && (
-                      <div className="mt-2 flex items-start gap-2 text-sm text-amber-700 bg-amber-50 rounded-md px-3 py-2">
-                        <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                        <span>Date conflict with: {conflicts.get(app.id)!.join(", ")}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          {filtered.map((app) => (
+            <VendorApplicationRow
+              key={app.id}
+              application={app}
+              conflicts={conflicts.get(app.id) ?? []}
+              highlighted={highlightId === app.id}
+            />
           ))}
         </div>
       )}

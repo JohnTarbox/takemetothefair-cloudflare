@@ -44,6 +44,27 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   const vendors = event.vendors || [];
   const colors = getCategoryColors(categories);
 
+  // Vendor application deadline chip: surface when closing within 14 days
+  // (but not yet past) so vendors browsing the list notice time-sensitive asks.
+  let deadlineChipText: string | null = null;
+  if (event.applicationDeadline) {
+    const deadlineMs = new Date(event.applicationDeadline).getTime();
+    const diffDays = Math.ceil((deadlineMs - Date.now()) / (24 * 60 * 60 * 1000));
+    if (diffDays >= 0 && diffDays <= 14) {
+      if (diffDays === 0) {
+        deadlineChipText = "Applies today";
+      } else if (diffDays === 1) {
+        deadlineChipText = "Applies in 1 day";
+      } else {
+        const short = new Date(event.applicationDeadline).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        });
+        deadlineChipText = `Applies by ${short}`;
+      }
+    }
+  }
+
   // Use public dates for display (falls back to full dates if not set)
   const displayStartDate = event.publicStartDate ?? event.startDate;
   const displayEndDate = event.publicEndDate ?? event.endDate;
@@ -194,8 +215,16 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               )}
             </div>
           )}
-          {categories.length > 0 && (
+          {(categories.length > 0 || deadlineChipText) && (
             <div className="mt-3 flex flex-wrap gap-1">
+              {deadlineChipText && (
+                <Badge
+                  className="bg-amber-light text-amber-dark"
+                  title={`Vendor applications close ${new Date(event.applicationDeadline!).toLocaleDateString()}`}
+                >
+                  {deadlineChipText}
+                </Badge>
+              )}
               {categories.slice(0, 3).map((category) => (
                 <Badge key={category} className={getCategoryBadgeClass(category)}>
                   {category}

@@ -228,6 +228,7 @@ export const eventVendors = sqliteTable(
       .default("NOT_REQUIRED")
       .notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
     index("idx_eventvendors_eventid_status").on(table.eventId, table.status),

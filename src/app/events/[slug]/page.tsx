@@ -52,6 +52,7 @@ import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { buildEventMetaDescription } from "@/lib/seo-utils";
 import { haversineDistance, formatDistance } from "@/lib/geo";
 import { TrackedLink } from "@/components/TrackedLink";
+import { getPromoterResponseStats } from "@/lib/promoter-stats";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
@@ -369,6 +370,14 @@ export default async function EventDetailPage({ params }: Props) {
   const dateConflicts = vendorInfo
     ? await getVendorDateConflicts(vendorInfo.vendor.id, event.id, event.startDate, event.endDate)
     : [];
+  // Apply-modal trust signals (Phase 5): only fetched when the current user
+  // is a vendor who hasn't already applied, to avoid an unnecessary query for
+  // the public detail page.
+  const promoterStats =
+    vendorInfo && !vendorInfo.existingApplication && event.promoterId
+      ? await getPromoterResponseStats(event.promoterId)
+      : null;
+  const confirmedVendorsCount = event.eventVendors.length;
   // Compute distance from vendor home base to venue
   const vendorDistance =
     vendorInfo?.vendor.latitude &&
@@ -906,6 +915,13 @@ export default async function EventDetailPage({ params }: Props) {
                       eventId={event.id}
                       eventName={event.name}
                       canSelfConfirm={vendorInfo.vendor.canSelfConfirm ?? false}
+                      applicationDeadline={
+                        event.applicationDeadline
+                          ? new Date(event.applicationDeadline).toISOString()
+                          : null
+                      }
+                      confirmedVendorsCount={confirmedVendorsCount}
+                      promoterMedianResponseDays={promoterStats?.medianDays ?? null}
                     />
                   </>
                 )}

@@ -176,6 +176,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       );
     }
 
+    // Stamp updatedAt so promoter response-time stats can compute decision latency.
+    updateData.updatedAt = new Date();
+
     await db
       .update(eventVendors)
       .set(updateData)
