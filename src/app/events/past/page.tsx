@@ -161,11 +161,11 @@ export default async function PastEventsPage({
 
       <div className="mb-8">
         <nav className="text-sm text-gray-500 mb-4">
-          <Link href="/" className="hover:text-royal">
+          <Link href="/" className="hover:text-navy">
             Home
           </Link>
           <span className="mx-2">/</span>
-          <Link href="/events" className="hover:text-royal">
+          <Link href="/events" className="hover:text-navy">
             Events
           </Link>
           <span className="mx-2">/</span>

@@ -364,7 +364,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 {venue.contactPhone && (
                   <a
                     href={`tel:${venue.contactPhone}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
                   >
                     <Phone className="w-5 h-5 text-royal" />
                     {venue.contactPhone}
@@ -373,7 +373,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 {venue.contactEmail && (
                   <a
                     href={`mailto:${venue.contactEmail}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
                   >
                     <Mail className="w-5 h-5 text-royal" />
                     {venue.contactEmail}
@@ -384,7 +384,7 @@ export default async function VenueDetailPage({ params }: Props) {
                     href={venue.website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
                   >
                     <Globe className="w-5 h-5 text-royal" />
                     Visit Website

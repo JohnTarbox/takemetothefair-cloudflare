@@ -55,7 +55,7 @@ export default function VendorEventsPage() {
     try {
       const res = await fetch(`/api/vendors/${slug}/events`);
       if (res.ok) {
-        const data = await res.json() as { events?: Event[]; vendor?: VendorInfo | null };
+        const data = (await res.json()) as { events?: Event[]; vendor?: VendorInfo | null };
         setEvents(data.events || []);
         setVendorInfo(data.vendor || null);
       }
@@ -136,7 +136,7 @@ export default function VendorEventsPage() {
       <div className="mb-8">
         <Link
           href={`/vendors/${slug}`}
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-royal mb-4"
+          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-navy mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Vendor
@@ -201,12 +201,8 @@ export default function VendorEventsPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">
-              No events found
-            </h3>
-            <p className="mt-1 text-gray-500">
-              Try adjusting your search or filter criteria
-            </p>
+            <h3 className="text-lg font-medium text-gray-900">No events found</h3>
+            <p className="mt-1 text-gray-500">Try adjusting your search or filter criteria</p>
           </CardContent>
         </Card>
       ) : viewMode === "grid" ? (
@@ -215,7 +211,9 @@ export default function VendorEventsPage() {
             const isPast = new Date(event.endDate) < now;
             return (
               <Link key={event.id} href={`/events/${event.slug}`}>
-                <Card className={`h-full hover:shadow-lg transition-shadow ${isPast ? "opacity-75" : ""}`}>
+                <Card
+                  className={`h-full hover:shadow-lg transition-shadow ${isPast ? "opacity-75" : ""}`}
+                >
                   <div className="aspect-video relative bg-gray-100">
                     {event.imageUrl ? (
                       <img
@@ -235,9 +233,7 @@ export default function VendorEventsPage() {
                     )}
                   </div>
                   <CardContent className="p-4">
-                    <h3 className="font-semibold text-gray-900 line-clamp-2">
-                      {event.name}
-                    </h3>
+                    <h3 className="font-semibold text-gray-900 line-clamp-2">{event.name}</h3>
                     <div className="mt-2 space-y-1 text-sm text-gray-600">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1">
@@ -299,12 +295,8 @@ export default function VendorEventsPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900">
-                          {event.name}
-                        </h3>
-                        {isPast && (
-                          <Badge variant="default">Past</Badge>
-                        )}
+                        <h3 className="font-semibold text-gray-900">{event.name}</h3>
+                        {isPast && <Badge variant="default">Past</Badge>}
                       </div>
                       <div className="mt-1 flex items-center gap-4 text-sm text-gray-600">
                         <div className="flex items-center gap-1">

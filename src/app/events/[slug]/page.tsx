@@ -670,7 +670,7 @@ export default async function EventDetailPage({ params }: Props) {
                   <div>
                     <Link
                       href={`/venues/${event.venue.slug}`}
-                      className="font-medium text-gray-900 hover:text-royal"
+                      className="font-medium text-gray-900 hover:text-navy"
                     >
                       {event.venue.name}
                     </Link>
@@ -1016,7 +1016,7 @@ export default async function EventDetailPage({ params }: Props) {
                 href={`/blog/${post.slug}`}
                 className="p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all group"
               >
-                <p className="font-medium text-gray-900 group-hover:text-royal line-clamp-2">
+                <p className="font-medium text-gray-900 group-hover:text-navy line-clamp-2">
                   {post.title}
                 </p>
                 {post.excerpt && (

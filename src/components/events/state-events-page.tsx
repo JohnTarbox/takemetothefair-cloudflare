@@ -170,11 +170,11 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
           across {state.name}.
         </p>
         <nav className="mt-4 text-sm text-gray-500" aria-label="Breadcrumb">
-          <Link href="/" className="hover:text-royal">
+          <Link href="/" className="hover:text-navy">
             Home
           </Link>
           <span className="mx-2">/</span>
-          <Link href="/events" className="hover:text-royal">
+          <Link href="/events" className="hover:text-navy">
             Events
           </Link>
           <span className="mx-2">/</span>

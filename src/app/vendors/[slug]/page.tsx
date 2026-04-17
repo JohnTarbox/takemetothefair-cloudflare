@@ -272,7 +272,7 @@ export default async function VendorDetailPage({ params }: Props) {
                         </Link>
                         <div className="flex-1">
                           <Link href={`/events/${event.slug}`}>
-                            <h3 className="font-medium text-gray-900 hover:text-royal">
+                            <h3 className="font-medium text-gray-900 hover:text-navy">
                               {event.name}
                             </h3>
                           </Link>
@@ -392,7 +392,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 {vendor.contactEmail && (
                   <a
                     href={`mailto:${vendor.contactEmail}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
                   >
                     <Mail className="w-5 h-5 text-royal" />
                     {vendor.contactEmail}
@@ -401,7 +401,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 {vendor.contactPhone && (
                   <a
                     href={`tel:${vendor.contactPhone}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
                   >
                     <Phone className="w-5 h-5 text-royal" />
                     {vendor.contactPhone}
@@ -412,7 +412,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     href={vendor.website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-3 text-gray-700 hover:text-royal"
+                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
                   >
                     <Globe className="w-5 h-5 text-royal" />
                     Visit Website
@@ -427,7 +427,7 @@ export default async function VendorDetailPage({ params }: Props) {
                         href={url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-3 text-gray-700 hover:text-royal capitalize"
+                        className="flex items-center gap-3 text-gray-700 hover:text-navy capitalize"
                       >
                         {platform}
                       </a>

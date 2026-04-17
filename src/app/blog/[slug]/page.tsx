@@ -233,7 +233,7 @@ export default async function BlogPostPage({ params }: Props) {
       {/* Back link */}
       <Link
         href="/blog"
-        className="inline-flex items-center gap-1 text-sm text-royal hover:text-royal/80 mb-6"
+        className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy/80 mb-6"
       >
         <ArrowLeft className="w-4 h-4" />
         Back to Blog
@@ -406,7 +406,7 @@ export default async function BlogPostPage({ params }: Props) {
                   </div>
                 )}
                 <div className="min-w-0">
-                  <p className="font-medium text-gray-900 group-hover:text-royal line-clamp-1">
+                  <p className="font-medium text-gray-900 group-hover:text-navy line-clamp-1">
                     {event.name}
                   </p>
                   {event.startDate && (

@@ -466,7 +466,7 @@ function CalendarView({
                           anchor: { x: rect.left, y: rect.bottom },
                         });
                       }}
-                      className="text-xs text-gray-500 px-1.5 hover:text-royal transition-colors"
+                      className="text-xs text-gray-500 px-1.5 hover:text-navy transition-colors"
                     >
                       +{dayEvents.length - 5} more
                     </button>
@@ -1202,7 +1202,7 @@ export function EventsView({
                     <td className="py-3 px-4">
                       <Link
                         href={`/events/${event.slug}`}
-                        className="font-medium text-gray-900 hover:text-royal"
+                        className="font-medium text-gray-900 hover:text-navy"
                       >
                         {event.name}
                       </Link>

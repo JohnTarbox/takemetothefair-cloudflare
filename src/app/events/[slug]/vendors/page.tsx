@@ -46,7 +46,7 @@ export default function EventVendorsPage() {
     try {
       const res = await fetch(`/api/events/${slug}/vendors`);
       if (res.ok) {
-        const data = await res.json() as { vendors?: Vendor[]; event?: EventInfo | null };
+        const data = (await res.json()) as { vendors?: Vendor[]; event?: EventInfo | null };
         setVendors(data.vendors || []);
         setEventInfo(data.event || null);
       }
@@ -68,8 +68,7 @@ export default function EventVendorsPage() {
       vendor.businessName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       vendor.vendorType?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       vendor.description?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesType =
-      selectedType === "all" || vendor.vendorType === selectedType;
+    const matchesType = selectedType === "all" || vendor.vendorType === selectedType;
     return matchesSearch && matchesType;
   });
 
@@ -106,7 +105,7 @@ export default function EventVendorsPage() {
       <div className="mb-8">
         <Link
           href={`/events/${slug}`}
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-royal mb-4"
+          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-navy mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Event
@@ -174,12 +173,8 @@ export default function EventVendorsPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Store className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">
-              No vendors found
-            </h3>
-            <p className="mt-1 text-gray-500">
-              Try adjusting your search or filter criteria
-            </p>
+            <h3 className="text-lg font-medium text-gray-900">No vendors found</h3>
+            <p className="mt-1 text-gray-500">Try adjusting your search or filter criteria</p>
           </CardContent>
         </Card>
       ) : viewMode === "grid" ? (
@@ -217,9 +212,7 @@ export default function EventVendorsPage() {
                     </div>
                   </div>
                   {vendor.description && (
-                    <p className="mt-3 text-sm text-gray-600 line-clamp-2">
-                      {vendor.description}
-                    </p>
+                    <p className="mt-3 text-sm text-gray-600 line-clamp-2">{vendor.description}</p>
                   )}
                   {vendor.products && vendor.products.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-1">
@@ -262,15 +255,9 @@ export default function EventVendorsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">
-                        {vendor.businessName}
-                      </h3>
-                      {vendor.verified && (
-                        <CheckCircle className="w-4 h-4 text-royal" />
-                      )}
-                      {vendor.vendorType && (
-                        <Badge variant="default">{vendor.vendorType}</Badge>
-                      )}
+                      <h3 className="font-semibold text-gray-900">{vendor.businessName}</h3>
+                      {vendor.verified && <CheckCircle className="w-4 h-4 text-royal" />}
+                      {vendor.vendorType && <Badge variant="default">{vendor.vendorType}</Badge>}
                     </div>
                     {vendor.description && (
                       <p className="mt-1 text-sm text-gray-600 line-clamp-1">

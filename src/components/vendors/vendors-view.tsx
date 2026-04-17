@@ -4,7 +4,12 @@ import { useState } from "react";
 import Link from "next/link";
 import { LayoutGrid, Table, Store, CheckCircle, ExternalLink, Download } from "lucide-react";
 import { VendorCard } from "./vendor-card";
-import { SortableHeader, SortConfig, sortData, getNextSortDirection } from "@/components/ui/sortable-table";
+import {
+  SortableHeader,
+  SortConfig,
+  sortData,
+  getNextSortDirection,
+} from "@/components/ui/sortable-table";
 import { Badge } from "@/components/ui/badge";
 
 interface VendorEvent {
@@ -40,10 +45,7 @@ interface VendorsViewProps {
   emptyMessage?: string;
 }
 
-export function VendorsView({
-  vendors,
-  emptyMessage = "No vendors found",
-}: VendorsViewProps) {
+export function VendorsView({ vendors, emptyMessage = "No vendors found" }: VendorsViewProps) {
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: "businessName",
@@ -93,13 +95,15 @@ export function VendorsView({
               Download CSV
             </button>
           )}
-          <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-white" role="group" aria-label="View mode">
+          <div
+            className="inline-flex rounded-lg border border-gray-200 p-1 bg-white"
+            role="group"
+            aria-label="View mode"
+          >
             <button
               onClick={() => setViewMode("cards")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "cards"
-                  ? "bg-royal text-white"
-                  : "text-gray-600 hover:bg-gray-100"
+                viewMode === "cards" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
               }`}
               aria-pressed={viewMode === "cards"}
               aria-label="Card view"
@@ -110,9 +114,7 @@ export function VendorsView({
             <button
               onClick={() => setViewMode("table")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "table"
-                  ? "bg-royal text-white"
-                  : "text-gray-600 hover:bg-gray-100"
+                viewMode === "table" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
               }`}
               aria-pressed={viewMode === "table"}
               aria-label="Table view"
@@ -190,7 +192,7 @@ export function VendorsView({
                         <div>
                           <Link
                             href={`/vendors/${vendor.slug}`}
-                            className="font-medium text-gray-900 hover:text-royal"
+                            className="font-medium text-gray-900 hover:text-navy"
                           >
                             {vendor.businessName}
                           </Link>
@@ -202,12 +204,8 @@ export function VendorsView({
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">
-                      {vendor.vendorType || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">
-                      {vendor.events.length}
-                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{vendor.vendorType || "-"}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{vendor.events.length}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         {vendor.verified && (
@@ -217,7 +215,9 @@ export function VendorsView({
                           </span>
                         )}
                         {vendor.commercial && (
-                          <Badge variant="default" className="text-xs">Commercial</Badge>
+                          <Badge variant="default" className="text-xs">
+                            Commercial
+                          </Badge>
                         )}
                         {!vendor.verified && !vendor.commercial && (
                           <span className="text-xs text-gray-400">-</span>

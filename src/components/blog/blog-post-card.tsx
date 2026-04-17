@@ -62,7 +62,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
           )}
         </div>
         <div className="p-4 space-y-2">
-          <h3 className="text-lg font-semibold text-navy line-clamp-2 group-hover:text-royal">
+          <h3 className="text-lg font-semibold text-navy line-clamp-2 group-hover:text-navy">
             {post.title}
           </h3>
           {post.excerpt && <p className="text-sm text-gray-600 line-clamp-3">{post.excerpt}</p>}

@@ -67,31 +67,16 @@ export function VendorCard({ vendor }: VendorCardProps) {
           </Link>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <Link href={`/vendors/${vendor.slug}`} className="hover:text-royal">
-                <h3 className="font-semibold text-gray-900 truncate">
-                  {vendor.businessName}
-                </h3>
+              <Link href={`/vendors/${vendor.slug}`} className="hover:text-navy">
+                <h3 className="font-semibold text-gray-900 truncate">{vendor.businessName}</h3>
               </Link>
-              {vendor.verified && (
-                <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />
-              )}
-              {vendor.commercial && (
-                <Badge variant="default">Commercial</Badge>
-              )}
-              <FavoriteButton
-                type="VENDOR"
-                id={vendor.id}
-                className="ml-auto"
-                size="sm"
-              />
+              {vendor.verified && <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />}
+              {vendor.commercial && <Badge variant="default">Commercial</Badge>}
+              <FavoriteButton type="VENDOR" id={vendor.id} className="ml-auto" size="sm" />
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
-              {vendor.vendorType && (
-                <span>{vendor.vendorType}</span>
-              )}
-              {vendor.vendorType && (vendor.city || vendor.state) && (
-                <span>•</span>
-              )}
+              {vendor.vendorType && <span>{vendor.vendorType}</span>}
+              {vendor.vendorType && (vendor.city || vendor.state) && <span>•</span>}
               {(vendor.city || vendor.state) && (
                 <span className="flex items-center gap-1">
                   <MapPin className="w-3 h-3" />
@@ -100,9 +85,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
               )}
             </div>
             {vendor.description && (
-              <p className="text-sm text-gray-600 mt-2 line-clamp-2">
-                {vendor.description}
-              </p>
+              <p className="text-sm text-gray-600 mt-2 line-clamp-2">{vendor.description}</p>
             )}
             {products.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
@@ -111,9 +94,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
                     {product}
                   </Badge>
                 ))}
-                {products.length > 3 && (
-                  <Badge variant="default">+{products.length - 3}</Badge>
-                )}
+                {products.length > 3 && <Badge variant="default">+{products.length - 3}</Badge>}
               </div>
             )}
           </div>
@@ -144,9 +125,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
                       />
                     </div>
                   )}
-                  <p className="font-medium text-gray-900 text-sm truncate">
-                    {event.name}
-                  </p>
+                  <p className="font-medium text-gray-900 text-sm truncate">{event.name}</p>
                   <p className="text-xs text-gray-500 mt-1">
                     {formatDateRange(event.startDate, event.endDate)}
                   </p>
@@ -163,9 +142,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
         )}
 
         {vendor.events.length === 0 && (
-          <p className="mt-4 text-xs text-gray-500">
-            No upcoming events scheduled
-          </p>
+          <p className="mt-4 text-xs text-gray-500">No upcoming events scheduled</p>
         )}
       </div>
     </Card>
