@@ -1,95 +1,78 @@
 /**
  * Category-based color mappings for event cards and detail pages.
- * Colors are chosen to visually differentiate event types at a glance.
+ *
+ * Five-palette system (Gold, Terracotta, Sage, Navy-soft, Stone-craft) —
+ * categories in the same family share a tint so chips read as belonging
+ * to a coherent group rather than 16 bespoke silos.
  */
 
 type CategoryColors = {
   bg: string;
   icon: string;
   badge: string;
+  accent: string;
+};
+
+const GOLD: CategoryColors = {
+  bg: "bg-amber-light",
+  icon: "text-amber",
+  badge: "bg-amber-light text-amber-dark",
+  accent: "#E8960C",
+};
+
+const TERRACOTTA: CategoryColors = {
+  bg: "bg-terracotta-light",
+  icon: "text-terracotta",
+  badge: "bg-terracotta-light text-stone-900",
+  accent: "#D97757",
+};
+
+const SAGE: CategoryColors = {
+  bg: "bg-sage-50",
+  icon: "text-sage-700",
+  badge: "bg-sage-50 text-sage-700",
+  accent: "#6B7E5E",
+};
+
+const NAVY_SOFT: CategoryColors = {
+  bg: "bg-stone-100",
+  icon: "text-navy",
+  badge: "bg-stone-100 text-navy",
+  accent: "#1E2761",
+};
+
+const STONE_CRAFT: CategoryColors = {
+  bg: "bg-stone-50",
+  icon: "text-stone-600",
+  badge: "bg-stone-50 text-stone-900",
+  accent: "#6F6455",
 };
 
 const CATEGORY_COLORS: Record<string, CategoryColors> = {
-  Fair: {
-    bg: "bg-amber-light",
-    icon: "text-amber",
-    badge: "bg-amber-light text-amber",
-  },
-  Festival: {
-    bg: "bg-brand-blue-light",
-    icon: "text-royal",
-    badge: "bg-brand-blue-light text-royal",
-  },
-  "Craft Show": {
-    bg: "bg-purple-50",
-    icon: "text-purple-400",
-    badge: "bg-purple-100 text-purple-700",
-  },
-  "Craft Fair": {
-    bg: "bg-purple-50",
-    icon: "text-purple-400",
-    badge: "bg-purple-100 text-purple-700",
-  },
-  Market: {
-    bg: "bg-green-50",
-    icon: "text-green-400",
-    badge: "bg-green-100 text-green-700",
-  },
-  "Farmers Market": {
-    bg: "bg-emerald-50",
-    icon: "text-emerald-400",
-    badge: "bg-emerald-100 text-emerald-700",
-  },
-  "Agricultural Fair": {
-    bg: "bg-yellow-50",
-    icon: "text-yellow-500",
-    badge: "bg-yellow-100 text-yellow-700",
-  },
-  "Art Walk": {
-    bg: "bg-rose-50",
-    icon: "text-rose-400",
-    badge: "bg-rose-100 text-rose-700",
-  },
-  "Flea Market": {
-    bg: "bg-orange-50",
-    icon: "text-orange-400",
-    badge: "bg-orange-100 text-orange-700",
-  },
-  "Food Festival": {
-    bg: "bg-red-50",
-    icon: "text-red-400",
-    badge: "bg-red-100 text-red-700",
-  },
-  "Holiday Market": {
-    bg: "bg-teal-50",
-    icon: "text-teal-400",
-    badge: "bg-teal-100 text-teal-700",
-  },
-  "Home Show": {
-    bg: "bg-slate-50",
-    icon: "text-slate-400",
-    badge: "bg-slate-100 text-slate-700",
-  },
-  "Music Festival": {
-    bg: "bg-indigo-50",
-    icon: "text-indigo-400",
-    badge: "bg-indigo-100 text-indigo-700",
-  },
-  "Trade Show": {
-    bg: "bg-cyan-50",
-    icon: "text-cyan-400",
-    badge: "bg-cyan-100 text-cyan-700",
-  },
+  Fair: GOLD,
+  "Agricultural Fair": GOLD,
+  Festival: TERRACOTTA,
+  "Music Festival": TERRACOTTA,
+  "Food Festival": TERRACOTTA,
+  "Holiday Market": TERRACOTTA,
+  "Farmers Market": SAGE,
+  Market: SAGE,
+  "Art Walk": SAGE,
+  "Home Show": NAVY_SOFT,
+  "Trade Show": NAVY_SOFT,
+  "Car Show": NAVY_SOFT,
+  "Craft Fair": STONE_CRAFT,
+  "Craft Show": STONE_CRAFT,
+  "Fiber Arts Festival": STONE_CRAFT,
+  "Antique Show": STONE_CRAFT,
+  "Flea Market": STONE_CRAFT,
+  Other: STONE_CRAFT,
 };
 
-const DEFAULT_COLORS: CategoryColors = {
-  bg: "bg-gray-100",
-  icon: "text-gray-400",
-  badge: "bg-gray-100 text-gray-700",
-};
+const DEFAULT_COLORS: CategoryColors = STONE_CRAFT;
 
 /**
- * Get colors for the first matching category. Falls back to neutral gray.
+ * Get colors for the first matching category. Falls back to stone-craft neutral.
  */
 export function getCategoryColors(categories: string[]): CategoryColors {
   for (const cat of categories) {
@@ -106,7 +89,7 @@ export function getCategoryBadgeClass(category: string): string {
 }
 
 /**
- * Category-to-placeholder-image mapping. Groups 16 categories into 6 themed SVGs.
+ * Category-to-placeholder-image mapping. Groups categories into 6 themed SVGs.
  */
 const CATEGORY_IMAGES: Record<string, string> = {
   "Agricultural Fair": "/images/categories/fair.svg",

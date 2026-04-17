@@ -44,6 +44,10 @@ const config: Config = {
           600: "#6F6455",
           900: "#2A2521",
         },
+        sage: {
+          50: "#EEF2EA",
+          700: "#4A5B3D",
+        },
         success: "#2F7D4E",
         warning: "#C47A1F",
         danger: "#A13834",

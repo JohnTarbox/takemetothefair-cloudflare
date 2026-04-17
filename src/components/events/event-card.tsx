@@ -58,22 +58,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
       {/* Top accent bar */}
-      <div
-        className={`h-1 ${colors.bg.replace("-50", "-400").replace("-100", "-500")}`}
-        style={{
-          backgroundColor: colors.icon.includes("blue")
-            ? "#3B6FD4"
-            : colors.icon.includes("purple")
-              ? "#9333ea"
-              : colors.icon.includes("amber")
-                ? "#E8960C"
-                : colors.icon.includes("green")
-                  ? "#16a34a"
-                  : colors.icon.includes("emerald")
-                    ? "#059669"
-                    : "#9ca3af",
-        }}
-      />
+      <div className="h-1" style={{ backgroundColor: colors.accent }} />
       <Link href={`/events/${event.slug}`} className="block">
         <div
           className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-gray-100" : colors.bg}`}
