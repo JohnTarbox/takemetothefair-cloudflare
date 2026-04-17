@@ -10,6 +10,7 @@ import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
+import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 
 const PAGE_SIZE = 50;
 
@@ -236,145 +237,147 @@ export default async function VenuesPage({
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <aside className="lg:col-span-1">
-          <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-6">
-            {/* Search */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-3">Search</h3>
-              <form method="GET" action="/venues">
-                {params.state && <input type="hidden" name="state" value={params.state} />}
-                {params.hasEvents && (
-                  <input type="hidden" name="hasEvents" value={params.hasEvents} />
-                )}
-                {params.favorites && (
-                  <input type="hidden" name="favorites" value={params.favorites} />
-                )}
-                {params.missingGoogle && (
-                  <input type="hidden" name="missingGoogle" value={params.missingGoogle} />
-                )}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    type="text"
-                    name="q"
-                    defaultValue={params.q || ""}
-                    placeholder="Search venues..."
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
-                  />
-                </div>
-              </form>
-            </div>
+          <MobileFilterDrawer>
+            <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-6">
+              {/* Search */}
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Search</h3>
+                <form method="GET" action="/venues">
+                  {params.state && <input type="hidden" name="state" value={params.state} />}
+                  {params.hasEvents && (
+                    <input type="hidden" name="hasEvents" value={params.hasEvents} />
+                  )}
+                  {params.favorites && (
+                    <input type="hidden" name="favorites" value={params.favorites} />
+                  )}
+                  {params.missingGoogle && (
+                    <input type="hidden" name="missingGoogle" value={params.missingGoogle} />
+                  )}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="text"
+                      name="q"
+                      defaultValue={params.q || ""}
+                      placeholder="Search venues..."
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
+                    />
+                  </div>
+                </form>
+              </div>
 
-            {/* State Filter */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-3">Filter by State</h3>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                <Link
-                  href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
-                  className={`block px-3 py-2 rounded-lg text-sm ${
-                    !params.state
-                      ? "bg-brand-blue-light text-royal font-medium"
-                      : "text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  All States
-                </Link>
-                {states.map((state) => (
+              {/* State Filter */}
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Filter by State</h3>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
                   <Link
-                    key={state}
-                    href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
+                    href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
-                      params.state === state
+                      !params.state
                         ? "bg-brand-blue-light text-royal font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    {state}
+                    All States
                   </Link>
-                ))}
+                  {states.map((state) => (
+                    <Link
+                      key={state}
+                      href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
+                      className={`block px-3 py-2 rounded-lg text-sm ${
+                        params.state === state
+                          ? "bg-brand-blue-light text-royal font-medium"
+                          : "text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      {state}
+                    </Link>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {/* Has Events Filter */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-3">Events</h3>
-              {showingWithEvents ? (
+              {/* Has Events Filter */}
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Events</h3>
+                {showingWithEvents ? (
+                  <Link
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 font-medium"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    With Upcoming Events
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    <Calendar className="w-4 h-4" />
+                    With Upcoming Events
+                  </Link>
+                )}
+              </div>
+
+              {/* Favorites Filter */}
+              {isLoggedIn && (
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
+                  {showingFavorites ? (
+                    <Link
+                      href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, missingGoogle: params.missingGoogle })}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
+                    >
+                      <Heart className="w-4 h-4 fill-current" />
+                      Showing Favorites
+                    </Link>
+                  ) : (
+                    <Link
+                      href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                    >
+                      <Heart className="w-4 h-4" />
+                      My Favorites
+                    </Link>
+                  )}
+                </div>
+              )}
+
+              {/* Admin: Missing Google Place ID Filter */}
+              {isAdmin && (
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-3">Admin</h3>
+                  {showingMissingGoogle ? (
+                    <Link
+                      href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-amber-50 text-amber-700 font-medium"
+                    >
+                      <Filter className="w-4 h-4" />
+                      Missing Google ID
+                    </Link>
+                  ) : (
+                    <Link
+                      href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: "true" })}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                    >
+                      <Filter className="w-4 h-4" />
+                      Missing Google ID
+                    </Link>
+                  )}
+                </div>
+              )}
+
+              {/* Clear Filters */}
+              {hasFilters && (
                 <Link
-                  href={`/venues${buildQueryString({ state: params.state, q: params.q, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 font-medium"
+                  href="/venues"
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
                 >
-                  <Calendar className="w-4 h-4" />
-                  With Upcoming Events
-                </Link>
-              ) : (
-                <Link
-                  href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                >
-                  <Calendar className="w-4 h-4" />
-                  With Upcoming Events
+                  <X className="w-4 h-4" />
+                  Clear Filters
                 </Link>
               )}
             </div>
-
-            {/* Favorites Filter */}
-            {isLoggedIn && (
-              <div>
-                <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
-                {showingFavorites ? (
-                  <Link
-                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, missingGoogle: params.missingGoogle })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
-                  >
-                    <Heart className="w-4 h-4 fill-current" />
-                    Showing Favorites
-                  </Link>
-                ) : (
-                  <Link
-                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                  >
-                    <Heart className="w-4 h-4" />
-                    My Favorites
-                  </Link>
-                )}
-              </div>
-            )}
-
-            {/* Admin: Missing Google Place ID Filter */}
-            {isAdmin && (
-              <div>
-                <h3 className="font-medium text-gray-900 mb-3">Admin</h3>
-                {showingMissingGoogle ? (
-                  <Link
-                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-amber-50 text-amber-700 font-medium"
-                  >
-                    <Filter className="w-4 h-4" />
-                    Missing Google ID
-                  </Link>
-                ) : (
-                  <Link
-                    href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: "true" })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                  >
-                    <Filter className="w-4 h-4" />
-                    Missing Google ID
-                  </Link>
-                )}
-              </div>
-            )}
-
-            {/* Clear Filters */}
-            {hasFilters && (
-              <Link
-                href="/venues"
-                className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                <X className="w-4 h-4" />
-                Clear Filters
-              </Link>
-            )}
-          </div>
+          </MobileFilterDrawer>
         </aside>
 
         <main className="lg:col-span-3">

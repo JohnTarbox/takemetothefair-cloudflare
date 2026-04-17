@@ -1112,7 +1112,7 @@ export function EventsView({
           <button
             onClick={() => switchView("cards")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "cards" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+              viewMode === "cards" ? "bg-navy text-white" : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <LayoutGrid className="w-4 h-4" />
@@ -1121,7 +1121,7 @@ export function EventsView({
           <button
             onClick={() => switchView("table")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "table" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+              viewMode === "table" ? "bg-navy text-white" : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <Table className="w-4 h-4" />
@@ -1130,7 +1130,7 @@ export function EventsView({
           <button
             onClick={() => switchView("calendar")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "calendar" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+              viewMode === "calendar" ? "bg-navy text-white" : "text-gray-600 hover:bg-gray-100"
             }`}
           >
             <CalendarIcon className="w-4 h-4" />

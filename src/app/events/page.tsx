@@ -20,6 +20,7 @@ import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -647,15 +648,17 @@ export default async function EventsPage({
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 print:block">
         <aside className="lg:col-span-1 print:hidden">
-          <Suspense fallback={<div className="animate-pulse bg-gray-200 h-64 rounded-lg" />}>
-            <EventsFilter
-              categories={categories}
-              states={states}
-              searchParams={params}
-              isVendor={isVendor}
-              isLoggedIn={isLoggedIn}
-            />
-          </Suspense>
+          <MobileFilterDrawer>
+            <Suspense fallback={<div className="animate-pulse bg-gray-200 h-64 rounded-lg" />}>
+              <EventsFilter
+                categories={categories}
+                states={states}
+                searchParams={params}
+                isVendor={isVendor}
+                isLoggedIn={isLoggedIn}
+              />
+            </Suspense>
+          </MobileFilterDrawer>
         </aside>
 
         <main className="lg:col-span-3">

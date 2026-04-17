@@ -12,6 +12,7 @@ import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
+import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 
 const PAGE_SIZE = 50;
 
@@ -303,118 +304,120 @@ export default async function VendorsPage({
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <aside className="lg:col-span-1">
-          <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-6">
-            {/* Search */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-3">Search</h3>
-              <form method="GET" action="/vendors">
-                {params.type && <input type="hidden" name="type" value={params.type} />}
-                {params.hasEvents && (
-                  <input type="hidden" name="hasEvents" value={params.hasEvents} />
-                )}
-                {params.favorites && (
-                  <input type="hidden" name="favorites" value={params.favorites} />
-                )}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    type="text"
-                    name="q"
-                    defaultValue={params.q || ""}
-                    placeholder="Search vendors..."
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
-                  />
-                </div>
-              </form>
-            </div>
+          <MobileFilterDrawer>
+            <div className="bg-white p-4 rounded-lg border border-gray-200 space-y-6">
+              {/* Search */}
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Search</h3>
+                <form method="GET" action="/vendors">
+                  {params.type && <input type="hidden" name="type" value={params.type} />}
+                  {params.hasEvents && (
+                    <input type="hidden" name="hasEvents" value={params.hasEvents} />
+                  )}
+                  {params.favorites && (
+                    <input type="hidden" name="favorites" value={params.favorites} />
+                  )}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="text"
+                      name="q"
+                      defaultValue={params.q || ""}
+                      placeholder="Search vendors..."
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
+                    />
+                  </div>
+                </form>
+              </div>
 
-            {/* Type Filter */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-3">Filter by Type</h3>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                <Link
-                  href={`/vendors${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
-                  className={`block px-3 py-2 rounded-lg text-sm ${
-                    !params.type
-                      ? "bg-brand-blue-light text-royal font-medium"
-                      : "text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  All Types
-                </Link>
-                {vendorTypes.map((type) => (
+              {/* Type Filter */}
+              <div>
+                <h3 className="font-medium text-gray-900 mb-3">Filter by Type</h3>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
                   <Link
-                    key={type}
-                    href={`/vendors${buildQueryString({ type, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
+                    href={`/vendors${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
-                      params.type === type
+                      !params.type
                         ? "bg-brand-blue-light text-royal font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    {type}
+                    All Types
                   </Link>
-                ))}
+                  {vendorTypes.map((type) => (
+                    <Link
+                      key={type}
+                      href={`/vendors${buildQueryString({ type, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
+                      className={`block px-3 py-2 rounded-lg text-sm ${
+                        params.type === type
+                          ? "bg-brand-blue-light text-royal font-medium"
+                          : "text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      {type}
+                    </Link>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {/* Has Events Filter */}
-            <div>
-              <h3 className="font-medium text-gray-900 mb-3">Events</h3>
-              {showingWithEvents ? (
-                <Link
-                  href={`/vendors${buildQueryString({ type: params.type, q: params.q, favorites: params.favorites })}`}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 font-medium"
-                >
-                  <Calendar className="w-4 h-4" />
-                  With Upcoming Events
-                </Link>
-              ) : (
-                <Link
-                  href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-                >
-                  <Calendar className="w-4 h-4" />
-                  With Upcoming Events
-                </Link>
-              )}
-            </div>
-
-            {/* Favorites Filter */}
-            {isLoggedIn && (
+              {/* Has Events Filter */}
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
-                {showingFavorites ? (
+                <h3 className="font-medium text-gray-900 mb-3">Events</h3>
+                {showingWithEvents ? (
                   <Link
-                    href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: params.hasEvents })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
+                    href={`/vendors${buildQueryString({ type: params.type, q: params.q, favorites: params.favorites })}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 font-medium"
                   >
-                    <Heart className="w-4 h-4 fill-current" />
-                    Showing Favorites
+                    <Calendar className="w-4 h-4" />
+                    With Upcoming Events
                   </Link>
                 ) : (
                   <Link
-                    href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
+                    href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                   >
-                    <Heart className="w-4 h-4" />
-                    My Favorites
+                    <Calendar className="w-4 h-4" />
+                    With Upcoming Events
                   </Link>
                 )}
               </div>
-            )}
 
-            {/* Clear Filters */}
-            {hasFilters && (
-              <Link
-                href="/vendors"
-                className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                <X className="w-4 h-4" />
-                Clear Filters
-              </Link>
-            )}
-          </div>
+              {/* Favorites Filter */}
+              {isLoggedIn && (
+                <div>
+                  <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
+                  {showingFavorites ? (
+                    <Link
+                      href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: params.hasEvents })}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-pink-50 text-pink-700 font-medium"
+                    >
+                      <Heart className="w-4 h-4 fill-current" />
+                      Showing Favorites
+                    </Link>
+                  ) : (
+                    <Link
+                      href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                    >
+                      <Heart className="w-4 h-4" />
+                      My Favorites
+                    </Link>
+                  )}
+                </div>
+              )}
+
+              {/* Clear Filters */}
+              {hasFilters && (
+                <Link
+                  href="/vendors"
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                  Clear Filters
+                </Link>
+              )}
+            </div>
+          </MobileFilterDrawer>
         </aside>
 
         <main className="lg:col-span-3">

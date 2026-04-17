@@ -53,6 +53,7 @@ import { buildEventMetaDescription } from "@/lib/seo-utils";
 import { haversineDistance, formatDistance } from "@/lib/geo";
 import { TrackedLink } from "@/components/TrackedLink";
 import { getPromoterResponseStats } from "@/lib/promoter-stats";
+import { StickyApplyBar } from "@/components/events/StickyApplyBar";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
@@ -852,7 +853,7 @@ export default async function EventDetailPage({ params }: Props) {
 
           {/* Vendor Application Section */}
           {vendorInfo && (
-            <Card>
+            <Card id="vendor-apply">
               <CardHeader>
                 <h3 className="font-semibold text-gray-900 flex items-center gap-2">
                   <Store className="w-5 h-5" />
@@ -930,7 +931,7 @@ export default async function EventDetailPage({ params }: Props) {
           )}
 
           {!session && (
-            <Card>
+            <Card id="vendor-apply">
               <CardContent className="p-6 text-center">
                 <Store className="w-8 h-8 text-gray-400 mx-auto mb-2" />
                 <p className="text-sm text-gray-600 mb-3">Are you a vendor?</p>
@@ -1035,6 +1036,12 @@ export default async function EventDetailPage({ params }: Props) {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Mobile-only sticky apply CTA */}
+      {!isPastEvent && !session && <StickyApplyBar label="Login to Apply" href="/login" />}
+      {!isPastEvent && vendorInfo && !vendorInfo.existingApplication && (
+        <StickyApplyBar label="Apply as Vendor" scrollTarget="vendor-apply" />
       )}
     </div>
   );
