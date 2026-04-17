@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
+import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 
 export const runtime = "edge";
 
@@ -146,6 +147,40 @@ export default function VendorProfilePage() {
     setMessage("Address auto-filled from Google. Review and save changes.");
   };
 
+  const buildPayload = (form: typeof formData) => ({
+    ...form,
+    products: form.products
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean),
+    paymentMethods: form.paymentMethods
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean),
+    yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null,
+  });
+
+  // Serialize formData to a string for stable comparison — the form has
+  // nested primitive fields only, so JSON is fine and cheap.
+  const serialized = useMemo(() => JSON.stringify(formData), [formData]);
+
+  const autosave = useAutosave({
+    value: serialized,
+    enabled: !loading && !!profile,
+    debounceMs: 3000,
+    onSave: async (_value, signal) => {
+      const res = await fetch("/api/vendor/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload(formData)),
+        signal,
+      });
+      if (!res.ok) {
+        throw new Error("Could not autosave profile");
+      }
+    },
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -155,18 +190,7 @@ export default function VendorProfilePage() {
       const res = await fetch("/api/vendor/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...formData,
-          products: formData.products
-            .split(",")
-            .map((p) => p.trim())
-            .filter(Boolean),
-          paymentMethods: formData.paymentMethods
-            .split(",")
-            .map((p) => p.trim())
-            .filter(Boolean),
-          yearEstablished: formData.yearEstablished ? parseInt(formData.yearEstablished, 10) : null,
-        }),
+        body: JSON.stringify(buildPayload(formData)),
       });
 
       if (res.ok) {
@@ -181,6 +205,8 @@ export default function VendorProfilePage() {
       setSaving(false);
     }
   };
+
+  const savedAgo = formatSavedAgo(autosave.lastSavedAt);
 
   if (loading) {
     return (
@@ -208,12 +234,21 @@ export default function VendorProfilePage() {
         title="Welcome to Meet Me at the Fair!"
         body="Complete your vendor profile below so promoters have what they need to approve your event applications."
       />
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between mb-8 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Vendor Profile</h1>
           <p className="mt-1 text-gray-600">Manage your business information</p>
         </div>
-        {profile.verified && <Badge variant="success">Verified</Badge>}
+        <div className="flex items-center gap-3 text-sm">
+          {autosave.status === "saving" && <span className="text-stone-600">Saving…</span>}
+          {autosave.status === "saved" && savedAgo && (
+            <span className="text-sage-700">Draft saved {savedAgo}</span>
+          )}
+          {autosave.status === "error" && (
+            <span className="text-red-600">Autosave failed — use Save</span>
+          )}
+          {profile.verified && <Badge variant="success">Verified</Badge>}
+        </div>
       </div>
 
       <Card>

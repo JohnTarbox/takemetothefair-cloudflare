@@ -5,10 +5,48 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Script from "next/script";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { FormErrorSummary } from "@/components/ui/form-error-summary";
 import { trackEvent } from "@/lib/analytics";
+import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
+
+// Client-side schema mirrors the server registerSchema but adds the
+// confirmPassword match check and role-specific conditionals the server
+// handles separately.
+const registerClientSchema = z
+  .object({
+    name: z.string().min(2, "Please enter your full name"),
+    email: z.string().email("Please enter a valid email address"),
+    password: z.string().min(8, "Password must be at least 8 characters"),
+    confirmPassword: z.string(),
+    role: z.enum(["USER", "PROMOTER", "VENDOR"]),
+    companyName: z.string().optional(),
+    businessName: z.string().optional(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  })
+  .refine((data) => data.role !== "PROMOTER" || !!data.companyName?.trim(), {
+    message: "Company name is required for promoters",
+    path: ["companyName"],
+  })
+  .refine((data) => data.role !== "VENDOR" || !!data.businessName?.trim(), {
+    message: "Business name is required for vendors",
+    path: ["businessName"],
+  });
+
+const FIELD_LABELS: Record<string, string> = {
+  name: "Full name",
+  email: "Email",
+  password: "Password",
+  confirmPassword: "Confirm password",
+  companyName: "Company name",
+  businessName: "Business name",
+};
 
 // Turnstile widget types
 declare global {
@@ -48,6 +86,7 @@ function RegisterForm() {
     businessName: "",
   });
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
 
@@ -118,26 +157,36 @@ function RegisterForm() {
       ...prev,
       [e.target.name]: e.target.value,
     }));
+    // Clear field-level error as the user edits.
+    if (fieldErrors[e.target.name]) {
+      setFieldErrors((prev) => {
+        const { [e.target.name]: _removed, ...rest } = prev;
+        return rest;
+      });
+    }
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const field = e.target.name;
+    const message = validateField(registerClientSchema, field, formData);
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      if (message) next[field] = message;
+      else delete next[field];
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (formData.password !== formData.confirmPassword) {
-      setError("Passwords do not match");
+    const validation = validateAll(registerClientSchema, formData);
+    if (!validation.ok) {
+      setFieldErrors(validation.errors);
       return;
     }
-
-    if (formData.role === "PROMOTER" && !formData.companyName) {
-      setError("Company name is required for promoters");
-      return;
-    }
-
-    if (formData.role === "VENDOR" && !formData.businessName) {
-      setError("Business name is required for vendors");
-      return;
-    }
+    setFieldErrors({});
 
     setIsLoading(true);
 
@@ -221,18 +270,21 @@ function RegisterForm() {
           <p className="text-center text-gray-600 mt-2">Join Meet Me at the Fair</p>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {error && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
                 {error}
               </div>
             )}
+            <FormErrorSummary errors={fieldErrors} fieldLabels={FIELD_LABELS} />
 
             <Input
               label="Full Name"
               name="name"
               value={formData.name}
               onChange={handleChange}
+              onBlur={handleBlur}
+              error={fieldErrors.name}
               placeholder="John Doe"
               required
             />
@@ -243,6 +295,8 @@ function RegisterForm() {
               name="email"
               value={formData.email}
               onChange={handleChange}
+              onBlur={handleBlur}
+              error={fieldErrors.email}
               placeholder="you@example.com"
               required
             />
@@ -253,6 +307,8 @@ function RegisterForm() {
               name="password"
               value={formData.password}
               onChange={handleChange}
+              onBlur={handleBlur}
+              error={fieldErrors.password}
               placeholder="At least 8 characters"
               required
             />
@@ -263,6 +319,8 @@ function RegisterForm() {
               name="confirmPassword"
               value={formData.confirmPassword}
               onChange={handleChange}
+              onBlur={handleBlur}
+              error={fieldErrors.confirmPassword}
               placeholder="Confirm your password"
               required
             />
@@ -287,6 +345,8 @@ function RegisterForm() {
                 name="companyName"
                 value={formData.companyName}
                 onChange={handleChange}
+                onBlur={handleBlur}
+                error={fieldErrors.companyName}
                 placeholder="Your company name"
                 required
               />
@@ -298,6 +358,8 @@ function RegisterForm() {
                 name="businessName"
                 value={formData.businessName}
                 onChange={handleChange}
+                onBlur={handleBlur}
+                error={fieldErrors.businessName}
                 placeholder="Your business name"
                 required
               />
