@@ -71,3 +71,29 @@ export function emailVerificationTemplate(args: { verifyUrl: string; name: strin
   const text = `${greeting}\n\nWelcome to Meet Me at the Fair. Please confirm this email address by opening the link below. It expires in 24 hours.\n\n${args.verifyUrl}\n\nIf you didn't sign up, you can safely ignore this email.`;
   return { subject: "Confirm your Meet Me at the Fair email", html, text };
 }
+
+export function promoterBlogMentionTemplate(args: {
+  promoterName: string | null;
+  postTitle: string;
+  postUrl: string;
+  eventName: string;
+  eventUrl: string;
+}): { subject: string; html: string; text: string } {
+  const greeting = args.promoterName ? `Hi ${args.promoterName},` : "Hi,";
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = baseLayout({
+    heading: "Your event was featured on our blog",
+    body: `<p style="margin:0 0 12px;">${greeting}</p>
+<p style="margin:0 0 12px;">We just published a blog post that mentions your event <strong>${escape(args.eventName)}</strong>:</p>
+<p style="margin:0 0 12px;"><a href="${args.postUrl}" style="color:#1E2761;">${escape(args.postTitle)}</a></p>
+<p style="margin:0 0 12px;">Feel free to share it — or visit <a href="${args.eventUrl}" style="color:#1E2761;">your event page</a> to see how it's being surfaced alongside related coverage.</p>`,
+    cta: { url: args.postUrl, label: "Read the post" },
+  });
+  const text = `${greeting}\n\nWe just published a blog post that mentions your event "${args.eventName}":\n\n${args.postTitle}\n${args.postUrl}\n\nEvent page: ${args.eventUrl}\n\nFeel free to share it with your audience.`;
+  return {
+    subject: `"${args.postTitle}" mentions ${args.eventName}`,
+    html,
+    text,
+  };
+}

@@ -13,6 +13,7 @@ import {
   Link2,
   Database,
   FileWarning,
+  FileText,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 
@@ -27,15 +28,12 @@ const adminNav = [
   { name: "Users", href: "/admin/users", icon: Users },
   { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
   { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
+  { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
   { name: "Database", href: "/admin/database", icon: Database },
   { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
 ];
 
-export default async function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
 
   if (!session || session.user.role !== "ADMIN") {

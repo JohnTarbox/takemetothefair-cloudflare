@@ -23,6 +23,7 @@ import { eq, and, gte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
+import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import type { Metadata } from "next";
 import { logError } from "@/lib/logger";
 import { buildVenueMetaDescription } from "@/lib/seo-utils";
@@ -140,6 +141,8 @@ export default async function VenueDetailPage({ params }: Props) {
   const isAdmin = session?.user?.role === "ADMIN";
 
   const amenities = parseJsonArray(venue.amenities);
+
+  const linkedBlogPosts = await getDirectlyLinkedBlogPosts(getCloudflareDb(), "VENUE", venue.id, 3);
 
   return (
     <>
@@ -404,6 +407,31 @@ export default async function VenueDetailPage({ params }: Props) {
                 </div>
               </CardContent>
             </Card>
+
+            {linkedBlogPosts.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <h3 className="font-semibold text-gray-900">Written about this venue</h3>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {linkedBlogPosts.map((post) => (
+                    <Link
+                      key={post.slug}
+                      href={`/blog/${post.slug}`}
+                      className="block p-3 rounded-lg border border-stone-100 hover:border-amber hover:bg-amber-light/40 transition-colors"
+                    >
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-1 rounded-full text-[11px] font-medium bg-amber-light text-amber-dark">
+                        Written about this venue
+                      </span>
+                      <p className="font-medium text-gray-900 line-clamp-2">{post.title}</p>
+                      {post.excerpt && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
+                      )}
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </aside>
         </div>
       </div>

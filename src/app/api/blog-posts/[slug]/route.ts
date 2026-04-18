@@ -7,6 +7,7 @@ import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, ne } from "drizzle-orm";
 import { findBrokenLinksInDb } from "@/lib/blog-links";
+import { syncContentLinks } from "@/lib/content-links-sync";
 
 export const runtime = "edge";
 
@@ -181,6 +182,23 @@ export async function PUT(request: NextRequest, { params }: Params) {
       } catch {
         /* non-fatal — skip warnings on query failure */
       }
+    }
+
+    // Re-derive the content-link index and fire promoter notifications for
+    // any unnotified PUBLISHED EVENT links. Runs on every PUT (not just body
+    // edits) so a DRAFT→PUBLISHED status flip with an existing link still
+    // triggers the email.
+    const bodyForSync = data.body !== undefined ? data.body : existing.body;
+    try {
+      await syncContentLinks(db, existing.id, bodyForSync, { notify: true });
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        message: "syncContentLinks failed after blog post update",
+        error: err,
+        source: "api/blog-posts/[slug]:PUT",
+        context: { blogPostId: existing.id },
+      });
     }
 
     return NextResponse.json({

@@ -10,6 +10,7 @@ import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { registerBlogTools } from "./tools/blog.js";
+import { registerContentLinksTools } from "./tools/content-links.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -112,6 +113,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       if (auth.role === "ADMIN") {
         registerAdminTools(this.server, db, auth, this.env);
         registerBlogTools(this.server, db, auth, this.env);
+        registerContentLinksTools(this.server, db, auth);
       }
     }
   }
@@ -184,6 +186,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     if (auth.role === "ADMIN") {
       registerAdminTools(server, db, auth, env);
       registerBlogTools(server, db, auth, env);
+      registerContentLinksTools(server, db, auth);
     }
   }
 

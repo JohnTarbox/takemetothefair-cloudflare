@@ -26,6 +26,7 @@ interface Event {
   featured: boolean;
   venue: { name: string } | null;
   promoter: { companyName: string } | null;
+  blogPostCount: number;
 }
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
@@ -125,6 +126,7 @@ export default function AdminEventsPage() {
     promoter: (e) => e.promoter?.companyName?.toLowerCase() || "",
     startDate: (e) => new Date(e.startDate).getTime(),
     status: (e) => e.status,
+    blogPostCount: (e) => e.blogPostCount ?? 0,
   });
 
   if (loading) {
@@ -227,6 +229,12 @@ export default function AdminEventsPage() {
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
+                  <SortableHeader
+                    column="blogPostCount"
+                    label="Blog"
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                  />
                   <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
                     Actions
                   </th>
@@ -261,6 +269,15 @@ export default function AdminEventsPage() {
                     <td className="py-3 px-4 text-gray-600">{formatDate(event.startDate)}</td>
                     <td className="py-3 px-4">
                       <Badge variant={statusColors[event.status]}>{event.status}</Badge>
+                    </td>
+                    <td className="py-3 px-4">
+                      {event.blogPostCount > 0 ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-dark">
+                          {event.blogPostCount}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400">0</span>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">

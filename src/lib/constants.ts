@@ -99,6 +99,29 @@ export const EVENT_CATEGORIES = [
   "Other",
 ] as const;
 
+/**
+ * Event URL slugs that are actually listing routes (category or state pages),
+ * not individual event slugs. The content-link parser skips these when
+ * indexing /events/{slug} references from blog bodies — otherwise a post that
+ * says "see all /events/fairs" would create a broken link index row.
+ *
+ * Keep this aligned with the directory listing under `src/app/events/`.
+ */
+export const EVENT_LISTING_SLUGS = new Set<string>([
+  "all",
+  "past",
+  "fairs",
+  "festivals",
+  "craft-fairs",
+  "craft-shows",
+  "markets",
+  "farmers-markets",
+  "maine",
+  "vermont",
+  "new-hampshire",
+  "massachusetts",
+]);
+
 // Indoor/outdoor designation
 export const INDOOR_OUTDOOR = {
   INDOOR: "INDOOR",

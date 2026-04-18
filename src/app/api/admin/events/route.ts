@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, eventDays } from "@/lib/db/schema";
-import { eq, or, gt, lt, and } from "drizzle-orm";
+import { events, eventDays, contentLinks, blogPosts } from "@/lib/db/schema";
+import { eq, or, gt, lt, and, sql } from "drizzle-orm";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
@@ -26,7 +26,34 @@ export async function GET(request: NextRequest) {
       includeVendorCounts: true,
     });
 
-    return NextResponse.json(eventsList);
+    // One aggregated query for blog-post counts per event, joined in memory.
+    const blogCounts = await db
+      .select({
+        eventId: contentLinks.targetId,
+        n: sql<number>`count(distinct ${contentLinks.sourceId})`,
+      })
+      .from(contentLinks)
+      .innerJoin(blogPosts, eq(contentLinks.sourceId, blogPosts.id))
+      .where(
+        and(
+          eq(contentLinks.sourceType, "BLOG_POST"),
+          eq(contentLinks.targetType, "EVENT"),
+          eq(blogPosts.status, "PUBLISHED")
+        )
+      )
+      .groupBy(contentLinks.targetId);
+    const byEvent = new Map(
+      blogCounts
+        .filter((r): r is { eventId: string; n: number } => !!r.eventId)
+        .map((r) => [r.eventId, Number(r.n)])
+    );
+
+    const enriched = eventsList.map((e) => ({
+      ...e,
+      blogPostCount: byEvent.get(e.id) ?? 0,
+    }));
+
+    return NextResponse.json(enriched);
   } catch (error) {
     await logError(db, {
       message: "Failed to fetch events",

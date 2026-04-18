@@ -342,6 +342,45 @@ export const newsletterSubscribers = sqliteTable(
   })
 );
 
+/**
+ * Content link index. Maintained by `syncContentLinks` whenever a blog post
+ * body is written; never edited manually.
+ *
+ * source_type is currently only BLOG_POST but has room to grow (e.g. PAGE).
+ * target_id is nullable: if the referenced slug doesn't resolve to an existing
+ * event/vendor/venue row, the link is still recorded with target_slug so the
+ * broken-link surface can show it.
+ */
+export const contentLinks = sqliteTable(
+  "content_links",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    sourceType: text("source_type", { enum: ["BLOG_POST"] }).notNull(),
+    sourceId: text("source_id").notNull(),
+    targetType: text("target_type", { enum: ["EVENT", "VENDOR", "VENUE"] }).notNull(),
+    targetSlug: text("target_slug").notNull(),
+    targetId: text("target_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // Stamped after we successfully fire a promoter blog-mention email for
+    // this row. NULL means we haven't notified yet (or this link type isn't
+    // notifiable). See src/lib/content-links-sync.ts for the firing logic.
+    notifiedAt: integer("notified_at", { mode: "timestamp" }),
+  },
+  (table) => ({
+    uniqueIdx: index("idx_content_links_unique").on(
+      table.sourceType,
+      table.sourceId,
+      table.targetType,
+      table.targetSlug
+    ),
+    targetIdIdx: index("idx_content_links_target_id").on(table.targetType, table.targetId),
+    targetSlugIdx: index("idx_content_links_target_slug").on(table.targetType, table.targetSlug),
+    sourceIdx: index("idx_content_links_source").on(table.sourceType, table.sourceId),
+  })
+);
+
 export const passwordResetTokens = sqliteTable(
   "password_reset_tokens",
   {

@@ -1,9 +1,20 @@
 import { inArray } from "drizzle-orm";
 import { blogPosts } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
+import { EVENT_LISTING_SLUGS } from "@/lib/constants";
 
 // Match /blog/<slug> occurrences (hrefs, markdown links, bare text).
 const BLOG_LINK_RE = /\/blog\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
+
+// Entity-aware content link extraction — see extractContentLinks below.
+const CONTENT_LINK_RE = /\/(events|vendors|venues)\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
+
+export type ContentLinkTargetType = "EVENT" | "VENDOR" | "VENUE";
+
+export interface ContentLinkRef {
+  targetType: ContentLinkTargetType;
+  targetSlug: string;
+}
 
 /**
  * Extract every /blog/<slug> reference from a post body. Dedupes, lowercases.
@@ -34,6 +45,33 @@ export function findBrokenLinks(body: string, publishedSlugs: Iterable<string>):
  * DB-aware broken-link check. Reads the slugs for every slug referenced in
  * the body, then returns any that were missing.
  */
+/**
+ * Extract every /events/, /vendors/, /venues/ reference from a post body.
+ * Deduplicates by (targetType, targetSlug). Filters out event listing routes
+ * (e.g. /events/past, /events/maine) since those are routes, not event slugs.
+ */
+export function extractContentLinks(body: string | null | undefined): ContentLinkRef[] {
+  if (!body) return [];
+  const seen = new Set<string>();
+  const out: ContentLinkRef[] = [];
+  const re = new RegExp(CONTENT_LINK_RE.source, CONTENT_LINK_RE.flags);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const kind = m[1].toLowerCase();
+    const slug = m[2].toLowerCase();
+    if (!slug) continue;
+    // Filter out event listing routes
+    if (kind === "events" && EVENT_LISTING_SLUGS.has(slug)) continue;
+    const targetType: ContentLinkTargetType =
+      kind === "events" ? "EVENT" : kind === "vendors" ? "VENDOR" : "VENUE";
+    const key = `${targetType}|${slug}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ targetType, targetSlug: slug });
+  }
+  return out;
+}
+
 export async function findBrokenLinksInDb(
   db: ReturnType<typeof getCloudflareDb>,
   body: string

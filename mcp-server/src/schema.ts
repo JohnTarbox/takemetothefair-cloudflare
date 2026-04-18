@@ -387,3 +387,15 @@ export const errorLogs = sqliteTable("error_logs", {
   userAgent: text("user_agent"),
   source: text("source"),
 });
+
+// Content link index — see main-app src/lib/db/schema.ts contentLinks for
+// full documentation. Kept in sync manually.
+export const contentLinks = sqliteTable("content_links", {
+  id: text("id").primaryKey(),
+  sourceType: text("source_type").notNull(),
+  sourceId: text("source_id").notNull(),
+  targetType: text("target_type").notNull(),
+  targetSlug: text("target_slug").notNull(),
+  targetId: text("target_id"),
+  createdAt: integer("created_at", { mode: "timestamp" }),
+});

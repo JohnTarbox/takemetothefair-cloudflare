@@ -4,6 +4,7 @@ import { blogPosts, users } from "@/lib/db/schema";
 import { isAuthorized, getAuthorizedSession } from "@/lib/api-auth";
 import { blogPostCreateSchema, validateRequestBody } from "@/lib/validations";
 import { findBrokenLinksInDb } from "@/lib/blog-links";
+import { syncContentLinks } from "@/lib/content-links-sync";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, desc, sql } from "drizzle-orm";
@@ -187,6 +188,20 @@ export async function POST(request: NextRequest) {
       if (broken.length > 0) warnings = { brokenLinks: broken };
     } catch {
       /* non-fatal */
+    }
+
+    // Update the content-link index from the saved body. Failures are logged
+    // but don't block the create — the backfill script can reconcile later.
+    try {
+      await syncContentLinks(db, id, data.body, { notify: true });
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        message: "syncContentLinks failed after blog post create",
+        error: err,
+        source: "api/blog-posts:POST",
+        context: { blogPostId: id },
+      });
     }
 
     return NextResponse.json(

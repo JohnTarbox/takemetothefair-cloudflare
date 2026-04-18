@@ -34,6 +34,7 @@ import {
   users,
   eventDays,
   blogPosts,
+  contentLinks,
 } from "@/lib/db/schema";
 import { eq, and, sql, ne, gte, lt, like, desc, or } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
@@ -289,7 +290,64 @@ async function getRelatedEvents(
   }
 }
 
-async function getRelatedBlogPosts(eventName: string, categories: string[]) {
+type RelatedBlogPost = {
+  title: string;
+  slug: string;
+  excerpt: string | null;
+  publishDate: Date | null;
+  /** "direct" = the post body contains a /events/<slug> link to this event.
+   *  "category" = matched on shared tag/category only (topical fallback). */
+  kind: "direct" | "category";
+};
+
+/**
+ * Posts that explicitly link to this event via /events/{slug} in the body.
+ * Joined through content_links, so this is O(direct-links) not O(posts).
+ */
+async function getDirectlyLinkedBlogPosts(
+  eventId: string,
+  limit: number
+): Promise<RelatedBlogPost[]> {
+  if (limit <= 0) return [];
+  try {
+    const db = getCloudflareDb();
+    const rows = await db
+      .select({
+        title: blogPosts.title,
+        slug: blogPosts.slug,
+        excerpt: blogPosts.excerpt,
+        publishDate: blogPosts.publishDate,
+      })
+      .from(contentLinks)
+      .innerJoin(blogPosts, eq(contentLinks.sourceId, blogPosts.id))
+      .where(
+        and(
+          eq(contentLinks.sourceType, "BLOG_POST"),
+          eq(contentLinks.targetType, "EVENT"),
+          eq(contentLinks.targetId, eventId),
+          eq(blogPosts.status, "PUBLISHED")
+        )
+      )
+      .orderBy(desc(blogPosts.publishDate))
+      .limit(limit);
+    return rows.map((r) => ({ ...r, kind: "direct" as const }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Category/tag-based matches. Used to fill remaining slots once the direct
+ * links are in. Excludes slugs already surfaced as direct links so we don't
+ * double-render the same post.
+ */
+async function getCategoryMatchedBlogPosts(
+  eventName: string,
+  categories: string[],
+  excludeSlugs: string[],
+  limit: number
+): Promise<RelatedBlogPost[]> {
+  if (limit <= 0) return [];
   try {
     const db = getCloudflareDb();
     const searchConditions = [
@@ -308,12 +366,33 @@ async function getRelatedBlogPosts(eventName: string, categories: string[]) {
       .from(blogPosts)
       .where(and(eq(blogPosts.status, "PUBLISHED"), or(...searchConditions)))
       .orderBy(desc(blogPosts.publishDate))
-      .limit(3);
+      .limit(limit + excludeSlugs.length);
 
-    return posts;
+    const excluded = new Set(excludeSlugs);
+    return posts
+      .filter((p) => !excluded.has(p.slug))
+      .slice(0, limit)
+      .map((p) => ({ ...p, kind: "category" as const }));
   } catch {
     return [];
   }
+}
+
+async function getRelatedBlogPosts(
+  eventId: string,
+  eventName: string,
+  categories: string[]
+): Promise<RelatedBlogPost[]> {
+  const direct = await getDirectlyLinkedBlogPosts(eventId, 3);
+  const remaining = 3 - direct.length;
+  if (remaining <= 0) return direct;
+  const category = await getCategoryMatchedBlogPosts(
+    eventName,
+    categories,
+    direct.map((p) => p.slug),
+    remaining
+  );
+  return [...direct, ...category];
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -398,7 +477,7 @@ export default async function EventDetailPage({ params }: Props) {
   const eventCategories = parseJsonArray(event.categories);
   const [relatedEvents, relatedBlogPosts] = await Promise.all([
     getRelatedEvents(event.id, event.venueId, eventCategories, isPastEvent),
-    getRelatedBlogPosts(event.name, eventCategories),
+    getRelatedBlogPosts(event.id, event.name, eventCategories),
   ]);
 
   return (
@@ -1005,7 +1084,9 @@ export default async function EventDetailPage({ params }: Props) {
         </div>
       )}
 
-      {/* Related Blog Posts */}
+      {/* Related Blog Posts — direct-link posts are labeled; category
+          matches are unlabeled fallback filler when there aren't 3 direct
+          links. See Phase: content-entity link index. */}
       {relatedBlogPosts.length > 0 && (
         <div className="mt-12 border-t border-gray-200 pt-8">
           <h2 className="text-2xl font-bold text-gray-900 mb-6">Related Blog Posts</h2>
@@ -1014,8 +1095,13 @@ export default async function EventDetailPage({ params }: Props) {
               <Link
                 key={post.slug}
                 href={`/blog/${post.slug}`}
-                className="p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all group"
+                className="p-4 bg-white rounded-lg border border-gray-200 hover:border-amber hover:shadow-sm transition-all group"
               >
+                {post.kind === "direct" && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-dark">
+                    Written about this event
+                  </span>
+                )}
                 <p className="font-medium text-gray-900 group-hover:text-navy line-clamp-2">
                   {post.title}
                 </p>

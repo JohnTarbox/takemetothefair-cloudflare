@@ -28,6 +28,7 @@ import type { Metadata } from "next";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
 import { buildVendorMetaDescription } from "@/lib/seo-utils";
+import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
@@ -152,6 +153,13 @@ export default async function VendorDetailPage({ params }: Props) {
 
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
+
+  const linkedBlogPosts = await getDirectlyLinkedBlogPosts(
+    getCloudflareDb(),
+    "VENDOR",
+    vendor.id,
+    3
+  );
 
   const now = new Date();
   const upcomingEvents = vendor.eventVendors.filter(
@@ -500,6 +508,31 @@ export default async function VendorDetailPage({ params }: Props) {
                 </div>
               </CardContent>
             </Card>
+
+            {linkedBlogPosts.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <h3 className="font-semibold text-gray-900">Written about this vendor</h3>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {linkedBlogPosts.map((post) => (
+                    <Link
+                      key={post.slug}
+                      href={`/blog/${post.slug}`}
+                      className="block p-3 rounded-lg border border-stone-100 hover:border-amber hover:bg-amber-light/40 transition-colors"
+                    >
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-1 rounded-full text-[11px] font-medium bg-amber-light text-amber-dark">
+                        Written about this vendor
+                      </span>
+                      <p className="font-medium text-gray-900 line-clamp-2">{post.title}</p>
+                      {post.excerpt && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
+                      )}
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </aside>
         </div>
       </div>
