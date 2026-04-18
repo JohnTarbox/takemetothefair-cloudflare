@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Calendar, ArrowLeft, Tag, User, Pencil } from "lucide-react";
+import { Calendar, ArrowLeft, Tag, User, Pencil, Link2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 import { TableOfContents } from "@/components/blog/table-of-contents";
+import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
 
 export const runtime = "edge";
@@ -183,10 +184,13 @@ export default async function BlogPostPage({ params }: Props) {
   const wordCount = countWords(post.body);
   const headings = extractHeadings(post.body);
   const postImage = post.featuredImageUrl || extractFirstImage(post.body);
-  const [recentPosts, relatedEvents] = await Promise.all([
+  const [recentPosts, relatedEvents, linkedEntities] = await Promise.all([
     getRecentPosts(post.id),
     getRelatedEvents(tags, categories),
+    getEntitiesLinkedFromPost(getCloudflareDb(), post.id),
   ]);
+  const hasLinkedEntities =
+    linkedEntities.events.length + linkedEntities.vendors.length + linkedEntities.venues.length > 0;
   const parsedRecentPosts = recentPosts.map((p) => ({
     ...p,
     authorName: formatAuthorName(p.authorName),
@@ -349,6 +353,69 @@ export default async function BlogPostPage({ params }: Props) {
                     </Badge>
                   ))}
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Mentioned in this post — reverse of content_links */}
+          {hasLinkedEntities && (
+            <Card>
+              <CardContent className="p-4">
+                <h3 className="text-sm font-semibold text-navy mb-3 flex items-center gap-1.5">
+                  <Link2 className="w-4 h-4" />
+                  Mentioned in this post
+                </h3>
+                {linkedEntities.events.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1.5">Events</p>
+                    <ul className="space-y-1">
+                      {linkedEntities.events.map((e) => (
+                        <li key={`e-${e.slug}`}>
+                          <Link
+                            href={`/events/${e.slug}`}
+                            className="text-sm text-royal hover:text-navy hover:underline"
+                          >
+                            {e.name}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {linkedEntities.venues.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1.5">Venues</p>
+                    <ul className="space-y-1">
+                      {linkedEntities.venues.map((v) => (
+                        <li key={`vn-${v.slug}`}>
+                          <Link
+                            href={`/venues/${v.slug}`}
+                            className="text-sm text-royal hover:text-navy hover:underline"
+                          >
+                            {v.name}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {linkedEntities.vendors.length > 0 && (
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1.5">Vendors</p>
+                    <ul className="space-y-1">
+                      {linkedEntities.vendors.map((v) => (
+                        <li key={`vd-${v.slug}`}>
+                          <Link
+                            href={`/vendors/${v.slug}`}
+                            className="text-sm text-royal hover:text-navy hover:underline"
+                          >
+                            {v.name}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
