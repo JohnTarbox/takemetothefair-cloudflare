@@ -14,6 +14,7 @@ import {
   Database,
   FileWarning,
   FileText,
+  BarChart3,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
 
@@ -29,6 +30,7 @@ const adminNav = [
   { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
   { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
   { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
+  { name: "Analytics", href: "/admin/analytics", icon: BarChart3 },
   { name: "Database", href: "/admin/database", icon: Database },
   { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
 ];

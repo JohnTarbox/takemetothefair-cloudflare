@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Calendar, MapPin, Store, Users, Clock, UserPlus } from "lucide-react";
+import { Calendar, MapPin, Store, Users, Clock, UserPlus, BarChart3 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
@@ -11,12 +11,10 @@ import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
-
 async function getStats() {
   const db = getCloudflareDb();
 
   try {
-
     const [
       totalEventsResult,
       pendingEventsResult,
@@ -66,7 +64,6 @@ async function getRecentSubmissions() {
   const db = getCloudflareDb();
 
   try {
-
     const results = await db
       .select()
       .from(events)
@@ -102,10 +99,7 @@ async function getUpcomingEventsWithVendorCounts() {
       .select()
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(and(
-        eq(events.status, "APPROVED"),
-        gte(events.endDate, now)
-      ))
+      .where(and(eq(events.status, "APPROVED"), gte(events.endDate, now)))
       .orderBy(events.startDate)
       .limit(50);
 
@@ -121,9 +115,9 @@ async function getUpcomingEventsWithVendorCounts() {
       .where(isPublicVendorStatus())
       .groupBy(eventVendors.eventId);
 
-    const countMap = new Map(vendorCounts.map(vc => [vc.eventId, vc.count]));
+    const countMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
 
-    return upcomingEvents.map(e => ({
+    return upcomingEvents.map((e) => ({
       ...e.events,
       venue: e.venues,
       vendorCount: countMap.get(e.events.id) || 0,
@@ -188,6 +182,13 @@ export default async function AdminDashboard() {
       color: "gray",
       href: "/admin/users",
     },
+    {
+      name: "Analytics",
+      value: "\u2192" as string | number,
+      icon: BarChart3,
+      color: "blue",
+      href: "/admin/analytics",
+    },
   ];
 
   return (
@@ -202,9 +203,7 @@ export default async function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-gray-600">{stat.name}</p>
-                    <p className="text-3xl font-bold text-gray-900 mt-1">
-                      {stat.value}
-                    </p>
+                    <p className="text-3xl font-bold text-gray-900 mt-1">{stat.value}</p>
                   </div>
                   <div
                     className={`w-12 h-12 rounded-lg flex items-center justify-center bg-${stat.color}-100`}
@@ -222,9 +221,7 @@ export default async function AdminDashboard() {
         {/* Recent Submissions */}
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900">
-              Recent Submissions
-            </h2>
+            <h2 className="text-lg font-semibold text-gray-900">Recent Submissions</h2>
           </CardHeader>
           <CardContent>
             {recentSubmissions.length === 0 ? (
@@ -232,10 +229,7 @@ export default async function AdminDashboard() {
             ) : (
               <div className="divide-y divide-gray-100">
                 {recentSubmissions.map((event) => (
-                  <div
-                    key={event.id}
-                    className="py-4 flex items-center justify-between"
-                  >
+                  <div key={event.id} className="py-4 flex items-center justify-between">
                     <div>
                       <p className="font-medium text-gray-900">{event.name}</p>
                       <p className="text-sm text-gray-500">
