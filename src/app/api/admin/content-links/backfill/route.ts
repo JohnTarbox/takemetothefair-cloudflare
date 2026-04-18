@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts } from "@/lib/db/schema";
 import { syncContentLinks } from "@/lib/content-links-sync";
@@ -18,8 +18,7 @@ export const runtime = "edge";
  *   { ok, postCount, totalLinks, addedTotal, removedTotal, failures }
  */
 export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
+  if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
