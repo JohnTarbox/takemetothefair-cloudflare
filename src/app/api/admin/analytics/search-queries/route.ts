@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { Ga4ApiError, Ga4ConfigError, getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
+import {
+  getSearchQueriesForPage,
+  ScApiError,
+  ScConfigError,
+  type ScEnv,
+} from "@/lib/search-console";
 
 export const runtime = "edge";
 
 /**
- * GET /api/admin/analytics/ga4
- * Returns server-fetched GA4 metrics for the admin analytics page.
+ * GET /api/admin/analytics/search-queries?path=/events
+ * Returns top Search Console queries for a specific page (last 30 days).
  * Pass ?refresh=1 to bypass KV caches.
  * Auth: admin session OR X-Internal-Key header (for MCP server).
  */
@@ -17,37 +22,40 @@ export async function GET(request: NextRequest) {
   }
 
   const url = new URL(request.url);
+  const path = url.searchParams.get("path");
+  if (!path || !path.startsWith("/")) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "bad_request",
+        message: "Missing or invalid 'path' parameter (must start with '/').",
+      },
+      { status: 400 }
+    );
+  }
+
   const skipCache = url.searchParams.get("refresh") === "1";
 
   try {
-    const env = getCloudflareEnv() as unknown as Ga4Env;
-    const metrics = await getDashboardMetrics(env, { skipCache });
-    return NextResponse.json({ success: true, metrics });
+    const env = getCloudflareEnv() as unknown as ScEnv;
+    const queries = await getSearchQueriesForPage(env, path, { skipCache });
+    return NextResponse.json({ success: true, path, queries });
   } catch (error) {
-    if (error instanceof Ga4ConfigError) {
+    if (error instanceof ScConfigError) {
       return NextResponse.json(
         { success: false, error: "config", message: error.message },
         { status: 503 }
       );
     }
-    if (error instanceof Ga4ApiError) {
+    if (error instanceof ScApiError) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "ga4_api",
-          status: error.status,
-          message: error.detail,
-        },
+        { success: false, error: "sc_api", status: error.status, message: error.detail },
         { status: 502 }
       );
     }
     if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json(
-        {
-          success: false,
-          error: "timeout",
-          message: "GA4 request timed out",
-        },
+        { success: false, error: "timeout", message: "Search Console request timed out" },
         { status: 504 }
       );
     }

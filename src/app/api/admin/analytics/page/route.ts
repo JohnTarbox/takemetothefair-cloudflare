@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { Ga4ApiError, Ga4ConfigError, getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
+import { Ga4ApiError, Ga4ConfigError, getPageMetrics, type Ga4Env } from "@/lib/ga4";
 
 export const runtime = "edge";
 
 /**
- * GET /api/admin/analytics/ga4
- * Returns server-fetched GA4 metrics for the admin analytics page.
+ * GET /api/admin/analytics/page?path=/events
+ * Returns per-page GA4 metrics (totals, deltas, daily series, sources, devices, events).
  * Pass ?refresh=1 to bypass KV caches.
  * Auth: admin session OR X-Internal-Key header (for MCP server).
  */
@@ -17,11 +17,23 @@ export async function GET(request: NextRequest) {
   }
 
   const url = new URL(request.url);
+  const path = url.searchParams.get("path");
+  if (!path || !path.startsWith("/")) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "bad_request",
+        message: "Missing or invalid 'path' parameter (must start with '/').",
+      },
+      { status: 400 }
+    );
+  }
+
   const skipCache = url.searchParams.get("refresh") === "1";
 
   try {
     const env = getCloudflareEnv() as unknown as Ga4Env;
-    const metrics = await getDashboardMetrics(env, { skipCache });
+    const metrics = await getPageMetrics(env, path, { skipCache });
     return NextResponse.json({ success: true, metrics });
   } catch (error) {
     if (error instanceof Ga4ConfigError) {
@@ -32,22 +44,13 @@ export async function GET(request: NextRequest) {
     }
     if (error instanceof Ga4ApiError) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "ga4_api",
-          status: error.status,
-          message: error.detail,
-        },
+        { success: false, error: "ga4_api", status: error.status, message: error.detail },
         { status: 502 }
       );
     }
     if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json(
-        {
-          success: false,
-          error: "timeout",
-          message: "GA4 request timed out",
-        },
+        { success: false, error: "timeout", message: "GA4 request timed out" },
         { status: 504 }
       );
     }

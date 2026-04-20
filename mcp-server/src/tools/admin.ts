@@ -1034,6 +1034,166 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  // ── Analytics tools (read-only, proxy to Next.js API) ───────────
+  // All four call the main app's admin analytics endpoints with an
+  // X-Internal-Key header. MAIN_APP_URL + INTERNAL_API_KEY must both
+  // be set in the MCP worker environment.
+
+  async function fetchAnalyticsJson(path: string): Promise<unknown> {
+    if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+      throw new Error(
+        "Analytics requires MAIN_APP_URL and INTERNAL_API_KEY to be configured in the MCP server environment."
+      );
+    }
+    const response = await fetch(`${env.MAIN_APP_URL}${path}`, {
+      method: "GET",
+      headers: { "X-Internal-Key": env.INTERNAL_API_KEY },
+    });
+    const text = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error(
+        `Analytics API returned non-JSON (${response.status}): ${text.slice(0, 200)}`
+      );
+    }
+    if (!response.ok) {
+      const errObj = parsed as { error?: string; message?: string };
+      throw new Error(
+        `Analytics API error (${response.status}): ${errObj.message ?? errObj.error ?? "unknown"}`
+      );
+    }
+    return parsed;
+  }
+
+  server.tool(
+    "get_analytics_overview",
+    "Get site-wide GA4 analytics overview: active users (7d + 28d), top 20 pages by views, top 15 events, top 10 traffic sources. Data covers the last 28 days. Admin only.",
+    {
+      refresh: z
+        .boolean()
+        .optional()
+        .describe("Bypass the 10-minute cache and fetch fresh data (default false)"),
+    },
+    async (params) => {
+      try {
+        const query = params.refresh ? "?refresh=1" : "";
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/ga4${query}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown error fetching overview",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "list_top_pages",
+    "List the top 20 pages by views from the last 28 days, sorted by traffic. Useful for 'what pages should I focus on?' analysis. Returns path, title, views, and unique users for each. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)"),
+    },
+    async (params) => {
+      try {
+        const query = params.refresh ? "?refresh=1" : "";
+        const data = (await fetchAnalyticsJson(`/api/admin/analytics/ga4${query}`)) as {
+          success: boolean;
+          metrics?: { topPages?: unknown; generatedAt?: string };
+        };
+        return {
+          content: [
+            jsonContent({
+              topPages: data.metrics?.topPages ?? [],
+              generatedAt: data.metrics?.generatedAt,
+            }),
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown error listing top pages",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_page_analytics",
+    "Get detailed analytics for a single page URL path: view totals with 28-day period-over-period deltas, daily views series, traffic sources, device breakdown, and GA4 events fired on that page. Use list_top_pages first if you don't know which path to query. Admin only.",
+    {
+      path: z
+        .string()
+        .startsWith("/")
+        .describe("URL path, must begin with '/'. Example: '/events' or '/blog/my-post'"),
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)"),
+    },
+    async (params) => {
+      try {
+        const query = new URLSearchParams({ path: params.path });
+        if (params.refresh) query.set("refresh", "1");
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/page?${query.toString()}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching page analytics",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_search_queries",
+    "Get top Google Search Console queries that led to a specific page in the last 30 days. Returns query text, clicks, impressions, CTR, and average SERP position. Use this to spot SEO opportunities (high-impression / low-click queries) or to find which keywords a page ranks for. Admin only.",
+    {
+      path: z
+        .string()
+        .startsWith("/")
+        .describe("URL path, must begin with '/'. Example: '/events' or '/blog/my-post'"),
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)"),
+    },
+    async (params) => {
+      try {
+        const query = new URLSearchParams({ path: params.path });
+        if (params.refresh) query.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/search-queries?${query.toString()}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching search queries",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── update_venue ──────────────────────────────────────────────
   server.tool(
     "update_venue",
