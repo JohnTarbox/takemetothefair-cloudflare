@@ -1,19 +1,18 @@
-import { SignJWT, importPKCS8 } from "jose";
+import {
+  getGoogleAccessToken,
+  GoogleAuthConfigError,
+  GoogleAuthError,
+  type GoogleAuthEnv,
+} from "./google-auth";
 
-const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GA4_API_BASE = "https://analyticsdata.googleapis.com/v1beta";
-const SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
-
-const TOKEN_CACHE_KEY = "ga4:access_token";
-const TOKEN_CACHE_TTL = 3000;
+const GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
+const GA4_TOKEN_CACHE_KEY = "ga4:access_token";
 const REPORT_CACHE_TTL = 600;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-export type Ga4Env = {
+export type Ga4Env = GoogleAuthEnv & {
   GA4_PROPERTY_ID?: string;
-  GA4_SA_CLIENT_EMAIL?: string;
-  GA4_SA_PRIVATE_KEY?: string;
-  RATE_LIMIT_KV?: KVNamespace;
 };
 
 export class Ga4ConfigError extends Error {
@@ -34,91 +33,52 @@ export class Ga4ApiError extends Error {
   }
 }
 
-type ResolvedConfig = {
-  propertyId: string;
-  clientEmail: string;
-  privateKey: string;
-};
-
-function resolveConfig(env: Ga4Env): ResolvedConfig {
+function resolveConfig(env: Ga4Env): { propertyId: string } {
   const propertyId = env.GA4_PROPERTY_ID?.trim();
-  const clientEmail = env.GA4_SA_CLIENT_EMAIL?.trim();
-  const rawKey = env.GA4_SA_PRIVATE_KEY;
-
-  const missing: string[] = [];
-  if (!propertyId) missing.push("GA4_PROPERTY_ID");
-  if (!clientEmail) missing.push("GA4_SA_CLIENT_EMAIL");
-  if (!rawKey) missing.push("GA4_SA_PRIVATE_KEY");
-  if (missing.length) {
+  if (!propertyId) {
     throw new Ga4ConfigError(
-      `Missing GA4 environment variables: ${missing.join(", ")}. See .env.example for setup.`
+      "Missing GA4 environment variable: GA4_PROPERTY_ID. See .env.example for setup."
     );
   }
-
-  const privateKey = rawKey!.replace(/\\n/g, "\n").trim();
-  return { propertyId: propertyId!, clientEmail: clientEmail!, privateKey };
+  return { propertyId };
 }
 
 export async function getGa4AccessToken(
   env: Ga4Env,
   opts: { skipCache?: boolean } = {}
 ): Promise<string> {
-  const kv = env.RATE_LIMIT_KV;
-  if (!opts.skipCache && kv) {
-    const cached = await kv.get(TOKEN_CACHE_KEY);
-    if (cached) return cached;
-  }
-
-  const { clientEmail, privateKey } = resolveConfig(env);
-  const key = await importPKCS8(privateKey, "RS256");
-  const now = Math.floor(Date.now() / 1000);
-  const jwt = await new SignJWT({ scope: SCOPE })
-    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
-    .setIssuer(clientEmail)
-    .setAudience(OAUTH_TOKEN_URL)
-    .setIssuedAt(now)
-    .setExpirationTime(now + 3600)
-    .sign(key);
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let res: Response;
   try {
-    res = await fetch(OAUTH_TOKEN_URL, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: jwt,
-      }),
+    return await getGoogleAccessToken(env, GA4_SCOPE, {
+      skipCache: opts.skipCache,
+      cacheKey: GA4_TOKEN_CACHE_KEY,
     });
-  } finally {
-    clearTimeout(timeoutId);
+  } catch (error) {
+    if (error instanceof GoogleAuthConfigError) {
+      throw new Ga4ConfigError(error.message);
+    }
+    if (error instanceof GoogleAuthError) {
+      throw new Ga4ApiError(error.status, error.detail);
+    }
+    throw error;
   }
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Ga4ApiError(res.status, `OAuth token exchange failed: ${text.slice(0, 500)}`);
-  }
-  const json = (await res.json()) as {
-    access_token?: string;
-    expires_in?: number;
-  };
-  if (!json.access_token) {
-    throw new Ga4ApiError(500, "OAuth response missing access_token");
-  }
-
-  if (kv) {
-    const ttl = Math.min(json.expires_in ?? 3600, TOKEN_CACHE_TTL);
-    await kv.put(TOKEN_CACHE_KEY, json.access_token, { expirationTtl: ttl });
-  }
-  return json.access_token;
 }
 
 type OrderBy =
   | { metric: { metricName: string }; desc?: boolean }
   | { dimension: { dimensionName: string }; desc?: boolean };
+
+type StringFilter = {
+  matchType?: "EXACT" | "BEGINS_WITH" | "ENDS_WITH" | "CONTAINS" | "FULL_REGEXP";
+  value: string;
+  caseSensitive?: boolean;
+};
+
+type DimensionFilterExpression = {
+  filter?: { fieldName: string; stringFilter?: StringFilter };
+  andGroup?: { expressions: DimensionFilterExpression[] };
+  orGroup?: { expressions: DimensionFilterExpression[] };
+  notExpression?: DimensionFilterExpression;
+};
 
 export type RunReportRequest = {
   dateRanges: Array<{ startDate: string; endDate: string; name?: string }>;
@@ -126,6 +86,7 @@ export type RunReportRequest = {
   metrics: Array<{ name: string }>;
   orderBys?: OrderBy[];
   limit?: number;
+  dimensionFilter?: DimensionFilterExpression;
 };
 
 export type RunReportResponse = {
@@ -341,6 +302,179 @@ export async function getDashboardMetrics(
     topPages,
     topEvents,
     trafficSources,
+    propertyId,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export type PageViewsDay = { date: string; views: number; users: number };
+export type DeviceRow = { category: string; sessions: number; activeUsers: number };
+export type PageEventRow = { eventName: string; count: number };
+
+export type PageTotals = {
+  views: number;
+  activeUsers: number;
+  sessions: number;
+  engagementRate: number;
+};
+
+export type PageMetrics = {
+  path: string;
+  title: string;
+  totals: PageTotals;
+  previousTotals: PageTotals;
+  byDay: PageViewsDay[];
+  trafficSources: TrafficSourceRow[];
+  devices: DeviceRow[];
+  events: PageEventRow[];
+  propertyId: string;
+  generatedAt: string;
+};
+
+function pagePathFilter(path: string): DimensionFilterExpression {
+  return {
+    filter: {
+      fieldName: "pagePath",
+      stringFilter: { matchType: "EXACT", value: path, caseSensitive: false },
+    },
+  };
+}
+
+export async function getPageMetrics(
+  env: Ga4Env,
+  path: string,
+  opts: { skipCache?: boolean } = {}
+): Promise<PageMetrics> {
+  const { propertyId } = resolveConfig(env);
+  const accessToken = await getGa4AccessToken(env, {
+    skipCache: opts.skipCache,
+  });
+  const passthrough = { skipCache: opts.skipCache, accessToken };
+  const dimensionFilter = pagePathFilter(path);
+  const last28 = [{ startDate: "28daysAgo", endDate: "today" }];
+  const prev28 = [{ startDate: "56daysAgo", endDate: "29daysAgo" }];
+
+  const totalsMetrics = [
+    { name: "screenPageViews" },
+    { name: "activeUsers" },
+    { name: "sessions" },
+    { name: "engagementRate" },
+  ];
+
+  const [totalsRes, prevTotalsRes, titleRes, byDayRes, trafficRes, deviceRes, eventsRes] =
+    await Promise.all([
+      runReport(env, { dateRanges: last28, metrics: totalsMetrics, dimensionFilter }, passthrough),
+      runReport(env, { dateRanges: prev28, metrics: totalsMetrics, dimensionFilter }, passthrough),
+      runReport(
+        env,
+        {
+          dateRanges: last28,
+          dimensions: [{ name: "pageTitle" }],
+          metrics: [{ name: "screenPageViews" }],
+          orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+          limit: 1,
+          dimensionFilter,
+        },
+        passthrough
+      ),
+      runReport(
+        env,
+        {
+          dateRanges: last28,
+          dimensions: [{ name: "date" }],
+          metrics: [{ name: "screenPageViews" }, { name: "activeUsers" }],
+          limit: 31,
+          dimensionFilter,
+        },
+        passthrough
+      ),
+      runReport(
+        env,
+        {
+          dateRanges: last28,
+          dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
+          metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+          limit: 10,
+          dimensionFilter,
+        },
+        passthrough
+      ),
+      runReport(
+        env,
+        {
+          dateRanges: last28,
+          dimensions: [{ name: "deviceCategory" }],
+          metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+          dimensionFilter,
+        },
+        passthrough
+      ),
+      runReport(
+        env,
+        {
+          dateRanges: last28,
+          dimensions: [{ name: "eventName" }],
+          metrics: [{ name: "eventCount" }],
+          orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
+          limit: 15,
+          dimensionFilter,
+        },
+        passthrough
+      ),
+    ]);
+
+  const parseTotals = (rows?: RunReportResponse["rows"]): PageTotals => {
+    const mv = rows?.[0]?.metricValues;
+    return {
+      views: toNumber(mv?.[0]?.value),
+      activeUsers: toNumber(mv?.[1]?.value),
+      sessions: toNumber(mv?.[2]?.value),
+      engagementRate: toNumber(mv?.[3]?.value),
+    };
+  };
+
+  const totals = parseTotals(totalsRes.rows);
+  const previousTotals = parseTotals(prevTotalsRes.rows);
+  const title = titleRes.rows?.[0]?.dimensionValues?.[0]?.value ?? "";
+
+  const byDay: PageViewsDay[] = (byDayRes.rows ?? [])
+    .map((row) => ({
+      date: row.dimensionValues?.[0]?.value ?? "",
+      views: toNumber(row.metricValues?.[0]?.value),
+      users: toNumber(row.metricValues?.[1]?.value),
+    }))
+    .filter((d) => d.date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const trafficSources: TrafficSourceRow[] = (trafficRes.rows ?? []).map((row) => ({
+    source: row.dimensionValues?.[0]?.value ?? "",
+    medium: row.dimensionValues?.[1]?.value ?? "",
+    sessions: toNumber(row.metricValues?.[0]?.value),
+    activeUsers: toNumber(row.metricValues?.[1]?.value),
+  }));
+
+  const devices: DeviceRow[] = (deviceRes.rows ?? []).map((row) => ({
+    category: row.dimensionValues?.[0]?.value ?? "",
+    sessions: toNumber(row.metricValues?.[0]?.value),
+    activeUsers: toNumber(row.metricValues?.[1]?.value),
+  }));
+
+  const events: PageEventRow[] = (eventsRes.rows ?? []).map((row) => ({
+    eventName: row.dimensionValues?.[0]?.value ?? "",
+    count: toNumber(row.metricValues?.[0]?.value),
+  }));
+
+  return {
+    path,
+    title,
+    totals,
+    previousTotals,
+    byDay,
+    trafficSources,
+    devices,
+    events,
     propertyId,
     generatedAt: new Date().toISOString(),
   };

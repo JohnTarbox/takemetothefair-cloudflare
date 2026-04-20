@@ -111,8 +111,13 @@ function MetricsView({ data }: { data: DashboardMetrics }) {
               ) : (
                 data.topPages.map((row, i) => (
                   <tr key={`${row.path}-${i}`}>
-                    <td className="px-6 py-2 font-mono text-xs text-gray-900 truncate max-w-xs">
-                      {row.path}
+                    <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
+                      <Link
+                        href={`/admin/analytics/page?path=${encodeURIComponent(row.path)}`}
+                        className="text-blue-600 hover:text-blue-700 hover:underline"
+                      >
+                        {row.path}
+                      </Link>
                     </td>
                     <td className="px-6 py-2 text-gray-700 truncate max-w-xs">{row.title}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.views)}</td>
