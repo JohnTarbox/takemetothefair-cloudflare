@@ -9,6 +9,7 @@ import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
+import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import type { AuthContext } from "./auth.js";
@@ -67,7 +68,12 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         if (props.role === "PROMOTER" || props.role === "ADMIN")
           toolSets.push("promoter tools (3)");
         if (props.role === "ADMIN")
-          toolSets.push("admin tools (27)", "blog tools (6)", "content-links tools (4)");
+          toolSets.push(
+            "admin tools (16)",
+            "analytics tools (11)",
+            "blog tools (6)",
+            "content-links tools (4)"
+          );
         return {
           content: [
             {
@@ -113,6 +119,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       }
       if (auth.role === "ADMIN") {
         registerAdminTools(this.server, db, auth, this.env);
+        registerAnalyticsTools(this.server, auth, this.env);
         registerBlogTools(this.server, db, auth, this.env);
         registerContentLinksTools(this.server, db, auth);
       }
@@ -186,6 +193,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     if (auth.role === "PROMOTER" || auth.role === "ADMIN") registerPromoterTools(server, db, auth);
     if (auth.role === "ADMIN") {
       registerAdminTools(server, db, auth, env);
+      registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth);
     }
