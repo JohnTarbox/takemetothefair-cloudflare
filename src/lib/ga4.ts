@@ -4,6 +4,7 @@ import {
   GoogleAuthError,
   type GoogleAuthEnv,
 } from "./google-auth";
+import { resolveDateRange, type DateRangeInput, type ResolvedDateRange } from "./analytics-params";
 
 const GA4_API_BASE = "https://analyticsdata.googleapis.com/v1beta";
 const GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
@@ -181,18 +182,60 @@ export type TrafficSourceRow = {
   activeUsers: number;
 };
 
+export type DateRangeDescriptor = {
+  startDate: string;
+  endDate: string;
+  days: number;
+  label?: string;
+};
+
 export type DashboardMetrics = {
   activeUsers: {
     last7d: number;
     last28d: number;
     byDay: ActiveUsersDay[];
+    current?: number;
+    previous?: number;
+    change?: number;
   };
   topPages: TopPageRow[];
   topEvents: TopEventRow[];
   trafficSources: TrafficSourceRow[];
+  dateRange?: DateRangeDescriptor;
+  previousDateRange?: DateRangeDescriptor;
   propertyId: string;
   generatedAt: string;
 };
+
+export type TopPagesOpts = {
+  pathPrefix?: string;
+  rowLimit?: number;
+  orderBy?: "views" | "users" | "sessions" | "engagementRate";
+  minViews?: number;
+};
+
+function pagePathPrefixFilter(prefix: string): DimensionFilterExpression {
+  return {
+    filter: {
+      fieldName: "pagePath",
+      stringFilter: { matchType: "BEGINS_WITH", value: prefix, caseSensitive: false },
+    },
+  };
+}
+
+function orderByMetricForTopPages(orderBy?: TopPagesOpts["orderBy"]): string {
+  switch (orderBy) {
+    case "users":
+      return "activeUsers";
+    case "sessions":
+      return "sessions";
+    case "engagementRate":
+      return "engagementRate";
+    case "views":
+    default:
+      return "screenPageViews";
+  }
+}
 
 function toNumber(value?: string): number {
   const n = Number(value ?? 0);
@@ -201,7 +244,12 @@ function toNumber(value?: string): number {
 
 export async function getDashboardMetrics(
   env: Ga4Env,
-  opts: { skipCache?: boolean } = {}
+  opts: {
+    skipCache?: boolean;
+    dateRange?: DateRangeInput;
+    comparePreviousPeriod?: boolean;
+    topPages?: TopPagesOpts;
+  } = {}
 ): Promise<DashboardMetrics> {
   const { propertyId } = resolveConfig(env);
   const accessToken = await getGa4AccessToken(env, {
@@ -209,13 +257,38 @@ export async function getDashboardMetrics(
   });
   const passthrough = { skipCache: opts.skipCache, accessToken };
 
+  // Default: preserve legacy behavior when no dateRange provided (last 28d).
+  const usesCustomRange = !!(opts.dateRange?.startDate || opts.dateRange?.preset);
+  const resolvedRange: ResolvedDateRange | null = usesCustomRange
+    ? resolveDateRange(opts.dateRange, { defaultPreset: "last_28d" })
+    : null;
+
+  const rangeForQuery = resolvedRange
+    ? [{ startDate: resolvedRange.startDate, endDate: resolvedRange.endDate }]
+    : [{ startDate: "28daysAgo", endDate: "today" }];
+  const prevRangeForQuery = resolvedRange
+    ? [{ startDate: resolvedRange.previousStartDate, endDate: resolvedRange.previousEndDate }]
+    : [{ startDate: "56daysAgo", endDate: "29daysAgo" }];
   const last28 = [{ startDate: "28daysAgo", endDate: "today" }];
   const last7 = [{ startDate: "7daysAgo", endDate: "today" }];
+  const byDayLimit = resolvedRange ? Math.min(resolvedRange.days + 1, 400) : 31;
+
+  // Top-pages report controls
+  const topPagesOpts = opts.topPages ?? {};
+  const topPagesRowLimit = Math.min(topPagesOpts.rowLimit ?? 20, 200);
+  const topPagesOrderMetric = orderByMetricForTopPages(topPagesOpts.orderBy);
+  const topPagesFilter = topPagesOpts.pathPrefix
+    ? pagePathPrefixFilter(topPagesOpts.pathPrefix)
+    : undefined;
+
+  const wantsCompare = !!opts.comparePreviousPeriod;
 
   const [
     activeByDayRes,
     activeUsers7dRes,
     activeUsers28dRes,
+    activeUsersCurrentRes,
+    activeUsersPreviousRes,
     topPagesRes,
     topEventsRes,
     trafficRes,
@@ -223,30 +296,50 @@ export async function getDashboardMetrics(
     runReport(
       env,
       {
-        dateRanges: last28,
+        dateRanges: rangeForQuery,
         dimensions: [{ name: "date" }],
         metrics: [{ name: "activeUsers" }],
-        limit: 31,
+        limit: byDayLimit,
       },
       passthrough
     ),
     runReport(env, { dateRanges: last7, metrics: [{ name: "activeUsers" }] }, passthrough),
     runReport(env, { dateRanges: last28, metrics: [{ name: "activeUsers" }] }, passthrough),
+    resolvedRange
+      ? runReport(
+          env,
+          { dateRanges: rangeForQuery, metrics: [{ name: "activeUsers" }] },
+          passthrough
+        )
+      : Promise.resolve({ rows: [] }),
+    wantsCompare
+      ? runReport(
+          env,
+          { dateRanges: prevRangeForQuery, metrics: [{ name: "activeUsers" }] },
+          passthrough
+        )
+      : Promise.resolve({ rows: [] }),
     runReport(
       env,
       {
-        dateRanges: last28,
+        dateRanges: rangeForQuery,
         dimensions: [{ name: "pagePath" }, { name: "pageTitle" }],
-        metrics: [{ name: "screenPageViews" }, { name: "activeUsers" }],
-        orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
-        limit: 20,
+        metrics: [
+          { name: "screenPageViews" },
+          { name: "activeUsers" },
+          { name: "sessions" },
+          { name: "engagementRate" },
+        ],
+        orderBys: [{ metric: { metricName: topPagesOrderMetric }, desc: true }],
+        limit: topPagesRowLimit,
+        dimensionFilter: topPagesFilter,
       },
       passthrough
     ),
     runReport(
       env,
       {
-        dateRanges: last28,
+        dateRanges: rangeForQuery,
         dimensions: [{ name: "eventName" }],
         metrics: [{ name: "eventCount" }],
         orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
@@ -257,7 +350,7 @@ export async function getDashboardMetrics(
     runReport(
       env,
       {
-        dateRanges: last28,
+        dateRanges: rangeForQuery,
         dimensions: [{ name: "sessionSource" }, { name: "sessionMedium" }],
         metrics: [{ name: "sessions" }, { name: "activeUsers" }],
         orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
@@ -278,12 +371,26 @@ export async function getDashboardMetrics(
   const last7d = toNumber(activeUsers7dRes.rows?.[0]?.metricValues?.[0]?.value);
   const last28d = toNumber(activeUsers28dRes.rows?.[0]?.metricValues?.[0]?.value);
 
-  const topPages: TopPageRow[] = (topPagesRes.rows ?? []).map((row) => ({
-    path: row.dimensionValues?.[0]?.value ?? "",
-    title: row.dimensionValues?.[1]?.value ?? "",
-    views: toNumber(row.metricValues?.[0]?.value),
-    activeUsers: toNumber(row.metricValues?.[1]?.value),
-  }));
+  const currentActiveUsers = resolvedRange
+    ? toNumber(activeUsersCurrentRes.rows?.[0]?.metricValues?.[0]?.value)
+    : undefined;
+  const previousActiveUsers = wantsCompare
+    ? toNumber(activeUsersPreviousRes.rows?.[0]?.metricValues?.[0]?.value)
+    : undefined;
+  const change =
+    wantsCompare && previousActiveUsers !== undefined && previousActiveUsers > 0
+      ? ((currentActiveUsers ?? 0) - previousActiveUsers) / previousActiveUsers
+      : undefined;
+
+  const minViewsFilter = topPagesOpts.minViews ?? 0;
+  const topPages: TopPageRow[] = (topPagesRes.rows ?? [])
+    .map((row) => ({
+      path: row.dimensionValues?.[0]?.value ?? "",
+      title: row.dimensionValues?.[1]?.value ?? "",
+      views: toNumber(row.metricValues?.[0]?.value),
+      activeUsers: toNumber(row.metricValues?.[1]?.value),
+    }))
+    .filter((row) => row.views >= minViewsFilter);
 
   const topEvents: TopEventRow[] = (topEventsRes.rows ?? []).map((row) => ({
     eventName: row.dimensionValues?.[0]?.value ?? "",
@@ -297,11 +404,39 @@ export async function getDashboardMetrics(
     activeUsers: toNumber(row.metricValues?.[1]?.value),
   }));
 
+  const dateRangeDescriptor: DateRangeDescriptor | undefined = resolvedRange
+    ? {
+        startDate: resolvedRange.startDate,
+        endDate: resolvedRange.endDate,
+        days: resolvedRange.days,
+        label: resolvedRange.label,
+      }
+    : undefined;
+  const previousDateRangeDescriptor: DateRangeDescriptor | undefined =
+    wantsCompare && resolvedRange
+      ? {
+          startDate: resolvedRange.previousStartDate,
+          endDate: resolvedRange.previousEndDate,
+          days: resolvedRange.days,
+        }
+      : wantsCompare
+        ? { startDate: "56daysAgo", endDate: "29daysAgo", days: 28 }
+        : undefined;
+
   return {
-    activeUsers: { last7d, last28d, byDay },
+    activeUsers: {
+      last7d,
+      last28d,
+      byDay,
+      ...(currentActiveUsers !== undefined ? { current: currentActiveUsers } : {}),
+      ...(previousActiveUsers !== undefined ? { previous: previousActiveUsers } : {}),
+      ...(change !== undefined ? { change } : {}),
+    },
     topPages,
     topEvents,
     trafficSources,
+    ...(dateRangeDescriptor ? { dateRange: dateRangeDescriptor } : {}),
+    ...(previousDateRangeDescriptor ? { previousDateRange: previousDateRangeDescriptor } : {}),
     propertyId,
     generatedAt: new Date().toISOString(),
   };
@@ -327,6 +462,8 @@ export type PageMetrics = {
   trafficSources: TrafficSourceRow[];
   devices: DeviceRow[];
   events: PageEventRow[];
+  dateRange?: DateRangeDescriptor;
+  previousDateRange?: DateRangeDescriptor;
   propertyId: string;
   generatedAt: string;
 };
@@ -343,7 +480,7 @@ function pagePathFilter(path: string): DimensionFilterExpression {
 export async function getPageMetrics(
   env: Ga4Env,
   path: string,
-  opts: { skipCache?: boolean } = {}
+  opts: { skipCache?: boolean; dateRange?: DateRangeInput } = {}
 ): Promise<PageMetrics> {
   const { propertyId } = resolveConfig(env);
   const accessToken = await getGa4AccessToken(env, {
@@ -351,8 +488,18 @@ export async function getPageMetrics(
   });
   const passthrough = { skipCache: opts.skipCache, accessToken };
   const dimensionFilter = pagePathFilter(path);
-  const last28 = [{ startDate: "28daysAgo", endDate: "today" }];
-  const prev28 = [{ startDate: "56daysAgo", endDate: "29daysAgo" }];
+
+  const usesCustomRange = !!(opts.dateRange?.startDate || opts.dateRange?.preset);
+  const resolvedRange: ResolvedDateRange | null = usesCustomRange
+    ? resolveDateRange(opts.dateRange, { defaultPreset: "last_28d" })
+    : null;
+  const last28 = resolvedRange
+    ? [{ startDate: resolvedRange.startDate, endDate: resolvedRange.endDate }]
+    : [{ startDate: "28daysAgo", endDate: "today" }];
+  const prev28 = resolvedRange
+    ? [{ startDate: resolvedRange.previousStartDate, endDate: resolvedRange.previousEndDate }]
+    : [{ startDate: "56daysAgo", endDate: "29daysAgo" }];
+  const byDayLimit = resolvedRange ? Math.min(resolvedRange.days + 1, 400) : 31;
 
   const totalsMetrics = [
     { name: "screenPageViews" },
@@ -383,7 +530,7 @@ export async function getPageMetrics(
           dateRanges: last28,
           dimensions: [{ name: "date" }],
           metrics: [{ name: "screenPageViews" }, { name: "activeUsers" }],
-          limit: 31,
+          limit: byDayLimit,
           dimensionFilter,
         },
         passthrough
@@ -466,6 +613,22 @@ export async function getPageMetrics(
     count: toNumber(row.metricValues?.[0]?.value),
   }));
 
+  const dateRangeDescriptor: DateRangeDescriptor | undefined = resolvedRange
+    ? {
+        startDate: resolvedRange.startDate,
+        endDate: resolvedRange.endDate,
+        days: resolvedRange.days,
+        label: resolvedRange.label,
+      }
+    : undefined;
+  const previousDateRangeDescriptor: DateRangeDescriptor | undefined = resolvedRange
+    ? {
+        startDate: resolvedRange.previousStartDate,
+        endDate: resolvedRange.previousEndDate,
+        days: resolvedRange.days,
+      }
+    : undefined;
+
   return {
     path,
     title,
@@ -475,6 +638,8 @@ export async function getPageMetrics(
     trafficSources,
     devices,
     events,
+    ...(dateRangeDescriptor ? { dateRange: dateRangeDescriptor } : {}),
+    ...(previousDateRangeDescriptor ? { previousDateRange: previousDateRangeDescriptor } : {}),
     propertyId,
     generatedAt: new Date().toISOString(),
   };

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
-import { trackEvent, trackZeroResults } from "@/lib/analytics";
+import { trackEvent, trackSearchResults, trackZeroResults } from "@/lib/analytics";
 
 interface SearchResults {
   events: { name: string; slug: string; startDate: string | null }[];
@@ -40,6 +40,9 @@ export function GlobalSearch() {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
       const data: SearchResults = await res.json();
       setResults(data);
+      const total =
+        data.events.length + data.venues.length + data.vendors.length + data.blogPosts.length;
+      trackSearchResults(q, total);
     } catch {
       setResults(null);
     } finally {

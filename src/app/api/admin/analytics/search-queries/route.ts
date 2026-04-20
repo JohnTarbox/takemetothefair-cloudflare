@@ -7,13 +7,14 @@ import {
   ScConfigError,
   type ScEnv,
 } from "@/lib/search-console";
+import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
 export const runtime = "edge";
 
 /**
  * GET /api/admin/analytics/search-queries?path=/events
- * Returns top Search Console queries for a specific page (last 30 days).
- * Pass ?refresh=1 to bypass KV caches.
+ * Returns top Search Console queries for a specific page.
+ * Query params: path (required), startDate, endDate, preset, rowLimit, refresh.
  * Auth: admin session OR X-Internal-Key header (for MCP server).
  */
 export async function GET(request: NextRequest) {
@@ -34,13 +35,23 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const skipCache = url.searchParams.get("refresh") === "1";
+  const params = parseAnalyticsParams(url.searchParams);
 
   try {
     const env = getCloudflareEnv() as unknown as ScEnv;
-    const queries = await getSearchQueriesForPage(env, path, { skipCache });
+    const queries = await getSearchQueriesForPage(env, path, {
+      skipCache: params.refresh,
+      dateRange: params.dateRange,
+      rowLimit: params.rowLimit,
+    });
     return NextResponse.json({ success: true, path, queries });
   } catch (error) {
+    if (error instanceof DateRangeError) {
+      return NextResponse.json(
+        { success: false, error: "bad_request", message: error.message },
+        { status: 400 }
+      );
+    }
     if (error instanceof ScConfigError) {
       return NextResponse.json(
         { success: false, error: "config", message: error.message },

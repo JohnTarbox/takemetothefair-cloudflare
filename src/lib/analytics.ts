@@ -74,6 +74,18 @@ export function trackZeroResults(query: string) {
   });
 }
 
+/** Track a completed site search with the number of results. Fires once per
+ *  distinct (query, resultsCount) pair so re-renders don't re-emit. */
+export function trackSearchResults(searchTerm: string, resultsCount: number) {
+  trackEvent("view_search_results", {
+    category: "engagement",
+    label: searchTerm,
+    value: resultsCount,
+    search_term: searchTerm,
+    results_count: resultsCount,
+  });
+}
+
 // ── Engagement tracking ──────────────────────────────────
 
 /** Track scroll depth milestones (25%, 50%, 75%, 100%) */

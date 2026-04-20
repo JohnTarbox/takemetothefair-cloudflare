@@ -1067,19 +1067,96 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     return parsed;
   }
 
+  // Shared Zod schemas for analytics date-range + filter params
+  const PRESET_LABELS = [
+    "last_7d",
+    "last_28d",
+    "last_30d",
+    "last_90d",
+    "last_365d",
+    "mtd",
+    "ytd",
+    "prev_7d",
+    "prev_28d",
+  ] as const;
+  const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  const dateRangeFields = {
+    startDate: z
+      .string()
+      .regex(ISO_DATE_REGEX)
+      .optional()
+      .describe("Inclusive start date, ISO YYYY-MM-DD. Mutually exclusive with preset."),
+    endDate: z
+      .string()
+      .regex(ISO_DATE_REGEX)
+      .optional()
+      .describe("Inclusive end date, ISO YYYY-MM-DD. Defaults to yesterday."),
+    preset: z
+      .enum(PRESET_LABELS)
+      .optional()
+      .describe(
+        "Named date range. Use instead of startDate/endDate. Options: last_7d, last_28d, last_30d, last_90d, last_365d, mtd, ytd, prev_7d, prev_28d."
+      ),
+  };
+
+  function buildDateQuery(params: {
+    startDate?: string;
+    endDate?: string;
+    preset?: string;
+    refresh?: boolean;
+  }): URLSearchParams {
+    const qs = new URLSearchParams();
+    if (params.startDate) qs.set("startDate", params.startDate);
+    if (params.endDate) qs.set("endDate", params.endDate);
+    if (params.preset) qs.set("preset", params.preset);
+    if (params.refresh) qs.set("refresh", "1");
+    return qs;
+  }
+
   server.tool(
     "get_analytics_overview",
-    "Get site-wide GA4 analytics overview: active users (7d + 28d), top 20 pages by views, top 15 events, top 10 traffic sources. Data covers the last 28 days. Admin only.",
+    "Site-wide GA4 overview: active users, top pages, top events, top traffic sources. Default window is last 28 days ending yesterday; pass preset or startDate/endDate to override. Pass comparePreviousPeriod:true for delta vs the prior equal-length period. Admin only.",
     {
-      refresh: z
+      ...dateRangeFields,
+      comparePreviousPeriod: z
         .boolean()
         .optional()
-        .describe("Bypass the 10-minute cache and fetch fresh data (default false)"),
+        .describe(
+          "When true, response adds previousTotals for the period immediately preceding the requested range. Default false."
+        ),
+      pathPrefix: z
+        .string()
+        .optional()
+        .describe("Filter topPages array to paths starting with this prefix (e.g. '/blog/')."),
+      rowLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Max rows in topPages (default 20, max 200)."),
+      orderBy: z
+        .enum(["views", "users", "sessions", "engagementRate"])
+        .optional()
+        .describe("Sort order for topPages (default views)."),
+      minViews: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Drop topPages rows with fewer views than this."),
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)."),
     },
     async (params) => {
       try {
-        const query = params.refresh ? "?refresh=1" : "";
-        const data = await fetchAnalyticsJson(`/api/admin/analytics/ga4${query}`);
+        const qs = buildDateQuery(params);
+        if (params.comparePreviousPeriod) qs.set("comparePreviousPeriod", "true");
+        if (params.pathPrefix) qs.set("pathPrefix", params.pathPrefix);
+        if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
+        if (params.orderBy) qs.set("orderBy", params.orderBy);
+        if (params.minViews !== undefined) qs.set("minViews", String(params.minViews));
+        const q = qs.toString();
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/ga4${q ? "?" + q : ""}`);
         return { content: [jsonContent(data)] };
       } catch (error) {
         return {
@@ -1097,21 +1174,49 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   server.tool(
     "list_top_pages",
-    "List the top 20 pages by views from the last 28 days, sorted by traffic. Useful for 'what pages should I focus on?' analysis. Returns path, title, views, and unique users for each. Admin only.",
+    "Top pages by traffic over a date window. Defaults to top 20 for the last 28 days; use pathPrefix to scope to a subtree (e.g. '/blog/'), rowLimit to fetch more, orderBy to sort differently. Admin only.",
     {
-      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)"),
+      ...dateRangeFields,
+      pathPrefix: z
+        .string()
+        .optional()
+        .describe("Filter to paths starting with this (e.g. '/blog/', '/events/')."),
+      rowLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Max rows to return (default 20, max 200)."),
+      orderBy: z
+        .enum(["views", "users", "sessions", "engagementRate"])
+        .optional()
+        .describe("Sort order (default views)."),
+      minViews: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Drop rows with fewer views than this."),
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)."),
     },
     async (params) => {
       try {
-        const query = params.refresh ? "?refresh=1" : "";
-        const data = (await fetchAnalyticsJson(`/api/admin/analytics/ga4${query}`)) as {
+        const qs = buildDateQuery(params);
+        if (params.pathPrefix) qs.set("pathPrefix", params.pathPrefix);
+        if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
+        if (params.orderBy) qs.set("orderBy", params.orderBy);
+        if (params.minViews !== undefined) qs.set("minViews", String(params.minViews));
+        const q = qs.toString();
+        const data = (await fetchAnalyticsJson(`/api/admin/analytics/ga4${q ? "?" + q : ""}`)) as {
           success: boolean;
-          metrics?: { topPages?: unknown; generatedAt?: string };
+          metrics?: { topPages?: unknown; dateRange?: unknown; generatedAt?: string };
         };
         return {
           content: [
             jsonContent({
               topPages: data.metrics?.topPages ?? [],
+              dateRange: data.metrics?.dateRange,
               generatedAt: data.metrics?.generatedAt,
             }),
           ],
@@ -1132,19 +1237,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   server.tool(
     "get_page_analytics",
-    "Get detailed analytics for a single page URL path: view totals with 28-day period-over-period deltas, daily views series, traffic sources, device breakdown, and GA4 events fired on that page. Use list_top_pages first if you don't know which path to query. Admin only.",
+    "Detailed analytics for a single page path: totals with period-over-period deltas, daily views series, traffic sources, device breakdown, and GA4 events fired on that page. Defaults to last 28 days; pass preset or startDate/endDate to override. Admin only.",
     {
       path: z
         .string()
         .startsWith("/")
         .describe("URL path, must begin with '/'. Example: '/events' or '/blog/my-post'"),
-      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)"),
+      ...dateRangeFields,
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)."),
     },
     async (params) => {
       try {
-        const query = new URLSearchParams({ path: params.path });
-        if (params.refresh) query.set("refresh", "1");
-        const data = await fetchAnalyticsJson(`/api/admin/analytics/page?${query.toString()}`);
+        const qs = buildDateQuery(params);
+        qs.set("path", params.path);
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/page?${qs.toString()}`);
         return { content: [jsonContent(data)] };
       } catch (error) {
         return {
@@ -1163,20 +1269,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
   server.tool(
     "get_search_queries",
-    "Get top Google Search Console queries that led to a specific page in the last 30 days. Returns query text, clicks, impressions, CTR, and average SERP position. Use this to spot SEO opportunities (high-impression / low-click queries) or to find which keywords a page ranks for. Admin only.",
+    "Top Google Search Console queries that led to a specific page. Returns query text, clicks, impressions, CTR, and average SERP position. Default window is last 30 days ending 3 days ago (to account for GSC reporting lag). Admin only.",
     {
       path: z
         .string()
         .startsWith("/")
         .describe("URL path, must begin with '/'. Example: '/events' or '/blog/my-post'"),
-      refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)"),
+      ...dateRangeFields,
+      rowLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max rows to return (default 15, max 500)."),
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
     },
     async (params) => {
       try {
-        const query = new URLSearchParams({ path: params.path });
-        if (params.refresh) query.set("refresh", "1");
+        const qs = buildDateQuery(params);
+        qs.set("path", params.path);
+        if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
         const data = await fetchAnalyticsJson(
-          `/api/admin/analytics/search-queries?${query.toString()}`
+          `/api/admin/analytics/search-queries?${qs.toString()}`
         );
         return { content: [jsonContent(data)] };
       } catch (error) {
@@ -1186,6 +1301,66 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
               type: "text",
               text:
                 error instanceof Error ? error.message : "Unknown error fetching search queries",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_top_search_queries",
+    "Site-wide top Google Search Console queries aggregated across all pages. Each query row includes its top 3 ranking pages. Filter by pathPrefix (e.g. '/blog/') to scope to a subtree. Default window is last 28 days ending 3 days ago. Use this to find SEO opportunities without walking each page individually. Admin only.",
+    {
+      ...dateRangeFields,
+      pathPrefix: z
+        .string()
+        .optional()
+        .describe(
+          "Only include queries where at least one impression came from a path starting with this prefix (e.g. '/blog/')."
+        ),
+      rowLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max queries to return (default 50, max 500)."),
+      minImpressions: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Drop queries with fewer impressions than this."),
+      orderBy: z
+        .enum(["impressions", "clicks", "position", "ctr"])
+        .optional()
+        .describe("Sort order (default impressions desc; position sorts ascending)."),
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
+    },
+    async (params) => {
+      try {
+        const qs = buildDateQuery(params);
+        if (params.pathPrefix) qs.set("pathPrefix", params.pathPrefix);
+        if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
+        if (params.minImpressions !== undefined)
+          qs.set("minImpressions", String(params.minImpressions));
+        if (params.orderBy) qs.set("orderBy", params.orderBy);
+        const q = qs.toString();
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/search-queries/site${q ? "?" + q : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error fetching site-wide search queries",
             },
           ],
           isError: true,

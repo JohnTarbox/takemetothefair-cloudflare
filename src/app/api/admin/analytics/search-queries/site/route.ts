@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-import { Ga4ApiError, Ga4ConfigError, getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
+import { getSiteSearchQueries, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
 export const runtime = "edge";
 
+type ScOrderBy = "impressions" | "clicks" | "position" | "ctr";
+
 /**
- * GET /api/admin/analytics/ga4
- * Returns server-fetched GA4 metrics for the admin analytics page.
- * Query params: startDate, endDate, preset, comparePreviousPeriod, pathPrefix,
- *   rowLimit, orderBy, minViews, refresh.
+ * GET /api/admin/analytics/search-queries/site
+ * Returns site-wide Search Console queries aggregated across pages.
+ * Query params: pathPrefix, startDate, endDate, preset, rowLimit,
+ *   minImpressions, orderBy, refresh.
  * Auth: admin session OR X-Internal-Key header (for MCP server).
  */
 export async function GET(request: NextRequest) {
@@ -21,20 +23,30 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const params = parseAnalyticsParams(url.searchParams);
 
+  const allowedOrderBy: ScOrderBy[] = ["impressions", "clicks", "position", "ctr"];
+  const orderBy = params.orderBy as ScOrderBy | undefined;
+  if (orderBy && !allowedOrderBy.includes(orderBy)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "bad_request",
+        message: `orderBy must be one of: ${allowedOrderBy.join(", ")}`,
+      },
+      { status: 400 }
+    );
+  }
+
   try {
-    const env = getCloudflareEnv() as unknown as Ga4Env;
-    const metrics = await getDashboardMetrics(env, {
+    const env = getCloudflareEnv() as unknown as ScEnv;
+    const result = await getSiteSearchQueries(env, {
       skipCache: params.refresh,
       dateRange: params.dateRange,
-      comparePreviousPeriod: params.comparePreviousPeriod,
-      topPages: {
-        pathPrefix: params.pathPrefix,
-        rowLimit: params.rowLimit,
-        orderBy: params.orderBy as "views" | "users" | "sessions" | "engagementRate" | undefined,
-        minViews: params.minViews,
-      },
+      pathPrefix: params.pathPrefix,
+      rowLimit: params.rowLimit,
+      minImpressions: params.minImpressions,
+      orderBy,
     });
-    return NextResponse.json({ success: true, metrics });
+    return NextResponse.json({ success: true, ...result });
   } catch (error) {
     if (error instanceof DateRangeError) {
       return NextResponse.json(
@@ -42,30 +54,21 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-    if (error instanceof Ga4ConfigError) {
+    if (error instanceof ScConfigError) {
       return NextResponse.json(
         { success: false, error: "config", message: error.message },
         { status: 503 }
       );
     }
-    if (error instanceof Ga4ApiError) {
+    if (error instanceof ScApiError) {
       return NextResponse.json(
-        {
-          success: false,
-          error: "ga4_api",
-          status: error.status,
-          message: error.detail,
-        },
+        { success: false, error: "sc_api", status: error.status, message: error.detail },
         { status: 502 }
       );
     }
     if (error instanceof Error && error.name === "AbortError") {
       return NextResponse.json(
-        {
-          success: false,
-          error: "timeout",
-          message: "GA4 request timed out",
-        },
+        { success: false, error: "timeout", message: "Search Console request timed out" },
         { status: 504 }
       );
     }

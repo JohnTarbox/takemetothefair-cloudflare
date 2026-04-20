@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { Ga4ApiError, Ga4ConfigError, getPageMetrics, type Ga4Env } from "@/lib/ga4";
+import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
 export const runtime = "edge";
 
 /**
  * GET /api/admin/analytics/page?path=/events
  * Returns per-page GA4 metrics (totals, deltas, daily series, sources, devices, events).
- * Pass ?refresh=1 to bypass KV caches.
+ * Query params: path (required), startDate, endDate, preset, refresh.
  * Auth: admin session OR X-Internal-Key header (for MCP server).
  */
 export async function GET(request: NextRequest) {
@@ -29,13 +30,22 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const skipCache = url.searchParams.get("refresh") === "1";
+  const params = parseAnalyticsParams(url.searchParams);
 
   try {
     const env = getCloudflareEnv() as unknown as Ga4Env;
-    const metrics = await getPageMetrics(env, path, { skipCache });
+    const metrics = await getPageMetrics(env, path, {
+      skipCache: params.refresh,
+      dateRange: params.dateRange,
+    });
     return NextResponse.json({ success: true, metrics });
   } catch (error) {
+    if (error instanceof DateRangeError) {
+      return NextResponse.json(
+        { success: false, error: "bad_request", message: error.message },
+        { status: 400 }
+      );
+    }
     if (error instanceof Ga4ConfigError) {
       return NextResponse.json(
         { success: false, error: "config", message: error.message },
