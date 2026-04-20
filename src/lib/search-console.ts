@@ -397,3 +397,113 @@ export async function getSiteSearchQueries(
   }
   return result;
 }
+
+export type QueryPageRow = {
+  path: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+};
+
+export type QueryPagesResult = {
+  query: string;
+  dateRange: { startDate: string; endDate: string };
+  pages: QueryPageRow[];
+  totals: { clicks: number; impressions: number; pages: number };
+};
+
+/**
+ * Reverse lookup: given a search query, return every page that ranked for it
+ * with per-page impressions/clicks/position. Useful for cannibalization
+ * detection (multiple pages competing for the same query).
+ */
+export async function getQueryPages(
+  env: ScEnv,
+  query: string,
+  opts: {
+    skipCache?: boolean;
+    dateRange?: DateRangeInput;
+    rowLimit?: number;
+  } = {}
+): Promise<QueryPagesResult> {
+  if (!query.trim()) throw new ScApiError(400, "query must be a non-empty string");
+  const siteUrl = resolveSiteUrl(env);
+  const kv = env.RATE_LIMIT_KV;
+  const range = resolveScRange(opts.dateRange, "last_28d");
+  const rowLimit = Math.min(opts.rowLimit ?? 50, 500);
+
+  const body = {
+    startDate: range.startDate,
+    endDate: range.endDate,
+    dimensions: ["page"],
+    dimensionFilterGroups: [
+      {
+        filters: [{ dimension: "query", operator: "equals", expression: query }],
+      },
+    ],
+    rowLimit,
+  };
+  const cacheKey = `sc:query-pages:${await hashRequest({ siteUrl, body })}`;
+
+  if (!opts.skipCache && kv) {
+    const cached = await kv.get<QueryPagesResult>(cacheKey, "json");
+    if (cached) return cached;
+  }
+
+  const token = await getAccessToken(env, opts.skipCache ?? false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text.slice(0, 500);
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message) {
+        detail = `${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+      }
+    } catch {
+      /* keep raw detail */
+    }
+    throw new ScApiError(res.status, detail);
+  }
+
+  const data = (await res.json()) as { rows?: GscApiRow[] };
+  const pages: QueryPageRow[] = (data.rows ?? []).map((r) => ({
+    path: pathFromGscPageKey(siteUrl, r.keys?.[0] ?? ""),
+    clicks: r.clicks ?? 0,
+    impressions: r.impressions ?? 0,
+    ctr: r.ctr ?? 0,
+    position: r.position ?? 0,
+  }));
+
+  const result: QueryPagesResult = {
+    query,
+    dateRange: { startDate: range.startDate, endDate: range.endDate },
+    pages,
+    totals: {
+      clicks: pages.reduce((s, p) => s + p.clicks, 0),
+      impressions: pages.reduce((s, p) => s + p.impressions, 0),
+      pages: pages.length,
+    },
+  };
+
+  if (kv) {
+    await kv.put(cacheKey, JSON.stringify(result), { expirationTtl: REPORT_CACHE_TTL });
+  }
+  return result;
+}

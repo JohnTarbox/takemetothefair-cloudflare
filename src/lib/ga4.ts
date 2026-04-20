@@ -644,3 +644,126 @@ export async function getPageMetrics(
     generatedAt: new Date().toISOString(),
   };
 }
+
+export type EventDetailValueRow = {
+  parameters: Record<string, string>;
+  count: number;
+};
+
+export type EventDetailResult = {
+  eventName: string;
+  totalCount: number;
+  dateRange?: DateRangeDescriptor;
+  topParameters: string[];
+  topValues: EventDetailValueRow[];
+  propertyId: string;
+  generatedAt: string;
+};
+
+/**
+ * Top parameter-value combinations for a specific GA4 event name.
+ * Each parameter in `topParameters` must be registered as a custom
+ * dimension in GA4 Admin -> Custom Definitions before it will be
+ * queryable via the Data API. Unregistered parameters return empty rows.
+ */
+export async function getGa4EventDetail(
+  env: Ga4Env,
+  eventName: string,
+  opts: {
+    skipCache?: boolean;
+    dateRange?: DateRangeInput;
+    path?: string;
+    topParameters?: string[];
+    topN?: number;
+  } = {}
+): Promise<EventDetailResult> {
+  const { propertyId } = resolveConfig(env);
+  const accessToken = await getGa4AccessToken(env, { skipCache: opts.skipCache });
+  const passthrough = { skipCache: opts.skipCache, accessToken };
+
+  const usesCustomRange = !!(opts.dateRange?.startDate || opts.dateRange?.preset);
+  const resolvedRange: ResolvedDateRange | null = usesCustomRange
+    ? resolveDateRange(opts.dateRange, { defaultPreset: "last_28d" })
+    : null;
+  const rangeForQuery = resolvedRange
+    ? [{ startDate: resolvedRange.startDate, endDate: resolvedRange.endDate }]
+    : [{ startDate: "28daysAgo", endDate: "today" }];
+
+  const topParameters = (opts.topParameters ?? []).filter((p) => p && p.length > 0);
+  const topN = Math.min(Math.max(opts.topN ?? 20, 1), 100);
+
+  // Build the dimension filter: always eventName matches; optionally add pagePath
+  const eventNameFilter: DimensionFilterExpression = {
+    filter: {
+      fieldName: "eventName",
+      stringFilter: { matchType: "EXACT", value: eventName, caseSensitive: false },
+    },
+  };
+  const dimensionFilter: DimensionFilterExpression = opts.path
+    ? {
+        andGroup: {
+          expressions: [eventNameFilter, pagePathFilter(opts.path)],
+        },
+      }
+    : eventNameFilter;
+
+  // GA4 Data API custom parameter dimension shape: `customEvent:<paramName>`.
+  // Unregistered params will silently return empty — caller should verify in
+  // GA4 Admin -> Custom Definitions if counts look surprisingly low.
+  const paramDimensions = topParameters.map((name) => ({ name: `customEvent:${name}` }));
+
+  const [totalsRes, valuesRes] = await Promise.all([
+    runReport(
+      env,
+      {
+        dateRanges: rangeForQuery,
+        metrics: [{ name: "eventCount" }],
+        dimensionFilter,
+      },
+      passthrough
+    ),
+    paramDimensions.length > 0
+      ? runReport(
+          env,
+          {
+            dateRanges: rangeForQuery,
+            dimensions: paramDimensions,
+            metrics: [{ name: "eventCount" }],
+            orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
+            limit: topN,
+            dimensionFilter,
+          },
+          passthrough
+        )
+      : Promise.resolve({ rows: [] } as RunReportResponse),
+  ]);
+
+  const totalCount = toNumber(totalsRes.rows?.[0]?.metricValues?.[0]?.value);
+
+  const topValues: EventDetailValueRow[] = (valuesRes.rows ?? []).map((row) => {
+    const parameters: Record<string, string> = {};
+    topParameters.forEach((paramName, i) => {
+      parameters[paramName] = row.dimensionValues?.[i]?.value ?? "";
+    });
+    return { parameters, count: toNumber(row.metricValues?.[0]?.value) };
+  });
+
+  const dateRangeDescriptor: DateRangeDescriptor | undefined = resolvedRange
+    ? {
+        startDate: resolvedRange.startDate,
+        endDate: resolvedRange.endDate,
+        days: resolvedRange.days,
+        label: resolvedRange.label,
+      }
+    : undefined;
+
+  return {
+    eventName,
+    totalCount,
+    ...(dateRangeDescriptor ? { dateRange: dateRangeDescriptor } : {}),
+    topParameters,
+    topValues,
+    propertyId,
+    generatedAt: new Date().toISOString(),
+  };
+}

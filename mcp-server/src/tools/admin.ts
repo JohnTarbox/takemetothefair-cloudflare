@@ -1369,6 +1369,145 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  server.tool(
+    "get_query_pages",
+    "Reverse lookup: given a search query, return every page that ranks for it with per-page clicks, impressions, CTR, and average position. Use to detect keyword cannibalization (multiple pages competing for the same query — none wins). Default window is last 28 days ending 3 days ago. Admin only.",
+    {
+      query: z
+        .string()
+        .min(1)
+        .describe("The exact search query to look up (e.g. 'fairs in maine')."),
+      ...dateRangeFields,
+      rowLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max pages to return (default 50, max 500)."),
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache (default false)."),
+    },
+    async (params) => {
+      try {
+        const qs = buildDateQuery(params);
+        qs.set("query", params.query);
+        if (params.rowLimit !== undefined) qs.set("rowLimit", String(params.rowLimit));
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/query-pages?${qs.toString()}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown error fetching query pages",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_event_analytics",
+    "Analytics for a single MMATF event: looks up the event record, then returns GA4 page analytics + Search Console queries for its public path (/events/<slug>). Provide either eventId or slug. Default window is last 28 days. Admin only.",
+    {
+      eventId: z.string().optional().describe("The MMATF event UUID. Use this OR slug, not both."),
+      slug: z
+        .string()
+        .optional()
+        .describe(
+          "The event slug (e.g. '2026-orono-easter-craft-and-vendor-fair'). Use this OR eventId."
+        ),
+      ...dateRangeFields,
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)."),
+    },
+    async (params) => {
+      if (!params.eventId && !params.slug) {
+        return {
+          content: [{ type: "text", text: "Provide either eventId or slug." }],
+          isError: true,
+        };
+      }
+      try {
+        const qs = buildDateQuery(params);
+        if (params.eventId) qs.set("eventId", params.eventId);
+        else if (params.slug) qs.set("slug", params.slug);
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/event?${qs.toString()}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching event analytics",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_ga4_event_detail",
+    "Top parameter-value combinations for a specific GA4 event (e.g. api_error, view_search_results, scroll_depth, form_submit). IMPORTANT: parameters must be registered as custom dimensions in GA4 Admin -> Custom Definitions before they will populate — unregistered params return empty rows even if the event fires them. Use to answer 'which endpoint is erroring most?' or 'what search terms return 0 results?'. Admin only.",
+    {
+      eventName: z
+        .string()
+        .min(1)
+        .describe(
+          "Exact GA4 event name (case-insensitive), e.g. 'api_error', 'view_search_results'."
+        ),
+      topParameters: z
+        .array(z.string().min(1))
+        .max(9)
+        .optional()
+        .describe(
+          "Custom event parameter names to break down by (max 9). E.g. ['endpoint','status_code','error_message']. Must be registered as custom dimensions in GA4."
+        ),
+      path: z
+        .string()
+        .startsWith("/")
+        .optional()
+        .describe("Optional: scope to one page path. Must begin with '/' if provided."),
+      topN: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Number of top parameter-value combinations to return (default 20, max 100)."),
+      ...dateRangeFields,
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)."),
+    },
+    async (params) => {
+      try {
+        const qs = buildDateQuery(params);
+        qs.set("eventName", params.eventName);
+        if (params.topParameters && params.topParameters.length > 0) {
+          qs.set("topParameters", params.topParameters.join(","));
+        }
+        if (params.path) qs.set("path", params.path);
+        if (params.topN !== undefined) qs.set("topN", String(params.topN));
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/ga4-event?${qs.toString()}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching GA4 event detail",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── update_venue ──────────────────────────────────────────────
   server.tool(
     "update_venue",
