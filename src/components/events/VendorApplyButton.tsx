@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Calendar, Clock, Users, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,11 @@ function formatRelativeDeadline(iso: string | null | undefined): string | null {
   const nowMs = Date.now();
   const diffDays = Math.ceil((d.getTime() - nowMs) / (24 * 60 * 60 * 1000));
   if (diffDays < 0) return null; // passed — skip
-  const formatted = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const formatted = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
   if (diffDays === 0) return `Applications close today (${formatted})`;
   if (diffDays === 1) return `Applications close tomorrow (${formatted})`;
   if (diffDays <= 14) return `Applications close in ${diffDays} days (${formatted})`;
@@ -50,6 +54,13 @@ export function VendorApplyButton({
   const [wasAutoApproved, setWasAutoApproved] = useState(false);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [boothInfo, setBoothInfo] = useState("");
+
+  // Deadline text depends on "now", so compute on the client after hydration
+  // to avoid SSR mismatch. Must be declared before any early return.
+  const [deadlineText, setDeadlineText] = useState<string | null>(null);
+  useEffect(() => {
+    setDeadlineText(formatRelativeDeadline(applicationDeadline));
+  }, [applicationDeadline]);
 
   const handleApply = async () => {
     setLoading(true);
@@ -109,7 +120,6 @@ export function VendorApplyButton({
   // Context chips shown on both the collapsed and expanded states so a vendor
   // can see the three trust signals (deadline / confirmed count / typical
   // response time) before deciding to apply.
-  const deadlineText = formatRelativeDeadline(applicationDeadline);
   const hasContext =
     !!deadlineText ||
     (confirmedVendorsCount !== undefined && confirmedVendorsCount > 0) ||

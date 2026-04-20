@@ -87,11 +87,11 @@ export function trackScrollDepth(depth: number, pageType: string) {
 }
 
 /** Track client-side errors sent to GA4 for visibility */
-export function trackApiError(endpoint: string, statusCode: number, requestId?: string) {
+export function trackApiError(endpoint: string, statusCode: number, detail?: string) {
   trackEvent("api_error", {
     category: "error",
     label: endpoint,
     value: statusCode,
-    request_id: requestId,
+    error_detail: detail,
   });
 }

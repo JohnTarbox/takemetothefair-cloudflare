@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
@@ -44,37 +44,40 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   const vendors = event.vendors || [];
   const colors = getCategoryColors(categories);
 
-  // Vendor application deadline chip: surface when closing within 14 days
-  // (but not yet past) so vendors browsing the list notice time-sensitive asks.
-  let deadlineChipText: string | null = null;
-  if (event.applicationDeadline) {
+  // Vendor application deadline chip — depends on "now", so defer to client
+  // after hydration to avoid SSR/CSR mismatch when page render straddles a
+  // day boundary or the deadline is very near.
+  const [deadlineChipText, setDeadlineChipText] = useState<string | null>(null);
+  useEffect(() => {
+    if (!event.applicationDeadline) return;
     const deadlineMs = new Date(event.applicationDeadline).getTime();
     const diffDays = Math.ceil((deadlineMs - Date.now()) / (24 * 60 * 60 * 1000));
-    if (diffDays >= 0 && diffDays <= 14) {
-      if (diffDays === 0) {
-        deadlineChipText = "Applies today";
-      } else if (diffDays === 1) {
-        deadlineChipText = "Applies in 1 day";
-      } else {
-        const short = new Date(event.applicationDeadline).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        });
-        deadlineChipText = `Applies by ${short}`;
-      }
+    if (diffDays < 0 || diffDays > 14) return;
+    if (diffDays === 0) {
+      setDeadlineChipText("Applies today");
+    } else if (diffDays === 1) {
+      setDeadlineChipText("Applies in 1 day");
+    } else {
+      const short = new Date(event.applicationDeadline).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      });
+      setDeadlineChipText(`Applies by ${short}`);
     }
-  }
+  }, [event.applicationDeadline]);
 
   // Use public dates for display (falls back to full dates if not set)
   const displayStartDate = event.publicStartDate ?? event.startDate;
   const displayEndDate = event.publicEndDate ?? event.endDate;
 
-  // Parse start date for date badge
+  // Parse start date for date badge — use UTC methods so the rendered day
+  // number is identical on the edge (UTC) and in the browser (local TZ).
   const startDate = displayStartDate ? new Date(displayStartDate) : null;
   const monthAbbr = startDate
-    ? startDate.toLocaleDateString("en-US", { month: "short" }).toUpperCase()
+    ? startDate.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase()
     : null;
-  const dayNum = startDate ? startDate.getDate() : null;
+  const dayNum = startDate ? startDate.getUTCDate() : null;
 
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
