@@ -1508,6 +1508,134 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  server.tool(
+    "get_internal_search_queries",
+    "Top site-search queries that users entered into the MMATF search box, with per-query event counts. Built on the view_search_results GA4 event (fires from the global search component). Default window is last 28 days. Note: the 'search_term' event parameter must be registered as a custom dimension in GA4 Admin for query text to populate — otherwise rows show blank search terms. Admin only.",
+    {
+      ...dateRangeFields,
+      rowLimit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Number of distinct queries to return (default 50, max 100)."),
+      refresh: z.boolean().optional().describe("Bypass the 10-minute cache (default false)."),
+    },
+    async (params) => {
+      try {
+        const qs = buildDateQuery(params);
+        qs.set("eventName", "view_search_results");
+        qs.set("topParameters", "search_term,results_count");
+        if (params.rowLimit !== undefined) qs.set("topN", String(params.rowLimit));
+        const data = (await fetchAnalyticsJson(
+          `/api/admin/analytics/ga4-event?${qs.toString()}`
+        )) as {
+          success: boolean;
+          eventName?: string;
+          totalCount?: number;
+          dateRange?: unknown;
+          topValues?: Array<{ parameters: Record<string, string>; count: number }>;
+          generatedAt?: string;
+        };
+        const queries = (data.topValues ?? []).map((row) => ({
+          searchTerm: row.parameters["search_term"] ?? "",
+          resultsReturned: row.parameters["results_count"]
+            ? Number(row.parameters["results_count"])
+            : undefined,
+          count: row.count,
+        }));
+        return {
+          content: [
+            jsonContent({
+              queries,
+              totalSearches: data.totalCount ?? 0,
+              dateRange: data.dateRange,
+              generatedAt: data.generatedAt,
+            }),
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error fetching internal search queries",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_sitemap_status",
+    "Lists all sitemaps submitted to Google Search Console with per-sitemap indexed-vs-submitted counts, errors, and warnings. Fast aggregate view for 'how many of our pages are indexed?'. For per-URL diagnosis use get_url_inspection. Data cached 24h. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 24h cache (default false)."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const q = qs.toString();
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/sitemap-status${q ? "?" + q : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching sitemap status",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_url_inspection",
+    "Inspects a single URL via Search Console's URL Inspection API. Returns index verdict, coverage state, last-crawl time, canonicalization, sitemap membership, mobile usability, and rich-results status. Rate-limited by Google to ~2000/day per property; cache 6h. Use to diagnose 'why isn't this page indexed?' — not for bulk audits. Admin only.",
+    {
+      path: z
+        .string()
+        .startsWith("/")
+        .describe(
+          "URL path to inspect, must begin with '/'. Example: '/events' or '/blog/my-post'"
+        ),
+      refresh: z.boolean().optional().describe("Bypass the 6h cache (default false)."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams({ path: params.path });
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/url-inspection?${qs.toString()}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown error inspecting URL",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── update_venue ──────────────────────────────────────────────
   server.tool(
     "update_venue",

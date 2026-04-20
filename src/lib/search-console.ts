@@ -507,3 +507,264 @@ export async function getQueryPages(
   }
   return result;
 }
+
+// ── Sitemaps + URL Inspection APIs ─────────────────────────────
+
+export type SitemapContentRow = {
+  type: string;
+  submitted: number;
+  indexed: number;
+};
+
+export type SitemapRow = {
+  path: string;
+  type?: string;
+  lastSubmitted?: string;
+  lastDownloaded?: string;
+  isPending?: boolean;
+  isSitemapsIndex?: boolean;
+  warnings: number;
+  errors: number;
+  contents: SitemapContentRow[];
+};
+
+export type SitemapStatus = {
+  sitemaps: SitemapRow[];
+  totals: { submitted: number; indexed: number };
+  generatedAt: string;
+};
+
+export async function getSitemapStatus(
+  env: ScEnv,
+  opts: { skipCache?: boolean } = {}
+): Promise<SitemapStatus> {
+  const siteUrl = resolveSiteUrl(env);
+  const kv = env.RATE_LIMIT_KV;
+  const cacheKey = `sc:sitemaps:${await hashRequest({ siteUrl })}`;
+
+  if (!opts.skipCache && kv) {
+    const cached = await kv.get<SitemapStatus>(cacheKey, "json");
+    if (cached) return cached;
+  }
+
+  const token = await getAccessToken(env, opts.skipCache ?? false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/sitemaps`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text.slice(0, 500);
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message) {
+        detail = `${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+      }
+    } catch {
+      /* keep raw detail */
+    }
+    throw new ScApiError(res.status, detail);
+  }
+
+  const data = (await res.json()) as {
+    sitemap?: Array<{
+      path?: string;
+      type?: string;
+      lastSubmitted?: string;
+      lastDownloaded?: string;
+      isPending?: boolean;
+      isSitemapsIndex?: boolean;
+      warnings?: string | number;
+      errors?: string | number;
+      contents?: Array<{ type?: string; submitted?: string | number; indexed?: string | number }>;
+    }>;
+  };
+
+  const toInt = (v: unknown): number => {
+    const n = typeof v === "number" ? v : Number(v ?? 0);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const sitemaps: SitemapRow[] = (data.sitemap ?? []).map((s) => ({
+    path: s.path ?? "",
+    type: s.type,
+    lastSubmitted: s.lastSubmitted,
+    lastDownloaded: s.lastDownloaded,
+    isPending: s.isPending,
+    isSitemapsIndex: s.isSitemapsIndex,
+    warnings: toInt(s.warnings),
+    errors: toInt(s.errors),
+    contents: (s.contents ?? []).map((c) => ({
+      type: c.type ?? "web",
+      submitted: toInt(c.submitted),
+      indexed: toInt(c.indexed),
+    })),
+  }));
+
+  let submittedTotal = 0;
+  let indexedTotal = 0;
+  for (const s of sitemaps) {
+    for (const c of s.contents) {
+      submittedTotal += c.submitted;
+      indexedTotal += c.indexed;
+    }
+  }
+
+  const sitemapStatusResult: SitemapStatus = {
+    sitemaps,
+    totals: { submitted: submittedTotal, indexed: indexedTotal },
+    generatedAt: new Date().toISOString(),
+  };
+
+  if (kv) {
+    await kv.put(cacheKey, JSON.stringify(sitemapStatusResult), { expirationTtl: 24 * 60 * 60 });
+  }
+  return sitemapStatusResult;
+}
+
+export type UrlInspectionResult = {
+  path: string;
+  inspectionLink?: string;
+  index: {
+    verdict?: string;
+    coverageState?: string;
+    robotsTxtState?: string;
+    indexingState?: string;
+    pageFetchState?: string;
+    lastCrawlTime?: string;
+    googleCanonical?: string;
+    userCanonical?: string;
+    crawledAs?: string;
+    referringUrls?: string[];
+    sitemaps?: string[];
+  };
+  mobileUsability?: {
+    verdict?: string;
+    issues?: Array<{ issueType?: string; severity?: string; message?: string }>;
+  };
+  richResults?: {
+    verdict?: string;
+    detectedItems?: Array<{ richResultType?: string; items?: Array<{ name?: string }> }>;
+  };
+  generatedAt: string;
+};
+
+export async function inspectUrl(
+  env: ScEnv,
+  path: string,
+  opts: { skipCache?: boolean } = {}
+): Promise<UrlInspectionResult> {
+  if (!path.startsWith("/")) throw new ScApiError(400, "path must start with '/'");
+  const siteUrl = resolveSiteUrl(env);
+  const kv = env.RATE_LIMIT_KV;
+  const inspectionUrl = pageUrlForFilter(siteUrl, path);
+  const cacheKey = `sc:inspect:${await hashRequest({ siteUrl, inspectionUrl })}`;
+
+  if (!opts.skipCache && kv) {
+    const cached = await kv.get<UrlInspectionResult>(cacheKey, "json");
+    if (cached) return cached;
+  }
+
+  const token = await getAccessToken(env, opts.skipCache ?? false);
+  // URL Inspection lives at the v1 base, not webmasters/v3.
+  const url = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ inspectionUrl, siteUrl }),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text.slice(0, 500);
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message) {
+        detail = `${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+      }
+    } catch {
+      /* keep raw detail */
+    }
+    throw new ScApiError(res.status, detail);
+  }
+
+  const data = (await res.json()) as {
+    inspectionResult?: {
+      inspectionResultLink?: string;
+      indexStatusResult?: {
+        verdict?: string;
+        coverageState?: string;
+        robotsTxtState?: string;
+        indexingState?: string;
+        pageFetchState?: string;
+        lastCrawlTime?: string;
+        googleCanonical?: string;
+        userCanonical?: string;
+        crawledAs?: string;
+        referringUrls?: string[];
+        sitemap?: string[];
+      };
+      mobileUsabilityResult?: {
+        verdict?: string;
+        issues?: Array<{ issueType?: string; severity?: string; message?: string }>;
+      };
+      richResultsResult?: {
+        verdict?: string;
+        detectedItems?: Array<{ richResultType?: string; items?: Array<{ name?: string }> }>;
+      };
+    };
+  };
+
+  const ir = data.inspectionResult ?? {};
+  const idx = ir.indexStatusResult ?? {};
+  const inspectionOutcome: UrlInspectionResult = {
+    path,
+    inspectionLink: ir.inspectionResultLink,
+    index: {
+      verdict: idx.verdict,
+      coverageState: idx.coverageState,
+      robotsTxtState: idx.robotsTxtState,
+      indexingState: idx.indexingState,
+      pageFetchState: idx.pageFetchState,
+      lastCrawlTime: idx.lastCrawlTime,
+      googleCanonical: idx.googleCanonical,
+      userCanonical: idx.userCanonical,
+      crawledAs: idx.crawledAs,
+      referringUrls: idx.referringUrls,
+      sitemaps: idx.sitemap,
+    },
+    mobileUsability: ir.mobileUsabilityResult
+      ? { verdict: ir.mobileUsabilityResult.verdict, issues: ir.mobileUsabilityResult.issues }
+      : undefined,
+    richResults: ir.richResultsResult
+      ? { verdict: ir.richResultsResult.verdict, detectedItems: ir.richResultsResult.detectedItems }
+      : undefined,
+    generatedAt: new Date().toISOString(),
+  };
+
+  if (kv) {
+    // URL Inspection is quota-limited — cache 6h.
+    await kv.put(cacheKey, JSON.stringify(inspectionOutcome), { expirationTtl: 6 * 60 * 60 });
+  }
+  return inspectionOutcome;
+}

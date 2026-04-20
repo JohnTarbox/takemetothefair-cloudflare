@@ -445,6 +445,27 @@ export async function getDashboardMetrics(
 export type PageViewsDay = { date: string; views: number; users: number };
 export type DeviceRow = { category: string; sessions: number; activeUsers: number };
 export type PageEventRow = { eventName: string; count: number };
+export type GeographyCountryRow = { country: string; sessions: number; activeUsers: number };
+export type GeographyRegionRow = {
+  region: string;
+  country: string;
+  sessions: number;
+  activeUsers: number;
+};
+export type GeographyBreakdown = {
+  byCountry: GeographyCountryRow[];
+  byRegion: GeographyRegionRow[];
+  newEnglandShare: number;
+};
+
+const NEW_ENGLAND_REGIONS = new Set([
+  "Maine",
+  "New Hampshire",
+  "Vermont",
+  "Massachusetts",
+  "Connecticut",
+  "Rhode Island",
+]);
 
 export type PageTotals = {
   views: number;
@@ -462,6 +483,7 @@ export type PageMetrics = {
   trafficSources: TrafficSourceRow[];
   devices: DeviceRow[];
   events: PageEventRow[];
+  geography: GeographyBreakdown;
   dateRange?: DateRangeDescriptor;
   previousDateRange?: DateRangeDescriptor;
   propertyId: string;
@@ -508,7 +530,7 @@ export async function getPageMetrics(
     { name: "engagementRate" },
   ];
 
-  const [totalsRes, prevTotalsRes, titleRes, byDayRes, trafficRes, deviceRes, eventsRes] =
+  const [totalsRes, prevTotalsRes, titleRes, byDayRes, trafficRes, deviceRes, eventsRes, geoRes] =
     await Promise.all([
       runReport(env, { dateRanges: last28, metrics: totalsMetrics, dimensionFilter }, passthrough),
       runReport(env, { dateRanges: prev28, metrics: totalsMetrics, dimensionFilter }, passthrough),
@@ -570,6 +592,18 @@ export async function getPageMetrics(
         },
         passthrough
       ),
+      runReport(
+        env,
+        {
+          dateRanges: last28,
+          dimensions: [{ name: "country" }, { name: "region" }],
+          metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+          orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+          limit: 50,
+          dimensionFilter,
+        },
+        passthrough
+      ),
     ]);
 
   const parseTotals = (rows?: RunReportResponse["rows"]): PageTotals => {
@@ -613,6 +647,36 @@ export async function getPageMetrics(
     count: toNumber(row.metricValues?.[0]?.value),
   }));
 
+  // Aggregate geography: rows come pre-split by (country, region). Fold up to
+  // country totals and compute the New England share for MMATF's core region.
+  const byRegion: GeographyRegionRow[] = (geoRes.rows ?? []).map((row) => ({
+    country: row.dimensionValues?.[0]?.value ?? "",
+    region: row.dimensionValues?.[1]?.value ?? "",
+    sessions: toNumber(row.metricValues?.[0]?.value),
+    activeUsers: toNumber(row.metricValues?.[1]?.value),
+  }));
+
+  const countryTotals = new Map<string, { sessions: number; activeUsers: number }>();
+  let totalSessions = 0;
+  let newEnglandSessions = 0;
+  for (const r of byRegion) {
+    totalSessions += r.sessions;
+    if (r.country === "United States" && NEW_ENGLAND_REGIONS.has(r.region)) {
+      newEnglandSessions += r.sessions;
+    }
+    const prev = countryTotals.get(r.country) ?? { sessions: 0, activeUsers: 0 };
+    countryTotals.set(r.country, {
+      sessions: prev.sessions + r.sessions,
+      activeUsers: prev.activeUsers + r.activeUsers,
+    });
+  }
+  const byCountry: GeographyCountryRow[] = Array.from(countryTotals.entries())
+    .map(([country, v]) => ({ country, sessions: v.sessions, activeUsers: v.activeUsers }))
+    .sort((a, b) => b.sessions - a.sessions);
+  const newEnglandShare = totalSessions > 0 ? newEnglandSessions / totalSessions : 0;
+
+  const geography: GeographyBreakdown = { byCountry, byRegion, newEnglandShare };
+
   const dateRangeDescriptor: DateRangeDescriptor | undefined = resolvedRange
     ? {
         startDate: resolvedRange.startDate,
@@ -638,6 +702,7 @@ export async function getPageMetrics(
     trafficSources,
     devices,
     events,
+    geography,
     ...(dateRangeDescriptor ? { dateRange: dateRangeDescriptor } : {}),
     ...(previousDateRangeDescriptor ? { previousDateRange: previousDateRangeDescriptor } : {}),
     propertyId,
