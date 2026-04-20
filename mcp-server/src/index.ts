@@ -56,17 +56,18 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
             ],
           };
         }
-        const toolSets = ["public tools (10)", "user tools (2)"];
+        const toolSets = ["public tools (9)", "user tools (2)"];
         if (props.role === "VENDOR" || props.role === "ADMIN") {
           toolSets.push(
             props.vendorId
-              ? "vendor tools (6)"
+              ? "vendor tools (7)"
               : "vendor tools (1 — suggest_event only, no vendor profile)"
           );
         }
         if (props.role === "PROMOTER" || props.role === "ADMIN")
           toolSets.push("promoter tools (3)");
-        if (props.role === "ADMIN") toolSets.push("admin tools (13)", "blog tools (6)");
+        if (props.role === "ADMIN")
+          toolSets.push("admin tools (27)", "blog tools (6)", "content-links tools (4)");
         return {
           content: [
             {
