@@ -24,12 +24,12 @@ After logging in, you'll land on your **Dashboard**. Click the **Vendor Portal**
 
 Fill in as much as you can:
 
-| Section | Key Fields |
-|---------|------------|
-| **Business Info** | Description, Vendor Type (e.g. Food, Crafts, Agriculture), Products, Website, Logo URL |
-| **Contact Info** | Contact name, email, phone |
-| **Address** | Street, City, State, ZIP — use the Google Place search to auto-fill |
-| **Business Details** | Year established, payment methods, license/insurance info |
+| Section              | Key Fields                                                                             |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| **Business Info**    | Description, Vendor Type (e.g. Food, Crafts, Agriculture), Products, Website, Logo URL |
+| **Contact Info**     | Contact name, email, phone                                                             |
+| **Address**          | Street, City, State, ZIP — use the Google Place search to auto-fill                    |
+| **Business Details** | Year established, payment methods, license/insurance info                              |
 
 Click **Save Changes** when you're done.
 
@@ -47,6 +47,7 @@ To confirm everything is set up correctly, try these quick checks:
 **Check the sidebar navigation works:**
 
 From any `/vendor/*` page, the sidebar should show:
+
 - My Profile
 - Applications
 - Suggest Event
@@ -65,7 +66,7 @@ If you can see all of these and your profile loads with the business name you en
 2. Click **Add Connector**.
 3. Enter:
    - **Name:** Meet Me at the Fair
-   - **URL:** `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`
+   - **URL:** `https://mcp.meetmeatthefair.com/mcp`
 4. Click **Save** or **Connect**.
 
 Claude will open a browser window to sign you in:
@@ -97,37 +98,38 @@ Once connected, Claude has access to these tools through your account:
 
 ### Browsing (no login required)
 
-| What to ask | What happens |
-|-------------|-------------|
-| "Find craft fairs in Vermont this summer" | Searches events by state and date range |
-| "Tell me about the Augusta Boat Show" | Gets full event details — dates, venue, vendors, pricing |
-| "What vendors are at the Bangor State Fair?" | Lists participating vendors for an event |
-| "Search for food vendors" | Searches vendors by type |
-| "Find venues in Portland" | Searches venues by city |
+| What to ask                                  | What happens                                             |
+| -------------------------------------------- | -------------------------------------------------------- |
+| "Find craft fairs in Vermont this summer"    | Searches events by state and date range                  |
+| "Tell me about the Augusta Boat Show"        | Gets full event details — dates, venue, vendors, pricing |
+| "What vendors are at the Bangor State Fair?" | Lists participating vendors for an event                 |
+| "Search for food vendors"                    | Searches vendors by type                                 |
+| "Find venues in Portland"                    | Searches venues by city                                  |
 
 ### Managing Your Account
 
-| What to ask | What happens |
-|-------------|-------------|
-| "Show my favorites" | Lists your favorited events, vendors, and venues |
-| "Favorite the Bangor State Fair" | Toggles a favorite on or off |
-| "Show my vendor profile" | Displays your business info |
-| "Update my description to ..." | Updates fields on your vendor profile |
-| "Update my products to include pottery and ceramics" | Updates your products list |
+| What to ask                                          | What happens                                     |
+| ---------------------------------------------------- | ------------------------------------------------ |
+| "Show my favorites"                                  | Lists your favorited events, vendors, and venues |
+| "Favorite the Bangor State Fair"                     | Toggles a favorite on or off                     |
+| "Show my vendor profile"                             | Displays your business info                      |
+| "Update my description to ..."                       | Updates fields on your vendor profile            |
+| "Update my products to include pottery and ceramics" | Updates your products list                       |
 
 ### Applications
 
-| What to ask | What happens |
-|-------------|-------------|
-| "Show my applications" | Lists all events you've applied to with statuses |
-| "Show only my confirmed applications" | Filters by status |
-| "Apply me to the Augusta Boat Show" | Submits a vendor application to that event |
-| "Withdraw my application from the Fryeburg Fair" | Withdraws an active application |
+| What to ask                                       | What happens                                               |
+| ------------------------------------------------- | ---------------------------------------------------------- |
+| "Show my applications"                            | Lists all events you've applied to with statuses           |
+| "Show only my confirmed applications"             | Filters by status                                          |
+| "Apply me to the Augusta Boat Show"               | Submits a vendor application to that event                 |
+| "Withdraw my application from the Fryeburg Fair"  | Withdraws an active application                            |
+| "Do I have any date conflicts with these events?" | Checks overlap between events and your active applications |
 
 ### Suggesting Events
 
-| What to ask | What happens |
-|-------------|-------------|
+| What to ask                                                                          | What happens                                                 |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
 | "I heard about a new farmers market in Brunswick starting in June — can you add it?" | Creates a TENTATIVE event suggestion that admins will review |
 
 ---
@@ -135,7 +137,7 @@ Once connected, Claude has access to these tools through your account:
 ## Troubleshooting
 
 **Login page doesn't appear when connecting:**
-Make sure the connector URL is exactly `https://meetmeatthefair-mcp.john-tarbox-account.workers.dev/mcp`. If Claude doesn't open a browser window, try removing and re-adding the connector.
+Make sure the connector URL is exactly `https://mcp.meetmeatthefair.com/mcp`. If Claude doesn't open a browser window, try removing and re-adding the connector.
 
 **"Invalid email or password" on the login page:**
 Use the same email and password you use to log in at [meetmeatthefair.com](https://meetmeatthefair.com). If you signed up with Google or Facebook, you don't have a password set — contact support or set a password through the site first.
