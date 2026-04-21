@@ -120,6 +120,8 @@ export const EVENT_LISTING_SLUGS = new Set<string>([
   "vermont",
   "new-hampshire",
   "massachusetts",
+  "connecticut",
+  "rhode-island",
 ]);
 
 // Indoor/outdoor designation

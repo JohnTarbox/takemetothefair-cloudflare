@@ -15,6 +15,8 @@ export const STATE_MAP: Record<string, { code: string; name: string }> = {
   vermont: { code: "VT", name: "Vermont" },
   "new-hampshire": { code: "NH", name: "New Hampshire" },
   massachusetts: { code: "MA", name: "Massachusetts" },
+  connecticut: { code: "CT", name: "Connecticut" },
+  "rhode-island": { code: "RI", name: "Rhode Island" },
 };
 
 const STATE_DESCRIPTIONS: Record<string, string> = {
@@ -26,6 +28,10 @@ const STATE_DESCRIPTIONS: Record<string, string> = {
     "New Hampshire's fair circuit features events from the Lakes Region to the White Mountains. The Hopkinton State Fair and Deerfield Fair are annual highlights, while craft shows and farmers markets dot the landscape from Concord to the Seacoast region throughout the warmer months.",
   massachusetts:
     "Massachusetts hosts events ranging from the massive Eastern States Exposition (The Big E) in West Springfield to intimate Cape Cod craft fairs. County fairs, harvest festivals, and year-round farmers markets make the Bay State a hub for community events and local artisan culture.",
+  connecticut:
+    "Connecticut's fair tradition spans from the historic Durham Fair — one of New England's largest agricultural fairs — to beloved community events like the Goshen Fair and North Haven Fair. Craft shows in Mystic and the Litchfield Hills, plus year-round farmers markets from Hartford to Fairfield County, round out the Constitution State's calendar of fairs, festivals, and community events.",
+  "rhode-island":
+    "Rhode Island may be the smallest state, but its fair calendar is packed — from the Washington County Fair in Richmond, the state's largest agricultural fair, to the Rocky Hill State Fair and seaside summer festivals along the Newport and Narragansett coasts. Farmers markets in Providence, Pawtucket, and South County deliver fresh local produce, while craft fairs celebrate the Ocean State's maritime heritage.",
 };
 
 async function getStateEvents(

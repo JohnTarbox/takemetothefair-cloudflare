@@ -12,6 +12,8 @@ export function Footer() {
       { name: "Vermont Fairs", href: "/events/vermont" },
       { name: "NH Fairs", href: "/events/new-hampshire" },
       { name: "MA Fairs", href: "/events/massachusetts" },
+      { name: "CT Fairs", href: "/events/connecticut" },
+      { name: "RI Fairs", href: "/events/rhode-island" },
       { name: "Past Events", href: "/events/past" },
       { name: "Venues", href: "/venues" },
       { name: "Vendors", href: "/vendors" },
