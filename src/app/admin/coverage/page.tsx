@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Calendar, MapPin, Store, FileText } from "lucide-react";
+import { Calendar, ChevronRight, MapPin, Store, FileText } from "lucide-react";
 import { and, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -47,6 +47,67 @@ interface CoverageRow {
   state: string | null;
   blogPostCount: number;
 }
+
+interface BlogPostRef {
+  id: string;
+  title: string;
+  slug: string;
+  publishDate: Date | null;
+}
+
+type PostsByTarget = Map<string, BlogPostRef[]>;
+
+async function getPostsByTarget(type: "EVENT" | "VENDOR" | "VENUE"): Promise<PostsByTarget> {
+  const db = getCloudflareDb();
+  const rows = await db
+    .select({
+      targetId: contentLinks.targetId,
+      postId: blogPosts.id,
+      postTitle: blogPosts.title,
+      postSlug: blogPosts.slug,
+      postPublishDate: blogPosts.publishDate,
+    })
+    .from(contentLinks)
+    .innerJoin(blogPosts, eq(contentLinks.sourceId, blogPosts.id))
+    .where(
+      and(
+        eq(contentLinks.sourceType, "BLOG_POST"),
+        eq(contentLinks.targetType, type),
+        eq(blogPosts.status, "PUBLISHED"),
+      ),
+    );
+
+  const byTarget: PostsByTarget = new Map();
+  for (const r of rows) {
+    if (!r.targetId) continue;
+    const list = byTarget.get(r.targetId) ?? [];
+    // Dedupe per (target, post) — same post could reference target twice.
+    if (!list.some((p) => p.id === r.postId)) {
+      list.push({
+        id: r.postId,
+        title: r.postTitle,
+        slug: r.postSlug,
+        publishDate: r.postPublishDate,
+      });
+    }
+    byTarget.set(r.targetId, list);
+  }
+  // Sort each list newest first.
+  for (const list of byTarget.values()) {
+    list.sort((a, b) => {
+      const at = a.publishDate?.getTime() ?? 0;
+      const bt = b.publishDate?.getTime() ?? 0;
+      return bt - at;
+    });
+  }
+  return byTarget;
+}
+
+const DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
 
 async function getCoverage(
   type: "EVENT" | "VENDOR" | "VENUE",
@@ -127,54 +188,119 @@ async function getCoverage(
     .sort((a, b) => a.blogPostCount - b.blogPostCount || a.name.localeCompare(b.name));
 }
 
+const ROW_GRID = "grid grid-cols-[1.25rem_1fr_3rem_5rem] gap-3 items-center px-3 py-2";
+
 function CoverageTable({
   rows,
   detailPath,
   emptyLabel,
+  postsByTarget,
 }: {
   rows: CoverageRow[];
   detailPath: string;
   emptyLabel: string;
+  postsByTarget: PostsByTarget;
 }) {
   if (rows.length === 0) {
     return <p className="text-sm text-stone-600">{emptyLabel}</p>;
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full">
-        <thead>
-          <tr className="border-b border-stone-100 text-left text-sm text-stone-600">
-            <th className="py-2 px-3 font-medium">Name</th>
-            <th className="py-2 px-3 font-medium">State</th>
-            <th className="py-2 px-3 font-medium w-24">Blog posts</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-b border-stone-100 hover:bg-stone-50">
-              <td className="py-2 px-3">
-                <Link
-                  href={`${detailPath}/${row.slug}`}
-                  className="text-gray-900 hover:text-navy font-medium"
-                >
-                  {row.name}
-                </Link>
-              </td>
-              <td className="py-2 px-3 text-gray-600 text-sm">{row.state ?? "-"}</td>
-              <td className="py-2 px-3">
-                {row.blogPostCount > 0 ? (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-dark">
-                    {row.blogPostCount}
-                  </span>
-                ) : (
-                  <span className="text-xs text-red-600 font-medium">0</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="divide-y divide-stone-100 border-t border-stone-100">
+      <div
+        className={`${ROW_GRID} text-xs uppercase tracking-wide text-stone-600 font-medium bg-stone-50`}
+      >
+        <span aria-hidden="true" />
+        <span>Name</span>
+        <span>State</span>
+        <span>Blog posts</span>
+      </div>
+      {rows.map((row) => {
+        const posts = postsByTarget.get(row.id) ?? [];
+        return (
+          <CoverageRowItem
+            key={row.id}
+            row={row}
+            posts={posts}
+            detailPath={detailPath}
+          />
+        );
+      })}
     </div>
+  );
+}
+
+function CoverageRowItem({
+  row,
+  posts,
+  detailPath,
+}: {
+  row: CoverageRow;
+  posts: BlogPostRef[];
+  detailPath: string;
+}) {
+  const hasPosts = posts.length > 0;
+
+  const rowBody = (
+    <>
+      <Link
+        href={`${detailPath}/${row.slug}`}
+        className="text-gray-900 hover:text-navy font-medium truncate"
+      >
+        {row.name}
+      </Link>
+      <span className="text-gray-600 text-sm">{row.state ?? "-"}</span>
+      <span>
+        {hasPosts ? (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-dark">
+            {posts.length}
+          </span>
+        ) : (
+          <span className="text-xs text-red-600 font-medium">0</span>
+        )}
+      </span>
+    </>
+  );
+
+  if (!hasPosts) {
+    return (
+      <div className={`${ROW_GRID} hover:bg-stone-50`}>
+        <span aria-hidden="true" />
+        {rowBody}
+      </div>
+    );
+  }
+
+  return (
+    <details className="group">
+      <summary
+        className={`${ROW_GRID} cursor-pointer hover:bg-stone-50 list-none [&::-webkit-details-marker]:hidden`}
+      >
+        <ChevronRight
+          className="w-4 h-4 text-stone-400 transition-transform group-open:rotate-90"
+          aria-hidden="true"
+        />
+        {rowBody}
+      </summary>
+      <ul className="bg-stone-50/60 border-t border-stone-100 pl-11 pr-4 py-2 space-y-1">
+        {posts.map((p) => (
+          <li key={p.id} className="flex items-baseline gap-2 text-sm">
+            <Link
+              href={`/blog/${p.slug}`}
+              className="text-navy hover:underline truncate"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {p.title}
+            </Link>
+            {p.publishDate && (
+              <span className="text-xs text-stone-500 shrink-0">
+                {DATE_FMT.format(p.publishDate)}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -249,10 +375,20 @@ export default async function AdminCoveragePage({
   const filter: CoverageFilter =
     rawFilter === "covered" ? "covered" : rawFilter === "uncovered" ? "uncovered" : "all";
 
-  const [eventRowsRaw, vendorRowsRaw, venueRowsRaw] = await Promise.all([
+  const [
+    eventRowsRaw,
+    vendorRowsRaw,
+    venueRowsRaw,
+    eventPosts,
+    vendorPosts,
+    venuePosts,
+  ] = await Promise.all([
     getCoverage("EVENT", scope),
     getCoverage("VENDOR"),
     getCoverage("VENUE"),
+    getPostsByTarget("EVENT"),
+    getPostsByTarget("VENDOR"),
+    getPostsByTarget("VENUE"),
   ]);
 
   const zeroEvents = eventRowsRaw.filter((r) => r.blogPostCount === 0).length;
@@ -325,6 +461,7 @@ export default async function AdminCoveragePage({
               rows={eventRows.slice(0, 200)}
               detailPath="/events"
               emptyLabel={emptyLabelFor("event", scope, filter)}
+              postsByTarget={eventPosts}
             />
           </CardContent>
         </Card>
@@ -342,6 +479,7 @@ export default async function AdminCoveragePage({
               rows={vendorRows.slice(0, 200)}
               detailPath="/vendors"
               emptyLabel={emptyLabelFor("vendor", scope, filter)}
+              postsByTarget={vendorPosts}
             />
           </CardContent>
         </Card>
@@ -359,6 +497,7 @@ export default async function AdminCoveragePage({
               rows={venueRows.slice(0, 200)}
               detailPath="/venues"
               emptyLabel={emptyLabelFor("venue", scope, filter)}
+              postsByTarget={venuePosts}
             />
           </CardContent>
         </Card>
