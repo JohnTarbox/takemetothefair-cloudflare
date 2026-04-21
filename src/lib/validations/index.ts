@@ -174,6 +174,7 @@ const eventBaseSchema = z.object({
   sourceName: z.string().optional().nullable(),
   sourceUrl: urlSchema,
   sourceId: z.string().optional().nullable(),
+  syncEnabled: z.boolean().optional(),
   eventDays: z
     .array(eventDaySchema)
     .max(100, "Maximum 100 days allowed for daily schedules")

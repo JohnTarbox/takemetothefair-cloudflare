@@ -199,6 +199,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.applicationInstructions !== undefined)
       updateData.applicationInstructions = data.applicationInstructions;
     if (data.walkInsAllowed !== undefined) updateData.walkInsAllowed = data.walkInsAllowed;
+    if (data.syncEnabled !== undefined) updateData.syncEnabled = data.syncEnabled;
 
     await db.update(events).set(updateData).where(eq(events.id, id));
 

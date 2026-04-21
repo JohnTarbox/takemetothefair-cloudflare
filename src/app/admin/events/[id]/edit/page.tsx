@@ -61,6 +61,7 @@ interface Event {
   sourceName?: string | null;
   sourceUrl?: string | null;
   lastSyncedAt?: string | null;
+  syncEnabled?: boolean | null;
   vendorFeeMin?: number | null;
   vendorFeeMax?: number | null;
   vendorFeeNotes?: string | null;
@@ -86,6 +87,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [discontinuousDates, setDiscontinuousDates] = useState(false);
   const [isStatewide, setIsStatewide] = useState(false);
   const [stateCode, setStateCode] = useState<StateCode | "">("");
+  const [syncEnabled, setSyncEnabled] = useState(true);
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
@@ -106,6 +108,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       setDiscontinuousDates(data.discontinuousDates ?? false);
       setIsStatewide(!!data.isStatewide);
       setStateCode((data.stateCode as StateCode) || "");
+      setSyncEnabled(data.syncEnabled !== false);
       if (data.startDate) {
         setStartDate(formatDateForInput(data.startDate));
       }
@@ -235,6 +238,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       applicationUrl: formData.get("applicationUrl") || null,
       applicationInstructions: formData.get("applicationInstructions") || null,
       walkInsAllowed: formData.get("walkInsAllowed") === "on" ? true : null,
+      syncEnabled,
     };
 
     try {
@@ -558,6 +562,27 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   </Label>
                 </div>
               </div>
+
+              {(event.sourceName || event.sourceUrl) && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="syncEnabled"
+                      type="checkbox"
+                      checked={syncEnabled}
+                      onChange={(e) => setSyncEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="syncEnabled" className="font-normal">
+                      Allow re-sync from source
+                    </Label>
+                  </div>
+                  <p className="mt-1 text-xs text-amber-900">
+                    Uncheck to protect hand-edits (description, venue, dates, etc.) from being
+                    overwritten on the next import/sync pass.
+                  </p>
+                </div>
+              )}
 
               {/* Vendor Information */}
               <div className="border-t pt-4 mt-4">

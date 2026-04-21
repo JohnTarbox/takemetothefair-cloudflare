@@ -29,16 +29,11 @@ async function findOrCreateVenue(
   const venueState = (scrapedVenue.state || "").toUpperCase().trim();
 
   // Try to find existing venue by slug
-  const existingVenues = await db
-    .select()
-    .from(venues)
-    .where(eq(venues.slug, venueSlug));
+  const existingVenues = await db.select().from(venues).where(eq(venues.slug, venueSlug));
 
   // Look for a venue with matching city (if we have city info)
   if (existingVenues.length > 0 && venueCity) {
-    const matchingVenue = existingVenues.find(
-      (v) => v.city.toLowerCase().trim() === venueCity
-    );
+    const matchingVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
     if (matchingVenue) {
       return matchingVenue.id;
     }
@@ -46,17 +41,19 @@ async function findOrCreateVenue(
   } else if (existingVenues.length > 0 && !venueCity) {
     // No city info from scraper - try to match by state if available
     if (venueState) {
-      const matchingVenue = existingVenues.find(
-        (v) => v.state.toUpperCase().trim() === venueState
-      );
+      const matchingVenue = existingVenues.find((v) => v.state.toUpperCase().trim() === venueState);
       if (matchingVenue) {
-        console.log(`[findOrCreateVenue] Matched existing venue "${matchingVenue.name}" by state ${venueState}`);
+        console.log(
+          `[findOrCreateVenue] Matched existing venue "${matchingVenue.name}" by state ${venueState}`
+        );
         return matchingVenue.id;
       }
     }
     // No state match either - just use the first existing venue with this slug
     // This is safer than creating duplicates with no distinguishing info
-    console.log(`[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`);
+    console.log(
+      `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
+    );
     return existingVenues[0].id;
   }
 
@@ -74,11 +71,7 @@ async function findOrCreateVenue(
     }
 
     // Check if this slug also exists, add random suffix if needed
-    const slugCheck = await db
-      .select()
-      .from(venues)
-      .where(eq(venues.slug, finalSlug))
-      .limit(1);
+    const slugCheck = await db.select().from(venues).where(eq(venues.slug, finalSlug)).limit(1);
     if (slugCheck.length > 0) {
       finalSlug = `${finalSlug}-${crypto.randomUUID().substring(0, 8)}`;
     }
@@ -150,9 +143,16 @@ export async function GET(request: Request) {
       try {
         result = await scraper.scrape(options);
       } catch (scrapeError) {
-        await logError(db, { message: "[FairsAndFestivals Custom URL] Scrape error", error: scrapeError, source: "api/admin/import", request });
+        await logError(db, {
+          message: "[FairsAndFestivals Custom URL] Scrape error",
+          error: scrapeError,
+          source: "api/admin/import",
+          request,
+        });
         return NextResponse.json(
-          { error: `Failed to scrape custom URL: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}` },
+          {
+            error: `Failed to scrape custom URL: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}`,
+          },
           { status: 500 }
         );
       }
@@ -178,7 +178,12 @@ export async function GET(request: Request) {
               : {};
             return { ...event, ...details };
           } catch (error) {
-            await logError(db, { message: `Error fetching details for ${event.name}`, error, source: "api/admin/import", request });
+            await logError(db, {
+              message: `Error fetching details for ${event.name}`,
+              error,
+              source: "api/admin/import",
+              request,
+            });
             return event;
           }
         })
@@ -191,28 +196,30 @@ export async function GET(request: Request) {
       .from(events)
       .where(eq(events.sourceName, source));
 
-    const existingSourceIds = new Set(existingEvents.map(e => e.sourceId));
+    const existingSourceIds = new Set(existingEvents.map((e) => e.sourceId));
 
     // Mark events as new or existing
-    const eventsWithStatus = eventsWithDetails.map(event => ({
+    const eventsWithStatus = eventsWithDetails.map((event) => ({
       ...event,
       exists: existingSourceIds.has(event.sourceId),
-      existingId: existingEvents.find(e => e.sourceId === event.sourceId)?.id,
+      existingId: existingEvents.find((e) => e.sourceId === event.sourceId)?.id,
     }));
 
     return NextResponse.json({
       source,
       events: eventsWithStatus,
       total: eventsWithStatus.length,
-      newCount: eventsWithStatus.filter(e => !e.exists).length,
-      existingCount: eventsWithStatus.filter(e => e.exists).length,
+      newCount: eventsWithStatus.filter((e) => !e.exists).length,
+      existingCount: eventsWithStatus.filter((e) => e.exists).length,
     });
   } catch (error) {
-    await logError(db, { message: "Error previewing import", error, source: "api/admin/import", request });
-    return NextResponse.json(
-      { error: "Failed to preview events" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error previewing import",
+      error,
+      source: "api/admin/import",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to preview events" }, { status: 500 });
   }
 }
 
@@ -226,7 +233,13 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { events: eventsToImport, venueId, promoterId, fetchDetails = false, updateExisting = false } = body as {
+    const {
+      events: eventsToImport,
+      venueId,
+      promoterId,
+      fetchDetails = false,
+      updateExisting = false,
+    } = body as {
       events: ScrapedEvent[];
       venueId?: string;
       promoterId: string;
@@ -239,10 +252,7 @@ export async function POST(request: Request) {
     }
 
     if (!promoterId) {
-      return NextResponse.json(
-        { error: "Promoter is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Promoter is required" }, { status: 400 });
     }
 
     // Verify venue exists if provided
@@ -275,12 +285,7 @@ export async function POST(request: Request) {
         const existing = await db
           .select()
           .from(events)
-          .where(
-            and(
-              eq(events.sourceName, event.sourceName),
-              eq(events.sourceId, event.sourceId)
-            )
-          )
+          .where(and(eq(events.sourceName, event.sourceName), eq(events.sourceId, event.sourceId)))
           .limit(1);
 
         // Optionally fetch additional details
@@ -295,12 +300,21 @@ export async function POST(request: Request) {
             }
             // Log if scraper didn't find dates
             if (!details.startDate && event.sourceName === "mainepublic.org") {
-              console.log(`[Import Debug] No dates found for ${event.name} from ${event.sourceUrl}`);
+              console.log(
+                `[Import Debug] No dates found for ${event.name} from ${event.sourceUrl}`
+              );
               console.log(`[Import Debug] Details returned:`, JSON.stringify(details));
             }
           } catch (scrapeError) {
-            await logError(db, { message: `[Import Debug] Scraper error for ${event.name}`, error: scrapeError, source: "api/admin/import", request });
-            results.errors.push(`Scraper error for ${event.name}: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}`);
+            await logError(db, {
+              message: `[Import Debug] Scraper error for ${event.name}`,
+              error: scrapeError,
+              source: "api/admin/import",
+              request,
+            });
+            results.errors.push(
+              `Scraper error for ${event.name}: ${scrapeError instanceof Error ? scrapeError.message : "Unknown error"}`
+            );
           }
           eventData = { ...eventData, ...details };
         }
@@ -313,25 +327,26 @@ export async function POST(request: Request) {
           const decodedVenueName = decodeHtmlEntities(eventData.venue.name);
           const venueSlug = createSlug(decodedVenueName);
 
-          console.log(`[Venue Match] Event: ${eventData.name}, Venue: ${decodedVenueName}, City from scraper: "${venueCity}"`);
+          console.log(
+            `[Venue Match] Event: ${eventData.name}, Venue: ${decodedVenueName}, City from scraper: "${venueCity}"`
+          );
 
           // Check if venue exists with matching name AND city
-          const existingVenues = await db
-            .select()
-            .from(venues)
-            .where(eq(venues.slug, venueSlug));
+          const existingVenues = await db.select().from(venues).where(eq(venues.slug, venueSlug));
 
-          console.log(`[Venue Match] Found ${existingVenues.length} existing venue(s) with slug "${venueSlug}"`);
+          console.log(
+            `[Venue Match] Found ${existingVenues.length} existing venue(s) with slug "${venueSlug}"`
+          );
           existingVenues.forEach((v, i) => {
-            console.log(`[Venue Match]   ${i + 1}. "${v.name}" in "${v.city}", ${v.state} (id: ${v.id})`);
+            console.log(
+              `[Venue Match]   ${i + 1}. "${v.name}" in "${v.city}", ${v.state} (id: ${v.id})`
+            );
           });
 
           let matchedVenue = null;
           if (existingVenues.length > 0 && venueCity) {
             // Look for venue with matching city
-            matchedVenue = existingVenues.find(
-              (v) => v.city.toLowerCase().trim() === venueCity
-            );
+            matchedVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
             if (matchedVenue) {
               console.log(`[Venue Match] Matched existing venue by name+city: ${matchedVenue.id}`);
             } else {
@@ -340,7 +355,9 @@ export async function POST(request: Request) {
           } else if (existingVenues.length > 0 && !venueCity) {
             // No city from scraper - DON'T fall back to first match, create new venue instead
             // This prevents matching "DoubleTree Portland" when we don't know the city
-            console.log(`[Venue Match] No city from scraper - will create new venue to avoid wrong match`);
+            console.log(
+              `[Venue Match] No city from scraper - will create new venue to avoid wrong match`
+            );
             matchedVenue = null;
           }
 
@@ -360,12 +377,15 @@ export async function POST(request: Request) {
 
         if (existing.length > 0) {
           // Event already exists
-          if (updateExisting) {
+          // Respect syncEnabled=false — admins set this after hand-editing so re-imports don't clobber enrichments
+          if (updateExisting && existing[0].syncEnabled !== false) {
             // Update the existing event (including venue if scraped)
             // Use website for ticketUrl (Event Website button), fall back to sourceUrl
             // Decode HTML entities in event name
             const decodedEventName = decodeHtmlEntities(eventData.name);
-            const decodedDescription = eventData.description ? decodeHtmlEntities(eventData.description) : existing[0].description;
+            const decodedDescription = eventData.description
+              ? decodeHtmlEntities(eventData.description)
+              : existing[0].description;
             const updateData: Record<string, unknown> = {
               name: decodedEventName,
               description: decodedDescription,
@@ -457,17 +477,21 @@ export async function POST(request: Request) {
           slug,
         });
       } catch (error) {
-        results.errors.push(`Failed to import ${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
+        results.errors.push(
+          `Failed to import ${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
       }
     }
 
     return NextResponse.json(results);
   } catch (error) {
-    await logError(db, { message: "Error importing events", error, source: "api/admin/import", request });
-    return NextResponse.json(
-      { error: "Failed to import events" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error importing events",
+      error,
+      source: "api/admin/import",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to import events" }, { status: 500 });
   }
 }
 
@@ -480,20 +504,19 @@ export async function PATCH(request: Request) {
   }
 
   try {
-
     // Get all events with sync enabled
     const syncableEvents = await db
       .select()
       .from(events)
       .where(
         and(
-          eq(events.syncEnabled, true),
+          eq(events.syncEnabled, true)
           // sourceName is not null - we use a simple check
         )
       );
 
     // Filter to only events that have a source
-    const eventsToSync = syncableEvents.filter(e => e.sourceName && e.sourceUrl);
+    const eventsToSync = syncableEvents.filter((e) => e.sourceName && e.sourceUrl);
 
     const results = {
       synced: 0,
@@ -515,7 +538,13 @@ export async function PATCH(request: Request) {
         const details = await detailsScraper(event.sourceUrl);
 
         // Update if we got new details
-        if (details.description || details.startDate || details.endDate || details.imageUrl || details.website) {
+        if (
+          details.description ||
+          details.startDate ||
+          details.endDate ||
+          details.imageUrl ||
+          details.website
+        ) {
           const updates: Record<string, unknown> = {
             lastSyncedAt: new Date(),
             updatedAt: new Date(),
@@ -524,10 +553,17 @@ export async function PATCH(request: Request) {
           if (details.description && details.description !== event.description) {
             updates.description = details.description;
           }
-          if (details.startDate && (!event.startDate || details.startDate.getTime() !== new Date(event.startDate).getTime())) {
+          if (
+            details.startDate &&
+            (!event.startDate ||
+              details.startDate.getTime() !== new Date(event.startDate).getTime())
+          ) {
             updates.startDate = details.startDate;
           }
-          if (details.endDate && (!event.endDate || details.endDate.getTime() !== new Date(event.endDate).getTime())) {
+          if (
+            details.endDate &&
+            (!event.endDate || details.endDate.getTime() !== new Date(event.endDate).getTime())
+          ) {
             updates.endDate = details.endDate;
           }
           if (details.imageUrl && details.imageUrl !== event.imageUrl) {
@@ -537,30 +573,38 @@ export async function PATCH(request: Request) {
             updates.ticketUrl = details.website;
           }
 
-          if (Object.keys(updates).length > 2) { // More than just timestamps
+          if (Object.keys(updates).length > 2) {
+            // More than just timestamps
             await db.update(events).set(updates).where(eq(events.id, event.id));
             results.synced++;
           } else {
             // Just update the sync timestamp
-            await db.update(events).set({
-              lastSyncedAt: new Date(),
-            }).where(eq(events.id, event.id));
+            await db
+              .update(events)
+              .set({
+                lastSyncedAt: new Date(),
+              })
+              .where(eq(events.id, event.id));
             results.unchanged++;
           }
         } else {
           results.unchanged++;
         }
       } catch (error) {
-        results.errors.push(`Failed to sync ${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
+        results.errors.push(
+          `Failed to sync ${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
       }
     }
 
     return NextResponse.json(results);
   } catch (error) {
-    await logError(db, { message: "Error syncing events", error, source: "api/admin/import", request });
-    return NextResponse.json(
-      { error: "Failed to sync events" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error syncing events",
+      error,
+      source: "api/admin/import",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to sync events" }, { status: 500 });
   }
 }

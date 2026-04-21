@@ -1296,6 +1296,63 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  // ── delete_venue ──────────────────────────────────────────────
+  server.tool(
+    "delete_venue",
+    "Delete a venue. Refuses if any events reference this venue — reassign or delete those first. Admin only.",
+    {
+      venue_id: z.string().uuid().describe("Venue ID to delete"),
+    },
+    async ({ venue_id }) => {
+      const venue = await db
+        .select({ id: venues.id, name: venues.name, slug: venues.slug })
+        .from(venues)
+        .where(eq(venues.id, venue_id))
+        .limit(1);
+
+      if (venue.length === 0) {
+        return {
+          content: [{ type: "text", text: `Venue ${venue_id} not found.` }],
+          isError: true,
+        };
+      }
+
+      const attachedEvents = await db
+        .select({ id: events.id, name: events.name, slug: events.slug })
+        .from(events)
+        .where(eq(events.venueId, venue_id))
+        .limit(10);
+
+      if (attachedEvents.length > 0) {
+        return {
+          content: [
+            jsonContent({
+              deleted: false,
+              venue_id,
+              reason:
+                "Venue has attached events. Reassign their venue_id (or mark them is_statewide + clear venue_id) before deleting this venue.",
+              attached_events: attachedEvents,
+            }),
+          ],
+          isError: true,
+        };
+      }
+
+      await db.delete(venues).where(eq(venues.id, venue_id));
+
+      return {
+        content: [
+          jsonContent({
+            deleted: true,
+            venue_id,
+            name: venue[0].name,
+            slug: venue[0].slug,
+          }),
+        ],
+      };
+    }
+  );
+
   // ── update_vendor ─────────────────────────────────────────────
   server.tool(
     "update_vendor",
