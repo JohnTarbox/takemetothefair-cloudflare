@@ -16,6 +16,29 @@ export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 type EventScope = "all" | "upcoming";
+type CoverageFilter = "all" | "uncovered" | "covered";
+
+function buildCoverageHref(scope: EventScope, filter: CoverageFilter): string {
+  const params = new URLSearchParams();
+  if (scope !== "all") params.set("scope", scope);
+  if (filter !== "all") params.set("filter", filter);
+  const qs = params.toString();
+  return qs ? `/admin/coverage?${qs}` : "/admin/coverage";
+}
+
+function applyCoverageView(rows: CoverageRow[], filter: CoverageFilter): CoverageRow[] {
+  if (filter === "uncovered") {
+    return rows
+      .filter((r) => r.blogPostCount === 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+  if (filter === "covered") {
+    return rows
+      .filter((r) => r.blogPostCount > 0)
+      .sort((a, b) => b.blogPostCount - a.blogPostCount || a.name.localeCompare(b.name));
+  }
+  return rows;
+}
 
 interface CoverageRow {
   id: string;
@@ -155,24 +178,24 @@ function CoverageTable({
   );
 }
 
-function ScopeToggle({ scope }: { scope: EventScope }) {
-  const base =
-    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors border";
-  const active = "bg-navy text-white border-navy";
-  const inactive = "bg-white text-gray-700 border-stone-200 hover:bg-stone-50";
+const TOGGLE_BASE = "px-3 py-1.5 text-sm font-medium rounded-md transition-colors border";
+const TOGGLE_ACTIVE = "bg-navy text-white border-navy";
+const TOGGLE_INACTIVE = "bg-white text-gray-700 border-stone-200 hover:bg-stone-50";
+
+function ScopeToggle({ scope, filter }: { scope: EventScope; filter: CoverageFilter }) {
   return (
     <div className="inline-flex items-center gap-2" role="group" aria-label="Event scope">
       <span className="text-xs uppercase tracking-wide text-stone-600 mr-1">Events:</span>
       <Link
-        href="/admin/coverage"
-        className={`${base} ${scope === "all" ? active : inactive}`}
+        href={buildCoverageHref("all", filter)}
+        className={`${TOGGLE_BASE} ${scope === "all" ? TOGGLE_ACTIVE : TOGGLE_INACTIVE}`}
         aria-pressed={scope === "all"}
       >
         All
       </Link>
       <Link
-        href="/admin/coverage?scope=upcoming"
-        className={`${base} ${scope === "upcoming" ? active : inactive}`}
+        href={buildCoverageHref("upcoming", filter)}
+        className={`${TOGGLE_BASE} ${scope === "upcoming" ? TOGGLE_ACTIVE : TOGGLE_INACTIVE}`}
         aria-pressed={scope === "upcoming"}
       >
         Upcoming only
@@ -181,23 +204,71 @@ function ScopeToggle({ scope }: { scope: EventScope }) {
   );
 }
 
+function CoverageFilterToggle({
+  scope,
+  filter,
+}: {
+  scope: EventScope;
+  filter: CoverageFilter;
+}) {
+  return (
+    <div className="inline-flex items-center gap-2" role="group" aria-label="Coverage filter">
+      <span className="text-xs uppercase tracking-wide text-stone-600 mr-1">Show:</span>
+      <Link
+        href={buildCoverageHref(scope, "all")}
+        className={`${TOGGLE_BASE} ${filter === "all" ? TOGGLE_ACTIVE : TOGGLE_INACTIVE}`}
+        aria-pressed={filter === "all"}
+      >
+        All
+      </Link>
+      <Link
+        href={buildCoverageHref(scope, "uncovered")}
+        className={`${TOGGLE_BASE} ${filter === "uncovered" ? TOGGLE_ACTIVE : TOGGLE_INACTIVE}`}
+        aria-pressed={filter === "uncovered"}
+      >
+        No coverage
+      </Link>
+      <Link
+        href={buildCoverageHref(scope, "covered")}
+        className={`${TOGGLE_BASE} ${filter === "covered" ? TOGGLE_ACTIVE : TOGGLE_INACTIVE}`}
+        aria-pressed={filter === "covered"}
+      >
+        With coverage
+      </Link>
+    </div>
+  );
+}
+
 export default async function AdminCoveragePage({
   searchParams,
 }: {
-  searchParams: Promise<{ scope?: string }>;
+  searchParams: Promise<{ scope?: string; filter?: string }>;
 }) {
-  const { scope: rawScope } = await searchParams;
+  const { scope: rawScope, filter: rawFilter } = await searchParams;
   const scope: EventScope = rawScope === "upcoming" ? "upcoming" : "all";
+  const filter: CoverageFilter =
+    rawFilter === "covered" ? "covered" : rawFilter === "uncovered" ? "uncovered" : "all";
 
-  const [eventRows, vendorRows, venueRows] = await Promise.all([
+  const [eventRowsRaw, vendorRowsRaw, venueRowsRaw] = await Promise.all([
     getCoverage("EVENT", scope),
     getCoverage("VENDOR"),
     getCoverage("VENUE"),
   ]);
 
-  const zeroEvents = eventRows.filter((r) => r.blogPostCount === 0).length;
-  const zeroVendors = vendorRows.filter((r) => r.blogPostCount === 0).length;
-  const zeroVenues = venueRows.filter((r) => r.blogPostCount === 0).length;
+  const zeroEvents = eventRowsRaw.filter((r) => r.blogPostCount === 0).length;
+  const zeroVendors = vendorRowsRaw.filter((r) => r.blogPostCount === 0).length;
+  const zeroVenues = venueRowsRaw.filter((r) => r.blogPostCount === 0).length;
+
+  const eventRows = applyCoverageView(eventRowsRaw, filter);
+  const vendorRows = applyCoverageView(vendorRowsRaw, filter);
+  const venueRows = applyCoverageView(venueRowsRaw, filter);
+
+  const description =
+    filter === "covered"
+      ? "Entities that have at least one published blog post linking to them, sorted by post count descending."
+      : filter === "uncovered"
+        ? "Entities with zero published blog-post coverage — your writing backlog."
+        : "Entities sorted by blog-post coverage ascending — zero-coverage items float to the top. Use this to prioritize what to write about next.";
 
   return (
     <div>
@@ -206,14 +277,12 @@ export default async function AdminCoveragePage({
           <FileText className="w-6 h-6 text-amber-dark" />
           Blog Coverage
         </h1>
-        <p className="mt-1 text-gray-600 max-w-3xl">
-          Entities sorted by blog-post coverage ascending — zero-coverage items float to the top.
-          Use this to prioritize what to write about next.
-        </p>
+        <p className="mt-1 text-gray-600 max-w-3xl">{description}</p>
       </div>
 
-      <div className="mb-6">
-        <ScopeToggle scope={scope} />
+      <div className="mb-6 flex flex-wrap items-center gap-4">
+        <CoverageFilterToggle scope={scope} filter={filter} />
+        <ScopeToggle scope={scope} filter={filter} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -222,19 +291,22 @@ export default async function AdminCoveragePage({
             {scope === "upcoming" ? "Upcoming events with 0 posts" : "Events with 0 posts"}
           </p>
           <p className="text-2xl font-bold text-stone-900 mt-1">
-            {zeroEvents} <span className="text-sm font-normal text-stone-600">/ {eventRows.length}</span>
+            {zeroEvents}{" "}
+            <span className="text-sm font-normal text-stone-600">/ {eventRowsRaw.length}</span>
           </p>
         </div>
         <div className="rounded-lg border border-stone-100 bg-stone-50 p-4">
           <p className="text-xs uppercase tracking-wide text-stone-600">Vendors with 0 posts</p>
           <p className="text-2xl font-bold text-stone-900 mt-1">
-            {zeroVendors} <span className="text-sm font-normal text-stone-600">/ {vendorRows.length}</span>
+            {zeroVendors}{" "}
+            <span className="text-sm font-normal text-stone-600">/ {vendorRowsRaw.length}</span>
           </p>
         </div>
         <div className="rounded-lg border border-stone-100 bg-stone-50 p-4">
           <p className="text-xs uppercase tracking-wide text-stone-600">Venues with 0 posts</p>
           <p className="text-2xl font-bold text-stone-900 mt-1">
-            {zeroVenues} <span className="text-sm font-normal text-stone-600">/ {venueRows.length}</span>
+            {zeroVenues}{" "}
+            <span className="text-sm font-normal text-stone-600">/ {venueRowsRaw.length}</span>
           </p>
         </div>
       </div>
@@ -245,17 +317,14 @@ export default async function AdminCoveragePage({
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
               <Calendar className="w-5 h-5" />
               {scope === "upcoming" ? "Upcoming Events" : "Events"}
+              <span className="text-sm font-normal text-stone-500">({eventRows.length})</span>
             </h2>
           </CardHeader>
           <CardContent>
             <CoverageTable
               rows={eventRows.slice(0, 200)}
               detailPath="/events"
-              emptyLabel={
-                scope === "upcoming"
-                  ? "No upcoming events in the database yet."
-                  : "No events to report."
-              }
+              emptyLabel={emptyLabelFor("event", scope, filter)}
             />
           </CardContent>
         </Card>
@@ -265,13 +334,14 @@ export default async function AdminCoveragePage({
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
               <Store className="w-5 h-5" />
               Vendors
+              <span className="text-sm font-normal text-stone-500">({vendorRows.length})</span>
             </h2>
           </CardHeader>
           <CardContent>
             <CoverageTable
               rows={vendorRows.slice(0, 200)}
               detailPath="/vendors"
-              emptyLabel="No vendors to report."
+              emptyLabel={emptyLabelFor("vendor", scope, filter)}
             />
           </CardContent>
         </Card>
@@ -281,17 +351,36 @@ export default async function AdminCoveragePage({
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
               <MapPin className="w-5 h-5" />
               Venues
+              <span className="text-sm font-normal text-stone-500">({venueRows.length})</span>
             </h2>
           </CardHeader>
           <CardContent>
             <CoverageTable
               rows={venueRows.slice(0, 200)}
               detailPath="/venues"
-              emptyLabel="No venues to report."
+              emptyLabel={emptyLabelFor("venue", scope, filter)}
             />
           </CardContent>
         </Card>
       </div>
     </div>
   );
+}
+
+function emptyLabelFor(
+  kind: "event" | "vendor" | "venue",
+  scope: EventScope,
+  filter: CoverageFilter,
+): string {
+  const plural = kind === "event" ? "events" : kind === "vendor" ? "vendors" : "venues";
+  if (filter === "covered") {
+    return `No ${plural} have blog coverage yet.`;
+  }
+  if (filter === "uncovered") {
+    return `Every ${kind} has at least one blog post — nothing to prioritize.`;
+  }
+  if (kind === "event" && scope === "upcoming") {
+    return "No upcoming events in the database yet.";
+  }
+  return `No ${plural} to report.`;
 }
