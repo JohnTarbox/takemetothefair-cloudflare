@@ -29,8 +29,6 @@ interface CoverageRow {
  */
 async function getCoverage(type: "EVENT" | "VENDOR" | "VENUE"): Promise<CoverageRow[]> {
   const db = getCloudflareDb();
-  const table = type === "EVENT" ? events : type === "VENDOR" ? vendors : venues;
-  const nameCol = type === "VENDOR" ? vendors.businessName : (table as typeof events).name;
 
   // Aggregated link counts per target id.
   const counts = await db
@@ -54,24 +52,37 @@ async function getCoverage(type: "EVENT" | "VENDOR" | "VENUE"): Promise<Coverage
       .map((r) => [r.targetId, Number(r.n)]),
   );
 
-  // Fetch entities — only "public" ones (approved events, active venues).
-  const baseWhere =
-    type === "EVENT"
-      ? isPublicEventStatus()
-      : type === "VENUE"
-        ? eq(venues.status, "ACTIVE")
-        : undefined;
-
-  const rows = await db
-    .select({
-      id: table.id,
-      slug: table.slug,
-      name: nameCol,
-      state: (table as typeof venues).state ?? null,
-    })
-    .from(table)
-    .where(baseWhere)
-    .orderBy(desc(table.id));
+  // Events don't carry state directly — derive it via their venue.
+  let rows: Array<{ id: string; slug: string; name: string; state: string | null }>;
+  if (type === "EVENT") {
+    rows = await db
+      .select({
+        id: events.id,
+        slug: events.slug,
+        name: events.name,
+        state: venues.state,
+      })
+      .from(events)
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(isPublicEventStatus())
+      .orderBy(desc(events.id));
+  } else if (type === "VENUE") {
+    rows = await db
+      .select({ id: venues.id, slug: venues.slug, name: venues.name, state: venues.state })
+      .from(venues)
+      .where(eq(venues.status, "ACTIVE"))
+      .orderBy(desc(venues.id));
+  } else {
+    rows = await db
+      .select({
+        id: vendors.id,
+        slug: vendors.slug,
+        name: vendors.businessName,
+        state: vendors.state,
+      })
+      .from(vendors)
+      .orderBy(desc(vendors.id));
+  }
 
   return rows
     .map((r) => ({
