@@ -95,6 +95,10 @@ export const events = sqliteTable(
       .notNull()
       .references(() => promoters.id, { onDelete: "cascade" }),
     venueId: text("venue_id").references(() => venues.id, { onDelete: "set null" }),
+    // Denormalized from venue.state; required when venueId is null (enforced in validation).
+    stateCode: text("state_code"),
+    // True for events with no single physical venue (statewide tours, multi-location trails).
+    isStatewide: integer("is_statewide", { mode: "boolean" }).notNull().default(false),
     startDate: integer("start_date", { mode: "timestamp" }),
     endDate: integer("end_date", { mode: "timestamp" }),
     publicStartDate: integer("public_start_date", { mode: "timestamp" }),
@@ -149,6 +153,7 @@ export const events = sqliteTable(
     index("idx_events_status_startdate").on(table.status, table.startDate),
     index("idx_events_venueid").on(table.venueId),
     index("idx_events_promoterid").on(table.promoterId),
+    index("idx_events_state_code").on(table.stateCode),
   ]
 );
 

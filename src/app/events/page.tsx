@@ -13,7 +13,20 @@ import {
   userFavorites,
   eventDays,
 } from "@/lib/db/schema";
-import { eq, and, gte, or, count, inArray, sql, like, isNull, asc, desc } from "drizzle-orm";
+import {
+  eq,
+  and,
+  gte,
+  or,
+  count,
+  inArray,
+  sql,
+  like,
+  isNull,
+  isNotNull,
+  asc,
+  desc,
+} from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -204,7 +217,7 @@ async function getEvents(
     // Get events with joins
     // Build separate queries for calendar (no pagination) vs cards/table (paginated)
     const stateConditions = searchParams.state
-      ? [...conditions, eq(venues.state, searchParams.state)]
+      ? [...conditions, eq(events.stateCode, searchParams.state)]
       : conditions;
 
     const orderByMap: Record<string, ReturnType<typeof asc>> = {
@@ -327,17 +340,11 @@ async function getEvents(
         : {}),
     }));
 
-    // Count total
-    const countResult = searchParams.state
-      ? await db
-          .select({ count: count() })
-          .from(events)
-          .leftJoin(venues, eq(events.venueId, venues.id))
-          .where(and(...stateConditions))
-      : await db
-          .select({ count: count() })
-          .from(events)
-          .where(and(...conditions));
+    // Count total (state filter now lives on events.state_code, so no venue join needed)
+    const countResult = await db
+      .select({ count: count() })
+      .from(events)
+      .where(and(...stateConditions));
 
     return {
       events: eventsWithVendors,
@@ -381,12 +388,20 @@ async function getCategories() {
 async function getStates() {
   try {
     const db = getCloudflareDb();
-    const results = await db
-      .selectDistinct({ state: venues.state })
-      .from(venues)
-      .where(eq(venues.status, "ACTIVE"));
+    // Union active-venue states with any event state_code so statewide-only
+    // events (venue_id NULL) still surface their state in nav/filters.
+    const [venueStates, eventStates] = await Promise.all([
+      db.selectDistinct({ state: venues.state }).from(venues).where(eq(venues.status, "ACTIVE")),
+      db
+        .selectDistinct({ state: events.stateCode })
+        .from(events)
+        .where(and(isPublicEventStatus(), isNotNull(events.stateCode))),
+    ]);
 
-    return results.map((v) => v.state).sort();
+    const all = new Set<string>();
+    for (const { state } of venueStates) if (state) all.add(state);
+    for (const { state } of eventStates) if (state) all.add(state);
+    return Array.from(all).sort();
   } catch (error) {
     console.error("Failed to fetch venue states", { error });
     return [];

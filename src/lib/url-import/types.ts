@@ -12,6 +12,11 @@ export interface ExtractedEventData {
   venueAddress: string | null;
   venueCity: string | null;
   venueState: string | null;
+  // Statewide / multi-location events with no single venue (e.g., Maine Pottery
+  // Tour, Maine Open Lighthouse Day). When true, venue fields are ignored and
+  // the event is placed on the state page via stateCode.
+  isStatewide: boolean;
+  stateCode: string | null; // Two-letter code, e.g. "ME"
   ticketUrl: string | null;
   ticketPriceMin: number | null;
   ticketPriceMax: number | null;

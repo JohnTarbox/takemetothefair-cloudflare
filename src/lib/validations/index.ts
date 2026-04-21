@@ -128,6 +128,8 @@ const eventBaseSchema = z.object({
   description: descriptionSchema,
   promoterId: z.string().min(1),
   venueId: z.string().min(1).optional().nullable(),
+  stateCode: z.string().length(2).optional().nullable(),
+  isStatewide: z.boolean().optional().default(false),
   startDate: z.string().datetime().optional().nullable(),
   endDate: z.string().datetime().optional().nullable(),
   datesConfirmed: z.boolean().optional().default(true),
@@ -226,6 +228,19 @@ export const eventCreateSchema = eventBaseSchema
     {
       message: "Discontinuous date events must have at least one date",
       path: ["eventDays"],
+    }
+  )
+  .refine(
+    (data) => {
+      // When no venue is attached, stateCode is how the event gets placed on
+      // /events/<state> listings. Enforce on create only — updates may touch
+      // venueId without revisiting stateCode.
+      if (!data.venueId && !data.stateCode) return false;
+      return true;
+    },
+    {
+      message: "State is required when no venue is selected",
+      path: ["stateCode"],
     }
   );
 
@@ -349,6 +364,8 @@ export const promoterEventCreateSchema = z
     name: nameSchema,
     description: descriptionSchema,
     venueId: z.string().min(1).optional().nullable(),
+    stateCode: z.string().length(2).optional().nullable(),
+    isStatewide: z.boolean().optional().default(false),
     startDate: z.string().min(1).optional().nullable(),
     endDate: z.string().min(1).optional().nullable(),
     discontinuousDates: z.boolean().optional().default(false),
@@ -426,6 +443,16 @@ export const promoterEventCreateSchema = z
     {
       message: "Discontinuous date events must have at least one date",
       path: ["eventDays"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (!data.venueId && !data.stateCode) return false;
+      return true;
+    },
+    {
+      message: "State is required when no venue is selected",
+      path: ["stateCode"],
     }
   );
 

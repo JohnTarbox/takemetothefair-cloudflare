@@ -84,6 +84,8 @@ export async function POST(request: NextRequest) {
       name,
       description,
       venueId,
+      stateCode,
+      isStatewide,
       startDate: rawStartDate,
       endDate: rawEndDate,
       discontinuousDates: isDiscontinuous,
@@ -149,12 +151,25 @@ export async function POST(request: NextRequest) {
 
     const eventId = crypto.randomUUID();
 
+    // Derive stateCode from the attached venue when not explicitly provided.
+    let resolvedStateCode = stateCode ?? null;
+    if (!resolvedStateCode && venueId) {
+      const venueRow = await db
+        .select({ state: venues.state })
+        .from(venues)
+        .where(eq(venues.id, venueId))
+        .limit(1);
+      resolvedStateCode = venueRow[0]?.state ?? null;
+    }
+
     await db.insert(events).values({
       id: eventId,
       name,
       slug,
       description,
       venueId: venueId || null,
+      stateCode: resolvedStateCode,
+      isStatewide: isStatewide ?? false,
       promoterId: promoter.id,
       startDate: startDate ? new Date(startDate) : null,
       endDate: endDate ? new Date(endDate) : null,

@@ -43,7 +43,7 @@ async function getStateEvents(
   const db = getCloudflareDb();
   const offset = (page - 1) * limit;
 
-  const conditions = [isPublicEventStatus(), eq(venues.state, stateCode)];
+  const conditions = [isPublicEventStatus(), eq(events.stateCode, stateCode)];
   if (!includePast) {
     conditions.push(or(gte(events.endDate, new Date()), isNull(events.endDate))!);
   }
@@ -51,7 +51,7 @@ async function getStateEvents(
   const results = await db
     .select()
     .from(events)
-    .innerJoin(venues, eq(events.venueId, venues.id))
+    .leftJoin(venues, eq(events.venueId, venues.id))
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
     .where(and(...conditions))
     .orderBy(events.startDate)
@@ -112,7 +112,6 @@ async function getStateEvents(
   const countResult = await db
     .select({ count: count() })
     .from(events)
-    .innerJoin(venues, eq(events.venueId, venues.id))
     .where(and(...conditions));
 
   return {

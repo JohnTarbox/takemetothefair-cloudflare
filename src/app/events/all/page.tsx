@@ -41,7 +41,8 @@ export default async function AllEventsPage() {
       slug: events.slug,
       imageUrl: events.imageUrl,
       startDate: events.startDate,
-      state: venues.state,
+      stateCode: events.stateCode,
+      venueState: venues.state,
     })
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
@@ -52,10 +53,11 @@ export default async function AllEventsPage() {
   const now = new Date();
   const upcomingEvents = results.filter((e) => !e.startDate || new Date(e.startDate) >= now);
 
-  // Group by state
+  // Group by state — prefer events.state_code (authoritative post-migration);
+  // fall back to venues.state for any event whose backfill hasn't landed yet.
   const byState = new Map<string, typeof results>();
   for (const event of upcomingEvents) {
-    const key = event.state || "Other";
+    const key = event.stateCode || event.venueState || "Other";
     if (!byState.has(key)) byState.set(key, []);
     byState.get(key)!.push(event);
   }

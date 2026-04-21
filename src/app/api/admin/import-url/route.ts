@@ -165,6 +165,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Resolve state_code: explicit from extractor wins, then venueState hint,
+    // then look up the state on a newly-attached venue if we have one.
+    let resolvedStateCode = event.stateCode || event.venueState || null;
+    if (!resolvedStateCode && venueId) {
+      const venueRow = await db
+        .select({ state: venues.state })
+        .from(venues)
+        .where(eq(venues.id, venueId))
+        .limit(1);
+      resolvedStateCode = venueRow[0]?.state ?? null;
+    }
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -174,6 +186,8 @@ export async function POST(request: NextRequest) {
       description: event.description || `${event.name} - imported from URL`,
       promoterId,
       venueId,
+      stateCode: resolvedStateCode,
+      isStatewide: event.isStatewide === true,
       startDate,
       endDate,
       publicStartDate: startDate,

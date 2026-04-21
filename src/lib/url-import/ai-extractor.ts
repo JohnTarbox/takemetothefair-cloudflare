@@ -39,6 +39,8 @@ Return a JSON array where each event has these fields (use null for fields not f
     "venueAddress": "street address",
     "venueCity": "city",
     "venueState": "2-letter state code (Maine=ME)",
+    "isStatewide": true/false - true ONLY if the event has no single venue and happens across a whole state (e.g., "statewide tour", "across Maine", "participating farms throughout the state", "open studios across the state"). If a single venue is named, this must be false.,
+    "stateCode": "2-letter state code for the event's state (always populate if determinable, e.g., 'ME' for a Maine event)",
     "ticketUrl": "URL for tickets",
     "ticketPriceMin": number or null,
     "ticketPriceMax": number or null,
@@ -100,6 +102,8 @@ Find and extract these fields. Use null for any field not found:
   "venueAddress": "street address",
   "venueCity": "city",
   "venueState": "2-letter state code (Maine=ME, Massachusetts=MA, New Hampshire=NH)",
+  "isStatewide": true/false - true ONLY if the event has no single venue and happens across a whole state (e.g., "statewide tour", "across Maine", "participating farms throughout the state"). False if a single venue is named.,
+  "stateCode": "2-letter state code for the event's state (always populate if determinable)",
   "ticketUrl": "URL for tickets",
   "ticketPriceMin": number or null,
   "ticketPriceMax": number or null,
@@ -362,6 +366,10 @@ function sanitizeEventData(
     venueAddress: sanitizeString(item.venueAddress || item.venue_address || item.address),
     venueCity: sanitizeString(item.venueCity || item.venue_city || item.city),
     venueState: sanitizeState(item.venueState || item.venue_state || item.state),
+    isStatewide: item.isStatewide === true || item.is_statewide === true,
+    stateCode:
+      sanitizeState(item.stateCode || item.state_code) ||
+      sanitizeState(item.venueState || item.venue_state || item.state),
     ticketUrl: sanitizeUrl(item.ticketUrl || item.ticket_url || item.url || item.link),
     ticketPriceMin: sanitizePrice(
       item.ticketPriceMin || item.ticket_price_min || item.price_min || item.price
@@ -425,6 +433,8 @@ function createFallbackEvent(metadata: PageMetadata): ExtractedEvent[] {
     venueAddress: null,
     venueCity: null,
     venueState: null,
+    isStatewide: false,
+    stateCode: null,
     ticketUrl: null,
     ticketPriceMin: null,
     ticketPriceMax: null,
@@ -513,6 +523,8 @@ function parseAiResponse(
     venueAddress: null,
     venueCity: null,
     venueState: null,
+    isStatewide: false,
+    stateCode: null,
     ticketUrl: null,
     ticketPriceMin: null,
     ticketPriceMax: null,
@@ -581,6 +593,8 @@ function parseAiResponse(
       venueAddress: sanitizeString(parsed.venueAddress),
       venueCity: sanitizeString(parsed.venueCity),
       venueState: sanitizeState(parsed.venueState),
+      isStatewide: parsed.isStatewide === true,
+      stateCode: sanitizeState(parsed.stateCode) || sanitizeState(parsed.venueState),
       ticketUrl: sanitizeUrl(parsed.ticketUrl),
       ticketPriceMin: sanitizePrice(parsed.ticketPriceMin),
       ticketPriceMax: sanitizePrice(parsed.ticketPriceMax),
@@ -673,6 +687,15 @@ function fallbackFromMetadata(
         }
       }
     }
+  }
+
+  // Keep stateCode in sync with venueState when the AI didn't populate it.
+  if (!data.stateCode && data.venueState) {
+    data.stateCode = data.venueState;
+  }
+
+  if (metadata.jsonLd) {
+    const ld = metadata.jsonLd;
 
     // Image from JSON-LD
     if (!data.imageUrl && ld.image) {

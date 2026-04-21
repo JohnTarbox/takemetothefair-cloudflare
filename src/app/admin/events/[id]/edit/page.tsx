@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
 import { RescrapePanel } from "@/components/admin/RescrapePanel";
+import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 
 export const runtime = "edge";
 
@@ -42,6 +43,8 @@ interface Event {
   name: string;
   description: string | null;
   venueId: string | null;
+  stateCode: string | null;
+  isStatewide: boolean;
   promoterId: string;
   startDate: string | null;
   endDate: string | null;
@@ -81,6 +84,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [promoters, setPromoters] = useState<Promoter[]>([]);
   const [datesTBD, setDatesTBD] = useState(false);
   const [discontinuousDates, setDiscontinuousDates] = useState(false);
+  const [isStatewide, setIsStatewide] = useState(false);
+  const [stateCode, setStateCode] = useState<StateCode | "">("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
@@ -99,6 +104,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       setEvent(data);
       setDatesTBD(!data.startDate || !data.datesConfirmed);
       setDiscontinuousDates(data.discontinuousDates ?? false);
+      setIsStatewide(!!data.isStatewide);
+      setStateCode((data.stateCode as StateCode) || "");
       if (data.startDate) {
         setStartDate(formatDateForInput(data.startDate));
       }
@@ -191,7 +198,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     const data = {
       name: formData.get("name"),
       description: formData.get("description") || null,
-      venueId: formData.get("venueId") || null,
+      venueId: isStatewide ? null : formData.get("venueId") || null,
+      isStatewide,
+      stateCode: stateCode || null,
       startDate: startDateISO,
       endDate: endDateISO,
       datesConfirmed: !datesTBD,
@@ -312,21 +321,55 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                 />
               </div>
 
-              <div>
-                <Label htmlFor="venueId">Venue</Label>
-                <select
-                  id="venueId"
-                  name="venueId"
-                  defaultValue={event.venueId || ""}
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  <option value="">No venue selected</option>
-                  {venues.map((venue) => (
-                    <option key={venue.id} value={venue.id}>
-                      {venue.name} - {venue.city}, {venue.state}
-                    </option>
-                  ))}
-                </select>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="isStatewide"
+                    type="checkbox"
+                    checked={isStatewide}
+                    onChange={(e) => setIsStatewide(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  <Label htmlFor="isStatewide" className="font-normal">
+                    Statewide event (no specific venue)
+                  </Label>
+                </div>
+                {isStatewide ? (
+                  <div>
+                    <Label htmlFor="stateCode">State *</Label>
+                    <select
+                      id="stateCode"
+                      value={stateCode}
+                      onChange={(e) => setStateCode(e.target.value as StateCode | "")}
+                      required
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="">Select a state</option>
+                      {STATE_CODES.map((code) => (
+                        <option key={code} value={code}>
+                          {STATES[code].name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <Label htmlFor="venueId">Venue</Label>
+                    <select
+                      id="venueId"
+                      name="venueId"
+                      defaultValue={event.venueId || ""}
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="">No venue selected</option>
+                      {venues.map((venue) => (
+                        <option key={venue.id} value={venue.id}>
+                          {venue.name} - {venue.city}, {venue.state}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div>

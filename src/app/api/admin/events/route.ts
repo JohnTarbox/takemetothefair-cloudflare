@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, eventDays, contentLinks, blogPosts } from "@/lib/db/schema";
+import { events, eventDays, contentLinks, blogPosts, venues } from "@/lib/db/schema";
 import { eq, or, gt, lt, and, sql } from "drizzle-orm";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
@@ -120,12 +120,26 @@ export async function POST(request: NextRequest) {
         ? computePublicDates(data.eventDays)
         : { publicStartDate: startDate, publicEndDate: endDate };
 
+    // Derive stateCode from the attached venue when not explicitly provided,
+    // so state filters stay in sync without callers having to pass both.
+    let resolvedStateCode = data.stateCode ?? null;
+    if (!resolvedStateCode && data.venueId) {
+      const venueRow = await db
+        .select({ state: venues.state })
+        .from(venues)
+        .where(eq(venues.id, data.venueId))
+        .limit(1);
+      resolvedStateCode = venueRow[0]?.state ?? null;
+    }
+
     await db.insert(events).values({
       id: eventId,
       name: data.name,
       slug,
       description: data.description,
       venueId: data.venueId,
+      stateCode: resolvedStateCode,
+      isStatewide: data.isStatewide ?? false,
       promoterId: data.promoterId,
       startDate,
       endDate,

@@ -21,6 +21,7 @@ import { WizardSteps, type WizardStep } from "@/components/ui/wizard-steps";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { VenueComboSearch } from "@/components/venue-combo-search";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
+import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 
 export const runtime = "edge";
 
@@ -45,6 +46,8 @@ interface FormState {
   name: string;
   description: string;
   venueId: string;
+  isStatewide: boolean;
+  stateCode: StateCode | "";
   startDate: string;
   startTime: string;
   endDate: string;
@@ -71,6 +74,8 @@ const EMPTY_FORM: FormState = {
   name: "",
   description: "",
   venueId: "",
+  isStatewide: false,
+  stateCode: "",
   startDate: "",
   startTime: "09:00",
   endDate: "",
@@ -112,7 +117,9 @@ function buildRequestBody(
   return {
     name: form.name,
     description: form.description || null,
-    venueId: form.venueId || null,
+    venueId: form.isStatewide ? null : form.venueId || null,
+    isStatewide: form.isStatewide,
+    stateCode: form.stateCode || null,
     startDate: startDateISO,
     endDate: endDateISO,
     discontinuousDates,
@@ -221,6 +228,8 @@ function CreateEventWizard() {
             : ((e.name as string) ?? ""),
           description: (e.description as string) ?? "",
           venueId: (e.venueId as string) ?? "",
+          isStatewide: !!e.isStatewide,
+          stateCode: ((e.stateCode as string) ?? "") as StateCode | "",
           startDate: toIsoDate(e.startDate),
           startTime: toTime(e.startDate) || "09:00",
           endDate: toIsoDate(e.endDate),
@@ -443,14 +452,56 @@ function CreateEventWizard() {
                   placeholder="Describe your event…"
                 />
               </div>
-              <VenueComboSearch
-                venues={venues}
-                selectedVenueId={form.venueId}
-                onVenueSelect={(venueId) => {
-                  setForm((prev) => ({ ...prev, venueId }));
-                }}
-                disabled={saving}
-              />
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={form.isStatewide}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        isStatewide: e.target.checked,
+                        // Clear venue when switching to statewide
+                        venueId: e.target.checked ? "" : prev.venueId,
+                      }))
+                    }
+                    className="h-4 w-4 rounded border-gray-300"
+                  />
+                  Statewide event (no specific venue)
+                </label>
+                {form.isStatewide ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">State *</label>
+                    <select
+                      value={form.stateCode}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          stateCode: e.target.value as StateCode | "",
+                        }))
+                      }
+                      required
+                      className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
+                    >
+                      <option value="">Select a state</option>
+                      {STATE_CODES.map((code) => (
+                        <option key={code} value={code}>
+                          {STATES[code].name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <VenueComboSearch
+                    venues={venues}
+                    selectedVenueId={form.venueId}
+                    onVenueSelect={(venueId) => {
+                      setForm((prev) => ({ ...prev, venueId }));
+                    }}
+                    disabled={saving}
+                  />
+                )}
+              </div>
               <Input
                 label="Categories (comma-separated)"
                 name="categories"

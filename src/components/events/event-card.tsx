@@ -13,6 +13,7 @@ import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
+import { getStateName } from "@/lib/states";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -146,20 +147,30 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                 variant="icon"
               />
             </div>
-            {event.venue && (
-              <div className="flex items-center justify-between">
-                <div className="flex items-center min-w-0">
-                  <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
-                  <span className="truncate">
-                    {event.venue.name}, {event.venue.city}, {event.venue.state}
-                  </span>
-                </div>
-                {distance != null && (
-                  <span className="ml-2 flex-shrink-0 text-xs font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                    {formatDistance(distance)}
-                  </span>
-                )}
+            {event.isStatewide ? (
+              <div className="flex items-center min-w-0">
+                <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
+                <span className="truncate">
+                  Statewide
+                  {getStateName(event.stateCode) ? ` — ${getStateName(event.stateCode)}` : ""}
+                </span>
               </div>
+            ) : (
+              event.venue && (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center min-w-0">
+                    <MapPin className="w-4 h-4 mr-2 flex-shrink-0" />
+                    <span className="truncate">
+                      {event.venue.name}, {event.venue.city}, {event.venue.state}
+                    </span>
+                  </div>
+                  {distance != null && (
+                    <span className="ml-2 flex-shrink-0 text-xs font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                      {formatDistance(distance)}
+                    </span>
+                  )}
+                </div>
+              )
             )}
             {event.ticketPriceMin !== null && (
               <div className="flex items-center">

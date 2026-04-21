@@ -132,6 +132,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
     if (data.description !== undefined) updateData.description = data.description;
     if (data.venueId !== undefined) updateData.venueId = data.venueId || null;
+    if (data.isStatewide !== undefined) updateData.isStatewide = data.isStatewide;
+    if (data.stateCode !== undefined) updateData.stateCode = data.stateCode || null;
+
+    // If the caller changed the venue without specifying stateCode, derive it from
+    // the new venue so state listings stay consistent.
+    if (data.venueId && data.stateCode === undefined) {
+      const venueRow = await db
+        .select({ state: venues.state })
+        .from(venues)
+        .where(eq(venues.id, data.venueId))
+        .limit(1);
+      if (venueRow[0]?.state) updateData.stateCode = venueRow[0].state;
+    }
     if (data.startDate !== undefined) {
       updateData.startDate = data.startDate ? new Date(data.startDate) : null;
     }
