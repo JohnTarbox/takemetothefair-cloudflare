@@ -344,6 +344,21 @@ export async function countFavorites(
   return result?.count || 0;
 }
 
+export async function bulkCountFavorites(
+  db: Database,
+  favoritableType: "EVENT" | "VENDOR" | "VENUE" | "PROMOTER"
+): Promise<Map<string, number>> {
+  const rows = await db
+    .select({
+      id: userFavorites.favoritableId,
+      n: count(),
+    })
+    .from(userFavorites)
+    .where(eq(userFavorites.favoritableType, favoritableType))
+    .groupBy(userFavorites.favoritableId);
+  return new Map(rows.map((r) => [r.id, Number(r.n)]));
+}
+
 /**
  * Find a venue by Google Place ID (for duplicate checking)
  * Returns the existing venue if found, null otherwise
