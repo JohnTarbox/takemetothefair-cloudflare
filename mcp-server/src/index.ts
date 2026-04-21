@@ -290,6 +290,21 @@ export default {
       });
     }
 
+    // Public build-fingerprint endpoint — no auth, no MCP protocol. Any client
+    // can curl this and compare gitSha to `git log` on the repo to verify they
+    // are talking to the latest deployed bundle.
+    if (url.pathname === "/version" && request.method === "GET") {
+      return new Response(
+        JSON.stringify({
+          name: "MeetMeAtTheFair",
+          serverVersion: "1.0.0",
+          gitSha: env.GIT_SHA || "unknown",
+          buildTime: env.BUILD_TIME || "unknown",
+        }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler
     if (url.pathname === "/mcp" && authHeader?.includes("mmatf_")) {
       return handleLegacyMcpRequest(request, env);
