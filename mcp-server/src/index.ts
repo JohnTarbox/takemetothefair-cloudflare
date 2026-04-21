@@ -24,6 +24,11 @@ interface Env {
   MCP_OBJECT: DurableObjectNamespace;
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
+  // Empty in local dev; populated in production so `whoami` can answer
+  // "which bundle is the server running?" without a client round-trip.
+  GIT_SHA?: string;
+  BUILD_TIME?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,11 +45,31 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
   async init() {
     const db = getDb(this.env.DB);
 
-    // Public tools — always available
-    registerPublicTools(this.server, db);
+    // Track which tools each register*() call added, so `whoami` can report
+    // counts and names sourced from the live McpServer registry — the same
+    // registry that `tools/list` iterates. Hardcoded counts drift silently;
+    // this can't.
+    const snapshot = (): Set<string> =>
+      new Set(Object.keys((this.server as any)._registeredTools ?? {}));
+    const diff = (before: Set<string>): string[] => [...snapshot()].filter((n) => !before.has(n));
+    const groups: Record<string, string[]> = {};
 
-    // Diagnostic tool
+    // Public tools — always available
+    let before = snapshot();
+    registerPublicTools(this.server, db);
+    groups.public = diff(before);
+
+    // Diagnostic tool — registered before role-gated tools, but reads `groups`
+    // at call time via closure, so later register*() calls populate it.
     const props = this.props;
+    const env = this.env;
+    const build = {
+      serverName: "MeetMeAtTheFair",
+      serverVersion: "1.0.0",
+      gitSha: env.GIT_SHA || "unknown",
+      buildTime: env.BUILD_TIME || "unknown",
+    };
+    before = snapshot();
     this.server.tool(
       "whoami",
       "Check your authentication status and see which tools are available.",
@@ -53,27 +78,30 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         if (!props) {
           return {
             content: [
-              { type: "text" as const, text: JSON.stringify({ authenticated: false }, null, 2) },
+              {
+                type: "text" as const,
+                text: JSON.stringify({ authenticated: false, build }, null, 2),
+              },
             ],
           };
         }
-        const toolSets = ["public tools (9)", "user tools (2)"];
-        if (props.role === "VENDOR" || props.role === "ADMIN") {
+        const toolSets: string[] = [
+          `public tools (${groups.public.length})`,
+          `user tools (${groups.user?.length ?? 0})`,
+        ];
+        if (groups.vendor?.length) {
           toolSets.push(
             props.vendorId
-              ? "vendor tools (7)"
-              : "vendor tools (1 — suggest_event only, no vendor profile)"
+              ? `vendor tools (${groups.vendor.length})`
+              : `vendor tools (${groups.vendor.length} — suggest_event only, no vendor profile)`
           );
         }
-        if (props.role === "PROMOTER" || props.role === "ADMIN")
-          toolSets.push("promoter tools (3)");
-        if (props.role === "ADMIN")
-          toolSets.push(
-            "admin tools (16)",
-            "analytics tools (11)",
-            "blog tools (6)",
-            "content-links tools (4)"
-          );
+        if (groups.promoter?.length) toolSets.push(`promoter tools (${groups.promoter.length})`);
+        if (groups.admin?.length) toolSets.push(`admin tools (${groups.admin.length})`);
+        if (groups.analytics?.length) toolSets.push(`analytics tools (${groups.analytics.length})`);
+        if (groups.blog?.length) toolSets.push(`blog tools (${groups.blog.length})`);
+        if (groups.contentLinks?.length)
+          toolSets.push(`content-links tools (${groups.contentLinks.length})`);
         return {
           content: [
             {
@@ -86,7 +114,19 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
                   role: props.role,
                   vendorId: props.vendorId || null,
                   promoterId: props.promoterId || null,
+                  build,
                   toolSets,
+                  tools: {
+                    public: groups.public,
+                    diagnostic: groups.diagnostic ?? [],
+                    user: groups.user ?? [],
+                    vendor: groups.vendor ?? [],
+                    promoter: groups.promoter ?? [],
+                    admin: groups.admin ?? [],
+                    analytics: groups.analytics ?? [],
+                    blog: groups.blog ?? [],
+                    contentLinks: groups.contentLinks ?? [],
+                  },
                 },
                 null,
                 2
@@ -96,6 +136,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         };
       }
     );
+    groups.diagnostic = diff(before);
 
     // Role-specific tools based on OAuth props
     if (this.props) {
@@ -106,22 +147,39 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         promoterId: this.props.promoterId,
       };
 
+      before = snapshot();
       registerUserTools(this.server, db, auth);
+      groups.user = diff(before);
 
       if (auth.role === "VENDOR" || auth.role === "ADMIN") {
         console.log(
           `[INIT] Registering vendor tools for role=${auth.role} vendorId=${auth.vendorId || "none"}`
         );
+        before = snapshot();
         registerVendorTools(this.server, db, auth);
+        groups.vendor = diff(before);
       }
       if (auth.role === "PROMOTER" || auth.role === "ADMIN") {
+        before = snapshot();
         registerPromoterTools(this.server, db, auth);
+        groups.promoter = diff(before);
       }
       if (auth.role === "ADMIN") {
+        before = snapshot();
         registerAdminTools(this.server, db, auth, this.env);
+        groups.admin = diff(before);
+
+        before = snapshot();
         registerAnalyticsTools(this.server, auth, this.env);
+        groups.analytics = diff(before);
+
+        before = snapshot();
         registerBlogTools(this.server, db, auth, this.env);
+        groups.blog = diff(before);
+
+        before = snapshot();
         registerContentLinksTools(this.server, db, auth);
+        groups.contentLinks = diff(before);
       }
     }
   }
