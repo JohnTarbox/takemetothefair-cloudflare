@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Calendar, MapPin, Store, FileText } from "lucide-react";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   blogPosts,
@@ -13,7 +13,9 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 export const runtime = "edge";
-export const revalidate = 300;
+export const dynamic = "force-dynamic";
+
+type EventScope = "all" | "upcoming";
 
 interface CoverageRow {
   id: string;
@@ -23,11 +25,10 @@ interface CoverageRow {
   blogPostCount: number;
 }
 
-/**
- * Returns rows for the given entity type, sorted by blog-post count ASC so
- * zero-coverage entities float to the top. One aggregated LEFT JOIN.
- */
-async function getCoverage(type: "EVENT" | "VENDOR" | "VENUE"): Promise<CoverageRow[]> {
+async function getCoverage(
+  type: "EVENT" | "VENDOR" | "VENUE",
+  eventScope: EventScope = "all",
+): Promise<CoverageRow[]> {
   const db = getCloudflareDb();
 
   // Aggregated link counts per target id.
@@ -52,9 +53,17 @@ async function getCoverage(type: "EVENT" | "VENDOR" | "VENUE"): Promise<Coverage
       .map((r) => [r.targetId, Number(r.n)]),
   );
 
-  // Events don't carry state directly — derive it via their venue.
   let rows: Array<{ id: string; slug: string; name: string; state: string | null }>;
   if (type === "EVENT") {
+    // Upcoming = event hasn't ended yet. Null end_date kept in the set
+    // (TBD-dated events are still worth prioritizing blog coverage for).
+    const eventWhere =
+      eventScope === "upcoming"
+        ? and(
+            isPublicEventStatus(),
+            or(gte(events.endDate, new Date()), isNull(events.endDate)),
+          )
+        : isPublicEventStatus();
     rows = await db
       .select({
         id: events.id,
@@ -64,7 +73,7 @@ async function getCoverage(type: "EVENT" | "VENDOR" | "VENUE"): Promise<Coverage
       })
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(isPublicEventStatus())
+      .where(eventWhere)
       .orderBy(desc(events.id));
   } else if (type === "VENUE") {
     rows = await db
@@ -146,9 +155,42 @@ function CoverageTable({
   );
 }
 
-export default async function AdminCoveragePage() {
+function ScopeToggle({ scope }: { scope: EventScope }) {
+  const base =
+    "px-3 py-1.5 text-sm font-medium rounded-md transition-colors border";
+  const active = "bg-navy text-white border-navy";
+  const inactive = "bg-white text-gray-700 border-stone-200 hover:bg-stone-50";
+  return (
+    <div className="inline-flex items-center gap-2" role="group" aria-label="Event scope">
+      <span className="text-xs uppercase tracking-wide text-stone-600 mr-1">Events:</span>
+      <Link
+        href="/admin/coverage"
+        className={`${base} ${scope === "all" ? active : inactive}`}
+        aria-pressed={scope === "all"}
+      >
+        All
+      </Link>
+      <Link
+        href="/admin/coverage?scope=upcoming"
+        className={`${base} ${scope === "upcoming" ? active : inactive}`}
+        aria-pressed={scope === "upcoming"}
+      >
+        Upcoming only
+      </Link>
+    </div>
+  );
+}
+
+export default async function AdminCoveragePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ scope?: string }>;
+}) {
+  const { scope: rawScope } = await searchParams;
+  const scope: EventScope = rawScope === "upcoming" ? "upcoming" : "all";
+
   const [eventRows, vendorRows, venueRows] = await Promise.all([
-    getCoverage("EVENT"),
+    getCoverage("EVENT", scope),
     getCoverage("VENDOR"),
     getCoverage("VENUE"),
   ]);
@@ -159,7 +201,7 @@ export default async function AdminCoveragePage() {
 
   return (
     <div>
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
           <FileText className="w-6 h-6 text-amber-dark" />
           Blog Coverage
@@ -170,9 +212,15 @@ export default async function AdminCoveragePage() {
         </p>
       </div>
 
+      <div className="mb-6">
+        <ScopeToggle scope={scope} />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="rounded-lg border border-stone-100 bg-stone-50 p-4">
-          <p className="text-xs uppercase tracking-wide text-stone-600">Events with 0 posts</p>
+          <p className="text-xs uppercase tracking-wide text-stone-600">
+            {scope === "upcoming" ? "Upcoming events with 0 posts" : "Events with 0 posts"}
+          </p>
           <p className="text-2xl font-bold text-stone-900 mt-1">
             {zeroEvents} <span className="text-sm font-normal text-stone-600">/ {eventRows.length}</span>
           </p>
@@ -196,14 +244,18 @@ export default async function AdminCoveragePage() {
           <CardHeader>
             <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
               <Calendar className="w-5 h-5" />
-              Events
+              {scope === "upcoming" ? "Upcoming Events" : "Events"}
             </h2>
           </CardHeader>
           <CardContent>
             <CoverageTable
               rows={eventRows.slice(0, 200)}
               detailPath="/events"
-              emptyLabel="No events to report."
+              emptyLabel={
+                scope === "upcoming"
+                  ? "No upcoming events in the database yet."
+                  : "No events to report."
+              }
             />
           </CardContent>
         </Card>
