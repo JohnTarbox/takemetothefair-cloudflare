@@ -5,12 +5,26 @@ function getSchemaType(vendorType?: string | null): string {
   const type = vendorType.toLowerCase();
 
   // Food-related types
-  if (type.includes("food") || type.includes("restaurant") || type.includes("catering") || type.includes("bakery") || type.includes("cafe")) {
+  if (
+    type.includes("food") ||
+    type.includes("restaurant") ||
+    type.includes("catering") ||
+    type.includes("bakery") ||
+    type.includes("cafe")
+  ) {
     return "FoodEstablishment";
   }
 
   // Craft/artisan/retail types
-  if (type.includes("craft") || type.includes("artisan") || type.includes("handmade") || type.includes("jewelry") || type.includes("retail") || type.includes("shop") || type.includes("boutique")) {
+  if (
+    type.includes("craft") ||
+    type.includes("artisan") ||
+    type.includes("handmade") ||
+    type.includes("jewelry") ||
+    type.includes("retail") ||
+    type.includes("shop") ||
+    type.includes("boutique")
+  ) {
     return "Store";
   }
 
@@ -21,7 +35,13 @@ function getPriceRange(vendorType?: string | null): string {
   if (!vendorType) return "$-$$";
   const type = vendorType.toLowerCase();
   if (type.includes("food") || type.includes("bakery") || type.includes("cafe")) return "$";
-  if (type.includes("craft") || type.includes("artisan") || type.includes("handmade") || type.includes("jewelry")) return "$$";
+  if (
+    type.includes("craft") ||
+    type.includes("artisan") ||
+    type.includes("handmade") ||
+    type.includes("jewelry")
+  )
+    return "$$";
   return "$-$$";
 }
 
@@ -92,9 +112,7 @@ export function VendorSchema({
     email: email || undefined,
     foundingDate: yearEstablished ? String(yearEstablished) : undefined,
     paymentAccepted:
-      paymentMethods && paymentMethods.length > 0
-        ? paymentMethods.join(", ")
-        : undefined,
+      paymentMethods && paymentMethods.length > 0 ? paymentMethods.join(", ") : undefined,
     sameAs: sameAs.length > 0 ? sameAs : undefined,
     priceRange: getPriceRange(vendorType),
     hasOfferCatalog:
@@ -105,7 +123,7 @@ export function VendorSchema({
             itemListElement: products.map((p) => ({
               "@type": "Offer",
               itemOffered: {
-                "@type": "Product",
+                "@type": "Service",
                 name: p,
               },
             })),

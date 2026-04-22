@@ -505,6 +505,7 @@ export default async function EventDetailPage({ params }: Props) {
               }
             : null
         }
+        stateCode={event.stateCode}
         organizer={
           event.promoter && event.promoter.slug !== "meet-me-at-the-fair"
             ? {

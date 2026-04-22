@@ -1,10 +1,3 @@
-interface UpcomingEvent {
-  name: string;
-  url: string;
-  startDate: Date;
-  endDate: Date;
-}
-
 interface VenueSchemaProps {
   name: string;
   description?: string | null;
@@ -24,7 +17,6 @@ interface VenueSchemaProps {
   openingHours?: string | null;
   accessibility?: string[];
   website?: string | null;
-  upcomingEvents?: UpcomingEvent[];
 }
 
 interface OpeningHoursSpec {
@@ -38,12 +30,14 @@ function parseOpeningHours(hoursString: string): OpeningHoursSpec[] | undefined 
   try {
     const parsed = JSON.parse(hoursString);
     if (Array.isArray(parsed)) {
-      return parsed.map((item) => ({
-        "@type": "OpeningHoursSpecification" as const,
-        dayOfWeek: item.dayOfWeek || item.day,
-        opens: item.opens || item.open,
-        closes: item.closes || item.close,
-      })).filter(spec => spec.dayOfWeek && spec.opens && spec.closes);
+      return parsed
+        .map((item) => ({
+          "@type": "OpeningHoursSpecification" as const,
+          dayOfWeek: item.dayOfWeek || item.day,
+          opens: item.opens || item.open,
+          closes: item.closes || item.close,
+        }))
+        .filter((spec) => spec.dayOfWeek && spec.opens && spec.closes);
     }
     return undefined;
   } catch {
@@ -70,11 +64,12 @@ export function VenueSchema({
   openingHours,
   accessibility,
   website,
-  upcomingEvents,
 }: VenueSchemaProps) {
+  const hasRating = !!(googleRating && googleRatingCount);
+
   const schema = {
     "@context": "https://schema.org",
-    "@type": "Place",
+    "@type": hasRating ? "LocalBusiness" : "Place",
     name,
     description: description || undefined,
     image: imageUrl || undefined,
@@ -96,9 +91,7 @@ export function VenueSchema({
           }
         : undefined,
     hasMap:
-      latitude && longitude
-        ? `https://www.google.com/maps?q=${latitude},${longitude}`
-        : undefined,
+      latitude && longitude ? `https://www.google.com/maps?q=${latitude},${longitude}` : undefined,
     maximumAttendeeCapacity: capacity || undefined,
     telephone: telephone || undefined,
     amenityFeature:
@@ -109,32 +102,18 @@ export function VenueSchema({
             value: true,
           }))
         : undefined,
-    aggregateRating:
-      googleRating && googleRatingCount
-        ? {
-            "@type": "AggregateRating",
-            ratingValue: googleRating,
-            reviewCount: googleRatingCount,
-            bestRating: 5,
-            worstRating: 1,
-          }
-        : undefined,
-    openingHoursSpecification: openingHours
-      ? parseOpeningHours(openingHours)
+    aggregateRating: hasRating
+      ? {
+          "@type": "AggregateRating",
+          ratingValue: googleRating,
+          reviewCount: googleRatingCount,
+          bestRating: 5,
+          worstRating: 1,
+        }
       : undefined,
-    accessibilityFeature:
-      accessibility && accessibility.length > 0 ? accessibility : undefined,
+    openingHoursSpecification: openingHours ? parseOpeningHours(openingHours) : undefined,
+    accessibilityFeature: accessibility && accessibility.length > 0 ? accessibility : undefined,
     sameAs: website ? [website] : undefined,
-    event:
-      upcomingEvents && upcomingEvents.length > 0
-        ? upcomingEvents.map((e) => ({
-            "@type": "Event",
-            name: e.name,
-            url: e.url,
-            startDate: new Date(e.startDate).toISOString(),
-            endDate: new Date(e.endDate).toISOString(),
-          }))
-        : undefined,
   };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));
