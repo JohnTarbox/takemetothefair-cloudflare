@@ -27,9 +27,7 @@ test.describe("Public pages", () => {
 });
 
 test.describe("Vendor detail regression", () => {
-  test("/vendors/maine-cardworks-inc loads without null-venue crash", async ({
-    page,
-  }) => {
+  test("/vendors/maine-cardworks-inc loads without null-venue crash", async ({ page }) => {
     const response = await page.goto("/vendors/maine-cardworks-inc");
     expect(response?.status()).toBe(200);
     await expect(page.getByRole("heading", { name: "Maine Cardworks" })).toBeVisible();
@@ -37,9 +35,7 @@ test.describe("Vendor detail regression", () => {
 });
 
 test.describe("Sitemap", () => {
-  test("sitemap.xml returns valid XML with expected pages", async ({
-    request,
-  }) => {
+  test("sitemap.xml returns valid XML with expected pages", async ({ request }) => {
     const response = await request.get("/sitemap.xml");
     expect(response.status()).toBe(200);
 
@@ -55,6 +51,21 @@ test.describe("Sitemap", () => {
     expect(body).toContain("/events/");
     expect(body).toContain("/venues/");
     expect(body).toContain("/vendors/");
+  });
+
+  // Forward-looking guard: if a future incident reattaches the
+  // mmatf-sitemap-hotfix Worker route, this header reappears and CI fails.
+  test("sitemap.xml is served by Pages, not the hotfix Worker", async ({ request }) => {
+    const response = await request.get("/sitemap.xml");
+    expect(response.status()).toBe(200);
+    expect(response.headers()["x-sitemap-source"]).toBeUndefined();
+  });
+});
+
+test.describe("Robots", () => {
+  test("robots.txt returns 200", async ({ request }) => {
+    const response = await request.get("/robots.txt");
+    expect(response.status()).toBe(200);
   });
 });
 

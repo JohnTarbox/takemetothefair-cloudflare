@@ -52,14 +52,44 @@ jobs:
             echo "::error::Events page returned HTTP $HTTP_CODE"
           fi
 
+      - name: Check sitemap.xml
+        id: sitemap
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            "https://meetmeatthefair.com/sitemap.xml")
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::sitemap.xml returned HTTP $HTTP_CODE"
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check robots.txt
+        id: robots
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            "https://meetmeatthefair.com/robots.txt")
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::robots.txt returned HTTP $HTTP_CODE"
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create issue on failure
-        if: steps.health.outputs.healthy == 'false' || steps.homepage.outputs.healthy == 'false'
+        if: steps.health.outputs.healthy == 'false' || steps.homepage.outputs.healthy == 'false' || steps.sitemap.outputs.healthy == 'false' || steps.robots.outputs.healthy == 'false'
         uses: actions/github-script@v7
         with:
           script: |
             const healthCode = '${{ steps.health.outputs.http_code }}';
             const homepageCode = '${{ steps.homepage.outputs.http_code }}';
             const eventsCode = '${{ steps.events.outputs.http_code }}';
+            const sitemapCode = '${{ steps.sitemap.outputs.http_code }}';
+            const robotsCode = '${{ steps.robots.outputs.http_code }}';
 
             // Check if there's already an open downtime issue
             const { data: issues } = await github.rest.issues.listForRepo({
@@ -76,7 +106,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issues[0].number,
-                body: `Still down at ${new Date().toISOString()}\n- Health: ${healthCode}\n- Homepage: ${homepageCode}\n- Events: ${eventsCode}`,
+                body: `Still down at ${new Date().toISOString()}\n- Health: ${healthCode}\n- Homepage: ${homepageCode}\n- Events: ${eventsCode}\n- Sitemap: ${sitemapCode}\n- Robots: ${robotsCode}`,
               });
             } else {
               // Create new issue
@@ -84,7 +114,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: `Site downtime detected - ${new Date().toISOString().split('T')[0]}`,
-                body: `## Downtime Alert\n\n| Endpoint | Status |\n|---|---|\n| /api/health | ${healthCode} |\n| / (homepage) | ${homepageCode} |\n| /events | ${eventsCode} |\n\nDetected at: ${new Date().toISOString()}`,
+                body: `## Downtime Alert\n\n| Endpoint | Status |\n|---|---|\n| /api/health | ${healthCode} |\n| / (homepage) | ${homepageCode} |\n| /events | ${eventsCode} |\n| /sitemap.xml | ${sitemapCode} |\n| /robots.txt | ${robotsCode} |\n\nDetected at: ${new Date().toISOString()}`,
                 labels: ['downtime', 'bug'],
               });
             }
