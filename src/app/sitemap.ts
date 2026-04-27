@@ -6,6 +6,17 @@ import { isPublicEventStatus } from "@/lib/event-status";
 
 export const runtime = "edge";
 
+// SQLite is dynamically typed, so a non-numeric value (e.g. an ISO string
+// written via raw SQL or a restore) lands in an `integer { mode: "timestamp" }`
+// column unchanged. Drizzle then deserializes it as `new Date(NaN * 1000)` =
+// Invalid Date, which is truthy but throws from `.toISOString()` during XML
+// serialization (after this handler returns, so the try/catch below cannot
+// catch it). Guard every row's lastmod through this helper.
+function safeLastMod(value: Date | null | undefined): Date {
+  if (value && !isNaN(value.getTime())) return value;
+  return new Date();
+}
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = "https://meetmeatthefair.com";
 
@@ -189,7 +200,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       const isPast = event.endDate && new Date(event.endDate) < now;
       return {
         url: `${baseUrl}/events/${event.slug}`,
-        lastModified: event.updatedAt || new Date(),
+        lastModified: safeLastMod(event.updatedAt),
         changeFrequency: isPast ? ("monthly" as const) : ("weekly" as const),
         priority: isPast ? 0.5 : 0.7,
       };
@@ -203,7 +214,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
     const venuePages: MetadataRoute.Sitemap = venueResults.map((venue) => ({
       url: `${baseUrl}/venues/${venue.slug}`,
-      lastModified: venue.updatedAt || new Date(),
+      lastModified: safeLastMod(venue.updatedAt),
       changeFrequency: "monthly" as const,
       priority: 0.6,
     }));
@@ -215,7 +226,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
     const vendorPages: MetadataRoute.Sitemap = vendorResults.map((vendor) => ({
       url: `${baseUrl}/vendors/${vendor.slug}`,
-      lastModified: vendor.updatedAt || new Date(),
+      lastModified: safeLastMod(vendor.updatedAt),
       changeFrequency: "monthly" as const,
       priority: 0.6,
     }));
@@ -232,7 +243,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
     const blogPages: MetadataRoute.Sitemap = blogResults.map((post) => ({
       url: `${baseUrl}/blog/${post.slug}`,
-      lastModified: post.updatedAt || new Date(),
+      lastModified: safeLastMod(post.updatedAt),
       changeFrequency: "weekly" as const,
       priority: 0.6,
     }));
@@ -247,7 +258,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       } catch {
         tagsArr = [];
       }
-      const postMod = post.updatedAt || new Date();
+      const postMod = safeLastMod(post.updatedAt);
       for (const raw of tagsArr) {
         const slug = raw
           .toLowerCase()
