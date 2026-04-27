@@ -3,7 +3,12 @@ import type { PageMetadata } from "./types";
 const MAX_CONTENT_LENGTH = 50 * 1024; // 50KB limit for AI processing
 
 /**
- * HTML entity decode map for common entities
+ * HTML entity decode map — URL-import-specific, intentionally richer than the
+ * canonical decoder at `@/lib/utils:decodeHtmlEntities`. URL-imported HTML
+ * commonly contains typographic entities (`&ndash;`, `&mdash;`, `&hellip;`)
+ * and symbol entities (`&copy;`, `&reg;`, `&trade;`, `&bull;`) that the
+ * validation-layer decoder doesn't handle. Don't replace this with the
+ * canonical version without first promoting these extra entities upstream.
  */
 const HTML_ENTITIES: Record<string, string> = {
   "&amp;": "&",
@@ -33,9 +38,7 @@ function decodeHtmlEntities(text: string): string {
   }
 
   // Replace numeric entities (decimal)
-  decoded = decoded.replace(/&#(\d+);/g, (_, code) =>
-    String.fromCharCode(parseInt(code, 10))
-  );
+  decoded = decoded.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
 
   // Replace numeric entities (hex)
   decoded = decoded.replace(/&#x([0-9a-f]+);/gi, (_, code) =>
@@ -166,8 +169,7 @@ export function extractMetadata(html: string): PageMetadata {
       // Check if it's an array of schemas
       if (Array.isArray(jsonData)) {
         const eventSchema = jsonData.find(
-          (item) =>
-            item["@type"] === "Event" || item["@type"]?.includes("Event")
+          (item) => item["@type"] === "Event" || item["@type"]?.includes("Event")
         );
         if (eventSchema) {
           metadata.jsonLd = eventSchema;
