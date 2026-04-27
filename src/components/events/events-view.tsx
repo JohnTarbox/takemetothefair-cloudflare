@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
-import { MonthCalendar, type CalendarDay } from "@mcw/calendar-grid";
+import { MonthCalendar, type CalendarDay } from "@johntarbox/calendar-grid";
 import { useSearchParams } from "next/navigation";
 import {
   LayoutGrid,
@@ -493,7 +493,7 @@ function CalendarView({
     );
   };
 
-  // Render Month View — uses shared @mcw/calendar-grid package
+  // Render Month View — uses shared @johntarbox/calendar-grid package
   const renderMonthDayContent = useCallback(
     (day: CalendarDay) => {
       if (!day.inMonth) return null;
