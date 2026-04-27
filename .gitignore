@@ -45,6 +45,12 @@ next-env.d.ts
 .wrangler/
 .dev.vars
 
+# OpenNext build output
+.open-next/
+
+# Claude Code session state
+.claude/
+
 # Database backups
 /backups/*.sql
 
