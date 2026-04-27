@@ -9,6 +9,7 @@ import {
   jsonContent,
   createSlug,
   parseLocation,
+  decodeHtmlEntities,
   VALID_TRANSITIONS,
   EVENT_STATUS_ENUM,
   VENDOR_STATUS_ENUM,
@@ -252,8 +253,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Update event fields (name, description, dates, venue, ticket info, source info, image, etc.). Does NOT change status — use update_event_status for that. Admin only.",
     {
       event_id: z.string().describe("Event ID"),
-      name: z.string().optional().describe("Event name (also regenerates slug)"),
-      description: z.string().optional().describe("Event description"),
+      name: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Event name (also regenerates slug)"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Event description"),
       start_date: z.string().optional().describe("Start date as ISO 8601 string"),
       end_date: z.string().optional().describe("End date as ISO 8601 string"),
       dates_confirmed: z.boolean().optional().describe("Whether dates are confirmed"),
@@ -306,6 +315,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       sync_enabled: z.boolean().optional().describe("Whether automated sync is enabled"),
       venue_name: z
         .string()
+        .transform(decodeHtmlEntities)
         .optional()
         .describe("Update linked venue's name (convenience shortcut)"),
       venue_address: z.string().optional().describe("Update linked venue's street address"),
@@ -1040,14 +1050,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Update venue fields (name, address, coordinates, etc.). Admin only.",
     {
       venue_id: z.string().describe("Venue ID (UUID)"),
-      name: z.string().optional().describe("Venue name (also regenerates slug)"),
+      name: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Venue name (also regenerates slug)"),
       address: z.string().optional().describe("Street address"),
       city: z.string().optional().describe("City"),
       state: z.string().optional().describe("State (2-letter code)"),
       zip: z.string().optional().describe("ZIP code"),
       latitude: z.number().optional().describe("Latitude coordinate"),
       longitude: z.number().optional().describe("Longitude coordinate"),
-      description: z.string().optional().describe("Venue description"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Venue description"),
       capacity: z.number().int().optional().describe("Venue capacity"),
       website: z.string().optional().describe("Website URL"),
       contact_email: z.string().optional().describe("Contact email"),
@@ -1191,7 +1209,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "create_venue",
     "Create a new venue record. Returns the venue ID for use with update_event. Admin only.",
     {
-      name: z.string().min(1).max(200).describe("Venue name"),
+      name: z.string().min(1).max(200).transform(decodeHtmlEntities).describe("Venue name"),
       address: z.string().min(1).describe("Street address"),
       city: z.string().min(1).describe("City"),
       state: z.string().min(1).max(2).describe("State (2-letter code)"),
@@ -1200,7 +1218,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       longitude: z.number().optional().describe("Longitude coordinate"),
       capacity: z.number().int().optional().describe("Venue capacity"),
       website: z.string().optional().describe("Website URL"),
-      description: z.string().optional().describe("Venue description"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Venue description"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       image_url: z.string().optional().describe("Venue image URL"),

@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, lte, sql } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
-import { parseJsonArray, formatDateRange, jsonContent } from "../helpers.js";
+import { parseJsonArray, formatDateRange, jsonContent, decodeHtmlEntities } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -509,11 +509,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
     "suggest_event",
     "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status.",
     {
-      name: z.string().describe("Event name"),
-      description: z.string().optional().describe("Event description"),
+      name: z.string().transform(decodeHtmlEntities).describe("Event name"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Event description"),
       start_date: z.string().optional().describe("Start date (YYYY-MM-DD)"),
       end_date: z.string().optional().describe("End date (YYYY-MM-DD)"),
-      venue_name: z.string().optional().describe("Venue name"),
+      venue_name: z.string().transform(decodeHtmlEntities).optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
       venue_state: z.string().optional().describe("Venue state (2-letter code)"),
       ticket_url: z.string().optional().describe("URL to purchase tickets"),

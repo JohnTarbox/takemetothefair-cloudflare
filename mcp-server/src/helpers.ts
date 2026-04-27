@@ -1,5 +1,22 @@
 /** Shared helpers for MCP tool implementations */
 
+/** Decode common HTML entities in user-supplied text.
+ *  Used at the MCP input boundary so dedup/storage/slug see literal characters.
+ *  Mirrors src/lib/scrapers/utils.ts decodeHtmlEntities. */
+export function decodeHtmlEntities(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
 /** Generate a URL-safe slug from text (no external dependency) */
 export function createSlug(text: string): string {
   return text
