@@ -10,8 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-export const runtime = "edge";
-
 interface Promoter {
   id: string;
   companyName: string;
@@ -38,7 +36,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
     try {
       const res = await fetch(`/api/admin/promoters/${id}`);
       if (!res.ok) throw new Error("Promoter not found");
-      const data = await res.json() as Promoter;
+      const data = (await res.json()) as Promoter;
       setPromoter(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load promoter");
@@ -69,7 +67,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to update promoter");
       }
 
@@ -119,20 +117,14 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div>
                 <Label>User Account</Label>
-                <Input
-                  value={promoter.user?.email || "-"}
-                  disabled
-                  className="bg-gray-100"
-                />
+                <Input value={promoter.user?.email || "-"} disabled className="bg-gray-100" />
                 <p className="text-xs text-gray-500 mt-1">User cannot be changed</p>
               </div>
 

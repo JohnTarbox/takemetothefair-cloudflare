@@ -11,8 +11,6 @@ import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile"
 import { sendEmail, getSiteUrl } from "@/lib/email/send";
 import { emailVerificationTemplate } from "@/lib/email/templates";
 
-export const runtime = "edge";
-
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(8, "Password must be at least 8 characters"),

@@ -4,8 +4,6 @@ import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
 import { eq, and, or, gte, isNull, count } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
-export const runtime = "edge";
-
 // SQLite is dynamically typed, so a non-numeric value (e.g. an ISO string
 // written via raw SQL or a restore) lands in an `integer { mode: "timestamp" }`
 // column unchanged. Drizzle then deserializes it as `new Date(NaN * 1000)` =

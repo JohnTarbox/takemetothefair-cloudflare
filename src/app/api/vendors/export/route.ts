@@ -9,8 +9,6 @@ import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 export async function GET(request: Request) {
   // Rate limiting check
   const rateLimitResult = await checkRateLimit(request, "export-vendors");

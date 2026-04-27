@@ -3,8 +3,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 const MAX_BODY_BYTES = 16_000;
 const MAX_MESSAGE_CHARS = 4_000;
 const MAX_STACK_CHARS = 8_000;

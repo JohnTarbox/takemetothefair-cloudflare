@@ -5,8 +5,6 @@ import { users, promoters, vendors } from "@/lib/db/schema";
 import { notInArray } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
@@ -18,14 +16,13 @@ export async function GET(request: NextRequest) {
 
   const db = getCloudflareDb();
   try {
-
     if (available === "promoter") {
       // Get users who don't have a promoter profile
-      const existingPromoterUserIds = await db
-        .select({ userId: promoters.userId })
-        .from(promoters);
+      const existingPromoterUserIds = await db.select({ userId: promoters.userId }).from(promoters);
 
-      const userIds = existingPromoterUserIds.map((p) => p.userId).filter((id): id is string => id !== null);
+      const userIds = existingPromoterUserIds
+        .map((p) => p.userId)
+        .filter((id): id is string => id !== null);
 
       let userList;
       if (userIds.length > 0) {
@@ -46,9 +43,7 @@ export async function GET(request: NextRequest) {
 
     if (available === "vendor") {
       // Get users who don't have a vendor profile
-      const existingVendorUserIds = await db
-        .select({ userId: vendors.userId })
-        .from(vendors);
+      const existingVendorUserIds = await db.select({ userId: vendors.userId }).from(vendors);
 
       const userIds = existingVendorUserIds.map((v) => v.userId);
 
@@ -83,7 +78,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(userList);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch users", error, source: "api/admin/users", request });
+    await logError(db, {
+      message: "Failed to fetch users",
+      error,
+      source: "api/admin/users",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 });
   }
 }

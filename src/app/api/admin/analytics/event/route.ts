@@ -13,8 +13,6 @@ import {
 } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/event?eventId=X or ?slug=X
  * Looks up the event, derives its public path (/events/<slug>), then returns

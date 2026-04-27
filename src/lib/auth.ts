@@ -4,7 +4,7 @@ import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import Facebook from "next-auth/providers/facebook";
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq, and } from "drizzle-orm";
@@ -112,7 +112,7 @@ export async function verifyPassword(password: string, storedHash: string): Prom
 // (process.env values are inlined at build time and won't have production secrets)
 function getRuntimeEnv(key: string): string | undefined {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as unknown as Record<string, string>)[key];
   } catch {
     return process.env[key];
@@ -147,10 +147,7 @@ function createAuthConfig(): NextAuthConfig {
             return null;
           }
 
-          const isValid = await verifyPassword(
-            credentials.password as string,
-            user.passwordHash
-          );
+          const isValid = await verifyPassword(credentials.password as string, user.passwordHash);
 
           if (!isValid) {
             return null;
@@ -223,7 +220,7 @@ function createAuthConfig(): NextAuthConfig {
         const existingAccount = await db.query.accounts.findFirst({
           where: and(
             eq(schema.accounts.provider, account.provider),
-            eq(schema.accounts.providerAccountId, account.providerAccountId),
+            eq(schema.accounts.providerAccountId, account.providerAccountId)
           ),
         });
 
@@ -250,9 +247,7 @@ function createAuthConfig(): NextAuthConfig {
         }
 
         // Extract profile image (Google uses "picture", Facebook uses "image")
-        const profileImage = (profile.picture as string)
-          ?? (profile.image as string)
-          ?? null;
+        const profileImage = (profile.picture as string) ?? (profile.image as string) ?? null;
 
         if (!existingUser) {
           // Create new user
@@ -360,5 +355,7 @@ export const signIn: SignInType = ((...args: Parameters<SignInType>) => {
 // Typed signOut function
 export const signOut: SignOutType = ((...args: Parameters<SignOutType>) => {
   const instance = initAuth();
-  return (instance.signOut as (...args: Parameters<SignOutType>) => ReturnType<SignOutType>)(...args);
+  return (instance.signOut as (...args: Parameters<SignOutType>) => ReturnType<SignOutType>)(
+    ...args
+  );
 }) as SignOutType;

@@ -7,8 +7,6 @@ import { createSlug } from "@/lib/utils";
 import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -51,7 +49,12 @@ export async function GET(request: NextRequest, { params }: Params) {
       })),
     });
   } catch (error) {
-    await logError(db, { message: "Failed to fetch vendor", error, source: "api/admin/vendors/[id]", request });
+    await logError(db, {
+      message: "Failed to fetch vendor",
+      error,
+      source: "api/admin/vendors/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch vendor" }, { status: 500 });
   }
 }
@@ -74,7 +77,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-
     // Get current vendor to check if slug needs updating
     const [currentVendor] = await db
       .select({ slug: vendors.slug })
@@ -100,10 +102,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           const existingSlug = await db
             .select({ id: vendors.id })
             .from(vendors)
-            .where(and(
-              eq(vendors.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
-              ne(vendors.id, id)
-            ))
+            .where(
+              and(
+                eq(vendors.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+                ne(vendors.id, id)
+              )
+            )
             .limit(1);
           if (existingSlug.length === 0) break;
           slugSuffix++;
@@ -129,21 +133,23 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.zip !== undefined) updateData.zip = data.zip;
     // Business Details
     if (data.yearEstablished !== undefined) updateData.yearEstablished = data.yearEstablished;
-    if (data.paymentMethods !== undefined) updateData.paymentMethods = JSON.stringify(data.paymentMethods);
+    if (data.paymentMethods !== undefined)
+      updateData.paymentMethods = JSON.stringify(data.paymentMethods);
     if (data.licenseInfo !== undefined) updateData.licenseInfo = data.licenseInfo;
     if (data.insuranceInfo !== undefined) updateData.insuranceInfo = data.insuranceInfo;
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
-    const [updatedVendor] = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, id))
-      .limit(1);
+    const [updatedVendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
 
     return NextResponse.json(updatedVendor);
   } catch (error) {
-    await logError(db, { message: "Failed to update vendor", error, source: "api/admin/vendors/[id]", request });
+    await logError(db, {
+      message: "Failed to update vendor",
+      error,
+      source: "api/admin/vendors/[id]",
+      request,
+    });
     const message = error instanceof Error ? error.message : "Failed to update vendor";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -160,11 +166,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   const db = getCloudflareDb();
   try {
     // Get vendor to find user
-    const vendor = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, id))
-      .limit(1);
+    const vendor = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
 
     if (vendor.length > 0) {
       // Reset user role to USER
@@ -174,7 +176,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(vendors).where(eq(vendors.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to delete vendor", error, source: "api/admin/vendors/[id]", request });
+    await logError(db, {
+      message: "Failed to delete vendor",
+      error,
+      source: "api/admin/vendors/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to delete vendor" }, { status: 500 });
   }
 }

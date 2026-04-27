@@ -6,12 +6,7 @@ import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ slug: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const db = getCloudflareDb();
   try {
     const { slug } = await params;
@@ -43,12 +38,7 @@ export async function GET(
       })
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(
-        and(
-          eq(eventVendors.eventId, event.id),
-          isPublicVendorStatus()
-        )
-      );
+      .where(and(eq(eventVendors.eventId, event.id), isPublicVendorStatus()));
 
     // Parse products JSON for each vendor
     const vendorsWithProducts = vendorResults
@@ -67,11 +57,13 @@ export async function GET(
       vendors: vendorsWithProducts,
     });
   } catch (error) {
-    await logError(db, { message: "Error fetching event vendors", error, source: "api/events/[slug]/vendors", request });
-    return NextResponse.json(
-      { error: "Failed to fetch vendors" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error fetching event vendors",
+      error,
+      source: "api/events/[slug]/vendors",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
 }
 

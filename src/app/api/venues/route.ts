@@ -7,8 +7,6 @@ import { createSlug } from "@/lib/utils";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: Request) {
   const db = getCloudflareDb();
   try {
@@ -163,9 +161,6 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
-      { error: "Failed to create venue" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to create venue" }, { status: 500 });
   }
 }

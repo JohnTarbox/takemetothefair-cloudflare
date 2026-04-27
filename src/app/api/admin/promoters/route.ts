@@ -8,8 +8,6 @@ import { getPromotersWithCounts } from "@/lib/queries";
 import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
@@ -21,7 +19,12 @@ export async function GET(request: NextRequest) {
     const promotersWithCounts = await getPromotersWithCounts(db);
     return NextResponse.json(promotersWithCounts);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch promoters", error, source: "api/admin/promoters", request });
+    await logError(db, {
+      message: "Failed to fetch promoters",
+      error,
+      source: "api/admin/promoters",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch promoters" }, { status: 500 });
   }
 }
@@ -69,7 +72,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(newPromoter, { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create promoter", error, source: "api/admin/promoters", request });
+    await logError(db, {
+      message: "Failed to create promoter",
+      error,
+      source: "api/admin/promoters",
+      request,
+    });
     return NextResponse.json({ error: "Failed to create promoter" }, { status: 500 });
   }
 }

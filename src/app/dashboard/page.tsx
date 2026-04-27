@@ -31,8 +31,6 @@ import { logError } from "@/lib/logger";
 import { formatDateRange } from "@/lib/utils";
 import { computeVendorCompleteness } from "@/lib/vendor-completeness";
 
-export const runtime = "edge";
-
 interface DashboardState {
   emailVerified: boolean;
   favoritesCount: number;

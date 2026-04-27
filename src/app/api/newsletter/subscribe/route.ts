@@ -6,8 +6,6 @@ import { newsletterSubscribers } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 const schema = z.object({
   email: z.string().email(),
   source: z.string().max(40).optional(),

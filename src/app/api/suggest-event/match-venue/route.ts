@@ -5,8 +5,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 const matchVenueSchema = z.object({
   venueName: z.string().min(1),
   venueCity: z.string().nullable().optional(),
@@ -122,10 +120,7 @@ export async function POST(request: NextRequest) {
 
         // Boost score if city matches
         if (venueCity && venue.city) {
-          const cityMatch = similarity(
-            normalizeName(venueCity),
-            normalizeName(venue.city)
-          );
+          const cityMatch = similarity(normalizeName(venueCity), normalizeName(venue.city));
           if (cityMatch > 0.8) {
             score += 0.15;
           }
@@ -180,9 +175,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("[Match Venue] Error:", error);
-    return NextResponse.json(
-      { success: false, error: "Failed to match venue" },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: "Failed to match venue" }, { status: 500 });
   }
 }

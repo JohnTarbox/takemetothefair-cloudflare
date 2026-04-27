@@ -3,8 +3,6 @@ import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface TableStats {
   name: string;
   rowCount: number;
@@ -23,20 +21,26 @@ export async function GET(request: NextRequest) {
     const db = env.DB;
 
     // Get all table names
-    const tablesResult = await db.prepare(`
+    const tablesResult = await db
+      .prepare(
+        `
       SELECT name FROM sqlite_master
       WHERE type='table'
       AND name NOT LIKE 'sqlite_%'
       AND name NOT LIKE '_cf_%'
       ORDER BY name
-    `).all();
+    `
+      )
+      .all();
 
     const tables: TableStats[] = [];
 
     for (const row of tablesResult.results) {
       const tableName = row.name as string;
       try {
-        const countResult = await db.prepare(`SELECT COUNT(*) as count FROM "${tableName}"`).first();
+        const countResult = await db
+          .prepare(`SELECT COUNT(*) as count FROM "${tableName}"`)
+          .first();
         tables.push({
           name: tableName,
           rowCount: (countResult?.count as number) || 0,
@@ -50,11 +54,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Get index count
-    const indexResult = await db.prepare(`
+    const indexResult = await db
+      .prepare(
+        `
       SELECT COUNT(*) as count FROM sqlite_master
       WHERE type='index'
       AND name NOT LIKE 'sqlite_%'
-    `).first();
+    `
+      )
+      .first();
 
     const totalRows = tables.reduce((sum, t) => sum + (t.rowCount > 0 ? t.rowCount : 0), 0);
 
@@ -67,7 +75,12 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    await logError(errorDb, { message: "Stats error", error, source: "api/admin/database/stats", request });
+    await logError(errorDb, {
+      message: "Stats error",
+      error,
+      source: "api/admin/database/stats",
+      request,
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to get database stats" },
       { status: 500 }

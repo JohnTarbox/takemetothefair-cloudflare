@@ -13,8 +13,6 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;
@@ -63,7 +61,7 @@ export default function AdminVenuesPage() {
   const fetchVenues = async () => {
     try {
       const res = await fetch("/api/admin/venues");
-      const data = await res.json() as Venue[];
+      const data = (await res.json()) as Venue[];
       setVenues(data);
     } catch (error) {
       console.error("Failed to fetch venues:", error);
@@ -93,7 +91,7 @@ export default function AdminVenuesPage() {
     setGoogleBackfillResult(null);
     try {
       const res = await fetch("/api/admin/venues/google-backfill/preview", { method: "POST" });
-      const data = await res.json() as BackfillPreview[];
+      const data = (await res.json()) as BackfillPreview[];
       if (data.length === 0) {
         setGoogleBackfillResult("No Google matches found for any venues.");
         return;
@@ -117,7 +115,12 @@ export default function AdminVenuesPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ venueIds: Array.from(selectedVenueIds) }),
       });
-      const data = await res.json() as { success: number; failed: number; skipped: number; total: number };
+      const data = (await res.json()) as {
+        success: number;
+        failed: number;
+        skipped: number;
+        total: number;
+      };
       setGoogleBackfillResult(
         `Google backfill: ${data.success} updated, ${data.skipped} skipped, ${data.failed} failed (${data.total} total)`
       );
@@ -153,7 +156,7 @@ export default function AdminVenuesPage() {
     setBatchResult(null);
     try {
       const res = await fetch("/api/admin/venues/geocode-batch", { method: "POST" });
-      const data = await res.json() as { success: number; failed: number; total: number };
+      const data = (await res.json()) as { success: number; failed: number; total: number };
       setBatchResult(`Geocoded ${data.success} of ${data.total} venues (${data.failed} failed)`);
       fetchVenues();
     } catch {
@@ -211,21 +214,13 @@ export default function AdminVenuesPage() {
               onClick={handleGooglePreview}
             >
               <Search className="w-4 h-4 mr-2" />
-              {previewLoading
-                ? "Looking up..."
-                : `Backfill Google Data (${missingGoogleCount})`}
+              {previewLoading ? "Looking up..." : `Backfill Google Data (${missingGoogleCount})`}
             </Button>
           )}
           {missingCoordCount > 0 && (
-            <Button
-              variant="outline"
-              disabled={batchGeocoding}
-              onClick={handleBatchGeocode}
-            >
+            <Button variant="outline" disabled={batchGeocoding} onClick={handleBatchGeocode}>
               <MapPin className="w-4 h-4 mr-2" />
-              {batchGeocoding
-                ? "Geocoding..."
-                : `Geocode Missing (${missingCoordCount})`}
+              {batchGeocoding ? "Geocoding..." : `Geocode Missing (${missingCoordCount})`}
             </Button>
           )}
           <Link href="/admin/venues/new">
@@ -238,9 +233,7 @@ export default function AdminVenuesPage() {
       </div>
 
       {batchResult && (
-        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">
-          {batchResult}
-        </div>
+        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">{batchResult}</div>
       )}
 
       {googleBackfillResult && (
@@ -259,7 +252,10 @@ export default function AdminVenuesPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => { setBackfillPreview([]); setSelectedVenueIds(new Set()); }}
+                onClick={() => {
+                  setBackfillPreview([]);
+                  setSelectedVenueIds(new Set());
+                }}
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -280,7 +276,9 @@ export default function AdminVenuesPage() {
                     <th className="py-2 px-3 text-left font-medium text-gray-600">Venue</th>
                     <th className="py-2 px-3 text-left font-medium text-gray-600">City/State</th>
                     <th className="py-2 px-3 text-left font-medium text-gray-600">Google Match</th>
-                    <th className="py-2 px-3 text-left font-medium text-gray-600">Google Address</th>
+                    <th className="py-2 px-3 text-left font-medium text-gray-600">
+                      Google Address
+                    </th>
                     <th className="py-2 px-3 text-left font-medium text-gray-600">Rating</th>
                   </tr>
                 </thead>
@@ -295,7 +293,9 @@ export default function AdminVenuesPage() {
                         />
                       </td>
                       <td className="py-2 px-3 font-medium text-gray-900">{p.venueName}</td>
-                      <td className="py-2 px-3 text-gray-600">{p.venueCity}, {p.venueState}</td>
+                      <td className="py-2 px-3 text-gray-600">
+                        {p.venueCity}, {p.venueState}
+                      </td>
                       <td className="py-2 px-3 text-gray-600">{p.googleName || "-"}</td>
                       <td className="py-2 px-3 text-gray-600">{p.googleAddress || "-"}</td>
                       <td className="py-2 px-3 text-gray-600">{p.googleRating ?? "-"}</td>
@@ -309,13 +309,14 @@ export default function AdminVenuesPage() {
                 disabled={selectedVenueIds.size === 0 || backfillingGoogle}
                 onClick={handleApplySelected}
               >
-                {backfillingGoogle
-                  ? "Applying..."
-                  : `Apply Selected (${selectedVenueIds.size})`}
+                {backfillingGoogle ? "Applying..." : `Apply Selected (${selectedVenueIds.size})`}
               </Button>
               <Button
                 variant="outline"
-                onClick={() => { setBackfillPreview([]); setSelectedVenueIds(new Set()); }}
+                onClick={() => {
+                  setBackfillPreview([]);
+                  setSelectedVenueIds(new Set());
+                }}
               >
                 Cancel
               </Button>
@@ -375,24 +376,16 @@ export default function AdminVenuesPage() {
               <tbody>
                 {sortedVenues.map((venue) => (
                   <tr key={venue.id} className="border-b border-gray-100">
-                    <td className="py-3 px-4 font-medium text-gray-900">
-                      {venue.name}
-                    </td>
+                    <td className="py-3 px-4 font-medium text-gray-900">{venue.name}</td>
                     <td className="py-3 px-4 text-gray-600">
                       {venue.city}, {venue.state}
                     </td>
                     <td className="py-3 px-4 text-gray-600">
                       {venue.capacity?.toLocaleString() || "-"}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {venue._count.events}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{venue._count.events}</td>
                     <td className="py-3 px-4">
-                      <Badge
-                        variant={
-                          venue.status === "ACTIVE" ? "success" : "default"
-                        }
-                      >
+                      <Badge variant={venue.status === "ACTIVE" ? "success" : "default"}>
                         {venue.status}
                       </Badge>
                     </td>

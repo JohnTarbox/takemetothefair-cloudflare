@@ -7,8 +7,6 @@ import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseJsonArray } from "@/types";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const db = getCloudflareDb();
   try {

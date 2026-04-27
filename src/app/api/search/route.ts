@@ -5,8 +5,6 @@ import { and, gte, eq, sql, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { withErrorHandler } from "@/lib/api-handler";
 
-export const runtime = "edge";
-
 export const GET = withErrorHandler(async (request: Request) => {
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim();

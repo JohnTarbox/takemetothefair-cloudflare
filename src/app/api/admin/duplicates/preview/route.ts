@@ -5,8 +5,6 @@ import { getMergePreview } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergePreviewRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function POST(request: NextRequest) {
   let db: ReturnType<typeof getCloudflareDb> | null = null;
   let body: MergePreviewRequest | null = null;
@@ -18,14 +16,11 @@ export async function POST(request: NextRequest) {
     }
 
     db = getCloudflareDb();
-    body = await request.json() as MergePreviewRequest;
+    body = (await request.json()) as MergePreviewRequest;
     const { type, primaryId, duplicateId } = body;
 
     if (!type || !["venues", "events", "vendors", "promoters"].includes(type)) {
-      return NextResponse.json(
-        { error: "Invalid or missing type parameter" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid or missing type parameter" }, { status: 400 });
     }
 
     if (!primaryId || !duplicateId) {
@@ -36,23 +31,18 @@ export async function POST(request: NextRequest) {
     }
 
     if (primaryId === duplicateId) {
-      return NextResponse.json(
-        { error: "Cannot merge an entity with itself" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Cannot merge an entity with itself" }, { status: 400 });
     }
 
-    const preview = await getMergePreview(
-      db,
-      type as DuplicateEntityType,
-      primaryId,
-      duplicateId
-    );
+    const preview = await getMergePreview(db, type as DuplicateEntityType, primaryId, duplicateId);
 
     return NextResponse.json(preview);
   } catch (error) {
-    const isTimeout = error instanceof Error &&
-      (error.message.includes("time") || error.message.includes("CPU") || error.message.includes("exceeded"));
+    const isTimeout =
+      error instanceof Error &&
+      (error.message.includes("time") ||
+        error.message.includes("CPU") ||
+        error.message.includes("exceeded"));
 
     await logError(db, {
       message: "Failed to generate merge preview",
@@ -70,11 +60,10 @@ export async function POST(request: NextRequest) {
 
     const userMessage = isTimeout
       ? "The preview timed out. Please try again."
-      : error instanceof Error ? error.message : "Failed to generate merge preview";
+      : error instanceof Error
+        ? error.message
+        : "Failed to generate merge preview";
 
-    return NextResponse.json(
-      { error: userMessage, isTimeout },
-      { status: isTimeout ? 503 : 500 }
-    );
+    return NextResponse.json({ error: userMessage, isTimeout }, { status: isTimeout ? 503 : 500 });
   }
 }

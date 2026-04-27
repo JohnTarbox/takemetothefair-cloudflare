@@ -7,8 +7,6 @@ import { hashPassword } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 const schema = z.object({
   token: z.string().min(32).max(128),
   password: z.string().min(8, "Password must be at least 8 characters"),

@@ -7,8 +7,6 @@ import { createSlug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   const session = await auth();

@@ -5,8 +5,6 @@ import { blogPosts } from "@/lib/db/schema";
 import { syncContentLinks } from "@/lib/content-links-sync";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 /**
  * Admin-only: iterate every blog post and re-derive its content-link index.
  *

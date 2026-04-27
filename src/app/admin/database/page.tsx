@@ -16,8 +16,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export const runtime = "edge";
-
 interface TableStats {
   name: string;
   rowCount: number;
@@ -69,7 +67,7 @@ export default function DatabaseManagementPage() {
     try {
       const res = await fetch("/api/admin/database/backup");
       if (!res.ok) {
-        const data = await res.json() as { error?: string };
+        const data = (await res.json()) as { error?: string };
         throw new Error(data.error || "Backup failed");
       }
 
@@ -122,7 +120,7 @@ export default function DatabaseManagementPage() {
         body: formData,
       });
 
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         error?: string;
         message?: string;
         details?: { tablesCreated: number; rowsInserted: number; totalErrors: number };

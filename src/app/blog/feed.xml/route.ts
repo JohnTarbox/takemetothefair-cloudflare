@@ -4,8 +4,6 @@ import { eq, desc } from "drizzle-orm";
 import { stripMarkdown } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 
-export const runtime = "edge";
-
 function escapeXml(text: string): string {
   return text
     .replace(/&/g, "&amp;")

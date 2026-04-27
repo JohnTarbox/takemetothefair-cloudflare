@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { Ga4ApiError, Ga4ConfigError, getGa4EventDetail, type Ga4Env } from "@/lib/ga4";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/ga4-event?eventName=X&topParameters=endpoint,status_code&topN=20[&path=/foo]
  * Returns top parameter-value combinations for a GA4 event. Parameters must be

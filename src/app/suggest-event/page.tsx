@@ -28,8 +28,6 @@ import { DailyScheduleInput, type EventDayInput } from "@/components/events/Dail
 import { trackEvent } from "@/lib/analytics";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
-export const runtime = "edge";
-
 type WizardStep =
   | "url-input"
   | "fetching"

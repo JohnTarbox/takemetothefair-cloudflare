@@ -6,8 +6,6 @@ import { eventVendors, vendors } from "@/lib/db/schema";
 import { isValidTransition } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 /**
  * Vendor-initiated withdraw.
  *

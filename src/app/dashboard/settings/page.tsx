@@ -8,8 +8,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getShortErrorMessage } from "@/lib/error-messages";
 import { Copy, Trash2, Plus, Key } from "lucide-react";
 
-export const runtime = "edge";
-
 interface ApiToken {
   id: string;
   name: string;
@@ -152,12 +150,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <Input
-              label="Email"
-              type="email"
-              value={session.user.email}
-              disabled
-            />
+            <Input label="Email" type="email" value={session.user.email} disabled />
 
             <Input
               label="Name"
@@ -176,17 +169,13 @@ export default function SettingsPage() {
 
       <Card className="mt-6">
         <CardHeader>
-          <h2 className="text-lg font-semibold text-gray-900">
-            Account Information
-          </h2>
+          <h2 className="text-lg font-semibold text-gray-900">Account Information</h2>
         </CardHeader>
         <CardContent>
           <div className="space-y-3 text-sm">
             <div>
               <span className="text-gray-500">Account Type:</span>{" "}
-              <span className="font-medium capitalize">
-                {session.user.role.toLowerCase()}
-              </span>
+              <span className="font-medium capitalize">{session.user.role.toLowerCase()}</span>
             </div>
             <div>
               <span className="text-gray-500">User ID:</span>{" "}
@@ -209,9 +198,7 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           {tokenMessage && (
-            <div className="p-3 rounded-lg text-sm bg-red-50 text-red-600 mb-4">
-              {tokenMessage}
-            </div>
+            <div className="p-3 rounded-lg text-sm bg-red-50 text-red-600 mb-4">{tokenMessage}</div>
           )}
 
           {/* Revealed token banner */}
@@ -224,12 +211,7 @@ export default function SettingsPage() {
                 <code className="flex-1 bg-white px-3 py-2 rounded border text-xs font-mono break-all">
                   {revealedToken}
                 </code>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCopyToken}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={handleCopyToken}>
                   <Copy className="h-4 w-4" />
                   <span className="ml-1">{copied ? "Copied" : "Copy"}</span>
                 </Button>
@@ -270,14 +252,9 @@ export default function SettingsPage() {
                     <p className="text-sm font-medium text-gray-900">{token.name}</p>
                     <p className="text-xs text-gray-500">
                       Created{" "}
-                      {token.createdAt
-                        ? new Date(token.createdAt).toLocaleDateString()
-                        : "unknown"}
+                      {token.createdAt ? new Date(token.createdAt).toLocaleDateString() : "unknown"}
                       {token.lastUsedAt && (
-                        <>
-                          {" "}· Last used{" "}
-                          {new Date(token.lastUsedAt).toLocaleDateString()}
-                        </>
+                        <> · Last used {new Date(token.lastUsedAt).toLocaleDateString()}</>
                       )}
                     </p>
                   </div>

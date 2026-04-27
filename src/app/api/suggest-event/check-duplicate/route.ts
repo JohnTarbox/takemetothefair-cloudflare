@@ -5,8 +5,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 const checkDuplicateSchema = z.object({
   sourceUrl: z.string().url().optional(),
   name: z.string().optional(),
@@ -123,12 +121,7 @@ export async function POST(request: NextRequest) {
           status: events.status,
         })
         .from(events)
-        .where(
-          and(
-            gte(events.startDate, minDate),
-            lte(events.startDate, maxDate)
-          )
-        );
+        .where(and(gte(events.startDate, minDate), lte(events.startDate, maxDate)));
 
       // Check string similarity with threshold
       const threshold = 0.85;

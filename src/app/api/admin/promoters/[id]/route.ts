@@ -7,8 +7,6 @@ import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -49,7 +47,12 @@ export async function GET(request: NextRequest, { params }: Params) {
       events: promoterEvents,
     });
   } catch (error) {
-    await logError(db, { message: "Failed to fetch promoter", error, source: "api/admin/promoters/[id]", request });
+    await logError(db, {
+      message: "Failed to fetch promoter",
+      error,
+      source: "api/admin/promoters/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch promoter" }, { status: 500 });
   }
 }
@@ -92,7 +95,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json(updatedPromoter);
   } catch (error) {
-    await logError(db, { message: "Failed to update promoter", error, source: "api/admin/promoters/[id]", request });
+    await logError(db, {
+      message: "Failed to update promoter",
+      error,
+      source: "api/admin/promoters/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to update promoter" }, { status: 500 });
   }
 }
@@ -108,11 +116,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   const db = getCloudflareDb();
   try {
     // Get promoter to find user
-    const promoter = await db
-      .select()
-      .from(promoters)
-      .where(eq(promoters.id, id))
-      .limit(1);
+    const promoter = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
 
     if (promoter.length > 0) {
       // Reset user role to USER
@@ -122,7 +126,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(promoters).where(eq(promoters.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to delete promoter", error, source: "api/admin/promoters/[id]", request });
+    await logError(db, {
+      message: "Failed to delete promoter",
+      error,
+      source: "api/admin/promoters/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to delete promoter" }, { status: 500 });
   }
 }

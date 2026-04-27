@@ -7,8 +7,6 @@ import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { like, and, isNotNull } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 
-export const runtime = "edge";
-
 export async function POST(request: Request) {
   const db = getCloudflareDb();
   const session = await auth();
@@ -104,9 +102,6 @@ export async function POST(request: Request) {
       source: "api/admin/import/rescrape-descriptions",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to re-scrape descriptions" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to re-scrape descriptions" }, { status: 500 });
   }
 }

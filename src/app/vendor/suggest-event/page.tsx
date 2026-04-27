@@ -25,8 +25,6 @@ import { trackEvent } from "@/lib/analytics";
 import { EVENT_CATEGORIES } from "@/lib/constants";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
-export const runtime = "edge";
-
 type WizardStep =
   | "url-input"
   | "fetching"

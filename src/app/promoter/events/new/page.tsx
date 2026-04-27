@@ -23,8 +23,6 @@ import { VenueComboSearch } from "@/components/venue-combo-search";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;

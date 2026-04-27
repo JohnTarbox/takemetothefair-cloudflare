@@ -7,8 +7,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateRange } from "@/lib/utils";
 
-export const runtime = "edge";
-
 interface Event {
   id: string;
   name: string;
@@ -36,7 +34,7 @@ export default function AdminSubmissionsPage() {
   const fetchSubmissions = async () => {
     try {
       const res = await fetch("/api/admin/events?status=PENDING");
-      const data = await res.json() as Event[];
+      const data = (await res.json()) as Event[];
       setSubmissions(data);
     } catch (error) {
       console.error("Failed to fetch submissions:", error);
@@ -74,9 +72,7 @@ export default function AdminSubmissionsPage() {
     <div>
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Submission Queue</h1>
-        <p className="mt-1 text-gray-600">
-          Review and approve event submissions from promoters
-        </p>
+        <p className="mt-1 text-gray-600">Review and approve event submissions from promoters</p>
       </div>
 
       {submissions.length === 0 ? (
@@ -91,12 +87,15 @@ export default function AdminSubmissionsPage() {
             <Card key={event.id}>
               <CardHeader className="flex flex-row items-start justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    {event.name}
-                  </h2>
+                  <h2 className="text-lg font-semibold text-gray-900">{event.name}</h2>
                   <p className="text-sm text-gray-500">
                     Submitted by{" "}
-                    {event.submitter?.name || event.submitter?.email || event.suggesterEmail || event.sourceName || event.promoter?.companyName || "Unknown"}{" "}
+                    {event.submitter?.name ||
+                      event.submitter?.email ||
+                      event.suggesterEmail ||
+                      event.sourceName ||
+                      event.promoter?.companyName ||
+                      "Unknown"}{" "}
                     on {formatDate(event.createdAt)}
                   </p>
                 </div>
@@ -121,12 +120,8 @@ export default function AdminSubmissionsPage() {
                 </div>
                 {event.description && (
                   <div className="mb-4">
-                    <p className="text-sm font-medium text-gray-700">
-                      Description
-                    </p>
-                    <p className="text-gray-600 line-clamp-3">
-                      {event.description}
-                    </p>
+                    <p className="text-sm font-medium text-gray-700">Description</p>
+                    <p className="text-gray-600 line-clamp-3">{event.description}</p>
                   </div>
                 )}
                 <div className="flex items-center gap-3 pt-4 border-t border-gray-100">
@@ -146,9 +141,7 @@ export default function AdminSubmissionsPage() {
                     <X className="w-4 h-4 mr-2" />
                     Reject
                   </Button>
-                  <a
-                    href={`/admin/events/${event.id}/edit`}
-                  >
+                  <a href={`/admin/events/${event.id}/edit`}>
                     <Button variant="outline">
                       <Eye className="w-4 h-4 mr-2" />
                       Review

@@ -10,8 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
-export const runtime = "edge";
-
 interface User {
   id: string;
   email: string;
@@ -31,7 +29,7 @@ export default function NewPromoterPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users?available=promoter");
-      const data = await res.json() as User[];
+      const data = (await res.json()) as User[];
       setUsers(data);
     } catch (err) {
       console.error("Failed to fetch users:", err);
@@ -60,7 +58,7 @@ export default function NewPromoterPage() {
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to create promoter");
       }
 
@@ -90,9 +88,7 @@ export default function NewPromoterPage() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -133,12 +129,7 @@ export default function NewPromoterPage() {
 
               <div>
                 <Label htmlFor="website">Website</Label>
-                <Input
-                  id="website"
-                  name="website"
-                  type="url"
-                  placeholder="https://example.com"
-                />
+                <Input id="website" name="website" type="url" placeholder="https://example.com" />
               </div>
 
               <div>

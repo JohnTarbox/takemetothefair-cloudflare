@@ -8,8 +8,6 @@ import { sanitizeLikeInput } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 export async function GET(request: Request) {
   // Rate limiting check
   const rateLimitResult = await checkRateLimit(request, "export-venues");
@@ -37,7 +35,7 @@ export async function GET(request: Request) {
 
     if (query) {
       conditions.push(
-        sql`(${venues.name} LIKE ${'%' + sanitizeLikeInput(query) + '%'} OR ${venues.city} LIKE ${'%' + sanitizeLikeInput(query) + '%'})`
+        sql`(${venues.name} LIKE ${"%" + sanitizeLikeInput(query) + "%"} OR ${venues.city} LIKE ${"%" + sanitizeLikeInput(query) + "%"})`
       );
     }
 
@@ -58,7 +56,7 @@ export async function GET(request: Request) {
           WHERE events.venue_id = venues.id
           AND events.status = 'APPROVED'
           AND events.end_date >= unixepoch('now')
-        )`.as('event_count'),
+        )`.as("event_count"),
       })
       .from(venues)
       .where(and(...conditions))
@@ -75,7 +73,17 @@ export async function GET(request: Request) {
     };
 
     // Build CSV
-    const headers = ["Venue", "Address", "City", "State", "Zip", "Capacity", "Amenities", "Website", "Upcoming Events"];
+    const headers = [
+      "Venue",
+      "Address",
+      "City",
+      "State",
+      "Zip",
+      "Capacity",
+      "Amenities",
+      "Website",
+      "Upcoming Events",
+    ];
     const rows = results.map((v) => {
       const amenities = parseJsonArray(v.amenities);
       return [
@@ -101,7 +109,12 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    await logError(db, { message: "Error exporting venues", error, source: "api/venues/export", request });
+    await logError(db, {
+      message: "Error exporting venues",
+      error,
+      source: "api/venues/export",
+      request,
+    });
     return NextResponse.json({ error: "Failed to export venues" }, { status: 500 });
   }
 }

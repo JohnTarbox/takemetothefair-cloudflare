@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { Ga4ApiError, Ga4ConfigError, getPageMetrics, type Ga4Env } from "@/lib/ga4";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/page?path=/events
  * Returns per-page GA4 metrics (totals, deltas, daily series, sources, devices, events).

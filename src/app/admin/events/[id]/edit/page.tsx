@@ -14,8 +14,6 @@ import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
 import { RescrapePanel } from "@/components/admin/RescrapePanel";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;

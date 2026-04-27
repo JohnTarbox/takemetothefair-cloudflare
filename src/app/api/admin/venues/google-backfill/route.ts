@@ -7,8 +7,6 @@ import { lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import { createSlug } from "@/lib/utils";
 
-export const runtime = "edge";
-
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {

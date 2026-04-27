@@ -26,7 +26,6 @@ import { TableOfContents } from "@/components/blog/table-of-contents";
 import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 interface Props {

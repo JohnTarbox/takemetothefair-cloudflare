@@ -3,8 +3,6 @@ import { Home, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Metadata } from "next";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "Page Not Found | Meet Me at the Fair",
 };

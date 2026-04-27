@@ -13,8 +13,6 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 
-export const runtime = "edge";
-
 interface Vendor {
   id: string;
   businessName: string;
@@ -42,7 +40,7 @@ export default function AdminVendorsPage() {
   const fetchVendors = async () => {
     try {
       const res = await fetch("/api/admin/vendors");
-      const data = await res.json() as Vendor[];
+      const data = (await res.json()) as Vendor[];
       setVendors(data);
     } catch (error) {
       console.error("Failed to fetch vendors:", error);
@@ -161,15 +159,9 @@ export default function AdminVendorsPage() {
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{vendor.businessName}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {vendor.vendorType || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {vendor.user?.email || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {vendor._count.events}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{vendor.vendorType || "-"}</td>
+                    <td className="py-3 px-4 text-gray-600">{vendor.user?.email || "-"}</td>
+                    <td className="py-3 px-4 text-gray-600">{vendor._count.events}</td>
                     <td className="py-3 px-4">
                       {vendor.verified ? (
                         <Badge variant="success" className="inline-flex items-center gap-1">
@@ -188,19 +180,25 @@ export default function AdminVendorsPage() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      {vendor.canSelfConfirm && (
-                        <Badge variant="success">Self-Confirm</Badge>
-                      )}
+                      {vendor.canSelfConfirm && <Badge variant="success">Self-Confirm</Badge>}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/vendors/${vendor.slug}`}>
-                          <Button variant="ghost" size="sm" aria-label={`View ${vendor.businessName}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`View ${vendor.businessName}`}
+                          >
                             <Eye className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Link href={`/admin/vendors/${vendor.id}/edit`}>
-                          <Button variant="ghost" size="sm" aria-label={`Edit ${vendor.businessName}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Edit ${vendor.businessName}`}
+                          >
                             <Pencil className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>

@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { Ga4ApiError, Ga4ConfigError, getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/ga4
  * Returns server-fetched GA4 metrics for the admin analytics page.

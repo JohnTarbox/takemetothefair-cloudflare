@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/url-inspection?path=/events
  * Runs the Search Console URL Inspection API for a single path. Rate-limited

@@ -8,9 +8,6 @@ import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
 
-export const runtime = "edge";
-
-
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -25,11 +22,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-    const venueResults = await db
-      .select()
-      .from(venues)
-      .where(eq(venues.id, id))
-      .limit(1);
+    const venueResults = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 
     if (venueResults.length === 0) {
       return NextResponse.json({ error: "Venue not found" }, { status: 404 });
@@ -50,7 +43,12 @@ export async function GET(request: NextRequest, { params }: Params) {
       events: venueEvents,
     });
   } catch (error) {
-    await logError(db, { message: "Failed to fetch venue", error, source: "api/admin/venues/[id]", request });
+    await logError(db, {
+      message: "Failed to fetch venue",
+      error,
+      source: "api/admin/venues/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch venue" }, { status: 500 });
   }
 }
@@ -73,7 +71,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-
     // Get current venue to check if slug needs updating
     const [currentVenue] = await db
       .select({ slug: venues.slug })
@@ -118,10 +115,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           const existingSlug = await db
             .select({ id: venues.id })
             .from(venues)
-            .where(and(
-              eq(venues.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
-              ne(venues.id, id)
-            ))
+            .where(
+              and(
+                eq(venues.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+                ne(venues.id, id)
+              )
+            )
             .limit(1);
           if (existingSlug.length === 0) break;
           slugSuffix++;
@@ -154,15 +153,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     await db.update(venues).set(updateData).where(eq(venues.id, id));
 
-    const [updatedVenue] = await db
-      .select()
-      .from(venues)
-      .where(eq(venues.id, id))
-      .limit(1);
+    const [updatedVenue] = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 
     return NextResponse.json(updatedVenue);
   } catch (error) {
-    await logError(db, { message: "Failed to update venue", error, source: "api/admin/venues/[id]", request });
+    await logError(db, {
+      message: "Failed to update venue",
+      error,
+      source: "api/admin/venues/[id]",
+      request,
+    });
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     // Handle unique constraint violations
@@ -193,7 +193,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(venues).where(eq(venues.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to delete venue", error, source: "api/admin/venues/[id]", request });
+    await logError(db, {
+      message: "Failed to delete venue",
+      error,
+      source: "api/admin/venues/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to delete venue" }, { status: 500 });
   }
 }

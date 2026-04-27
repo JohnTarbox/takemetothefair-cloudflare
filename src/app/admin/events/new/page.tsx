@@ -12,8 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;

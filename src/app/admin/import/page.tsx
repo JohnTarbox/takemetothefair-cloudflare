@@ -17,8 +17,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 
-export const runtime = "edge";
-
 interface PreviewEvent {
   sourceId: string;
   sourceName: string;
@@ -131,8 +129,8 @@ function useImportPage() {
         fetch("/api/admin/venues"),
         fetch("/api/admin/promoters"),
       ]);
-      const venuesData = await venuesRes.json() as Venue[];
-      const promotersData = await promotersRes.json() as Promoter[];
+      const venuesData = (await venuesRes.json()) as Venue[];
+      const promotersData = (await promotersRes.json()) as Promoter[];
       setVenues(venuesData);
       setPromoters(promotersData);
     } catch (err) {
@@ -161,10 +159,12 @@ function useImportPage() {
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
         console.error("Non-JSON response:", text.substring(0, 500));
-        throw new Error(`Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`);
+        throw new Error(
+          `Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`
+        );
       }
 
-      const data = await res.json() as Record<string, any>;
+      const data = (await res.json()) as Record<string, any>;
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to fetch events");
@@ -224,10 +224,12 @@ function useImportPage() {
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
         console.error("Non-JSON response:", text.substring(0, 500));
-        throw new Error(`Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`);
+        throw new Error(
+          `Server error: Expected JSON but got ${contentType || "unknown content type"}. Status: ${res.status}`
+        );
       }
 
-      const data = await res.json() as Record<string, any>;
+      const data = (await res.json()) as Record<string, any>;
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to import events");
@@ -235,15 +237,17 @@ function useImportPage() {
 
       const venuesMsg = data.venuesCreated ? ` ${data.venuesCreated} venues created.` : "";
       const errorsMsg = data.errors?.length > 0 ? ` Errors: ${data.errors.join("; ")}` : "";
-      setSuccess(`Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped.${venuesMsg}${errorsMsg}`);
+      setSuccess(
+        `Imported ${data.imported} events. ${data.updated || 0} updated. ${data.skipped} skipped.${venuesMsg}${errorsMsg}`
+      );
 
       setImportedEvents(data.importedEvents || []);
       setUpdatedEvents(data.updatedEvents || []);
 
       setSelectedEvents(new Set());
-      setEvents(prevEvents =>
-        prevEvents.map(e =>
-          eventsToImport.some(imported => imported.sourceId === e.sourceId)
+      setEvents((prevEvents) =>
+        prevEvents.map((e) =>
+          eventsToImport.some((imported) => imported.sourceId === e.sourceId)
             ? { ...e, exists: true }
             : e
         )
@@ -265,13 +269,15 @@ function useImportPage() {
         method: "PATCH",
       });
 
-      const data = await res.json() as Record<string, any>;
+      const data = (await res.json()) as Record<string, any>;
 
       if (!res.ok) {
         throw new Error(data.error || "Failed to sync events");
       }
 
-      setSuccess(`Synced ${data.synced} events. ${data.unchanged} unchanged. ${data.errors?.length || 0} errors.`);
+      setSuccess(
+        `Synced ${data.synced} events. ${data.unchanged} unchanged. ${data.errors?.length || 0} errors.`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sync events");
     } finally {
@@ -346,7 +352,7 @@ function useImportPage() {
         { method: "POST" }
       );
 
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         found: number;
         updated: number;
         skipped: number;
@@ -361,7 +367,9 @@ function useImportPage() {
 
       setRescrapeResults(data);
       if (!dryRun && data.updated > 0) {
-        setSuccess(`Updated ${data.updated} event descriptions. ${data.skipped} skipped. ${data.errors.length} errors.`);
+        setSuccess(
+          `Updated ${data.updated} event descriptions. ${data.skipped} skipped. ${data.errors.length} errors.`
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to re-scrape descriptions");
@@ -371,27 +379,49 @@ function useImportPage() {
   };
 
   return {
-    source, setSource,
-    loading, syncing, importing,
+    source,
+    setSource,
+    loading,
+    syncing,
+    importing,
     events,
     selectedEvents,
-    venues, promoters,
-    selectedVenueId, setSelectedVenueId,
-    selectedPromoterId, setSelectedPromoterId,
-    fetchDetails, setFetchDetails,
-    fetchDetailsOnPreview, setFetchDetailsOnPreview,
-    updateExisting, setUpdateExisting,
-    error, success,
+    venues,
+    promoters,
+    selectedVenueId,
+    setSelectedVenueId,
+    selectedPromoterId,
+    setSelectedPromoterId,
+    fetchDetails,
+    setFetchDetails,
+    fetchDetailsOnPreview,
+    setFetchDetailsOnPreview,
+    updateExisting,
+    setUpdateExisting,
+    error,
+    success,
     stats,
-    importedEvents, updatedEvents,
-    commercialFilter, setCommercialFilter,
-    excludeFarmersMarkets, setExcludeFarmersMarkets,
-    customUrl, setCustomUrl,
-    filteredEvents, filteredStats,
+    importedEvents,
+    updatedEvents,
+    commercialFilter,
+    setCommercialFilter,
+    excludeFarmersMarkets,
+    setExcludeFarmersMarkets,
+    customUrl,
+    setCustomUrl,
+    filteredEvents,
+    filteredStats,
     downloadImportResults,
-    handlePreview, handleImport, handleSync,
-    handleRescrapeDescriptions, rescraping, rescrapeResults,
-    toggleEventSelection, selectAllNew, selectAll, deselectAll,
+    handlePreview,
+    handleImport,
+    handleSync,
+    handleRescrapeDescriptions,
+    rescraping,
+    rescrapeResults,
+    toggleEventSelection,
+    selectAllNew,
+    selectAll,
+    deselectAll,
     formatDate,
   };
 }
@@ -430,7 +460,10 @@ function ImportResultsCard({
               </h3>
               <ul className="space-y-2 max-h-64 overflow-y-auto">
                 {importedEvents.map((event) => (
-                  <li key={event.id} className="flex items-center justify-between p-2 bg-green-50 rounded-md">
+                  <li
+                    key={event.id}
+                    className="flex items-center justify-between p-2 bg-green-50 rounded-md"
+                  >
                     <span className="text-sm text-gray-900">{event.name}</span>
                     <Link
                       href={`/events/${event.slug}`}
@@ -452,7 +485,10 @@ function ImportResultsCard({
               </h3>
               <ul className="space-y-2 max-h-64 overflow-y-auto">
                 {updatedEvents.map((event) => (
-                  <li key={event.id} className="flex items-center justify-between p-2 bg-blue-50 rounded-md">
+                  <li
+                    key={event.id}
+                    className="flex items-center justify-between p-2 bg-blue-50 rounded-md"
+                  >
                     <span className="text-sm text-gray-900">{event.name}</span>
                     <Link
                       href={`/events/${event.slug}`}
@@ -473,9 +509,12 @@ function ImportResultsCard({
 }
 
 function SourceSelectionCard({
-  source, setSource,
-  customUrl, setCustomUrl,
-  fetchDetailsOnPreview, setFetchDetailsOnPreview,
+  source,
+  setSource,
+  customUrl,
+  setCustomUrl,
+  fetchDetailsOnPreview,
+  setFetchDetailsOnPreview,
   loading,
   handlePreview,
 }: {
@@ -506,21 +545,37 @@ function SourceSelectionCard({
               >
                 <option value="mainefairs.net">Maine Fairs (mainefairs.net)</option>
                 <option value="mainemade.com">Maine Made Events (mainemade.com)</option>
-                <option value="mainepublic.org">Maine Public Community Calendar (mainepublic.org)</option>
+                <option value="mainepublic.org">
+                  Maine Public Community Calendar (mainepublic.org)
+                </option>
                 <option value="mafa.org">Massachusetts Fairs (mafa.org)</option>
                 <option value="vtnhfairs.org-vt">Vermont Fairs (vtnhfairs.org)</option>
                 <option value="vtnhfairs.org-nh">New Hampshire Fairs (vtnhfairs.org)</option>
-                <option value="newenglandcraftfairs.com">New England Craft Fairs (newenglandcraftfairs.com)</option>
-                <option value="joycescraftshows.com">Joyce&apos;s Craft Shows (joycescraftshows.com)</option>
+                <option value="newenglandcraftfairs.com">
+                  New England Craft Fairs (newenglandcraftfairs.com)
+                </option>
+                <option value="joycescraftshows.com">
+                  Joyce&apos;s Craft Shows (joycescraftshows.com)
+                </option>
                 <optgroup label="FairsAndFestivals.net (by state)">
                   <option value="fairsandfestivals.net-ME">Maine (fairsandfestivals.net)</option>
-                  <option value="fairsandfestivals.net-MA">Massachusetts (fairsandfestivals.net)</option>
-                  <option value="fairsandfestivals.net-NH">New Hampshire (fairsandfestivals.net)</option>
+                  <option value="fairsandfestivals.net-MA">
+                    Massachusetts (fairsandfestivals.net)
+                  </option>
+                  <option value="fairsandfestivals.net-NH">
+                    New Hampshire (fairsandfestivals.net)
+                  </option>
                   <option value="fairsandfestivals.net-VT">Vermont (fairsandfestivals.net)</option>
-                  <option value="fairsandfestivals.net-CT">Connecticut (fairsandfestivals.net)</option>
-                  <option value="fairsandfestivals.net-RI">Rhode Island (fairsandfestivals.net)</option>
+                  <option value="fairsandfestivals.net-CT">
+                    Connecticut (fairsandfestivals.net)
+                  </option>
+                  <option value="fairsandfestivals.net-RI">
+                    Rhode Island (fairsandfestivals.net)
+                  </option>
                   <option value="fairsandfestivals.net-NY">New York (fairsandfestivals.net)</option>
-                  <option value="fairsandfestivals.net-custom">Custom URL (fairsandfestivals.net)</option>
+                  <option value="fairsandfestivals.net-custom">
+                    Custom URL (fairsandfestivals.net)
+                  </option>
                 </optgroup>
               </select>
             </div>
@@ -528,7 +583,11 @@ function SourceSelectionCard({
               onClick={handlePreview}
               disabled={loading || (source === "fairsandfestivals.net-custom" && !customUrl)}
             >
-              {loading ? (fetchDetailsOnPreview ? "Fetching details..." : "Loading...") : "Preview Events"}
+              {loading
+                ? fetchDetailsOnPreview
+                  ? "Fetching details..."
+                  : "Loading..."
+                : "Preview Events"}
             </Button>
           </div>
           {source === "fairsandfestivals.net-custom" && (
@@ -543,7 +602,8 @@ function SourceSelectionCard({
                 className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Enter any FairsAndFestivals.net page URL (e.g., state page, city page, or search results)
+                Enter any FairsAndFestivals.net page URL (e.g., state page, city page, or search
+                results)
               </p>
             </div>
           )}
@@ -565,11 +625,16 @@ function SourceSelectionCard({
 }
 
 function ImportSettingsCard({
-  venues, promoters,
-  selectedVenueId, setSelectedVenueId,
-  selectedPromoterId, setSelectedPromoterId,
-  fetchDetails, setFetchDetails,
-  updateExisting, setUpdateExisting,
+  venues,
+  promoters,
+  selectedVenueId,
+  setSelectedVenueId,
+  selectedPromoterId,
+  setSelectedPromoterId,
+  fetchDetails,
+  setFetchDetails,
+  updateExisting,
+  setUpdateExisting,
 }: {
   venues: Venue[];
   promoters: Promoter[];
@@ -623,9 +688,7 @@ function ImportSettingsCard({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              Events will be assigned to this promoter.
-            </p>
+            <p className="text-xs text-gray-500 mt-1">Events will be assigned to this promoter.</p>
           </div>
         </div>
         <div className="mt-4 space-y-2">
@@ -676,8 +739,8 @@ function EventRow({
         event.exists
           ? "bg-gray-50 border-gray-200"
           : selected
-          ? "bg-blue-50 border-blue-300"
-          : "hover:bg-gray-50"
+            ? "bg-blue-50 border-blue-300"
+            : "hover:bg-gray-50"
       }`}
     >
       <input
@@ -724,9 +787,7 @@ function EventRow({
               </Badge>
             )}
             {event.vendorTypes && event.vendorTypes.length > 0 && (
-              <span className="text-gray-500">
-                Vendors: {event.vendorTypes.join(", ")}
-              </span>
+              <span className="text-gray-500">Vendors: {event.vendorTypes.join(", ")}</span>
             )}
           </div>
         )}
@@ -744,26 +805,31 @@ function EventRow({
         )}
       </div>
       {event.imageUrl && (
-        <img
-          src={event.imageUrl}
-          alt=""
-          className="w-20 h-20 rounded object-cover"
-        />
+        <img src={event.imageUrl} alt="" className="w-20 h-20 rounded object-cover" />
       )}
     </label>
   );
 }
 
 function EventsListCard({
-  filteredEvents, filteredStats, stats,
-  commercialFilter, setCommercialFilter,
-  excludeFarmersMarkets, setExcludeFarmersMarkets,
+  filteredEvents,
+  filteredStats,
+  stats,
+  commercialFilter,
+  setCommercialFilter,
+  excludeFarmersMarkets,
+  setExcludeFarmersMarkets,
   selectedEvents,
   updateExisting,
-  loading, importing,
+  loading,
+  importing,
   selectedPromoterId,
-  handlePreview, handleImport,
-  toggleEventSelection, selectAllNew, selectAll, deselectAll,
+  handlePreview,
+  handleImport,
+  toggleEventSelection,
+  selectAllNew,
+  selectAll,
+  deselectAll,
   formatDate,
 }: {
   filteredEvents: PreviewEvent[];
@@ -794,9 +860,15 @@ function EventsListCard({
             <CardTitle>Preview Events</CardTitle>
             <p className="text-sm text-gray-500 mt-1">
               {commercialFilter === "all" ? (
-                <>{stats.total} events found: {stats.newCount} new, {stats.existingCount} already imported</>
+                <>
+                  {stats.total} events found: {stats.newCount} new, {stats.existingCount} already
+                  imported
+                </>
               ) : (
-                <>Showing {filteredStats.total} of {stats.total} events: {filteredStats.newCount} new, {filteredStats.existingCount} already imported</>
+                <>
+                  Showing {filteredStats.total} of {stats.total} events: {filteredStats.newCount}{" "}
+                  new, {filteredStats.existingCount} already imported
+                </>
               )}
             </p>
           </div>
@@ -880,11 +952,12 @@ function EmptyState({ loading }: { loading: boolean }) {
         <Download className="w-12 h-12 text-gray-400 mx-auto mb-4" />
         <h3 className="text-lg font-medium text-gray-900">Import Events from External Sources</h3>
         <p className="text-gray-500 mt-2 max-w-md mx-auto">
-          Select a source and click &quot;Preview Events&quot; to see available events.
-          You can then select which events to import into your calendar.
+          Select a source and click &quot;Preview Events&quot; to see available events. You can then
+          select which events to import into your calendar.
         </p>
         <p className="text-sm text-gray-400 mt-4">
-          Currently supported: mainefairs.net, mainemade.com, mainepublic.org, mafa.org, vtnhfairs.org (VT &amp; NH), fairsandfestivals.net (all states)
+          Currently supported: mainefairs.net, mainemade.com, mainepublic.org, mafa.org,
+          vtnhfairs.org (VT &amp; NH), fairsandfestivals.net (all states)
         </p>
       </CardContent>
     </Card>
@@ -911,15 +984,9 @@ export default function ImportEventsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Import Events</h1>
-          <p className="text-gray-600 mt-1">
-            Import and sync events from external sources
-          </p>
+          <p className="text-gray-600 mt-1">Import and sync events from external sources</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={state.handleSync}
-          disabled={state.syncing}
-        >
+        <Button variant="outline" onClick={state.handleSync} disabled={state.syncing}>
           <RefreshCw className={`w-4 h-4 mr-2 ${state.syncing ? "animate-spin" : ""}`} />
           {state.syncing ? "Syncing..." : "Sync All"}
         </Button>
@@ -944,7 +1011,8 @@ export default function ImportEventsPage() {
         <CardHeader>
           <CardTitle className="text-lg">Fix Truncated Descriptions</CardTitle>
           <p className="text-sm text-gray-600">
-            Find events with descriptions ending in &quot;...&quot; and re-scrape full text from source pages.
+            Find events with descriptions ending in &quot;...&quot; and re-scrape full text from
+            source pages.
           </p>
         </CardHeader>
         <CardContent>
@@ -955,9 +1023,7 @@ export default function ImportEventsPage() {
               onClick={() => state.handleRescrapeDescriptions(true)}
               disabled={state.rescraping}
             >
-              {state.rescraping ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : null}
+              {state.rescraping ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : null}
               Preview
             </Button>
             <Button
@@ -965,9 +1031,7 @@ export default function ImportEventsPage() {
               onClick={() => state.handleRescrapeDescriptions(false)}
               disabled={state.rescraping}
             >
-              {state.rescraping ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : null}
+              {state.rescraping ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : null}
               Fix Descriptions
             </Button>
           </div>
@@ -975,22 +1039,42 @@ export default function ImportEventsPage() {
           {state.rescrapeResults && (
             <div className="text-sm space-y-2">
               <div className="flex gap-4 text-gray-700">
-                <span>Found: <strong>{state.rescrapeResults.found}</strong></span>
+                <span>
+                  Found: <strong>{state.rescrapeResults.found}</strong>
+                </span>
                 {state.rescrapeResults.updated !== undefined && !state.rescrapeResults.previews && (
-                  <span>Updated: <strong className="text-green-600">{state.rescrapeResults.updated}</strong></span>
+                  <span>
+                    Updated:{" "}
+                    <strong className="text-green-600">{state.rescrapeResults.updated}</strong>
+                  </span>
                 )}
-                <span>Skipped: <strong>{state.rescrapeResults.skipped || state.rescrapeResults.noScraper}</strong></span>
+                <span>
+                  Skipped:{" "}
+                  <strong>
+                    {state.rescrapeResults.skipped || state.rescrapeResults.noScraper}
+                  </strong>
+                </span>
                 {state.rescrapeResults.errors.length > 0 && (
-                  <span>Errors: <strong className="text-red-600">{state.rescrapeResults.errors.length}</strong></span>
+                  <span>
+                    Errors:{" "}
+                    <strong className="text-red-600">{state.rescrapeResults.errors.length}</strong>
+                  </span>
                 )}
               </div>
 
               {state.rescrapeResults.previews && state.rescrapeResults.previews.length > 0 && (
                 <div className="max-h-48 overflow-y-auto border rounded p-2 mt-2">
                   {state.rescrapeResults.previews.map((p, i) => (
-                    <div key={i} className="flex justify-between text-xs py-1 border-b last:border-0">
+                    <div
+                      key={i}
+                      className="flex justify-between text-xs py-1 border-b last:border-0"
+                    >
                       <span className="truncate mr-2">{p.name}</span>
-                      <span className={p.status === "will re-scrape" ? "text-green-600" : "text-gray-400"}>
+                      <span
+                        className={
+                          p.status === "will re-scrape" ? "text-green-600" : "text-gray-400"
+                        }
+                      >
                         {p.status}
                       </span>
                     </div>
@@ -1001,7 +1085,9 @@ export default function ImportEventsPage() {
               {state.rescrapeResults.errors.length > 0 && (
                 <div className="max-h-32 overflow-y-auto text-xs text-red-600 border border-red-200 rounded p-2 mt-2">
                   {state.rescrapeResults.errors.map((err, i) => (
-                    <div key={i} className="py-0.5">{err}</div>
+                    <div key={i} className="py-0.5">
+                      {err}
+                    </div>
                   ))}
                 </div>
               )}

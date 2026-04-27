@@ -8,8 +8,6 @@ import { getVendorsWithCounts } from "@/lib/queries";
 import { vendorCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
@@ -21,7 +19,12 @@ export async function GET(request: NextRequest) {
     const vendorsWithCounts = await getVendorsWithCounts(db);
     return NextResponse.json(vendorsWithCounts);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch vendors", error, source: "api/admin/vendors", request });
+    await logError(db, {
+      message: "Failed to fetch vendors",
+      error,
+      source: "api/admin/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
 }
@@ -77,15 +80,16 @@ export async function POST(request: NextRequest) {
     // Update user role to VENDOR
     await db.update(users).set({ role: "VENDOR" }).where(eq(users.id, data.userId));
 
-    const [newVendor] = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, vendorId))
-      .limit(1);
+    const [newVendor] = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
 
     return NextResponse.json(newVendor, { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create vendor", error, source: "api/admin/vendors", request });
+    await logError(db, {
+      message: "Failed to create vendor",
+      error,
+      source: "api/admin/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to create vendor" }, { status: 500 });
   }
 }

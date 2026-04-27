@@ -11,8 +11,6 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 
-export const runtime = "edge";
-
 interface User {
   id: string;
   email: string;
@@ -43,7 +41,7 @@ export default function AdminUsersPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users");
-      const data = await res.json() as User[];
+      const data = (await res.json()) as User[];
       setUsers(data);
     } catch (error) {
       console.error("Failed to fetch users:", error);
@@ -138,17 +136,11 @@ export default function AdminUsersPage() {
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{user.email}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {user.name || "-"}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{user.name || "-"}</td>
                     <td className="py-3 px-4">
-                      <Badge variant={roleColors[user.role]}>
-                        {user.role}
-                      </Badge>
+                      <Badge variant={roleColors[user.role]}>{user.role}</Badge>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {formatDate(user.createdAt)}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{formatDate(user.createdAt)}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <select

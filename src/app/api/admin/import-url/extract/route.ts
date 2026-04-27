@@ -6,17 +6,17 @@ import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import type { PageMetadata } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
   url: z.string().url().optional(),
-  metadata: z.object({
-    title: z.string().nullable().optional(),
-    description: z.string().nullable().optional(),
-    ogImage: z.string().nullable().optional(),
-    jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
-  }).optional(),
+  metadata: z
+    .object({
+      title: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+      ogImage: z.string().nullable().optional(),
+      jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
+    })
+    .optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -50,7 +50,6 @@ export async function POST(request: NextRequest) {
       (metadata || {}) as PageMetadata
     );
 
-
     // If URL provided but no ticketUrl extracted, use source URL for events without one
     if (url) {
       for (const event of events) {
@@ -67,7 +66,12 @@ export async function POST(request: NextRequest) {
       count: events.length,
     });
   } catch (error) {
-    await logError(db, { message: "Extraction error", error, source: "api/admin/import-url/extract", request });
+    await logError(db, {
+      message: "Extraction error",
+      error,
+      source: "api/admin/import-url/extract",
+      request,
+    });
     return NextResponse.json(
       {
         success: false,

@@ -6,17 +6,17 @@ import type { PageMetadata } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
   url: z.string().url().optional(),
-  metadata: z.object({
-    title: z.string().nullable().optional(),
-    description: z.string().nullable().optional(),
-    ogImage: z.string().nullable().optional(),
-    jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
-  }).optional(),
+  metadata: z
+    .object({
+      title: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+      ogImage: z.string().nullable().optional(),
+      jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
+    })
+    .optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -52,7 +52,6 @@ export async function POST(request: NextRequest) {
       (metadata || {}) as PageMetadata
     );
 
-
     // If URL provided but no ticketUrl extracted, use source URL
     if (url && !extracted.ticketUrl) {
       extracted.ticketUrl = url;
@@ -64,7 +63,12 @@ export async function POST(request: NextRequest) {
       confidence,
     });
   } catch (error) {
-    await logError(db, { message: "Extraction error", error, source: "api/suggest-event/extract", request });
+    await logError(db, {
+      message: "Extraction error",
+      error,
+      source: "api/suggest-event/extract",
+      request,
+    });
     return NextResponse.json(
       {
         success: false,

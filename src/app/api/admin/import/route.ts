@@ -115,8 +115,6 @@ async function findOrCreateVenue(
   return newVenueId;
 }
 
-export const runtime = "edge";
-
 // GET - Preview events from a source
 export async function GET(request: Request) {
   const db = getCloudflareDb();

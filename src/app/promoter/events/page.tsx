@@ -12,8 +12,6 @@ import { eq, desc, inArray, sql } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",
   PENDING: "warning",

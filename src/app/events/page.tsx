@@ -35,7 +35,6 @@ import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {

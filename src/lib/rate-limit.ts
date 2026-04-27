@@ -1,4 +1,4 @@
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { auth } from "@/lib/auth";
 
 // Rate limit configuration per endpoint
@@ -138,7 +138,7 @@ function getClientIp(request: Request): string {
  */
 function isProductionEnvironment(): boolean {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return !!(env as unknown as Record<string, unknown>).CF_PAGES;
   } catch {
     return false;
@@ -150,7 +150,7 @@ function isProductionEnvironment(): boolean {
  */
 function getRateLimitKv(): KVNamespace | null {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as { RATE_LIMIT_KV?: KVNamespace }).RATE_LIMIT_KV ?? null;
   } catch {
     return null;

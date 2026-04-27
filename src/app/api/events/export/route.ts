@@ -8,8 +8,6 @@ import { sanitizeLikeInput } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 export async function GET(request: Request) {
   // Rate limiting check
   const rateLimitResult = await checkRateLimit(request, "export-events");
@@ -42,10 +40,7 @@ export async function GET(request: Request) {
     if (query) {
       const safeQuery = sanitizeLikeInput(query);
       conditions.push(
-        or(
-          like(events.name, `%${safeQuery}%`),
-          like(events.description, `%${safeQuery}%`)
-        )!
+        or(like(events.name, `%${safeQuery}%`), like(events.description, `%${safeQuery}%`))!
       );
     }
 
@@ -121,7 +116,12 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    await logError(db, { message: "Error exporting events", error, source: "api/events/export", request });
+    await logError(db, {
+      message: "Error exporting events",
+      error,
+      source: "api/events/export",
+      request,
+    });
     return NextResponse.json({ error: "Failed to export events" }, { status: 500 });
   }
 }

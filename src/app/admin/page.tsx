@@ -9,8 +9,6 @@ import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 async function getStats() {
   const db = getCloudflareDb();
 

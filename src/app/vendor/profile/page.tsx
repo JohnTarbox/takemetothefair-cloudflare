@@ -10,8 +10,6 @@ import type { PlaceLookupResult } from "@/lib/google-maps";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 
-export const runtime = "edge";
-
 interface VendorProfile {
   id: string;
   businessName: string;

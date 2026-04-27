@@ -8,8 +8,6 @@ import { eq } from "drizzle-orm";
 import { EventsView } from "@/components/events/events-view";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 async function getVendorEvents(userId: string) {
   const db = getCloudflareDb();
 

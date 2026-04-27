@@ -6,8 +6,6 @@ import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { trackEventStatusChange } from "@/lib/server-analytics";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ id: string }>;
 }

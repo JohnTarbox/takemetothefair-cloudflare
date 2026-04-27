@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { getQueryPages, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/query-pages?query=X
  * Returns every page that ranked for the given search query, with per-page

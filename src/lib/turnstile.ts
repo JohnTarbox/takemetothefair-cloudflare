@@ -1,4 +1,4 @@
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 export interface TurnstileVerifyResult {
@@ -20,7 +20,7 @@ interface TurnstileResponse {
  */
 function isCloudflarePages(): boolean {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return !!(env as unknown as Record<string, unknown>).CF_PAGES;
   } catch {
     return false;
@@ -32,7 +32,7 @@ function isCloudflarePages(): boolean {
  */
 function getTurnstileSecretKey(): string | null {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY ?? null;
   } catch {
     return process.env.TURNSTILE_SECRET_KEY ?? null;

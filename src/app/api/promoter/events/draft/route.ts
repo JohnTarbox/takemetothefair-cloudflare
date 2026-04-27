@@ -7,8 +7,6 @@ import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } f
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface EventDayInput {
   date: string;
   openTime: string;

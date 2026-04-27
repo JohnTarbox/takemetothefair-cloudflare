@@ -3,8 +3,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 
-export const runtime = "edge";
-
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
@@ -19,19 +17,13 @@ export async function POST(request: NextRequest) {
   };
 
   if (!body.address || !body.city || !body.state) {
-    return NextResponse.json(
-      { error: "Address, city, and state are required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Address, city, and state are required" }, { status: 400 });
   }
 
   const env = getCloudflareEnv();
   const apiKey = env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "Google Maps API key is not configured." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Google Maps API key is not configured." }, { status: 500 });
   }
   const result = await geocodeAddress(body.address, body.city, body.state, body.zip, apiKey);
   if (!result) {

@@ -13,8 +13,6 @@ import {
 import type { DuplicateEntityType, FindDuplicatesResponse } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
@@ -26,17 +24,11 @@ export async function GET(request: NextRequest) {
   const threshold = parseFloat(searchParams.get("threshold") || "0.7");
 
   if (!type || !["venues", "events", "vendors", "promoters"].includes(type)) {
-    return NextResponse.json(
-      { error: "Invalid or missing type parameter" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Invalid or missing type parameter" }, { status: 400 });
   }
 
   if (isNaN(threshold) || threshold < 0 || threshold > 1) {
-    return NextResponse.json(
-      { error: "Threshold must be between 0 and 1" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Threshold must be between 0 and 1" }, { status: 400 });
   }
 
   const db = getCloudflareDb();
@@ -117,17 +109,17 @@ export async function GET(request: NextRequest) {
           _count: { eventVendors: vendorCountMap.get(result.event.id) || 0 },
         }));
 
-        duplicates = findDuplicatePairs(
-          eventsWithDetails,
-          getEventComparisonString,
-          threshold
-        );
+        duplicates = findDuplicatePairs(eventsWithDetails, getEventComparisonString, threshold);
         break;
       }
 
       case "vendors": {
         // Batch query: Get all vendors (limited to prevent timeout)
-        const vendorList = await db.select().from(vendors).orderBy(vendors.businessName).limit(MAX_ENTITIES);
+        const vendorList = await db
+          .select()
+          .from(vendors)
+          .orderBy(vendors.businessName)
+          .limit(MAX_ENTITIES);
         totalEntities = vendorList.length;
 
         // Batch query: Get event vendor counts for ALL vendors in one query
@@ -148,17 +140,17 @@ export async function GET(request: NextRequest) {
           _count: { eventVendors: countMap.get(vendor.id) || 0 },
         }));
 
-        duplicates = findDuplicatePairs(
-          vendorsWithCounts,
-          getVendorComparisonString,
-          threshold
-        );
+        duplicates = findDuplicatePairs(vendorsWithCounts, getVendorComparisonString, threshold);
         break;
       }
 
       case "promoters": {
         // Batch query: Get all promoters (limited to prevent timeout)
-        const promoterList = await db.select().from(promoters).orderBy(promoters.companyName).limit(MAX_ENTITIES);
+        const promoterList = await db
+          .select()
+          .from(promoters)
+          .orderBy(promoters.companyName)
+          .limit(MAX_ENTITIES);
         totalEntities = promoterList.length;
 
         // Batch query: Get event counts for ALL promoters in one query
@@ -202,8 +194,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    const isTimeout = error instanceof Error &&
-      (error.message.includes("time") || error.message.includes("CPU"));
+    const isTimeout =
+      error instanceof Error && (error.message.includes("time") || error.message.includes("CPU"));
 
     await logError(db, {
       message: "Failed to find duplicates",
@@ -220,11 +212,10 @@ export async function GET(request: NextRequest) {
 
     const userMessage = isTimeout
       ? `The duplicate search timed out while processing ${type}. Try increasing the similarity threshold to reduce comparisons.`
-      : error instanceof Error ? error.message : "Unknown error";
+      : error instanceof Error
+        ? error.message
+        : "Unknown error";
 
-    return NextResponse.json(
-      { error: userMessage, isTimeout },
-      { status: isTimeout ? 503 : 500 }
-    );
+    return NextResponse.json({ error: userMessage, isTimeout }, { status: isTimeout ? 503 : 500 });
   }
 }

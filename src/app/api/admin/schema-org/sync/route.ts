@@ -6,8 +6,6 @@ import { eq, inArray, isNotNull, isNull, and, or, ne, sql } from "drizzle-orm";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface SyncRequest {
   eventIds?: string[];
   onlyMissing?: boolean;
@@ -37,7 +35,7 @@ export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
 
   try {
-    const body = await request.json() as SyncRequest;
+    const body = (await request.json()) as SyncRequest;
     const { eventIds, onlyMissing = false, onlyExisting = false, limit = 50, offset = 0 } = body;
 
     // Build query to find events to sync
@@ -54,10 +52,7 @@ export async function POST(request: NextRequest) {
         })
         .from(events)
         .leftJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
-        .where(and(
-          inArray(events.id, eventIds),
-          isNotNull(events.ticketUrl)
-        ))
+        .where(and(inArray(events.id, eventIds), isNotNull(events.ticketUrl)))
         .offset(offset)
         .limit(limit);
     } else if (onlyMissing) {
@@ -72,13 +67,12 @@ export async function POST(request: NextRequest) {
         })
         .from(events)
         .leftJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
-        .where(and(
-          isNotNull(events.ticketUrl),
-          or(
-            isNull(eventSchemaOrg.id),
-            ne(eventSchemaOrg.status, "available")
+        .where(
+          and(
+            isNotNull(events.ticketUrl),
+            or(isNull(eventSchemaOrg.id), ne(eventSchemaOrg.status, "available"))
           )
-        ))
+        )
         .offset(offset)
         .limit(limit);
     } else if (onlyExisting) {
@@ -92,10 +86,7 @@ export async function POST(request: NextRequest) {
         })
         .from(events)
         .innerJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
-        .where(and(
-          isNotNull(events.ticketUrl),
-          eq(eventSchemaOrg.status, "available")
-        ))
+        .where(and(isNotNull(events.ticketUrl), eq(eventSchemaOrg.status, "available")))
         .offset(offset)
         .limit(limit);
     } else {
@@ -231,10 +222,7 @@ export async function POST(request: NextRequest) {
       source: "api/admin/schema-org/sync",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to sync schema.org data" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to sync schema.org data" }, { status: 500 });
   }
 }
 
@@ -289,9 +277,6 @@ export async function GET(request: NextRequest) {
       source: "api/admin/schema-org/sync",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to get schema.org stats" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to get schema.org stats" }, { status: 500 });
   }
 }

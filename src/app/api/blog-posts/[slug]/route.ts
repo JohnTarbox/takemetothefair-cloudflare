@@ -9,8 +9,6 @@ import { eq, and, or, gt, lt, ne } from "drizzle-orm";
 import { findBrokenLinksInDb } from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ slug: string }>;
 }

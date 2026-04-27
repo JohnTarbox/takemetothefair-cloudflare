@@ -9,8 +9,6 @@ import {
 } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/search-queries?path=/events
  * Returns top Search Console queries for a specific page.

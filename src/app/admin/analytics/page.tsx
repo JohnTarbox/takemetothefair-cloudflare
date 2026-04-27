@@ -10,7 +10,6 @@ import {
   type Ga4Env,
 } from "@/lib/ga4";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 type PageProps = {

@@ -10,8 +10,6 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 
-export const runtime = "edge";
-
 // The stable ID for the Community Suggestions promoter
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 

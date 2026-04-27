@@ -9,8 +9,6 @@ import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
 import { eq, inArray, desc } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 async function getFavorites(userId: string) {
   const db = getCloudflareDb();
 

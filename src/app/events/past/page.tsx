@@ -9,7 +9,6 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 export const metadata: Metadata = {

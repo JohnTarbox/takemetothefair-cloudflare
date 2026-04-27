@@ -11,8 +11,6 @@ import { Label } from "@/components/ui/label";
 import { EVENT_VENDOR_STATUS } from "@/lib/constants";
 import { STATUS_LABELS, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 
-export const runtime = "edge";
-
 interface Vendor {
   id: string;
   businessName: string;
@@ -71,9 +69,9 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
 
       if (!eventRes.ok) throw new Error("Event not found");
 
-      const eventData = await eventRes.json() as Event;
-      const vendorsData = await vendorsRes.json() as EventVendor[];
-      const allVendorsData = await allVendorsRes.json() as Vendor[];
+      const eventData = (await eventRes.json()) as Event;
+      const vendorsData = (await vendorsRes.json()) as EventVendor[];
+      const allVendorsData = (await allVendorsRes.json()) as Vendor[];
 
       setEvent(eventData);
       setEventVendors(vendorsData);
@@ -103,11 +101,11 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
       });
 
       if (!res.ok) {
-        const data = await res.json() as { error?: string };
+        const data = (await res.json()) as { error?: string };
         throw new Error(data.error || "Failed to add vendor");
       }
 
-      const newEventVendor = await res.json() as EventVendor;
+      const newEventVendor = (await res.json()) as EventVendor;
       setEventVendors([...eventVendors, newEventVendor]);
       setShowAddForm(false);
       setSelectedVendorId("");
@@ -141,7 +139,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
         });
 
         if (res.ok) {
-          const newEventVendor = await res.json() as EventVendor;
+          const newEventVendor = (await res.json()) as EventVendor;
           results.push(newEventVendor);
         }
       }
@@ -167,9 +165,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
 
       if (!res.ok) throw new Error("Failed to update status");
 
-      setEventVendors(eventVendors.map((ev) =>
-        ev.id === eventVendorId ? { ...ev, status } : ev
-      ));
+      setEventVendors(eventVendors.map((ev) => (ev.id === eventVendorId ? { ...ev, status } : ev)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update status");
     }
@@ -217,9 +213,10 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
   );
 
   // Filter available vendors by search query
-  const filteredAvailableVendors = availableVendors.filter((v) =>
-    v.businessName.toLowerCase().includes(bulkSearchQuery.toLowerCase()) ||
-    v.vendorType?.toLowerCase().includes(bulkSearchQuery.toLowerCase())
+  const filteredAvailableVendors = availableVendors.filter(
+    (v) =>
+      v.businessName.toLowerCase().includes(bulkSearchQuery.toLowerCase()) ||
+      v.vendorType?.toLowerCase().includes(bulkSearchQuery.toLowerCase())
   );
 
   const allStatuses = Object.values(EVENT_VENDOR_STATUS);
@@ -261,30 +258,37 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
           <h1 className="text-2xl font-bold text-gray-900">Manage Vendors</h1>
           <p className="text-gray-600 mt-1">{event.name}</p>
           {!event.commercialVendorsAllowed && (
-            <Badge variant="warning" className="mt-2">Commercial vendors not allowed</Badge>
+            <Badge variant="warning" className="mt-2">
+              Commercial vendors not allowed
+            </Badge>
           )}
         </div>
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={() => { setShowBulkAdd(true); setShowAddForm(false); }}
+            onClick={() => {
+              setShowBulkAdd(true);
+              setShowAddForm(false);
+            }}
             disabled={showBulkAdd}
           >
             <Users className="w-4 h-4 mr-2" />
             Quick Add Multiple
           </Button>
-          <Button onClick={() => { setShowAddForm(true); setShowBulkAdd(false); }} disabled={showAddForm}>
+          <Button
+            onClick={() => {
+              setShowAddForm(true);
+              setShowBulkAdd(false);
+            }}
+            disabled={showAddForm}
+          >
             <Plus className="w-4 h-4 mr-2" />
             Add Single Vendor
           </Button>
         </div>
       </div>
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-          {error}
-        </div>
-      )}
+      {error && <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>}
 
       {/* Bulk Add Form */}
       {showBulkAdd && (
@@ -362,7 +366,9 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                           <div className="text-sm text-gray-500 flex items-center gap-2">
                             {vendor.vendorType && <span>{vendor.vendorType}</span>}
                             {vendor.commercial && (
-                              <Badge variant="default" className="text-xs">Commercial</Badge>
+                              <Badge variant="default" className="text-xs">
+                                Commercial
+                              </Badge>
                             )}
                           </div>
                         </div>
@@ -424,7 +430,9 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                   ))}
                 </select>
                 {availableVendors.length === 0 && (
-                  <p className="text-sm text-gray-500 mt-1">All vendors have been added to this event</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    All vendors have been added to this event
+                  </p>
                 )}
               </div>
 
@@ -474,72 +482,73 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
           ) : (
             <div className="space-y-4">
               {eventVendors.map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="flex items-center justify-between p-4 border rounded-lg"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
-                        {ev.vendor.logoUrl ? (
-                          <img
-                            src={ev.vendor.logoUrl}
-                            alt={ev.vendor.businessName}
-                            className="w-12 h-12 rounded-lg object-cover"
-                          />
-                        ) : (
-                          <Store className="w-6 h-6 text-gray-400" />
-                        )}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/admin/vendors/${ev.vendor.id}/edit`}
-                            className="font-medium text-gray-900 hover:text-blue-600"
-                          >
-                            {ev.vendor.businessName}
-                          </Link>
-                          {ev.vendor.commercial && (
-                            <Badge variant="default">Commercial</Badge>
-                          )}
-                          {ev.vendor.canSelfConfirm && (
-                            <Badge variant="success">Self-Confirm</Badge>
-                          )}
-                        </div>
-                        {ev.vendor.vendorType && (
-                          <p className="text-sm text-gray-500">{ev.vendor.vendorType}</p>
-                        )}
-                        {ev.boothInfo && (
-                          <p className="text-sm text-gray-500">Booth: {ev.boothInfo}</p>
-                        )}
-                      </div>
+                <div
+                  key={ev.id}
+                  className="flex items-center justify-between p-4 border rounded-lg"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                      {ev.vendor.logoUrl ? (
+                        <img
+                          src={ev.vendor.logoUrl}
+                          alt={ev.vendor.businessName}
+                          className="w-12 h-12 rounded-lg object-cover"
+                        />
+                      ) : (
+                        <Store className="w-6 h-6 text-gray-400" />
+                      )}
                     </div>
-
-                    <div className="flex items-center gap-3">
-                      <select
-                        value={ev.status}
-                        onChange={(e) => handleUpdateStatus(ev.id, e.target.value)}
-                        className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-                      >
-                        {allStatuses.map((s) => (
-                          <option key={s} value={s}>
-                            {STATUS_LABELS[s as keyof typeof STATUS_LABELS] ?? s}
-                          </option>
-                        ))}
-                      </select>
-                      <Badge variant={STATUS_BADGE_VARIANTS[ev.status as keyof typeof STATUS_BADGE_VARIANTS] ?? "default"}>
-                        {STATUS_LABELS[ev.status as keyof typeof STATUS_LABELS] ?? ev.status}
-                      </Badge>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRemoveVendor(ev.id)}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={`/admin/vendors/${ev.vendor.id}/edit`}
+                          className="font-medium text-gray-900 hover:text-blue-600"
+                        >
+                          {ev.vendor.businessName}
+                        </Link>
+                        {ev.vendor.commercial && <Badge variant="default">Commercial</Badge>}
+                        {ev.vendor.canSelfConfirm && <Badge variant="success">Self-Confirm</Badge>}
+                      </div>
+                      {ev.vendor.vendorType && (
+                        <p className="text-sm text-gray-500">{ev.vendor.vendorType}</p>
+                      )}
+                      {ev.boothInfo && (
+                        <p className="text-sm text-gray-500">Booth: {ev.boothInfo}</p>
+                      )}
                     </div>
                   </div>
-                ))}
+
+                  <div className="flex items-center gap-3">
+                    <select
+                      value={ev.status}
+                      onChange={(e) => handleUpdateStatus(ev.id, e.target.value)}
+                      className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    >
+                      {allStatuses.map((s) => (
+                        <option key={s} value={s}>
+                          {STATUS_LABELS[s as keyof typeof STATUS_LABELS] ?? s}
+                        </option>
+                      ))}
+                    </select>
+                    <Badge
+                      variant={
+                        STATUS_BADGE_VARIANTS[ev.status as keyof typeof STATUS_BADGE_VARIANTS] ??
+                        "default"
+                      }
+                    >
+                      {STATUS_LABELS[ev.status as keyof typeof STATUS_LABELS] ?? ev.status}
+                    </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRemoveVendor(ev.id)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

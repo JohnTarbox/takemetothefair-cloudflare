@@ -27,7 +27,6 @@ import {
   type SearchQueryRow,
 } from "@/lib/search-console";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 type PageProps = {

@@ -12,8 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;
@@ -77,7 +75,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
     try {
       const res = await fetch(`/api/admin/venues/${id}`);
       if (!res.ok) throw new Error("Venue not found");
-      const data = await res.json() as Venue;
+      const data = (await res.json()) as Venue;
       setVenue(data);
       setFormData({
         name: data.name || "",
@@ -101,7 +99,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       if (data.googleMapsUrl) existingGoogleData.googleMapsUrl = data.googleMapsUrl;
       if (data.openingHours) existingGoogleData.openingHours = data.openingHours;
       if (data.googleRating != null) existingGoogleData.googleRating = String(data.googleRating);
-      if (data.googleRatingCount != null) existingGoogleData.googleRatingCount = String(data.googleRatingCount);
+      if (data.googleRatingCount != null)
+        existingGoogleData.googleRatingCount = String(data.googleRatingCount);
       if (data.googleTypes) existingGoogleData.googleTypes = data.googleTypes;
       if (data.accessibility) existingGoogleData.accessibility = data.accessibility;
       if (data.parking) existingGoogleData.parking = data.parking;
@@ -140,7 +139,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
     if (place.googleMapsUrl) newGoogleData.googleMapsUrl = place.googleMapsUrl;
     if (place.openingHours) newGoogleData.openingHours = place.openingHours;
     if (place.googleRating != null) newGoogleData.googleRating = String(place.googleRating);
-    if (place.googleRatingCount != null) newGoogleData.googleRatingCount = String(place.googleRatingCount);
+    if (place.googleRatingCount != null)
+      newGoogleData.googleRatingCount = String(place.googleRatingCount);
     if (place.googleTypes) newGoogleData.googleTypes = place.googleTypes;
     if (place.accessibility) newGoogleData.accessibility = place.accessibility;
     if (place.parking) newGoogleData.parking = place.parking;
@@ -173,7 +173,9 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       googleMapsUrl: googleData.googleMapsUrl || null,
       openingHours: googleData.openingHours || null,
       googleRating: googleData.googleRating ? parseFloat(googleData.googleRating) : null,
-      googleRatingCount: googleData.googleRatingCount ? parseInt(googleData.googleRatingCount) : null,
+      googleRatingCount: googleData.googleRatingCount
+        ? parseInt(googleData.googleRatingCount)
+        : null,
       googleTypes: googleData.googleTypes || null,
       accessibility: googleData.accessibility || null,
       parking: googleData.parking || null,
@@ -188,7 +190,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to update venue");
       }
 
@@ -215,10 +217,10 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
         }),
       });
       if (!res.ok) {
-        const data = await res.json() as { error?: string };
+        const data = (await res.json()) as { error?: string };
         throw new Error(data.error || "Geocoding failed");
       }
-      const result = await res.json() as { lat: number; lng: number; zip: string | null };
+      const result = (await res.json()) as { lat: number; lng: number; zip: string | null };
       setFormData((prev) => ({
         ...prev,
         latitude: String(result.lat),
@@ -282,35 +284,64 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
           </div>
 
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div>
                 <Label htmlFor="name">Venue Name *</Label>
-                <Input id="name" name="name" required value={formData.name} onChange={handleChange} />
+                <Input
+                  id="name"
+                  name="name"
+                  required
+                  value={formData.name}
+                  onChange={handleChange}
+                />
               </div>
 
               <div>
                 <Label htmlFor="address">Address *</Label>
-                <Input id="address" name="address" required value={formData.address} onChange={handleChange} />
+                <Input
+                  id="address"
+                  name="address"
+                  required
+                  value={formData.address}
+                  onChange={handleChange}
+                />
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="col-span-2">
                   <Label htmlFor="city">City *</Label>
-                  <Input id="city" name="city" required value={formData.city} onChange={handleChange} />
+                  <Input
+                    id="city"
+                    name="city"
+                    required
+                    value={formData.city}
+                    onChange={handleChange}
+                  />
                 </div>
                 <div>
                   <Label htmlFor="state">State *</Label>
-                  <Input id="state" name="state" required maxLength={2} value={formData.state} onChange={handleChange} />
+                  <Input
+                    id="state"
+                    name="state"
+                    required
+                    maxLength={2}
+                    value={formData.state}
+                    onChange={handleChange}
+                  />
                 </div>
                 <div>
                   <Label htmlFor="zip">ZIP *</Label>
-                  <Input id="zip" name="zip" required value={formData.zip} onChange={handleChange} />
+                  <Input
+                    id="zip"
+                    name="zip"
+                    required
+                    value={formData.zip}
+                    onChange={handleChange}
+                  />
                 </div>
               </div>
 
@@ -443,35 +474,68 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                   {googleData.googlePlaceId && (
                     <div>
                       <Label className="text-xs text-gray-500">Place ID</Label>
-                      <Input readOnly value={googleData.googlePlaceId} className="bg-gray-50 text-sm" />
+                      <Input
+                        readOnly
+                        value={googleData.googlePlaceId}
+                        className="bg-gray-50 text-sm"
+                      />
                     </div>
                   )}
                   {googleData.googleMapsUrl && (
                     <div>
                       <Label className="text-xs text-gray-500">Google Maps URL</Label>
                       <div className="flex gap-2">
-                        <Input readOnly value={googleData.googleMapsUrl} className="bg-gray-50 text-sm" />
-                        <a href={googleData.googleMapsUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-gray-50">Open</a>
+                        <Input
+                          readOnly
+                          value={googleData.googleMapsUrl}
+                          className="bg-gray-50 text-sm"
+                        />
+                        <a
+                          href={googleData.googleMapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-gray-50"
+                        >
+                          Open
+                        </a>
                       </div>
                     </div>
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label className="text-xs text-gray-500">Rating</Label>
-                      <Input readOnly value={googleData.googleRating || ""} className="bg-gray-50 text-sm" />
+                      <Input
+                        readOnly
+                        value={googleData.googleRating || ""}
+                        className="bg-gray-50 text-sm"
+                      />
                     </div>
                     <div>
                       <Label className="text-xs text-gray-500">Rating Count</Label>
-                      <Input readOnly value={googleData.googleRatingCount || ""} className="bg-gray-50 text-sm" />
+                      <Input
+                        readOnly
+                        value={googleData.googleRatingCount || ""}
+                        className="bg-gray-50 text-sm"
+                      />
                     </div>
                   </div>
                   {googleData.googleTypes && (
                     <div>
                       <Label className="text-xs text-gray-500">Types</Label>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {(() => { try { return (JSON.parse(googleData.googleTypes) as string[]).map((t: string) => (
-                          <span key={t} className="px-2 py-0.5 bg-gray-100 rounded text-xs">{t.replace(/_/g, " ")}</span>
-                        )); } catch { return null; } })()}
+                        {(() => {
+                          try {
+                            return (JSON.parse(googleData.googleTypes) as string[]).map(
+                              (t: string) => (
+                                <span key={t} className="px-2 py-0.5 bg-gray-100 rounded text-xs">
+                                  {t.replace(/_/g, " ")}
+                                </span>
+                              )
+                            );
+                          } catch {
+                            return null;
+                          }
+                        })()}
                       </div>
                     </div>
                   )}
@@ -479,12 +543,24 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                     <div>
                       <Label className="text-xs text-gray-500">Opening Hours</Label>
                       <div className="mt-1 text-sm bg-gray-50 rounded-md p-2 space-y-0.5">
-                        {(() => { try {
-                          const hours = JSON.parse(googleData.openingHours) as { weekdayDescriptions?: string[] };
-                          return hours.weekdayDescriptions?.map((d: string, i: number) => (
-                            <div key={i} className="text-xs">{d}</div>
-                          )) || <div className="text-xs text-gray-400">No schedule available</div>;
-                        } catch { return <div className="text-xs text-gray-400">Invalid format</div>; } })()}
+                        {(() => {
+                          try {
+                            const hours = JSON.parse(googleData.openingHours) as {
+                              weekdayDescriptions?: string[];
+                            };
+                            return (
+                              hours.weekdayDescriptions?.map((d: string, i: number) => (
+                                <div key={i} className="text-xs">
+                                  {d}
+                                </div>
+                              )) || (
+                                <div className="text-xs text-gray-400">No schedule available</div>
+                              )
+                            );
+                          } catch {
+                            return <div className="text-xs text-gray-400">Invalid format</div>;
+                          }
+                        })()}
                       </div>
                     </div>
                   )}
@@ -492,13 +568,27 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                     <div>
                       <Label className="text-xs text-gray-500">Accessibility</Label>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {(() => { try { return Object.entries(JSON.parse(googleData.accessibility) as Record<string, boolean>)
-                          .filter(([, v]) => v)
-                          .map(([k]) => (
-                            <span key={k} className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs">
-                              {k.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim()}
-                            </span>
-                          )); } catch { return null; } })()}
+                        {(() => {
+                          try {
+                            return Object.entries(
+                              JSON.parse(googleData.accessibility) as Record<string, boolean>
+                            )
+                              .filter(([, v]) => v)
+                              .map(([k]) => (
+                                <span
+                                  key={k}
+                                  className="px-2 py-0.5 bg-green-50 text-green-700 rounded text-xs"
+                                >
+                                  {k
+                                    .replace(/([A-Z])/g, " $1")
+                                    .replace(/^./, (s) => s.toUpperCase())
+                                    .trim()}
+                                </span>
+                              ));
+                          } catch {
+                            return null;
+                          }
+                        })()}
                       </div>
                     </div>
                   )}
@@ -506,13 +596,27 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                     <div>
                       <Label className="text-xs text-gray-500">Parking</Label>
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {(() => { try { return Object.entries(JSON.parse(googleData.parking) as Record<string, boolean>)
-                          .filter(([, v]) => v)
-                          .map(([k]) => (
-                            <span key={k} className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">
-                              {k.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase()).trim()}
-                            </span>
-                          )); } catch { return null; } })()}
+                        {(() => {
+                          try {
+                            return Object.entries(
+                              JSON.parse(googleData.parking) as Record<string, boolean>
+                            )
+                              .filter(([, v]) => v)
+                              .map(([k]) => (
+                                <span
+                                  key={k}
+                                  className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
+                                >
+                                  {k
+                                    .replace(/([A-Z])/g, " $1")
+                                    .replace(/^./, (s) => s.toUpperCase())
+                                    .trim()}
+                                </span>
+                              ));
+                          } catch {
+                            return null;
+                          }
+                        })()}
                       </div>
                     </div>
                   )}

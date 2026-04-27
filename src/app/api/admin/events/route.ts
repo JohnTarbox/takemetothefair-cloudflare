@@ -8,8 +8,6 @@ import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {

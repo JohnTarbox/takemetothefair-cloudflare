@@ -10,8 +10,6 @@ import { logError } from "@/lib/logger";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 
-export const runtime = "edge";
-
 interface ImportRequest {
   event: ExtractedEventData & {
     datesConfirmed?: boolean;

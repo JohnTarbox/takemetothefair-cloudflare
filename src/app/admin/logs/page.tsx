@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-export const runtime = "edge";
-
 interface ErrorLog {
   id: string;
   timestamp: number;
@@ -115,9 +113,7 @@ export default function AdminLogsPage() {
         <CardContent className="pt-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Level
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Level</label>
               <select
                 value={level}
                 onChange={(e) => setLevel(e.target.value)}
@@ -130,9 +126,7 @@ export default function AdminLogsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Source
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
               <input
                 type="text"
                 value={source}
@@ -142,9 +136,7 @@ export default function AdminLogsPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Search message
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Search message</label>
               <input
                 type="text"
                 value={search}
@@ -154,9 +146,7 @@ export default function AdminLogsPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Limit
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Limit</label>
               <select
                 value={limit}
                 onChange={(e) => setLimit(Number(e.target.value))}
@@ -184,25 +174,16 @@ export default function AdminLogsPage() {
           ) : (
             <div className="space-y-2">
               {logs.map((log) => (
-                <div
-                  key={log.id}
-                  className="border border-gray-200 rounded-lg overflow-hidden"
-                >
+                <div key={log.id} className="border border-gray-200 rounded-lg overflow-hidden">
                   <button
                     type="button"
-                    onClick={() =>
-                      setExpandedId(expandedId === log.id ? null : log.id)
-                    }
+                    onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
                     className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-start gap-3">
-                      <Badge variant={levelColors[log.level] || "default"}>
-                        {log.level}
-                      </Badge>
+                      <Badge variant={levelColors[log.level] || "default"}>{log.level}</Badge>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {log.message}
-                        </p>
+                        <p className="text-sm font-medium text-gray-900 truncate">{log.message}</p>
                         <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
                           <span>{log.time}</span>
                           {log.source && (
@@ -222,9 +203,7 @@ export default function AdminLogsPage() {
                               })()}
                             </span>
                           )}
-                          {log.statusCode && (
-                            <span>HTTP {log.statusCode}</span>
-                          )}
+                          {log.statusCode && <span>HTTP {log.statusCode}</span>}
                         </div>
                       </div>
                       <span className="text-gray-400 text-sm">

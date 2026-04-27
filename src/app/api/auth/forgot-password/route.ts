@@ -8,8 +8,6 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { sendEmail, getSiteUrl } from "@/lib/email/send";
 import { passwordResetTemplate } from "@/lib/email/templates";
 
-export const runtime = "edge";
-
 const schema = z.object({ email: z.string().email() });
 
 const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour

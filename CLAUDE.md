@@ -60,15 +60,11 @@ npm run db:seed                # Seed local database
 npm run db:studio              # Open Drizzle Studio
 ```
 
-## Critical: Cloudflare Edge Runtime
+## Cloudflare Workers Runtime
 
-**Every page and API route MUST include:**
+This project runs on Cloudflare Workers (via the OpenNext adapter) with D1 (SQLite at edge). The workerd runtime supports the Node.js compatibility layer (`nodejs_compat`), so most Node APIs are available — but the project should still treat external storage (D1, KV, R2) as the source of truth and avoid any filesystem or process-level state.
 
-```typescript
-export const runtime = "edge";
-```
-
-This project runs on Cloudflare Pages with D1 (SQLite at edge). Node.js APIs are not available.
+Do NOT add `export const runtime = "edge";` to routes. OpenNext for Cloudflare does not support the Edge Runtime annotation; routes run as Node-runtime functions on workerd. The annotation was a Pages-era requirement and was bulk-removed during the 2026-04-27 migration.
 
 ## Database Access Pattern
 

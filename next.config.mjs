@@ -1,4 +1,4 @@
-import { setupDevPlatform } from "@cloudflare/next-on-pages/next-dev";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -23,6 +23,8 @@ const nextConfig = {
       { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
       { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
       { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com https://www.google-analytics.com https://region1.google-analytics.com https://www.google.com https://cloudflareinsights.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" },
+      { key: "Link", value: "<https://challenges.cloudflare.com>; rel=preconnect" },
+      { key: "Link", value: "<https://www.googletagmanager.com>; rel=preconnect" },
     ];
 
     const cdnCache = (maxAge, swr = 0) => ({
@@ -55,12 +57,7 @@ const nextConfig = {
   },
 };
 
-// Enable Cloudflare bindings in development
-if (process.env.NODE_ENV === "development") {
-  await setupDevPlatform({
-    // In CI, use local-only mode to avoid needing Cloudflare auth for remote bindings (AI)
-    ...(process.env.CI ? { configPath: "wrangler.ci.toml" } : {}),
-  });
-}
+// OpenNext: enable Cloudflare bindings during `next dev`. No-ops outside dev.
+initOpenNextCloudflareForDev();
 
 export default nextConfig;

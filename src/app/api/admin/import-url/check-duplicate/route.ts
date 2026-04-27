@@ -4,8 +4,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {

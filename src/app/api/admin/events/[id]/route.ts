@@ -7,8 +7,6 @@ import { createSlug, computePublicDates } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ id: string }>;
 }

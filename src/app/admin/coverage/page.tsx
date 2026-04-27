@@ -15,7 +15,6 @@ import { getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
 import { bulkCountFavorites } from "@/lib/queries";
 import { EVENT_LISTING_SLUGS } from "@/lib/constants";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 type EventScope = "all" | "upcoming";

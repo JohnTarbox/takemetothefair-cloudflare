@@ -4,8 +4,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { apiTokens } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
-export const runtime = "edge";
-
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -63,13 +61,13 @@ export async function POST(request: NextRequest) {
   if (existing.length >= 5) {
     return NextResponse.json(
       { error: "Maximum of 5 API tokens allowed. Please revoke an existing token first." },
-      { status: 400 },
+      { status: 400 }
     );
   }
 
   let name = "Default";
   try {
-    const body = await request.json() as Record<string, unknown>;
+    const body = (await request.json()) as Record<string, unknown>;
     if (body.name && typeof body.name === "string") {
       name = body.name.slice(0, 50);
     }
@@ -88,11 +86,14 @@ export async function POST(request: NextRequest) {
     name,
   });
 
-  return NextResponse.json({
-    id,
-    name,
-    token: rawToken, // Shown once, never stored
-  }, { status: 201 });
+  return NextResponse.json(
+    {
+      id,
+      name,
+      token: rawToken, // Shown once, never stored
+    },
+    { status: 201 }
+  );
 }
 
 /** DELETE — revoke a token by ID */

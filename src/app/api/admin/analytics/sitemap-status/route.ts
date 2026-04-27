@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { getSitemapStatus, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 /**
  * GET /api/admin/analytics/sitemap-status
  * Returns indexed-vs-submitted counts for all sitemaps registered in Search

@@ -4,17 +4,12 @@ import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkAdminGeoRestriction } from "@/lib/geo-security";
 
-export const runtime = "edge";
-
 // POST - Restore database from SQL backup
 export async function POST(request: NextRequest) {
   // Geo-restriction check for sensitive database operations
   const geoResult = checkAdminGeoRestriction(request);
   if (!geoResult.allowed) {
-    return NextResponse.json(
-      { error: "Access denied from your location" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "Access denied from your location" }, { status: 403 });
   }
 
   const session = await auth();
@@ -80,7 +75,9 @@ export async function POST(request: NextRequest) {
         const errorMsg = error instanceof Error ? error.message : "Unknown error";
         // Don't fail on "table already exists" or similar
         if (!errorMsg.includes("already exists")) {
-          results.errors.push(`Statement failed: ${trimmed.substring(0, 100)}... Error: ${errorMsg}`);
+          results.errors.push(
+            `Statement failed: ${trimmed.substring(0, 100)}... Error: ${errorMsg}`
+          );
         }
       }
     }
@@ -98,7 +95,12 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    await logError(errorDb, { message: "Restore error", error, source: "api/admin/database/restore", request });
+    await logError(errorDb, {
+      message: "Restore error",
+      error,
+      source: "api/admin/database/restore",
+      request,
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to restore database" },
       { status: 500 }

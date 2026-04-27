@@ -14,8 +14,6 @@ import { PreviewStep } from "./components/PreviewStep";
 import { SavingStep } from "./components/SavingStep";
 import { SuccessStep } from "./components/SuccessStep";
 
-export const runtime = "edge";
-
 export default function ImportUrlPage() {
   const {
     state,

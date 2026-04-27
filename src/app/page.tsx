@@ -14,7 +14,6 @@ import { formatAuthorName } from "@/lib/utils";
 
 import type { Metadata } from "next";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {

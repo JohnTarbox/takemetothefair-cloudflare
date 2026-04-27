@@ -1,0 +1,38 @@
+// Workers config for the parallel/eventual replacement of the Pages project.
+// Used during the Step 2 (Path B / OpenNext) migration. The existing
+// wrangler.toml stays in place so `wrangler pages deploy` keeps working
+// for production until the route is flipped.
+//
+// Build + deploy with: npm run deploy:worker
+//   (which runs `opennextjs-cloudflare build && wrangler deploy --config wrangler.workers.jsonc`)
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "takemetothefair-worker",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "takemetothefair-db",
+      "database_id": "d449e416-3814-48a6-b9e8-b676333b2cdc",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "RATE_LIMIT_KV",
+      "id": "b7aeca316e7a41108fd375be2e152cff"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

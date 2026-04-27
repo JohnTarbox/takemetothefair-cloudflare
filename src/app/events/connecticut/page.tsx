@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { StateEventsPage } from "@/components/events/state-events-page";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 export const metadata: Metadata = {

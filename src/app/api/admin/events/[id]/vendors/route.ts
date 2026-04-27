@@ -12,8 +12,6 @@ import { isValidTransition } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
 import { trackVendorStatusChange } from "@/lib/server-analytics";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ id: string }>;
 }

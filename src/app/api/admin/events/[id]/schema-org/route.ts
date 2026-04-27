@@ -6,8 +6,6 @@ import { eq } from "drizzle-orm";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 interface Params {
   params: Promise<{ id: string }>;
 }
@@ -81,11 +79,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   try {
     // Get the event
-    const [event] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, id))
-      .limit(1);
+    const [event] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
     if (!event) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
@@ -94,7 +88,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     // Check for body with custom URL (optional)
     let urlToFetch = event.ticketUrl;
     try {
-      const body = await request.json() as { url?: string };
+      const body = (await request.json()) as { url?: string };
       if (body.url) {
         urlToFetch = body.url;
       }
@@ -150,10 +144,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     if (existing) {
       // Update existing record
-      await db
-        .update(eventSchemaOrg)
-        .set(schemaOrgData)
-        .where(eq(eventSchemaOrg.id, existing.id));
+      await db.update(eventSchemaOrg).set(schemaOrgData).where(eq(eventSchemaOrg.id, existing.id));
     } else {
       // Insert new record
       await db.insert(eventSchemaOrg).values({
@@ -182,10 +173,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       source: "api/admin/events/[id]/schema-org",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to fetch schema.org data" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch schema.org data" }, { status: 500 });
   }
 }
 
@@ -203,14 +191,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const db = getCloudflareDb();
 
   try {
-    const body = await request.json() as { fields: string[] };
+    const body = (await request.json()) as { fields: string[] };
     const { fields } = body;
 
     if (!fields || !Array.isArray(fields) || fields.length === 0) {
-      return NextResponse.json(
-        { error: "No fields specified to apply" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No fields specified to apply" }, { status: 400 });
     }
 
     // Get the schema.org data
@@ -252,21 +237,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     if (appliedFields.length === 0) {
-      return NextResponse.json(
-        { error: "No valid fields to apply" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "No valid fields to apply" }, { status: 400 });
     }
 
     // Update the event
     await db.update(events).set(updateData).where(eq(events.id, id));
 
     // Get updated event
-    const [updatedEvent] = await db
-      .select()
-      .from(events)
-      .where(eq(events.id, id))
-      .limit(1);
+    const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
     return NextResponse.json({
       success: true,
@@ -280,9 +258,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       source: "api/admin/events/[id]/schema-org",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to apply schema.org data" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to apply schema.org data" }, { status: 500 });
   }
 }

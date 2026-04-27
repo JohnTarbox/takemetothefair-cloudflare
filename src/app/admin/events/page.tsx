@@ -14,8 +14,6 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 
-export const runtime = "edge";
-
 interface Event {
   id: string;
   name: string;

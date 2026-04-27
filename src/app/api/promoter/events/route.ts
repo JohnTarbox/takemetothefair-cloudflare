@@ -7,8 +7,6 @@ import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } f
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   const session = await auth();

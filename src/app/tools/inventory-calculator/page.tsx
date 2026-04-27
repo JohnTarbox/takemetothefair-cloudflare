@@ -3,8 +3,6 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { InventoryCalculator } from "@/components/blog/embeds/InventoryCalculator";
 
-export const runtime = "edge";
-
 const title = "Craft Fair Inventory Calculator | Meet Me at the Fair";
 const description =
   "Figure out how many items to bring to a craft fair based on your sales goal, product type, and fair size. Free planning tool for vendors.";

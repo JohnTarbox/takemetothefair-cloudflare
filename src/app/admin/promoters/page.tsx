@@ -13,8 +13,6 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 
-export const runtime = "edge";
-
 interface Promoter {
   id: string;
   companyName: string;
@@ -39,7 +37,7 @@ export default function AdminPromotersPage() {
   const fetchPromoters = async () => {
     try {
       const res = await fetch("/api/admin/promoters");
-      const data = await res.json() as Promoter[];
+      const data = (await res.json()) as Promoter[];
       setPromoters(data);
     } catch (error) {
       console.error("Failed to fetch promoters:", error);
@@ -137,12 +135,8 @@ export default function AdminPromotersPage() {
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{promoter.companyName}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {promoter.user?.email || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {promoter._count.events}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{promoter.user?.email || "-"}</td>
+                    <td className="py-3 px-4 text-gray-600">{promoter._count.events}</td>
                     <td className="py-3 px-4">
                       {promoter.verified ? (
                         <Badge variant="success" className="inline-flex items-center gap-1">
@@ -156,12 +150,20 @@ export default function AdminPromotersPage() {
                     <td className="py-3 px-4">
                       <div className="flex items-center justify-end gap-2">
                         <Link href={`/promoters/${promoter.slug}`}>
-                          <Button variant="ghost" size="sm" aria-label={`View ${promoter.companyName}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`View ${promoter.companyName}`}
+                          >
                             <Eye className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                         <Link href={`/admin/promoters/${promoter.id}/edit`}>
-                          <Button variant="ghost" size="sm" aria-label={`Edit ${promoter.companyName}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Edit ${promoter.companyName}`}
+                          >
                             <Pencil className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>

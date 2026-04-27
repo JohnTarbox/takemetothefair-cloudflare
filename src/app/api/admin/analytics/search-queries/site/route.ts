@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { getSiteSearchQueries, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
 
-export const runtime = "edge";
-
 type ScOrderBy = "impressions" | "clicks" | "position" | "ctr";
 
 /**

@@ -4,8 +4,6 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { resolveGoogleMapsUrl } from "@/lib/google-maps";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
-export const runtime = "edge";
-
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user) {
@@ -26,10 +24,7 @@ export async function POST(request: Request) {
 
   const url = body.url?.trim();
   if (!url) {
-    return NextResponse.json(
-      { error: "url field is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "url field is required" }, { status: 400 });
   }
 
   // Validate it looks like a Google Maps or share URL
@@ -41,19 +36,13 @@ export async function POST(request: Request) {
     "share.google",
   ];
   if (!validDomains.some((d) => url.includes(d))) {
-    return NextResponse.json(
-      { error: "URL must be a Google Maps link" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "URL must be a Google Maps link" }, { status: 400 });
   }
 
   const env = getCloudflareEnv();
   const apiKey = (env as { GOOGLE_MAPS_API_KEY?: string }).GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "Google Maps API key not configured" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Google Maps API key not configured" }, { status: 500 });
   }
 
   const { place, suggestedQuery } = await resolveGoogleMapsUrl(url, apiKey);
@@ -71,10 +60,7 @@ export async function POST(request: Request) {
   }
 
   if (!place) {
-    return NextResponse.json(
-      { error: "Could not resolve venue from this URL" },
-      { status: 404 }
-    );
+    return NextResponse.json({ error: "Could not resolve venue from this URL" }, { status: 404 });
   }
 
   return NextResponse.json(place);

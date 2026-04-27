@@ -6,8 +6,6 @@ import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { inArray, eq } from "drizzle-orm";
 
-export const runtime = "edge";
-
 export async function POST(request: Request) {
   const db = getCloudflareDb();
 
@@ -16,7 +14,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.json() as { event_ids?: string[] };
+    const body = (await request.json()) as { event_ids?: string[] };
     const eventIds = body.event_ids;
 
     if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0) {
@@ -27,10 +25,7 @@ export async function POST(request: Request) {
     }
 
     if (eventIds.length > 50) {
-      return NextResponse.json(
-        { error: "Maximum 50 events per request" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Maximum 50 events per request" }, { status: 400 });
     }
 
     // Fetch the requested events
@@ -101,16 +96,14 @@ export async function POST(request: Request) {
         }
         if (
           details.startDate &&
-          (!event.startDate ||
-            details.startDate.getTime() !== new Date(event.startDate).getTime())
+          (!event.startDate || details.startDate.getTime() !== new Date(event.startDate).getTime())
         ) {
           updates.startDate = details.startDate;
           fieldsUpdated.push("startDate");
         }
         if (
           details.endDate &&
-          (!event.endDate ||
-            details.endDate.getTime() !== new Date(event.endDate).getTime())
+          (!event.endDate || details.endDate.getTime() !== new Date(event.endDate).getTime())
         ) {
           updates.endDate = details.endDate;
           fieldsUpdated.push("endDate");
@@ -137,10 +130,7 @@ export async function POST(request: Request) {
           });
         } else {
           // Update sync timestamp even if nothing changed
-          await db
-            .update(events)
-            .set({ lastSyncedAt: new Date() })
-            .where(eq(events.id, event.id));
+          await db.update(events).set({ lastSyncedAt: new Date() }).where(eq(events.id, event.id));
           results.skipped++;
           results.details.push({
             id: event.id,
@@ -183,9 +173,6 @@ export async function POST(request: Request) {
       source: "api/admin/import/rescrape-events",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to re-scrape events" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to re-scrape events" }, { status: 500 });
   }
 }

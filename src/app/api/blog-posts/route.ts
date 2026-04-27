@@ -9,8 +9,6 @@ import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, desc, sql } from "drizzle-orm";
 
-export const runtime = "edge";
-
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   const admin = await isAuthorized(request);
