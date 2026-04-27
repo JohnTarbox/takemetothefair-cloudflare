@@ -742,14 +742,28 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "create_vendor",
     "Create a new vendor profile on the platform. Returns the vendor ID for use with update_vendor_status to link to events. Admin only.",
     {
-      business_name: z.string().min(1).max(200).describe("Business/organization name"),
+      business_name: z
+        .string()
+        .min(1)
+        .max(200)
+        .transform(decodeHtmlEntities)
+        .describe("Business/organization name"),
       type: z
         .string()
         .max(100)
+        .transform(decodeHtmlEntities)
         .optional()
         .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
-      description: z.string().max(500).optional().describe("Business description"),
-      products: z.array(z.string()).optional().describe("List of products/services offered"),
+      description: z
+        .string()
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Business description"),
+      products: z
+        .array(z.string().transform(decodeHtmlEntities))
+        .optional()
+        .describe("List of products/services offered"),
       location: z.string().optional().describe("City and state, e.g. 'Portland, ME'"),
       website: z.string().optional().describe("Vendor website URL"),
       contact_email: z.string().optional().describe("Primary contact email address"),
@@ -1381,10 +1395,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Update any vendor's profile fields. Admin only.",
     {
       vendor_id: z.string().describe("Vendor ID (UUID)"),
-      business_name: z.string().optional().describe("Business name (also regenerates slug)"),
-      vendor_type: z.string().optional().describe("Vendor category"),
-      description: z.string().optional().describe("Business description"),
-      products: z.array(z.string()).optional().describe("Products/services list"),
+      business_name: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Business name (also regenerates slug)"),
+      vendor_type: z.string().transform(decodeHtmlEntities).optional().describe("Vendor category"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Business description"),
+      products: z
+        .array(z.string().transform(decodeHtmlEntities))
+        .optional()
+        .describe("Products/services list"),
       website: z.string().optional().describe("Website URL"),
       contact_name: z.string().optional().describe("Contact person name"),
       contact_email: z.string().optional().describe("Contact email"),
@@ -1541,9 +1566,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "create_promoter",
     "Create a new promoter (event organizer) on the platform. Returns the promoter ID for use with update_event to link events. Admin only.",
     {
-      name: z.string().min(1).max(200).describe("Company/organization name"),
+      name: z
+        .string()
+        .min(1)
+        .max(200)
+        .transform(decodeHtmlEntities)
+        .describe("Company/organization name"),
       website: z.string().optional().describe("Promoter website URL"),
-      description: z.string().max(500).optional().describe("Promoter description"),
+      description: z
+        .string()
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Promoter description"),
       city: z.string().optional().describe("City"),
       state: z.string().optional().describe("State (2-letter code)"),
       contact_email: z.string().optional().describe("Primary contact email address"),
@@ -1647,8 +1682,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "Update any promoter's profile fields. Admin only.",
     {
       promoter_id: z.string().describe("Promoter ID (UUID)"),
-      name: z.string().optional().describe("Company name (also regenerates slug)"),
-      description: z.string().optional().describe("Promoter description"),
+      name: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Company name (also regenerates slug)"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Promoter description"),
       website: z.string().optional().describe("Website URL"),
       city: z.string().optional().describe("City"),
       state: z.string().optional().describe("State (2-letter code)"),

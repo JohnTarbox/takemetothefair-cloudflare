@@ -60,9 +60,20 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
     "update_vendor_profile",
     "Update your vendor profile fields. Only provided fields are updated.",
     {
-      description: z.string().optional().describe("Business description"),
-      vendor_type: z.string().optional().describe("Type of vendor (e.g., Food, Crafts)"),
-      products: z.array(z.string()).optional().describe("List of products/services"),
+      description: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Business description"),
+      vendor_type: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Type of vendor (e.g., Food, Crafts)"),
+      products: z
+        .array(z.string().transform(decodeHtmlEntities))
+        .optional()
+        .describe("List of products/services"),
       website: z.string().optional().describe("Website URL"),
       contact_name: z.string().optional().describe("Contact person name"),
       contact_email: z.string().optional().describe("Contact email"),
@@ -193,7 +204,11 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
     "Apply to participate in an event as a vendor.",
     {
       event_slug: z.string().describe("Slug of the event to apply to"),
-      booth_info: z.string().optional().describe("Booth/space requirements or notes"),
+      booth_info: z
+        .string()
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Booth/space requirements or notes"),
     },
     async (params) => {
       // Find the event

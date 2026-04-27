@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Auto-load Skills
 
 Always load these skills when working on this project:
+
 - `/cloudflare-d1` - D1 database patterns, migrations, error handling
 - `/drizzle-orm-d1` - Drizzle ORM with D1, schema definitions, queries
 - `/nextjs` - Next.js App Router, Server Components, caching
@@ -16,6 +17,7 @@ Always load these skills when working on this project:
 This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search()` to discover API endpoints and `execute()` to call them.
 
 ### Resource IDs (for MCP queries)
+
 - **Account**: Use `search("list accounts")` to discover
 - **D1 Database**: `d449e416-3814-48a6-b9e8-b676333b2cdc` (name: `takemetothefair-db`)
 - **KV Namespace**: `b7aeca316e7a41108fd375be2e152cff` (binding: `RATE_LIMIT_KV`)
@@ -26,12 +28,14 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 ## Cloudflare Account
 
 **This project uses the `jtarboxme@gmail.com` Cloudflare account ONLY.**
+
 - Account Name: `John Tarbox - Account`
 - Account ID: `e6011e48b7014ef83c77e3c767dac6cf`
 - **Never use the APRS Foundation account** (`john.tarbox@aprsfoundation.org`)
 - Before any wrangler command that touches Cloudflare (deploy, d1 migrations, etc.), verify with `npx wrangler whoami`
 
 ### Safety Rules
+
 - Prefer `SELECT` queries over mutations when inspecting D1 data
 - Never run `DELETE`, `DROP`, or destructive DNS changes without explicit user confirmation
 - Always confirm before write operations that affect production resources
@@ -59,6 +63,7 @@ npm run db:studio              # Open Drizzle Studio
 ## Critical: Cloudflare Edge Runtime
 
 **Every page and API route MUST include:**
+
 ```typescript
 export const runtime = "edge";
 ```
@@ -88,6 +93,7 @@ async function getData() {
 ## Architecture Overview
 
 ### User Roles & Portals
+
 - **Public**: Browse events, venues, vendors (`/events`, `/venues`, `/vendors`)
 - **User**: Dashboard with favorites (`/dashboard`)
 - **Vendor**: Profile management, event applications (`/vendor/*`)
@@ -95,6 +101,7 @@ async function getData() {
 - **Admin**: Full management (`/admin/*`)
 
 ### Core Data Model
+
 - **Events**: Central entity with promoter (required), venue (optional), and many-to-many vendors
 - **Promoters**: Organizations that create events (linked to user account)
 - **Vendors**: Businesses that apply to participate in events (linked to user account)
@@ -104,17 +111,20 @@ async function getData() {
 ### Key Patterns
 
 **JSON Arrays in SQLite**: Categories, tags, amenities, products stored as JSON strings
+
 ```typescript
 import { parseJsonArray } from "@/types";
 const categories = parseJsonArray(event.categories); // Returns string[]
 ```
 
 **Page Caching (ISR)**:
+
 ```typescript
 export const revalidate = 300; // Cache for 5 minutes
 ```
 
 **Authentication**:
+
 ```typescript
 import { auth } from "@/lib/auth";
 const session = await auth();
@@ -122,6 +132,7 @@ if (session?.user?.role === "ADMIN") { ... }
 ```
 
 ### Event Scrapers
+
 Located in `src/lib/scrapers/`. Import events from external fair websites (mainefairs.net, etc.). Used via admin import page (`/admin/import`).
 
 ### URL Import Feature (CRITICAL)
@@ -129,22 +140,26 @@ Located in `src/lib/scrapers/`. Import events from external fair websites (maine
 **This is one of the most important features on the website.** Located at `/admin/import-url`, it allows importing events from arbitrary URLs using AI-powered extraction.
 
 **Priority**: Must be capable, flexible, and resilient. When making changes:
+
 - Test with diverse URL sources (event pages, venue sites, social media)
 - Handle edge cases gracefully (missing data, unusual date formats, no structured data)
 - Always provide manual fallback options for users
 - Maintain robust error handling with helpful user messages
 
 **Architecture** (`src/lib/url-import/`):
+
 - `types.ts` - TypeScript interfaces for extracted data
 - `html-parser.ts` - Extracts text content and metadata (title, og:image, JSON-LD)
 - `ai-extractor.ts` - Cloudflare Workers AI (Llama 3.1 8B) extraction with fallbacks
 
 **API Routes** (`src/app/api/admin/import-url/`):
+
 - `fetch/route.ts` - GET: Fetches URL, extracts text and metadata
 - `extract/route.ts` - POST: AI extraction from content
 - `route.ts` - POST: Saves event with venue creation
 
 **Key Design Decisions**:
+
 1. Uses Workers AI (no external API keys needed)
 2. Hybrid approach: AI suggests, user verifies/corrects
 3. Manual paste fallback if fetch fails
@@ -152,6 +167,7 @@ Located in `src/lib/scrapers/`. Import events from external fair websites (maine
 5. Date parsing handles multiple formats (ISO, "February 01, 2026", "1/15/25", etc.)
 
 ## Test Accounts (after seeding)
+
 - Admin: admin@takemetothefair.com / admin123
 - Promoter: promoter@example.com / promoter123
 - Vendor: vendor@example.com / vendor123
@@ -159,7 +175,9 @@ Located in `src/lib/scrapers/`. Import events from external fair websites (maine
 ## Common Pitfalls & Solutions
 
 ### Absolute positioned elements over images
+
 When placing buttons/icons over images using `absolute` positioning, add `z-10` or higher to ensure visibility:
+
 ```tsx
 <div className="relative">
   <Image src={...} fill className="object-cover" />
@@ -168,7 +186,9 @@ When placing buttons/icons over images using `absolute` positioning, add `z-10` 
 ```
 
 ### Client component click handlers
+
 Interactive buttons in client components need proper event handling to work reliably:
+
 ```tsx
 <Button
   type="button"  // Prevents form submission behavior
@@ -181,7 +201,9 @@ Interactive buttons in client components need proper event handling to work reli
 ```
 
 ### N+1 Query Prevention
+
 Avoid fetching related data in loops. Use single queries with JOINs or batch fetch with `inArray`:
+
 ```typescript
 // Bad: N+1 queries
 for (const event of events) {
@@ -189,15 +211,34 @@ for (const event of events) {
 }
 
 // Good: Single batch query
-const eventIds = events.map(e => e.id);
-const allVendors = await db.select().from(eventVendors).where(inArray(eventVendors.eventId, eventIds));
+const eventIds = events.map((e) => e.id);
+const allVendors = await db
+  .select()
+  .from(eventVendors)
+  .where(inArray(eventVendors.eventId, eventIds));
 const vendorsByEvent = new Map(); // Group in memory
 ```
 
 ### Next.js Image component with fill
+
 When using `fill` prop, the parent must have `relative` positioning and explicit dimensions:
+
 ```tsx
 <div className="aspect-video relative">
   <Image src={url} alt={alt} fill sizes="(max-width: 768px) 100vw, 50vw" className="object-cover" />
 </div>
+```
+
+### Free-text input decoding at the schema boundary
+
+User-facing string fields (names, descriptions, titles, business names) must use `.transform(decodeHtmlEntities)` at the Zod schema layer so dedup matching, slug generation, and storage all see literal characters by construction. Prevents silent failures when callers send entity-encoded text (e.g. agents posting `Earth Expo &amp; Convention Center`, which would otherwise miss dedup against the existing `Earth Expo & Convention Center` row and create a duplicate).
+
+- **Main app**: shared `nameSchema` / `descriptionSchema` in `src/lib/validations/index.ts` already apply the transform — endpoints using them inherit decoding automatically. Helper at `src/lib/utils.ts:decodeHtmlEntities`.
+- **MCP server**: helper at `mcp-server/src/helpers.ts:decodeHtmlEntities`. Apply per-field on every new tool that takes free-text strings.
+- **Skip**: URLs (URL-encoded `&` is meaningful in query strings), email/phone/ZIP/state codes, enum values, FK ids.
+
+Order matters in the chain: put `.min()`/`.max()` BEFORE `.transform()` so length validators run on raw input (decoding only ever shortens, so the raw cap is a safe upper bound):
+
+```ts
+title: z.string().min(1).max(200).transform(decodeHtmlEntities).optional();
 ```

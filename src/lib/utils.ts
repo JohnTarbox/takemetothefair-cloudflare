@@ -14,6 +14,26 @@ export function createSlug(text: string): string {
   });
 }
 
+/**
+ * Decode common HTML entities in user-supplied text.
+ * Used at the validation-schema boundary so dedup/storage/slug see literal
+ * characters even when callers send entity-encoded text (e.g. `&amp;`).
+ * Mirrors mcp-server/src/helpers.ts and src/lib/scrapers/utils.ts.
+ */
+export function decodeHtmlEntities(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
 export function sanitizeLikeInput(input: string): string {
   return input.replace(/[%_]/g, "\\$&");
 }

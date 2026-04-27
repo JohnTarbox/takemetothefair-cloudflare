@@ -13,10 +13,20 @@ import {
   INDOOR_OUTDOOR,
   EVENT_SCALE,
 } from "@/lib/constants";
+import { decodeHtmlEntities } from "@/lib/utils";
 
 // Common field schemas
-const nameSchema = z.string().min(VALIDATION.NAME_MIN_LENGTH).max(VALIDATION.NAME_MAX_LENGTH);
-const descriptionSchema = z.string().max(VALIDATION.DESCRIPTION_MAX_LENGTH).optional().nullable();
+const nameSchema = z
+  .string()
+  .min(VALIDATION.NAME_MIN_LENGTH)
+  .max(VALIDATION.NAME_MAX_LENGTH)
+  .transform(decodeHtmlEntities);
+const descriptionSchema = z
+  .string()
+  .max(VALIDATION.DESCRIPTION_MAX_LENGTH)
+  .transform(decodeHtmlEntities)
+  .optional()
+  .nullable();
 const urlSchema = z
   .string()
   .url()

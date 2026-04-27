@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug, computePublicDates } from "@/lib/utils";
+import { createSlug, computePublicDates, decodeHtmlEntities } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
@@ -25,16 +25,16 @@ const eventDaySchema = z.object({
 });
 
 const submitEventSchema = z.object({
-  name: z.string().min(1, "Event name is required"),
-  description: z.string().nullable().optional(),
+  name: z.string().min(1, "Event name is required").transform(decodeHtmlEntities),
+  description: z.string().transform(decodeHtmlEntities).nullable().optional(),
   startDate: z.string().nullable().optional(),
   endDate: z.string().nullable().optional(),
   startTime: z.string().nullable().optional(), // HH:MM format
   endTime: z.string().nullable().optional(), // HH:MM format
   hoursVaryByDay: z.boolean().optional(),
-  hoursNotes: z.string().nullable().optional(),
+  hoursNotes: z.string().transform(decodeHtmlEntities).nullable().optional(),
   venueId: z.string().uuid().nullable().optional(), // Link to existing venue if confirmed
-  venueName: z.string().nullable().optional(),
+  venueName: z.string().transform(decodeHtmlEntities).nullable().optional(),
   venueAddress: z.string().nullable().optional(),
   venueCity: z.string().nullable().optional(),
   venueState: z.string().nullable().optional(),
@@ -46,7 +46,7 @@ const submitEventSchema = z.object({
   // Vendor decision-support fields
   vendorFeeMin: z.number().nullable().optional(),
   vendorFeeMax: z.number().nullable().optional(),
-  vendorFeeNotes: z.string().nullable().optional(),
+  vendorFeeNotes: z.string().transform(decodeHtmlEntities).nullable().optional(),
   indoorOutdoor: z.enum(["INDOOR", "OUTDOOR", "MIXED"]).nullable().optional(),
   estimatedAttendance: z.number().int().nullable().optional(),
   eventScale: z.enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"]).nullable().optional(),

@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
-import { parseJsonArray, formatDate, jsonContent } from "../helpers.js";
+import { parseJsonArray, formatDate, jsonContent, decodeHtmlEntities } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -21,9 +21,18 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     "create_blog_post",
     "Create a new blog post. Body should be Markdown. Posts default to DRAFT status unless explicitly published.",
     {
-      title: z.string().min(1).max(200).describe("Post title"),
-      body: z.string().min(1).describe("Post body in Markdown format"),
-      excerpt: z.string().max(500).optional().describe("Short excerpt/summary"),
+      title: z.string().min(1).max(200).transform(decodeHtmlEntities).describe("Post title"),
+      body: z
+        .string()
+        .min(1)
+        .transform(decodeHtmlEntities)
+        .describe("Post body in Markdown format"),
+      excerpt: z
+        .string()
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("Short excerpt/summary"),
       tags: z.array(z.string()).optional().describe("Array of tag strings"),
       categories: z.array(z.string()).optional().describe("Array of category strings"),
       featured_image_url: z.string().url().optional().describe("URL of the featured image"),
@@ -240,9 +249,25 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     "Update an existing blog post by slug. Only provided fields are changed. Body should be Markdown.",
     {
       slug: z.string().min(1).describe("Current slug of the post to update"),
-      title: z.string().min(1).max(200).optional().describe("New title"),
-      body: z.string().min(1).optional().describe("New body in Markdown format"),
-      excerpt: z.string().max(500).optional().describe("New excerpt/summary"),
+      title: z
+        .string()
+        .min(1)
+        .max(200)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("New title"),
+      body: z
+        .string()
+        .min(1)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("New body in Markdown format"),
+      excerpt: z
+        .string()
+        .max(500)
+        .transform(decodeHtmlEntities)
+        .optional()
+        .describe("New excerpt/summary"),
       tags: z.array(z.string()).optional().describe("New tags array (replaces existing)"),
       categories: z
         .array(z.string())
