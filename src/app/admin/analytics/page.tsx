@@ -502,16 +502,22 @@ async function BingTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Site Scan</p>
+            <p className="text-sm text-gray-600">Bingbot crawl issues</p>
             <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
               {fmt(errorCount)} errors · {fmt(warningCount)} warnings
             </p>
-            <Link
-              href="/admin/analytics?tab=site-health"
-              className="text-xs text-blue-600 hover:text-blue-700 mt-1 inline-block"
-            >
-              View in Site Health →
-            </Link>
+            <p className="text-xs text-gray-500 mt-1">
+              From Bingbot&apos;s crawl. The manual Site Scan tool isn&apos;t exposed via API —{" "}
+              <a
+                href="https://www.bing.com/webmasters/sitescan?siteUrl=https://meetmeatthefair.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-700"
+              >
+                view in BWT
+              </a>
+              .
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -564,7 +570,8 @@ async function BingTab() {
               {queries.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-6 py-6 text-gray-500">
-                    No Bing query data yet.
+                    No Bing query data yet. Bing typically takes 7&ndash;14 days after site
+                    verification to start reporting search-performance data.
                   </td>
                 </tr>
               ) : (
@@ -604,7 +611,8 @@ async function BingTab() {
                 {pages.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="px-6 py-6 text-gray-500">
-                      No data yet.
+                      No data yet. Populates after Bing accumulates impression data (typically
+                      7&ndash;14 days post-verification).
                     </td>
                   </tr>
                 ) : (
@@ -640,7 +648,8 @@ async function BingTab() {
                 {crawl.length === 0 ? (
                   <tr>
                     <td colSpan={3} className="px-6 py-6 text-gray-500">
-                      No crawl data yet.
+                      No crawl data yet. Bingbot needs to visit the site at least once; can take a
+                      few days after sitemap submission.
                     </td>
                   </tr>
                 ) : (
