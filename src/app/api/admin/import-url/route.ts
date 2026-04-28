@@ -6,6 +6,7 @@ import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
+import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
@@ -197,7 +198,7 @@ export async function POST(request: NextRequest) {
       categories: JSON.stringify(
         Array.isArray(event.categories) && event.categories.length > 0
           ? event.categories
-          : ["Event"]
+          : (inferCategoriesFromName(event.name) ?? ["Event"])
       ),
       tags: JSON.stringify(["imported", "url-import"]),
       ticketUrl: event.ticketUrl || sourceUrl || null,

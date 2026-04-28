@@ -9,6 +9,7 @@ import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
+import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 
 export const runtime = "edge";
 
@@ -194,7 +195,9 @@ export async function POST(request: NextRequest) {
           : endDate,
       datesConfirmed: startDate !== null,
       categories: JSON.stringify(
-        Array.isArray(data.categories) && data.categories.length > 0 ? data.categories : ["Event"]
+        Array.isArray(data.categories) && data.categories.length > 0
+          ? data.categories
+          : (inferCategoriesFromName(data.name) ?? ["Event"])
       ),
       tags: JSON.stringify(tagList),
       ticketUrl: data.ticketUrl || data.sourceUrl || null,
