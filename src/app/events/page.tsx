@@ -189,11 +189,17 @@ async function getEvents(
     }
 
     if (searchParams.excludeFarmersMarkets === "true") {
-      // categories defaults to "[]" but historical rows may be NULL —
-      // SQL NULL NOT LIKE '%x%' is NULL (filters them out), so OR isNull
-      // to keep uncategorized events visible.
+      // Match BOTH the categories array AND the event name. Many farmers-market
+      // events are imported without the "Farmers Market" category tag
+      // (e.g. "Bath Farmers Market" with categories=["Market"]), so the category
+      // test alone misses them. NULL categories pass the categories test (we
+      // only filter out positive matches), and events.name is NOT NULL so the
+      // name notLike applies cleanly to every row.
       conditions.push(
-        or(notLike(events.categories, "%Farmers Market%"), isNull(events.categories))!
+        and(
+          or(notLike(events.categories, "%Farmers Market%"), isNull(events.categories)),
+          notLike(events.name, "%Farmers Market%")
+        )!
       );
     }
 
