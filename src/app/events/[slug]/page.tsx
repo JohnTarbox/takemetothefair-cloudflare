@@ -53,6 +53,7 @@ import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { buildEventMetaDescription } from "@/lib/seo-utils";
 import { haversineDistance, formatDistance } from "@/lib/geo";
 import { TrackedLink } from "@/components/TrackedLink";
+import { OutboundEventLink } from "@/components/OutboundEventLink";
 import { getPromoterResponseStats } from "@/lib/promoter-stats";
 import { StickyApplyBar } from "@/components/events/StickyApplyBar";
 import { FavoriteButton } from "@/components/FavoriteButton";
@@ -60,7 +61,6 @@ import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 interface Props {
@@ -885,31 +885,26 @@ export default async function EventDetailPage({ params }: Props) {
                       </p>
                     )}
                     {event.applicationUrl && (
-                      <a
+                      <OutboundEventLink
+                        kind="application"
+                        eventSlug={event.slug}
                         href={event.applicationUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="text-sm text-blue-600 hover:underline mt-1 inline-block"
                       >
                         Apply Now →
-                      </a>
+                      </OutboundEventLink>
                     )}
                   </div>
                 </div>
               )}
 
               {event.ticketUrl && (
-                <TrackedLink
-                  href={event.ticketUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  eventLabel={event.ticketUrl}
-                >
+                <OutboundEventLink kind="ticket" eventSlug={event.slug} href={event.ticketUrl}>
                   <Button className="w-full" size="lg">
                     <ExternalLink className="w-4 h-4 mr-2" />
                     Event Website
                   </Button>
-                </TrackedLink>
+                </OutboundEventLink>
               )}
 
               {isAdmin && (

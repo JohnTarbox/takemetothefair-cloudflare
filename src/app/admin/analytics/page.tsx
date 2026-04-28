@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { ExternalLink, RefreshCw, Users, BarChart3 } from "lucide-react";
+import { desc, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { analyticsEvents } from "@/lib/db/schema";
 import {
   Ga4ApiError,
   Ga4ConfigError,
@@ -117,13 +119,117 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
           description="Unified Bing scan + GSC issues with snooze controls will populate here."
         />
       )}
-      {tab === "first-party-events" && (
-        <PlaceholderTab
-          title="First-party events"
-          description="Server-side admin actions and beacon-captured client events (outbound clicks, filter applies) will populate here."
-        />
-      )}
+      {tab === "first-party-events" && <FirstPartyEventsTab />}
     </div>
+  );
+}
+
+async function FirstPartyEventsTab() {
+  const db = getCloudflareDb();
+  const days = 30;
+  const sinceTimestamp = Math.floor(Date.now() / 1000) - days * 86400;
+
+  const [recent, summary] = await Promise.all([
+    db
+      .select()
+      .from(analyticsEvents)
+      .where(gte(analyticsEvents.timestamp, sinceTimestamp))
+      .orderBy(desc(analyticsEvents.timestamp))
+      .limit(100),
+    db
+      .select({
+        eventName: analyticsEvents.eventName,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(analyticsEvents)
+      .where(gte(analyticsEvents.timestamp, sinceTimestamp))
+      .groupBy(analyticsEvents.eventName)
+      .orderBy(sql`COUNT(*) DESC`),
+  ]);
+
+  return (
+    <>
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Event counts (last {days} days)</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Event</th>
+                <th className="text-right px-6 py-2 font-medium">Count</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {summary.length === 0 ? (
+                <tr>
+                  <td colSpan={2} className="px-6 py-6 text-gray-500">
+                    No first-party events recorded yet.
+                  </td>
+                </tr>
+              ) : (
+                summary.map((row) => (
+                  <tr key={row.eventName}>
+                    <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
+                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent events</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Time</th>
+                <th className="text-left px-6 py-2 font-medium">Category</th>
+                <th className="text-left px-6 py-2 font-medium">Event</th>
+                <th className="text-left px-6 py-2 font-medium">User</th>
+                <th className="text-left px-6 py-2 font-medium">Properties</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {recent.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-6 text-gray-500">
+                    No events in the last {days} days.
+                  </td>
+                </tr>
+              ) : (
+                recent.map((row) => (
+                  <tr key={row.id} className="align-top">
+                    <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
+                      {new Date(row.timestamp * 1000).toLocaleString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-6 py-2 text-gray-700">{row.eventCategory}</td>
+                    <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
+                    <td className="px-6 py-2 font-mono text-xs text-gray-600">
+                      {row.userId ? row.userId.slice(0, 8) : "—"}
+                    </td>
+                    <td className="px-6 py-2 font-mono text-xs text-gray-700 break-all max-w-md">
+                      {row.properties && row.properties !== "{}" ? row.properties : "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 

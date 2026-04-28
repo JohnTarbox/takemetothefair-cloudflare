@@ -84,6 +84,10 @@ export function trackSearchResults(searchTerm: string, resultsCount: number) {
     search_term: searchTerm,
     results_count: resultsCount,
   });
+  sendBeacon("internal_search_performed", "engagement", {
+    searchTerm,
+    resultsCount,
+  });
 }
 
 // ── Engagement tracking ──────────────────────────────────
@@ -105,5 +109,76 @@ export function trackApiError(endpoint: string, statusCode: number, detail?: str
     label: endpoint,
     value: statusCode,
     error_detail: detail,
+  });
+}
+
+// ── First-party beacon (dual-emit alongside GA4) ────────────────────────────
+//
+// These helpers send events to /api/analytics/track in addition to GA4 so we
+// own a copy of the signal in D1. Server name allowlist lives in the route
+// handler — adding a name here without updating that allowlist will 400.
+
+type BeaconCategory = "funnel" | "engagement" | "conversion";
+
+function sendBeacon(name: string, category: BeaconCategory, properties?: Record<string, unknown>) {
+  if (typeof window === "undefined") return;
+  const payload = JSON.stringify({ name, category, properties });
+  // sendBeacon is the right primitive for fire-and-forget on click/unload —
+  // it's queued by the browser and survives navigation. Fall back to fetch
+  // with keepalive when sendBeacon isn't available (or the payload is rejected
+  // by the browser, which can happen for some Content-Type combinations).
+  if (navigator.sendBeacon) {
+    const blob = new Blob([payload], { type: "application/json" });
+    if (navigator.sendBeacon("/api/analytics/track", blob)) return;
+  }
+  fetch("/api/analytics/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+    keepalive: true,
+  }).catch(() => {
+    // Beacon failures are non-critical — never surface to the user.
+  });
+}
+
+/** Track a click on an outbound application URL on an event detail page. */
+export function trackOutboundApplicationClick(eventSlug: string, destinationUrl: string) {
+  trackEvent("outbound_application_click", {
+    category: "conversion",
+    label: eventSlug,
+    destination_url: destinationUrl,
+  });
+  sendBeacon("outbound_application_click", "conversion", {
+    eventSlug,
+    destinationUrl,
+  });
+}
+
+/** Track a click on an outbound ticket URL on an event detail page. */
+export function trackOutboundTicketClick(eventSlug: string, destinationUrl: string) {
+  trackEvent("outbound_ticket_click", {
+    category: "conversion",
+    label: eventSlug,
+    destination_url: destinationUrl,
+  });
+  sendBeacon("outbound_ticket_click", "conversion", {
+    eventSlug,
+    destinationUrl,
+  });
+}
+
+/** Track a filter change on a listing page (events, venues, vendors). */
+export function trackFilterApplied(filterType: string, filterValue: string, pageType: string) {
+  trackEvent("filter_applied", {
+    category: "engagement",
+    label: filterType,
+    filter_type: filterType,
+    filter_value: filterValue,
+    page_type: pageType,
+  });
+  sendBeacon("filter_applied", "engagement", {
+    filterType,
+    filterValue,
+    pageType,
   });
 }

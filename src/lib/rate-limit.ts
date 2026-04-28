@@ -103,6 +103,13 @@ export const RATE_LIMITS = {
     authenticatedLimit: 120,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // First-party analytics beacon — moderate cap to prevent log flooding
+  // while allowing normal browsing patterns (clicks, filter changes).
+  "analytics-track": {
+    anonymousLimit: 60,
+    authenticatedLimit: 120,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
