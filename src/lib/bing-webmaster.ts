@@ -106,10 +106,20 @@ async function bingFetch<T>(
     } catch {
       /* keep raw */
     }
+    console.error(`[Bing] ${endpoint} ${res.status}: ${detail}`);
     throw new BingApiError(res.status, detail);
   }
 
-  return (await res.json()) as T;
+  // Diagnostic: log a snippet of the raw response so empty-but-200 responses
+  // (which Bing returns while data is still accumulating for a fresh site)
+  // are visible via `wrangler pages tail`.
+  const raw = await res.text();
+  console.log(`[Bing] ${endpoint} OK ${raw.length}B: ${raw.slice(0, 200)}`);
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new BingApiError(res.status, `Invalid JSON: ${raw.slice(0, 200)}`);
+  }
 }
 
 async function withCache<T>(
@@ -243,7 +253,14 @@ export async function getCrawlStats(
   });
 }
 
-// ── Site scan issues ───────────────────────────────────────────────
+// ── Crawl issues ──────────────────────────────────────────────────
+//
+// Bing's manual "Site Scan" tool (the BWT UI section under Site Scan)
+// is NOT exposed via the Webmaster API — there is no GetSiteScanResults
+// endpoint in IWebmasterApi. The closest API surface is GetCrawlIssues,
+// which lists problems Bingbot discovered during normal crawling: 404s,
+// blocked-by-robots, server errors, soft-404s, etc. Different data
+// source from the manual Site Scan tool but similar diagnostic value.
 
 export type BingSiteScanIssue = {
   issueType: string;
@@ -253,45 +270,62 @@ export type BingSiteScanIssue = {
   detectedAt?: string;
 };
 
-interface RawScanResult {
-  d: {
-    Issues?: Array<{
-      IssueType?: string;
-      Severity?: string;
-      AffectedUrlCount?: number;
-      AffectedUrls?: string[];
-      LastScanned?: string;
-    }>;
-  };
+interface RawCrawlIssueRow {
+  __type?: string;
+  Url?: string;
+  Issues?: number;
+  HttpCode?: number;
+}
+
+// Bitmask values for the `Issues` field on a crawl-issue row, from the
+// IWebmasterApi CrawlIssues enum. Mapping the most common bits to
+// severities so the UI gets meaningful colors.
+function decodeCrawlIssueBits(
+  bits: number
+): Array<{ type: string; severity: "Error" | "Warning" | "Notice" }> {
+  const issues: Array<{ type: string; severity: "Error" | "Warning" | "Notice" }> = [];
+  if (bits & 1) issues.push({ type: "DNS_FAILURE", severity: "Error" });
+  if (bits & 2) issues.push({ type: "HTTP_4XX_5XX", severity: "Error" });
+  if (bits & 4) issues.push({ type: "BLOCKED_BY_ROBOTS", severity: "Error" });
+  if (bits & 8) issues.push({ type: "EXCLUDED_FROM_INDEX", severity: "Warning" });
+  if (bits & 16) issues.push({ type: "MALFORMED_HEADERS", severity: "Warning" });
+  if (bits & 32) issues.push({ type: "SERVER_ERROR_5XX", severity: "Error" });
+  if (bits & 64) issues.push({ type: "SLOW_RESPONSE", severity: "Warning" });
+  if (issues.length === 0) issues.push({ type: "UNKNOWN_ISSUE", severity: "Notice" });
+  return issues;
 }
 
 export async function getSiteScanIssues(
   env: BingEnv,
   opts: { skipCache?: boolean } = {}
 ): Promise<BingSiteScanIssue[]> {
-  const cacheKey = `bing:scan:${await hashRequest({ site: SITE_URL })}`;
+  const cacheKey = `bing:crawl-issues:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, SCAN_CACHE_TTL, opts.skipCache ?? false, async () => {
-    // Endpoint name varies by API version; GetUrlInfo + per-URL aggregation
-    // is the most stable approach. For v1 we use GetSiteScanResults if
-    // exposed; fall back to an empty list rather than throwing if Bing has
-    // not yet completed a scan for the site.
-    try {
-      const data = await bingFetch<RawScanResult>(env, "GetSiteScanResults");
-      const issues = data.d?.Issues ?? [];
-      return issues.map((i) => ({
-        issueType: i.IssueType ?? "Unknown",
-        severity: (i.Severity ?? "Notice") as BingSiteScanIssue["severity"],
-        affectedUrlCount: i.AffectedUrlCount ?? i.AffectedUrls?.length ?? 0,
-        affectedUrls: i.AffectedUrls ?? [],
-        detectedAt: i.LastScanned,
-      }));
-    } catch (error) {
-      // Don't fail the whole panel if scan endpoint is unavailable for this
-      // account/property — return an empty list and let the UI show "no
-      // issues" rather than an error card.
-      if (error instanceof BingApiError && error.status === 404) return [];
-      throw error;
+    const data = await bingFetch<{ d?: RawCrawlIssueRow[] }>(env, "GetCrawlIssues");
+    const rows = data.d ?? [];
+    // Group rows by issue type so the UI shows "Blocked by robots.txt — 2 URLs"
+    // instead of one row per affected URL.
+    const grouped = new Map<string, BingSiteScanIssue>();
+    for (const row of rows) {
+      if (!row.Url) continue;
+      const decoded = decodeCrawlIssueBits(row.Issues ?? 0);
+      for (const { type, severity } of decoded) {
+        const key = `${type}|${severity}`;
+        const existing = grouped.get(key);
+        if (existing) {
+          existing.affectedUrlCount++;
+          existing.affectedUrls.push(row.Url);
+        } else {
+          grouped.set(key, {
+            issueType: type,
+            severity,
+            affectedUrlCount: 1,
+            affectedUrls: [row.Url],
+          });
+        }
+      }
     }
+    return [...grouped.values()];
   });
 }
 
