@@ -22,6 +22,7 @@ import {
   inArray,
   sql,
   like,
+  notLike,
   isNull,
   isNotNull,
   asc,
@@ -74,6 +75,7 @@ interface SearchParams {
   state?: string;
   featured?: string;
   commercialVendors?: string;
+  excludeFarmersMarkets?: string;
   includePast?: string;
   includeTBD?: string;
   myEvents?: string;
@@ -184,6 +186,15 @@ async function getEvents(
 
     if (searchParams.commercialVendors === "true") {
       conditions.push(eq(events.commercialVendorsAllowed, true));
+    }
+
+    if (searchParams.excludeFarmersMarkets === "true") {
+      // categories defaults to "[]" but historical rows may be NULL —
+      // SQL NULL NOT LIKE '%x%' is NULL (filters them out), so OR isNull
+      // to keep uncategorized events visible.
+      conditions.push(
+        or(notLike(events.categories, "%Farmers Market%"), isNull(events.categories))!
+      );
     }
 
     if (searchParams.indoorOutdoor) {
@@ -540,16 +551,38 @@ function EventsFilter({
         <span className="text-sm text-gray-700">Featured only</span>
       </label>
 
-      <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          name="commercialVendors"
-          value="true"
-          defaultChecked={searchParams.commercialVendors === "true"}
-          className="rounded border-gray-300 text-royal focus:ring-royal"
-        />
-        <span className="text-sm text-gray-700">Commercial vendors allowed</span>
-      </label>
+      <fieldset className="border-t border-gray-200 pt-3">
+        <legend className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+          Vendor & event type
+        </legend>
+
+        <label className="flex items-start gap-2 mb-2">
+          <input
+            type="checkbox"
+            name="commercialVendors"
+            value="true"
+            defaultChecked={searchParams.commercialVendors === "true"}
+            className="mt-0.5 rounded border-gray-300 text-royal focus:ring-royal"
+          />
+          <span className="text-sm text-gray-700">
+            Only shows that allow commercial vendors
+            <span className="block text-xs text-gray-500">
+              Hides events whose listing indicates only craft, food, or farm vendors.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            name="excludeFarmersMarkets"
+            value="true"
+            defaultChecked={searchParams.excludeFarmersMarkets === "true"}
+            className="mt-0.5 rounded border-gray-300 text-royal focus:ring-royal"
+          />
+          <span className="text-sm text-gray-700">Hide farmers markets</span>
+        </label>
+      </fieldset>
 
       <label className="flex items-center gap-2">
         <input
