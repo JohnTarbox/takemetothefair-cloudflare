@@ -15,9 +15,16 @@ import {
   VENDOR_STATUS_ENUM,
   PAYMENT_STATUS_ENUM,
   computePublicDates,
+  publicUrlFor,
+  triggerIndexNow,
+  PUBLIC_EVENT_STATUSES,
+  PUBLIC_VENDOR_STATUSES,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+
+const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
+const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 
 interface Env {
   MAIN_APP_URL: string;
@@ -209,7 +216,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     },
     async (params) => {
       const eventRows = await db
-        .select({ id: events.id, name: events.name, status: events.status })
+        .select({
+          id: events.id,
+          name: events.name,
+          slug: events.slug,
+          status: events.status,
+        })
         .from(events)
         .where(eq(events.id, params.event_id))
         .limit(1);
@@ -235,6 +247,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .update(events)
         .set({ status: params.status, updatedAt: new Date() })
         .where(eq(events.id, event.id));
+
+      // IndexNow: ping when transitioning into the public set so search
+      // engines pick up the new content within minutes.
+      if (env && PUBLIC_EVENT_SET.has(params.status) && !PUBLIC_EVENT_SET.has(previousStatus)) {
+        await triggerIndexNow(publicUrlFor("events", event.slug), env);
+      }
 
       return {
         content: [
@@ -890,6 +908,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
+      // Pre-fetch event slug so we can fire IndexNow after a transition into
+      // the public vendor set (the public event page changes when the vendor
+      // list grows).
+      const eventSlugRows = await db
+        .select({ slug: events.slug })
+        .from(events)
+        .where(eq(events.id, params.event_id))
+        .limit(1);
+      const eventSlug = eventSlugRows[0]?.slug;
+
       // Find the event-vendor record
       const rows = await db
         .select({
@@ -937,6 +965,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           status: newStatus,
           paymentStatus: newPaymentStatus,
         });
+
+        if (env && PUBLIC_VENDOR_SET.has(newStatus) && eventSlug) {
+          await triggerIndexNow(publicUrlFor("events", eventSlug), env);
+        }
 
         return {
           content: [
@@ -990,6 +1022,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       await db.update(eventVendors).set(updates).where(eq(eventVendors.id, record.id));
+
+      if (
+        env &&
+        params.status &&
+        PUBLIC_VENDOR_SET.has(params.status) &&
+        !PUBLIC_VENDOR_SET.has(record.status) &&
+        eventSlug
+      ) {
+        await triggerIndexNow(publicUrlFor("events", eventSlug), env);
+      }
 
       return { content: [jsonContent(result)] };
     }
@@ -1195,6 +1237,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       await db.update(venues).set(updates).where(eq(venues.id, venue.id));
+
+      // IndexNow: ping when venue transitions to ACTIVE.
+      if (env && params.status === "ACTIVE" && venue.status !== "ACTIVE") {
+        const finalSlug = (updates.slug as string | undefined) ?? venue.slug;
+        await triggerIndexNow(publicUrlFor("venues", finalSlug), env);
+      }
 
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {

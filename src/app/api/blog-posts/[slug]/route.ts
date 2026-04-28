@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { isAuthorized } from "@/lib/api-auth";
 import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
@@ -8,6 +8,7 @@ import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, ne } from "drizzle-orm";
 import { findBrokenLinksInDb } from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -199,6 +200,14 @@ export async function PUT(request: NextRequest, { params }: Params) {
         source: "api/blog-posts/[slug]:PUT",
         context: { blogPostId: existing.id },
       });
+    }
+
+    // IndexNow: ping when transitioning from DRAFT to PUBLISHED. Re-edits to
+    // an already-published post don't ping.
+    if (data.status === "PUBLISHED" && existing.status !== "PUBLISHED") {
+      const finalSlug = (updateData.slug as string | undefined) ?? existing.slug;
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(indexNowUrlFor("blog", finalSlug), env);
     }
 
     return NextResponse.json({

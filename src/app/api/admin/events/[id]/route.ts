@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors, eventDays } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { createSlug, computePublicDates } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
+
+const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -92,9 +96,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-    // Get current event to check if slug needs updating
+    // Get current event to check if slug needs updating + capture prior status
+    // for IndexNow transition detection below.
     const [currentEvent] = await db
-      .select({ slug: events.slug })
+      .select({ slug: events.slug, status: events.status })
       .from(events)
       .where(eq(events.id, id))
       .limit(1);
@@ -231,6 +236,20 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
+
+    // IndexNow: ping when the event transitions from non-public to public so
+    // search engines pick up the new content within minutes. Re-edits within
+    // the public set don't ping (avoids spam). Re-pings on public→public are
+    // also skipped — let the next genuine status change trigger.
+    if (
+      data.status &&
+      PUBLIC_EVENT_SET.has(data.status) &&
+      !PUBLIC_EVENT_SET.has(currentEvent.status)
+    ) {
+      const slug = (updateData.slug as string | undefined) ?? currentEvent.slug;
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(indexNowUrlFor("events", slug), env);
+    }
 
     return NextResponse.json(updatedEvent);
   } catch (error) {
