@@ -580,6 +580,49 @@ export const analyticsEvents = sqliteTable(
   ]
 );
 
+// Site Health — see drizzle/0034_add_site_health.sql
+export const healthIssues = sqliteTable(
+  "health_issues",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    fingerprint: text("fingerprint").notNull().unique(),
+    source: text("source").notNull(),
+    issueType: text("issue_type").notNull(),
+    severity: text("severity").notNull(),
+    url: text("url"),
+    message: text("message"),
+    firstDetectedAt: integer("first_detected_at").notNull(),
+    lastDetectedAt: integer("last_detected_at").notNull(),
+    resolvedAt: integer("resolved_at"),
+  },
+  (table) => [
+    index("idx_health_issues_source").on(table.source, table.lastDetectedAt),
+    index("idx_health_issues_open").on(table.resolvedAt),
+  ]
+);
+
+export const healthIssueSnoozes = sqliteTable("health_issue_snoozes", {
+  fingerprint: text("fingerprint").primaryKey(),
+  snoozedUntil: integer("snoozed_until").notNull(),
+  snoozedBy: text("snoozed_by").notNull(),
+  snoozedAt: integer("snoozed_at").notNull(),
+  note: text("note"),
+});
+
+export const gscInspectionState = sqliteTable(
+  "gsc_inspection_state",
+  {
+    url: text("url").primaryKey(),
+    lastInspectedAt: integer("last_inspected_at").notNull(),
+    lastVerdict: text("last_verdict"),
+    lastCoverageState: text("last_coverage_state"),
+    source: text("source").notNull().default("sitemap"),
+  },
+  (table) => [index("idx_gsc_inspection_state_stale").on(table.lastInspectedAt)]
+);
+
 // Error Logs table
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
@@ -610,3 +653,6 @@ export type EventSchemaOrg = typeof eventSchemaOrg.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type BlogPost = typeof blogPosts.$inferSelect;
 export type AnalyticsEvent = typeof analyticsEvents.$inferSelect;
+export type HealthIssue = typeof healthIssues.$inferSelect;
+export type HealthIssueSnooze = typeof healthIssueSnoozes.$inferSelect;
+export type GscInspectionState = typeof gscInspectionState.$inferSelect;
