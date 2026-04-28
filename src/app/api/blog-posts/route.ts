@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { isAuthorized, getAuthorizedSession } from "@/lib/api-auth";
 import { blogPostCreateSchema, validateRequestBody } from "@/lib/validations";
@@ -8,6 +8,7 @@ import { syncContentLinks } from "@/lib/content-links-sync";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, desc, sql } from "drizzle-orm";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -202,6 +203,12 @@ export async function POST(request: NextRequest) {
         source: "api/blog-posts:POST",
         context: { blogPostId: id },
       });
+    }
+
+    // IndexNow: ping when a new post is created already PUBLISHED.
+    if (data.status === "PUBLISHED") {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(indexNowUrlFor("blog", slug), env);
     }
 
     return NextResponse.json(

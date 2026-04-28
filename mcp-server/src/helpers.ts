@@ -99,6 +99,48 @@ export function jsonContent(data: unknown): { type: "text"; text: string } {
   return { type: "text", text: JSON.stringify(data, null, 2) };
 }
 
+/** Build the canonical public URL for a content slug. Mirrors
+ *  src/lib/indexnow.ts:indexNowUrlFor in the main app. */
+export function publicUrlFor(kind: "events" | "venues" | "vendors" | "blog", slug: string): string {
+  return `https://meetmeatthefair.com/${kind}/${slug}`;
+}
+
+/** Trigger an IndexNow ping via the main app's internal endpoint. The MCP
+ *  server has its own DB binding so it mutates D1 directly — this endpoint is
+ *  the single hook point where the actual IndexNow API call happens.
+ *
+ *  Fire-and-forget: never throws to the caller. Failures are logged so they
+ *  surface in `wrangler tail` but never break the MCP tool response.
+ *
+ *  Requires MAIN_APP_URL and INTERNAL_API_KEY in the env. */
+export async function triggerIndexNow(
+  urls: string | string[],
+  env: { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string }
+): Promise<void> {
+  if (!env.MAIN_APP_URL || !env.INTERNAL_API_KEY) {
+    console.warn("[MCP/IndexNow] MAIN_APP_URL or INTERNAL_API_KEY missing — skipping ping");
+    return;
+  }
+  const list = Array.isArray(urls) ? urls : [urls];
+  if (list.length === 0) return;
+  try {
+    const response = await fetch(`${env.MAIN_APP_URL}/api/internal/indexnow`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Key": env.INTERNAL_API_KEY,
+      },
+      body: JSON.stringify({ urls: list }),
+    });
+    if (!response.ok) {
+      const body = (await response.text()).slice(0, 200);
+      console.error(`[MCP/IndexNow] ${response.status} ${body}`);
+    }
+  } catch (error) {
+    console.error("[MCP/IndexNow] network error:", error);
+  }
+}
+
 /** Compute public start/end dates from event days, excluding vendor-only days */
 export function computePublicDates(days: { date: string; vendorOnly?: boolean | null }[]): {
   publicStartDate: Date | null;

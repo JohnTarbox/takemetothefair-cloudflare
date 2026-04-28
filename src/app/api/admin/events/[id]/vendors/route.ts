@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
-import { eventVendors, vendors } from "@/lib/db/schema";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { eventVendors, events, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   eventVendorAddSchema,
@@ -9,10 +9,14 @@ import {
   validateRequestBody,
 } from "@/lib/validations";
 import { isValidTransition } from "@/lib/vendor-status";
+import { PUBLIC_VENDOR_STATUSES } from "@/lib/constants";
 import { logError } from "@/lib/logger";
 import { trackVendorStatusChange } from "@/lib/server-analytics";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
+
+const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -190,6 +194,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
       .where(eq(eventVendors.id, data.eventVendorId))
       .limit(1);
+
+    // IndexNow: when a vendor enters the public set on an event, the public
+    // event page changes (the vendor list grows). Re-ping the event URL so
+    // search engines pick up the new content. Only fires on transitions INTO
+    // the public set — re-edits among public statuses don't ping.
+    if (data.status && PUBLIC_VENDOR_SET.has(data.status)) {
+      const [eventRow] = await db
+        .select({ slug: events.slug })
+        .from(events)
+        .where(eq(events.id, id))
+        .limit(1);
+      if (eventRow) {
+        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        await pingIndexNow(indexNowUrlFor("events", eventRow.slug), env);
+      }
+    }
 
     return NextResponse.json({
       ...updated.event_vendors,
