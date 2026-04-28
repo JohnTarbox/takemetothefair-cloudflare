@@ -26,6 +26,15 @@ import {
   type BingSiteScanIssue,
   type BingIndexNowQuota,
 } from "@/lib/bing-webmaster";
+import {
+  ScApiError,
+  ScConfigError,
+  getSiteSearchQueries,
+  getSitemapStatus,
+  type ScEnv,
+  type SiteSearchQueriesResult,
+  type SitemapStatus,
+} from "@/lib/search-console";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -417,12 +426,241 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function GoogleTab() {
+type GscLoad =
+  | {
+      ok: true;
+      queries: SiteSearchQueriesResult | null;
+      sitemaps: SitemapStatus | null;
+    }
+  | { ok: false; kind: "config" | "api" | "unknown"; message: string };
+
+async function loadGscData(): Promise<GscLoad> {
+  try {
+    const env = getCloudflareEnv() as unknown as ScEnv;
+    const settled = await Promise.allSettled([
+      getSiteSearchQueries(env, { rowLimit: 25 }),
+      getSitemapStatus(env),
+    ]);
+    const firstFailure = settled.find((r) => r.status === "rejected");
+    if (firstFailure && firstFailure.status === "rejected") {
+      const err = firstFailure.reason;
+      // Surface config errors as a tab-level setup card; downgrade per-endpoint
+      // failures to silent nulls so one outage doesn't blank the whole tab.
+      if (err instanceof ScConfigError) {
+        return { ok: false, kind: "config", message: err.message };
+      }
+    }
+    const [queries, sitemaps] = settled.map((r) => (r.status === "fulfilled" ? r.value : null));
+    return {
+      ok: true,
+      queries: (queries as SiteSearchQueriesResult | null) ?? null,
+      sitemaps: (sitemaps as SitemapStatus | null) ?? null,
+    };
+  } catch (error) {
+    if (error instanceof ScConfigError) {
+      return { ok: false, kind: "config", message: error.message };
+    }
+    if (error instanceof ScApiError) {
+      return { ok: false, kind: "api", message: error.detail };
+    }
+    return {
+      ok: false,
+      kind: "unknown",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function GoogleTab() {
+  const result = await loadGscData();
+  if (!result.ok) {
+    return <GscErrorPanel kind={result.kind} message={result.message} />;
+  }
+  const { queries, sitemaps } = result;
+  const sitemapErrorCount = sitemaps?.sitemaps.reduce((acc, s) => acc + (s.errors ?? 0), 0) ?? 0;
+  const sitemapWarningCount =
+    sitemaps?.sitemaps.reduce((acc, s) => acc + (s.warnings ?? 0), 0) ?? 0;
+
   return (
-    <PlaceholderTab
-      title="Google Search Console"
-      description="Site-wide GSC queries, sitemap status, and query→pages cannibalization will populate here. The per-page GSC view is already available — click a path on the Overview tab to drill in."
-    />
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Total clicks</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmt(queries?.totals.clicks ?? 0)}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {queries ? `${queries.dateRange.startDate} → ${queries.dateRange.endDate}` : "—"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Unique queries</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmt(queries?.totals.queries ?? 0)}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {fmt(queries?.totals.impressions ?? 0)} impressions
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Sitemap status</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmt(sitemaps?.totals.indexed ?? 0)} /{" "}
+              <span className="text-base font-normal text-gray-500">
+                {fmt(sitemaps?.totals.submitted ?? 0)}
+              </span>
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              indexed / submitted · {fmt(sitemapErrorCount)} errors · {fmt(sitemapWarningCount)}{" "}
+              warnings
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Top GSC queries</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Query</th>
+                <th className="text-right px-6 py-2 font-medium">Clicks</th>
+                <th className="text-right px-6 py-2 font-medium">Impressions</th>
+                <th className="text-right px-6 py-2 font-medium">CTR</th>
+                <th className="text-right px-6 py-2 font-medium">Avg position</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {!queries || queries.queries.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-6 text-gray-500">
+                    No GSC query data for the current window.
+                  </td>
+                </tr>
+              ) : (
+                queries.queries.map((row, i) => (
+                  <tr key={`${row.query}-${i}`}>
+                    <td className="px-6 py-2 text-gray-900 truncate max-w-md">{row.query}</td>
+                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
+                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      {fmt(row.impressions)}
+                    </td>
+                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      {(row.ctr * 100).toFixed(1)}%
+                    </td>
+                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      {row.position.toFixed(1)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Submitted sitemaps</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Path</th>
+                <th className="text-right px-6 py-2 font-medium">Submitted</th>
+                <th className="text-right px-6 py-2 font-medium">Indexed</th>
+                <th className="text-right px-6 py-2 font-medium">Warnings</th>
+                <th className="text-right px-6 py-2 font-medium">Errors</th>
+                <th className="text-left px-6 py-2 font-medium">Last submitted</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {!sitemaps || sitemaps.sitemaps.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-gray-500">
+                    No sitemaps submitted to GSC.
+                  </td>
+                </tr>
+              ) : (
+                sitemaps.sitemaps.map((row) => {
+                  const submittedTotal = row.contents.reduce((acc, c) => acc + c.submitted, 0);
+                  const indexedTotal = row.contents.reduce((acc, c) => acc + c.indexed, 0);
+                  return (
+                    <tr key={row.path}>
+                      <td className="px-6 py-2 font-mono text-xs truncate max-w-md">{row.path}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(submittedTotal)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(indexedTotal)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums text-amber-700">
+                        {fmt(row.warnings)}
+                      </td>
+                      <td className="px-6 py-2 text-right tabular-nums text-red-700">
+                        {fmt(row.errors)}
+                      </td>
+                      <td className="px-6 py-2 text-gray-700">
+                        {row.lastSubmitted
+                          ? new Date(row.lastSubmitted).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
+function GscErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; message: string }) {
+  const isConfig = kind === "config";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-gray-500" />
+          {isConfig ? "Search Console not configured" : "Could not load Search Console data"}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-700 mb-4">{message}</p>
+        {isConfig && (
+          <div className="text-sm text-gray-700 space-y-2">
+            <p className="font-medium">One-time setup:</p>
+            <ol className="list-decimal pl-5 space-y-2">
+              <li>
+                Confirm{" "}
+                <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                  SC_SITE_URL
+                </span>{" "}
+                is set on the Pages deployment to either <code>sc-domain:meetmeatthefair.com</code>{" "}
+                (Domain property) or <code>https://meetmeatthefair.com/</code> (URL-prefix
+                property).
+              </li>
+              <li>
+                Confirm the GA4 service account email has been granted access to the Search Console
+                property under Settings → Users and permissions.
+              </li>
+              <li>Redeploy and reload this tab.</li>
+            </ol>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -849,22 +1087,6 @@ async function SiteHealthTab() {
         follow-up.
       </p>
     </>
-  );
-}
-
-function PlaceholderTab({ title, description }: { title: string; description: string }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-gray-500" />
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-gray-700">{description}</p>
-      </CardContent>
-    </Card>
   );
 }
 
