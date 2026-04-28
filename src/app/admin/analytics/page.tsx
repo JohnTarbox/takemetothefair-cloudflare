@@ -118,12 +118,7 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
         ))}
       {tab === "google" && <GoogleTab />}
       {tab === "bing" && <BingTab />}
-      {tab === "site-health" && (
-        <PlaceholderTab
-          title="Site Health"
-          description="Unified Bing scan + GSC issues with snooze controls will populate here."
-        />
-      )}
+      {tab === "site-health" && <SiteHealthTab />}
       {tab === "first-party-events" && <FirstPartyEventsTab />}
     </div>
   );
@@ -718,6 +713,133 @@ function BingErrorPanel({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+async function SiteHealthTab() {
+  const db = getCloudflareDb();
+  const { getCurrentIssues } = await import("@/lib/site-health");
+  const issues = await getCurrentIssues(db, { hideSnoozed: false });
+  const now = Math.floor(Date.now() / 1000);
+  const activeSnoozeCount = issues.filter((i) => i.snoozedUntil && i.snoozedUntil > now).length;
+  const errorCount = issues.filter(
+    (i) => i.severity === "ERROR" && (!i.snoozedUntil || i.snoozedUntil <= now)
+  ).length;
+  const warningCount = issues.filter(
+    (i) => i.severity === "WARNING" && (!i.snoozedUntil || i.snoozedUntil <= now)
+  ).length;
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Open errors</p>
+            <p className="text-3xl font-bold text-red-700 mt-1 tabular-nums">{fmt(errorCount)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Open warnings</p>
+            <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">
+              {fmt(warningCount)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Snoozed</p>
+            <p className="text-3xl font-bold text-gray-500 mt-1 tabular-nums">
+              {fmt(activeSnoozeCount)}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Current issues</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Source</th>
+                <th className="text-left px-6 py-2 font-medium">Issue</th>
+                <th className="text-left px-6 py-2 font-medium">Severity</th>
+                <th className="text-left px-6 py-2 font-medium">URL</th>
+                <th className="text-left px-6 py-2 font-medium">Last detected</th>
+                <th className="text-left px-6 py-2 font-medium">Snoozed</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {issues.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-6 text-gray-500">
+                    No open issues. Run the daily sweep to refresh.
+                  </td>
+                </tr>
+              ) : (
+                issues.map((row) => {
+                  const snoozed = row.snoozedUntil && row.snoozedUntil > now;
+                  const sevColor =
+                    row.severity === "ERROR"
+                      ? "text-red-700"
+                      : row.severity === "WARNING"
+                        ? "text-amber-700"
+                        : "text-gray-600";
+                  return (
+                    <tr key={row.fingerprint} className={snoozed ? "opacity-50" : ""}>
+                      <td className="px-6 py-2 font-mono text-xs">{row.source}</td>
+                      <td className="px-6 py-2 text-gray-900">
+                        {row.issueType}
+                        {row.message && <span className="text-gray-500"> · {row.message}</span>}
+                      </td>
+                      <td className={`px-6 py-2 font-medium ${sevColor}`}>{row.severity}</td>
+                      <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
+                        {row.url ? (
+                          <a
+                            href={row.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            {row.url}
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-6 py-2 tabular-nums text-gray-700">
+                        {new Date(row.lastDetectedAt * 1000).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </td>
+                      <td className="px-6 py-2 text-gray-700">
+                        {snoozed && row.snoozedUntil
+                          ? `until ${new Date(row.snoozedUntil * 1000).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                            })}`
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <p className="text-xs text-gray-500 mt-4">
+        Snooze and refresh actions are exposed via the API endpoints under{" "}
+        <code>/api/admin/site-health/*</code> and the <code>get_site_health_issues</code> /{" "}
+        <code>snooze_site_health_issue</code> MCP tools. A UI control row can layer on top in a
+        follow-up.
+      </p>
+    </>
   );
 }
 

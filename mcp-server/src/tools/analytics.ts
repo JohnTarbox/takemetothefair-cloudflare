@@ -811,6 +811,91 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     }
   );
 
+  // ── Site Health ───────────────────────────────────────────────────
+
+  server.tool(
+    "get_site_health_issues",
+    "Unified Bing + GSC site health issues with snooze state. Filter by source (BING_SCAN | BING_SITEMAP | GSC_SITEMAP | GSC_URL_INSPECTION), severity (ERROR | WARNING | NOTICE), or hideSnoozed. Admin only.",
+    {
+      source: z.enum(["BING_SCAN", "BING_SITEMAP", "GSC_SITEMAP", "GSC_URL_INSPECTION"]).optional(),
+      severity: z.enum(["ERROR", "WARNING", "NOTICE"]).optional(),
+      hideSnoozed: z.boolean().optional(),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.source) qs.set("source", params.source);
+        if (params.severity) qs.set("severity", params.severity);
+        if (params.hideSnoozed) qs.set("hideSnoozed", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/site-health${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown site health error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "snooze_site_health_issue",
+    "Snooze a site health issue for N days (1-365). Use the fingerprint from get_site_health_issues. Optional note for context. Admin only.",
+    {
+      fingerprint: z.string().min(8).describe("Issue fingerprint from get_site_health_issues"),
+      days: z.number().int().min(1).max(365).describe("Days to snooze"),
+      note: z.string().max(500).optional().describe("Why this is being snoozed"),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [{ type: "text", text: "Snooze requires MAIN_APP_URL and INTERNAL_API_KEY." }],
+          isError: true,
+        };
+      }
+      try {
+        const response = await fetch(`${env.MAIN_APP_URL}/api/admin/site-health/snooze`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Key": env.INTERNAL_API_KEY,
+          },
+          body: JSON.stringify(params),
+        });
+        const data = (await response.json()) as Record<string, unknown>;
+        if (!response.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Snooze failed (${response.status}): ${JSON.stringify(data)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown snooze error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   server.tool(
     "get_first_party_events",
     "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Admin only.",
