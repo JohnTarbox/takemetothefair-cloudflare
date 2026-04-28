@@ -26,6 +26,7 @@ import {
 import { Pagination } from "@/components/ui/pagination";
 import { formatDateRange } from "@/lib/utils";
 import { haversineDistance } from "@/lib/geo";
+import { trackFilterApplied } from "@/lib/analytics";
 import type { events, venues, promoters } from "@/lib/db/schema";
 
 type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
@@ -1037,6 +1038,7 @@ export function EventsView({
           value={currentSort}
           onChange={(e) => {
             const val = e.target.value;
+            trackFilterApplied("sort", val, "events");
             if (val === "nearest" && !activeCoords) {
               // Request browser geolocation then apply sort
               navigator.geolocation?.getCurrentPosition(
@@ -1065,6 +1067,7 @@ export function EventsView({
           value={maxRadius ?? ""}
           onChange={(e) => {
             const val = e.target.value;
+            trackFilterApplied("radius", val || "any", "events");
             if (!val) {
               setMaxRadius(null);
               return;

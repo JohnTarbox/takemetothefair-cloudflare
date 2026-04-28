@@ -613,4 +613,97 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       }
     }
   );
+
+  server.tool(
+    "get_first_party_events",
+    "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Admin only.",
+    {
+      category: z
+        .string()
+        .optional()
+        .describe("Filter by category (e.g. 'admin', 'conversion', 'engagement')."),
+      name: z
+        .string()
+        .optional()
+        .describe("Filter by exact event name (e.g. 'outbound_application_click')."),
+      days: z
+        .number()
+        .int()
+        .min(1)
+        .max(365)
+        .optional()
+        .describe("Days back to include. Default 30, max 365."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max recent rows returned. Default 100, max 500."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.category) qs.set("category", params.category);
+        if (params.name) qs.set("name", params.name);
+        if (params.days) qs.set("days", String(params.days));
+        if (params.limit) qs.set("limit", String(params.limit));
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/events${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown error fetching events",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_admin_action_log",
+    "Recent admin actions captured in first-party analytics: event approvals/rejections, vendor status changes. Filtered to category='admin'. Useful for auditing who did what when. Default window is the last 30 days. Admin only.",
+    {
+      days: z
+        .number()
+        .int()
+        .min(1)
+        .max(365)
+        .optional()
+        .describe("Days back to include. Default 30, max 365."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max rows. Default 100, max 500."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams({ category: "admin" });
+        if (params.days) qs.set("days", String(params.days));
+        if (params.limit) qs.set("limit", String(params.limit));
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/events?${qs}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching admin action log",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }

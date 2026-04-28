@@ -75,33 +75,3 @@ export async function trackVendorStatusChange(
     source: "admin",
   });
 }
-
-export async function trackScraperRun(
-  db: DrizzleD1Database<Record<string, unknown>> | null,
-  scraperName: string,
-  eventsFound: number,
-  eventsImported: number,
-  errors: number
-) {
-  return trackServerEvent(db, {
-    eventName: "scraper_run",
-    eventCategory: "system",
-    properties: { scraperName, eventsFound, eventsImported, errors },
-    source: "scraper",
-  });
-}
-
-export async function trackUrlImport(
-  db: DrizzleD1Database<Record<string, unknown>> | null,
-  url: string,
-  success: boolean,
-  userId?: string
-) {
-  return trackServerEvent(db, {
-    eventName: "url_import",
-    eventCategory: "admin",
-    properties: { url, success },
-    userId,
-    source: "import",
-  });
-}
