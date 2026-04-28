@@ -13,8 +13,22 @@ import {
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
+const TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "google", label: "Google" },
+  { key: "bing", label: "Bing" },
+  { key: "site-health", label: "Site Health" },
+  { key: "first-party-events", label: "First-party events" },
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
+
+function isTabKey(value: string | undefined): value is TabKey {
+  return TABS.some((t) => t.key === value);
+}
+
 type PageProps = {
-  searchParams: Promise<{ refresh?: string }>;
+  searchParams: Promise<{ refresh?: string; tab?: string }>;
 };
 
 type LoadResult =
@@ -43,38 +57,101 @@ function fmt(n: number): string {
 }
 
 export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
-  const { refresh } = await searchParams;
-  const result = await load(refresh === "1");
+  const params = await searchParams;
+  const tab: TabKey = isTabKey(params.tab) ? params.tab : "overview";
+  const refresh = params.refresh === "1";
+
+  // Only fetch GA4 data when the Overview tab is active
+  const overviewResult = tab === "overview" ? await load(refresh) : null;
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Analytics (GA4)</h1>
-        <div className="flex items-center gap-4">
-          <Link
-            href="/admin/analytics?refresh=1"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900"
-          >
-            <RefreshCw className="w-4 h-4" /> Refresh data
-          </Link>
-          {result.ok && (
-            <a
-              href={`https://analytics.google.com/analytics/web/#/p${result.data.propertyId}/reports`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+        {tab === "overview" && (
+          <div className="flex items-center gap-4">
+            <Link
+              href="/admin/analytics?refresh=1"
+              className="inline-flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900"
             >
-              Open in GA4 <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          )}
-        </div>
+              <RefreshCw className="w-4 h-4" /> Refresh data
+            </Link>
+            {overviewResult?.ok && (
+              <a
+                href={`https://analytics.google.com/analytics/web/#/p${overviewResult.data.propertyId}/reports`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              >
+                Open in GA4 <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
+        )}
       </div>
 
-      {!result.ok ? (
-        <ErrorPanel kind={result.kind} message={result.message} />
-      ) : (
-        <MetricsView data={result.data} />
+      <TabBar currentTab={tab} />
+
+      {tab === "overview" &&
+        overviewResult &&
+        (overviewResult.ok ? (
+          <MetricsView data={overviewResult.data} />
+        ) : (
+          <ErrorPanel kind={overviewResult.kind} message={overviewResult.message} />
+        ))}
+      {tab === "google" && (
+        <PlaceholderTab
+          title="Google Search Console"
+          description="Site-wide GSC queries, sitemap status, and query→pages cannibalization will populate here. The per-page GSC view is already available — click a path on the Overview tab to drill in."
+        />
       )}
+      {tab === "bing" && (
+        <PlaceholderTab
+          title="Bing Webmaster Tools"
+          description="Search performance, crawl stats, and IndexNow status will populate here once the Bing Webmaster API integration ships."
+        />
+      )}
+      {tab === "site-health" && (
+        <PlaceholderTab
+          title="Site Health"
+          description="Unified Bing scan + GSC issues with snooze controls will populate here."
+        />
+      )}
+      {tab === "first-party-events" && (
+        <PlaceholderTab
+          title="First-party events"
+          description="Server-side admin actions and beacon-captured client events (outbound clicks, filter applies) will populate here."
+        />
+      )}
+    </div>
+  );
+}
+
+function TabBar({ currentTab }: { currentTab: TabKey }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Analytics sections"
+      className="mb-6 flex flex-wrap gap-2 border-b border-gray-200 pb-2"
+    >
+      {TABS.map((tab) => {
+        const isActive = currentTab === tab.key;
+        const href =
+          tab.key === "overview" ? "/admin/analytics" : `/admin/analytics?tab=${tab.key}`;
+        return (
+          <Link
+            key={tab.key}
+            href={href}
+            role="tab"
+            aria-selected={isActive}
+            className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              isActive ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900 hover:bg-gray-200"
+            }`}
+          >
+            {tab.label}
+          </Link>
+        );
+      })}
     </div>
   );
 }
@@ -229,6 +306,22 @@ function StatCard({ label, value }: { label: string; value: string }) {
             <Users className="w-6 h-6 text-blue-600" />
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PlaceholderTab({ title, description }: { title: string; description: string }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-gray-500" />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-700">{description}</p>
       </CardContent>
     </Card>
   );
