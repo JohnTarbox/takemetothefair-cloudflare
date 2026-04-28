@@ -11,6 +11,21 @@ import {
   type DashboardMetrics,
   type Ga4Env,
 } from "@/lib/ga4";
+import {
+  BingApiError,
+  BingConfigError,
+  getQueryStats,
+  getPageStats,
+  getCrawlStats,
+  getSiteScanIssues,
+  getIndexNowQuota,
+  type BingEnv,
+  type BingQueryRow,
+  type BingPageRow,
+  type BingCrawlStatsRow,
+  type BingSiteScanIssue,
+  type BingIndexNowQuota,
+} from "@/lib/bing-webmaster";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -101,18 +116,8 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
         ) : (
           <ErrorPanel kind={overviewResult.kind} message={overviewResult.message} />
         ))}
-      {tab === "google" && (
-        <PlaceholderTab
-          title="Google Search Console"
-          description="Site-wide GSC queries, sitemap status, and query→pages cannibalization will populate here. The per-page GSC view is already available — click a path on the Overview tab to drill in."
-        />
-      )}
-      {tab === "bing" && (
-        <PlaceholderTab
-          title="Bing Webmaster Tools"
-          description="Search performance, crawl stats, and IndexNow status will populate here once the Bing Webmaster API integration ships."
-        />
-      )}
+      {tab === "google" && <GoogleTab />}
+      {tab === "bing" && <BingTab />}
       {tab === "site-health" && (
         <PlaceholderTab
           title="Site Health"
@@ -412,6 +417,305 @@ function StatCard({ label, value }: { label: string; value: string }) {
             <Users className="w-6 h-6 text-blue-600" />
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GoogleTab() {
+  return (
+    <PlaceholderTab
+      title="Google Search Console"
+      description="Site-wide GSC queries, sitemap status, and query→pages cannibalization will populate here. The per-page GSC view is already available — click a path on the Overview tab to drill in."
+    />
+  );
+}
+
+type BingLoad =
+  | { ok: true; data: BingTabData }
+  | { ok: false; kind: "config" | "api" | "unknown"; message: string };
+
+interface BingTabData {
+  queries: BingQueryRow[];
+  pages: BingPageRow[];
+  crawl: BingCrawlStatsRow[];
+  scan: BingSiteScanIssue[];
+  quota: BingIndexNowQuota | null;
+}
+
+async function loadBingData(): Promise<BingLoad> {
+  try {
+    const env = getCloudflareEnv() as unknown as BingEnv;
+    // Run all Bing reports in parallel. Each result is independently catchable
+    // so a transient failure on one (e.g. site-scan returning 404 before Bing
+    // has completed a scan) doesn't blank the whole tab.
+    const settled = await Promise.allSettled([
+      getQueryStats(env),
+      getPageStats(env),
+      getCrawlStats(env),
+      getSiteScanIssues(env),
+      getIndexNowQuota(env),
+    ]);
+    // If the first call (queries) hit BingConfigError, surface that as the
+    // tab-level error so the operator knows the API key isn't set.
+    const firstFailure = settled.find((r) => r.status === "rejected");
+    if (firstFailure && firstFailure.status === "rejected") {
+      const err = firstFailure.reason;
+      if (err instanceof BingConfigError) {
+        return { ok: false, kind: "config", message: err.message };
+      }
+    }
+    const [queries, pages, crawl, scan, quota] = settled.map((r) =>
+      r.status === "fulfilled" ? r.value : null
+    );
+    return {
+      ok: true,
+      data: {
+        queries: (queries as BingQueryRow[] | null) ?? [],
+        pages: (pages as BingPageRow[] | null) ?? [],
+        crawl: (crawl as BingCrawlStatsRow[] | null) ?? [],
+        scan: (scan as BingSiteScanIssue[] | null) ?? [],
+        quota: (quota as BingIndexNowQuota | null) ?? null,
+      },
+    };
+  } catch (error) {
+    if (error instanceof BingConfigError) {
+      return { ok: false, kind: "config", message: error.message };
+    }
+    if (error instanceof BingApiError) {
+      return { ok: false, kind: "api", message: error.detail };
+    }
+    return {
+      ok: false,
+      kind: "unknown",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function BingTab() {
+  const result = await loadBingData();
+  if (!result.ok) {
+    return <BingErrorPanel kind={result.kind} message={result.message} />;
+  }
+  const { queries, pages, crawl, scan, quota } = result.data;
+  const errorCount = scan.filter((i) => i.severity === "Error").length;
+  const warningCount = scan.filter((i) => i.severity === "Warning").length;
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Site Scan</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmt(errorCount)} errors · {fmt(warningCount)} warnings
+            </p>
+            <Link
+              href="/admin/analytics?tab=site-health"
+              className="text-xs text-blue-600 hover:text-blue-700 mt-1 inline-block"
+            >
+              View in Site Health →
+            </Link>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">Search clicks (recent)</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmt(queries.reduce((acc, q) => acc + q.clicks, 0))}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {queries.length} unique {queries.length === 1 ? "query" : "queries"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-gray-600">IndexNow quota</p>
+            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+              {quota ? fmt(quota.dailyRemaining) : "—"}
+              {quota && (
+                <span className="text-base font-normal text-gray-500">
+                  {" "}
+                  / {fmt(quota.dailyQuota)} daily
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {quota
+                ? `${fmt(quota.monthlyRemaining)} of ${fmt(quota.monthlyQuota)} monthly`
+                : "Unavailable"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Top Bing queries</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Query</th>
+                <th className="text-right px-6 py-2 font-medium">Clicks</th>
+                <th className="text-right px-6 py-2 font-medium">Impressions</th>
+                <th className="text-right px-6 py-2 font-medium">Avg position</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {queries.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-6 text-gray-500">
+                    No Bing query data yet.
+                  </td>
+                </tr>
+              ) : (
+                queries.slice(0, 25).map((row, i) => (
+                  <tr key={`${row.query}-${i}`}>
+                    <td className="px-6 py-2 text-gray-900 truncate max-w-md">{row.query}</td>
+                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
+                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      {fmt(row.impressions)}
+                    </td>
+                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      {row.avgImpressionPosition.toFixed(1)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Top pages (Bing)</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="text-left px-6 py-2 font-medium">Page</th>
+                  <th className="text-right px-6 py-2 font-medium">Clicks</th>
+                  <th className="text-right px-6 py-2 font-medium">Impr.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {pages.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-6 py-6 text-gray-500">
+                      No data yet.
+                    </td>
+                  </tr>
+                ) : (
+                  pages.slice(0, 15).map((row, i) => (
+                    <tr key={`${row.page}-${i}`}>
+                      <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">{row.page}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                        {fmt(row.impressions)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Crawl stats (recent)</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="text-left px-6 py-2 font-medium">Date</th>
+                  <th className="text-right px-6 py-2 font-medium">Crawled</th>
+                  <th className="text-right px-6 py-2 font-medium">Errors</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {crawl.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-6 py-6 text-gray-500">
+                      No crawl data yet.
+                    </td>
+                  </tr>
+                ) : (
+                  crawl.slice(0, 14).map((row) => (
+                    <tr key={row.date}>
+                      <td className="px-6 py-2 tabular-nums text-gray-700">{row.date}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.crawledPages)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                        {fmt(row.crawlErrors)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function BingErrorPanel({
+  kind,
+  message,
+}: {
+  kind: "config" | "api" | "unknown";
+  message: string;
+}) {
+  const isConfig = kind === "config";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-gray-500" />
+          {isConfig ? "Bing Webmaster Tools not configured" : "Could not load Bing data"}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm text-gray-700 mb-4">{message}</p>
+        {isConfig && (
+          <div className="text-sm text-gray-700 space-y-2">
+            <p className="font-medium">One-time setup:</p>
+            <ol className="list-decimal pl-5 space-y-2">
+              <li>
+                Sign in at{" "}
+                <a
+                  href="https://www.bing.com/webmasters/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-700"
+                >
+                  Bing Webmaster Tools
+                </a>{" "}
+                and verify ownership of <code>meetmeatthefair.com</code>.
+              </li>
+              <li>
+                In Settings → API Access, generate an account-wide API key. Treat this key like a
+                password — it grants read access to all sites under the account.
+              </li>
+              <li>
+                Set the secret on the Worker:
+                <pre className="mt-2 bg-gray-100 p-2 rounded font-mono text-xs">
+                  wrangler secret put BING_WEBMASTER_API_KEY
+                </pre>
+              </li>
+              <li>Redeploy the main app, then reload this tab.</li>
+            </ol>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

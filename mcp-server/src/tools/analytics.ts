@@ -614,6 +614,203 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     }
   );
 
+  // ── Bing Webmaster Tools ─────────────────────────────────────────
+
+  server.tool(
+    "get_bing_search_queries",
+    "Bing search performance for the site: queries with clicks, impressions, average click position, and average impression position. Cached 15 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/queries${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing query error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_top_pages",
+    "Bing top-performing pages by impressions and clicks. Cached 15 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/top-pages${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing top-pages error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_crawl_stats",
+    "Bing crawl stats time series: pages crawled, crawl errors, in-links, total pages in index per day. Cached 15 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/crawl-stats${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing crawl stats error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_site_scan_issues",
+    "Bing Site Scan results: list of detected SEO/accessibility issues with severity (Error/Warning/Notice), affected URL count, and per-issue URL lists. The single highest-value Bing diagnostic. Cached 60 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/site-scan${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing site scan error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_url_info",
+    "Per-URL inspection from Bing Webmaster: indexed status, last crawl date, crawl errors, link counts. Cached 15 minutes. Admin only.",
+    {
+      url: z.string().url().describe("Absolute URL to inspect."),
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams({ url: params.url });
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/bing/url-info?${qs}`);
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing URL info error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_sitemaps",
+    "Submitted sitemap status as Bing sees it: URLs, submission/last-crawled dates, URL counts, status. Cached 60 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/sitemaps${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing sitemap error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_indexnow_quota",
+    "Bing's view of remaining IndexNow / URL-submission quota: daily and monthly limits and remaining counts. Useful for capacity planning the backfill job. Cached 60 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/indexnow-quota${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing quota error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   server.tool(
     "get_first_party_events",
     "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Admin only.",
