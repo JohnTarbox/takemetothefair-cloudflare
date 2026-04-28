@@ -4,6 +4,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { analyticsEvents } from "@/lib/db/schema";
 import { desc, eq, gte, and, sql } from "drizzle-orm";
 
+export const runtime = "edge";
+
 /**
  * GET /api/admin/analytics/events
  * Query first-party analytics events from D1.
