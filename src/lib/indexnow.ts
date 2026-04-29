@@ -4,9 +4,12 @@
  *
  * Spec: https://www.indexnow.org/documentation
  *
- * Set INDEXNOW_KEY as a Cloudflare Worker secret. The key file at
- * https://meetmeatthefair.com/<key>.txt is served by the catch-all route
- * src/app/[indexnowKey]/route.ts.
+ * Set INDEXNOW_KEY as a Cloudflare Worker secret. The key file is served at
+ * the SITE ROOT (https://meetmeatthefair.com/<key>.txt) by
+ * src/app/[indexnowKey]/route.ts. Root location matters: per the spec, a key
+ * file's path scope authorizes only URLs under that path. Serving from a
+ * subdirectory (e.g. /api/indexnow-key/) caused IndexNow to reject all
+ * /blog/, /events/, /venues/ submissions with HTTP 422.
  *
  * NEVER throws to the caller. Logs success/failure to console for wrangler
  * tail observability AND persists every attempt to the indexnow_submissions
@@ -22,7 +25,7 @@ const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 const MAX_BATCH_SIZE = 10_000;
 
 function keyLocation(key: string): string {
-  return `https://${HOST}/api/indexnow-key/${key}.txt`;
+  return `https://${HOST}/${key}.txt`;
 }
 
 interface IndexNowEnv {
