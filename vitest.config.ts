@@ -13,24 +13,37 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
+      // Restrict coverage to `src/lib/` — utility modules where unit tests
+      // are meaningful. App routes and React Server Components live in
+      // `src/app/` and aren't unit-testable in vitest (edge runtime, auth,
+      // DB bindings); they're covered by E2E tests instead.
+      include: ["src/lib/**/*.{ts,tsx}"],
       exclude: [
-        "node_modules/",
-        ".next/",
-        ".vercel/",
-        "e2e/",
         "**/*.d.ts",
         "**/*.config.*",
-        "**/test/**",
-        "drizzle/",
-        "scripts/",
-        "gvalidate/",
+        "**/__tests__/**",
+        "src/lib/db/schema.ts", // Drizzle schema — type definitions only
+        // Integration code that requires Cloudflare runtime / external APIs
+        // (Workers AI, GA4, GSC). These are exercised through E2E and
+        // production smoke tests, not unit tests.
+        "src/lib/cloudflare.ts",
+        "src/lib/ga4.ts",
+        "src/lib/google-auth.ts",
+        "src/lib/search-console.ts",
+        "src/lib/bing-webmaster.ts",
+        "src/lib/url-import/ai-extractor.ts",
+        "src/lib/auth.ts",
       ],
       thresholds: {
-        // Conservative thresholds — raise as coverage improves
-        lines: 15,
-        functions: 15,
-        branches: 15,
-        statements: 15,
+        // Tightened gate over a meaningful denominator (src/lib/ minus
+        // integration code). Floor is set ~2 points below current measured
+        // coverage so day-to-day fluctuations don't break CI; significant
+        // regressions still trip it. Raise as more lib helpers gain tests.
+        // Current measured: lines/statements ~35%, functions ~66%, branches ~76%.
+        lines: 33,
+        functions: 60,
+        branches: 70,
+        statements: 33,
       },
     },
   },
