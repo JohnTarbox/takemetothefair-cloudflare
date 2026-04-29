@@ -55,7 +55,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("email");
@@ -72,7 +72,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("8 characters");
@@ -89,7 +89,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("2 characters");
@@ -108,7 +108,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(400);
     expect(data.error).toContain("already exists");
@@ -128,7 +128,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(201);
     expect(data.message).toBe("Account created successfully");
@@ -153,12 +153,13 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("VENDOR");
-    // Verify both user and vendor insert were called
-    expect(mockDb.insert).toHaveBeenCalledTimes(2);
+    // user + vendor + verificationTokens (the email-verification token row
+    // was added when verification flow shipped — see register/route.ts:102).
+    expect(mockDb.insert).toHaveBeenCalledTimes(3);
   });
 
   it("successfully registers a promoter with companyName", async () => {
@@ -177,12 +178,12 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("PROMOTER");
-    // Verify both user and promoter insert were called
-    expect(mockDb.insert).toHaveBeenCalledTimes(2);
+    // user + promoter + verificationTokens (see register/route.ts:102).
+    expect(mockDb.insert).toHaveBeenCalledTimes(3);
   });
 
   it("returns 400 for invalid role", async () => {
@@ -215,7 +216,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("USER");
@@ -234,7 +235,7 @@ describe("POST /api/auth/register", () => {
     });
 
     const response = await POST(request);
-    const data = await response.json() as any;
+    const data = (await response.json()) as any;
 
     expect(response.status).toBe(500);
     expect(data.error).toContain("error occurred");

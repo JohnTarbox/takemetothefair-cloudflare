@@ -88,22 +88,25 @@ describe("formatDateRange", () => {
     expect(result).toContain(" - ");
   });
 
-  it('returns TBD when start is null', () => {
+  it("returns TBD when start is null", () => {
     const result = formatDateRange(null, new Date(2024, 5, 15));
     expect(result).toBe("TBD");
   });
 
-  it('returns TBD when end is null', () => {
+  it("returns just the start date when end is null", () => {
+    // Asymmetric with the start-is-null case: knowing the start is more
+    // useful UX than rendering "TBD". formatDateRange falls through to
+    // formatDate(startDate) when end is missing. See src/lib/utils.ts:97-99.
     const result = formatDateRange(new Date(2024, 5, 15), null);
-    expect(result).toBe("TBD");
+    expect(result).toBe("Sat, Jun 15, 2024");
   });
 
-  it('returns TBD when both are null', () => {
+  it("returns TBD when both are null", () => {
     const result = formatDateRange(null, null);
     expect(result).toBe("TBD");
   });
 
-  it('returns TBD for invalid date strings', () => {
+  it("returns TBD for invalid date strings", () => {
     const result = formatDateRange("invalid", "also-invalid");
     expect(result).toBe("TBD");
   });

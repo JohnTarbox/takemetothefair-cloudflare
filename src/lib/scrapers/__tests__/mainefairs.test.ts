@@ -493,7 +493,9 @@ describe("scrapeEventDetails", () => {
 
     const result = await scrapeEventDetails("https://mainefairs.net/event/test/");
 
-    expect(result.description?.length).toBeLessThanOrEqual(2000);
+    // JSON-LD descriptions are trusted (structured) so they keep up to 5000
+    // chars; the HTML-fallback path slices to 2000. See mainefairs.ts:241,295.
+    expect(result.description?.length).toBeLessThanOrEqual(5000);
   });
 
   it("handles malformed JSON-LD gracefully", async () => {

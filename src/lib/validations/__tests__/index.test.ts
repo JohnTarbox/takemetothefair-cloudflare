@@ -55,7 +55,7 @@ describe("venueCreateSchema", () => {
     const result = venueCreateSchema.safeParse({});
     expect(result.success).toBe(false);
     if (!result.success) {
-      const paths = result.error.issues.map(i => i.path[0]);
+      const paths = result.error.issues.map((i) => i.path[0]);
       expect(paths).toContain("name");
       expect(paths).toContain("address");
       expect(paths).toContain("city");
@@ -101,13 +101,21 @@ describe("venueCreateSchema", () => {
   });
 
   it("validates email format", () => {
-    expect(venueCreateSchema.safeParse({ ...validVenue, contactEmail: "valid@example.com" }).success).toBe(true);
-    expect(venueCreateSchema.safeParse({ ...validVenue, contactEmail: "invalid-email" }).success).toBe(false);
+    expect(
+      venueCreateSchema.safeParse({ ...validVenue, contactEmail: "valid@example.com" }).success
+    ).toBe(true);
+    expect(
+      venueCreateSchema.safeParse({ ...validVenue, contactEmail: "invalid-email" }).success
+    ).toBe(false);
   });
 
   it("validates website as URL", () => {
-    expect(venueCreateSchema.safeParse({ ...validVenue, website: "https://example.com" }).success).toBe(true);
-    expect(venueCreateSchema.safeParse({ ...validVenue, website: "not-a-url" }).success).toBe(false);
+    expect(
+      venueCreateSchema.safeParse({ ...validVenue, website: "https://example.com" }).success
+    ).toBe(true);
+    expect(venueCreateSchema.safeParse({ ...validVenue, website: "not-a-url" }).success).toBe(
+      false
+    );
   });
 
   it("validates status enum", () => {
@@ -174,15 +182,19 @@ describe("promoterCreateSchema", () => {
   });
 
   it("validates userId as UUID", () => {
-    expect(promoterCreateSchema.safeParse({
-      ...validPromoter,
-      userId: "550e8400-e29b-41d4-a716-446655440000",
-    }).success).toBe(true);
+    expect(
+      promoterCreateSchema.safeParse({
+        ...validPromoter,
+        userId: "550e8400-e29b-41d4-a716-446655440000",
+      }).success
+    ).toBe(true);
 
-    expect(promoterCreateSchema.safeParse({
-      ...validPromoter,
-      userId: "not-a-uuid",
-    }).success).toBe(false);
+    expect(
+      promoterCreateSchema.safeParse({
+        ...validPromoter,
+        userId: "not-a-uuid",
+      }).success
+    ).toBe(false);
   });
 
   it("defaults verified to false", () => {
@@ -225,7 +237,7 @@ describe("vendorCreateSchema", () => {
     const result = vendorCreateSchema.safeParse({ businessName: "Test" });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some(i => i.path[0] === "userId")).toBe(true);
+      expect(result.error.issues.some((i) => i.path[0] === "userId")).toBe(true);
     }
   });
 
@@ -301,9 +313,14 @@ describe("eventDaySchema", () => {
 });
 
 describe("eventCreateSchema", () => {
+  // stateCode is required when no venueId is set (see eventCreateSchema's
+  // refine in src/lib/validations/index.ts:244). Including it here keeps the
+  // shared minimal fixture passing without making every spread copy declare
+  // venue or location.
   const validEvent = {
     name: "Summer Fair",
     promoterId: "promo-123",
+    stateCode: "ME",
   };
 
   it("validates a minimal valid event", () => {
@@ -366,15 +383,19 @@ describe("eventCreateSchema", () => {
   });
 
   it("validates datetime format for dates", () => {
-    expect(eventCreateSchema.safeParse({
-      ...validEvent,
-      startDate: "2025-06-15T10:00:00Z",
-    }).success).toBe(true);
+    expect(
+      eventCreateSchema.safeParse({
+        ...validEvent,
+        startDate: "2025-06-15T10:00:00Z",
+      }).success
+    ).toBe(true);
 
-    expect(eventCreateSchema.safeParse({
-      ...validEvent,
-      startDate: "2025-06-15",
-    }).success).toBe(false);
+    expect(
+      eventCreateSchema.safeParse({
+        ...validEvent,
+        startDate: "2025-06-15",
+      }).success
+    ).toBe(false);
   });
 
   it("defaults arrays to empty", () => {
@@ -397,9 +418,7 @@ describe("eventCreateSchema", () => {
   it("validates nested eventDays", () => {
     const result = eventCreateSchema.safeParse({
       ...validEvent,
-      eventDays: [
-        { date: "invalid-date", openTime: "09:00", closeTime: "17:00" },
-      ],
+      eventDays: [{ date: "invalid-date", openTime: "09:00", closeTime: "17:00" }],
     });
     expect(result.success).toBe(false);
   });
@@ -441,17 +460,24 @@ describe("eventCreateSchema", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some(i =>
-        i.message.includes("Maximum 100 days") || i.message.includes("Array must contain at most 100")
-      )).toBe(true);
+      expect(
+        result.error.issues.some(
+          (i) =>
+            i.message.includes("Maximum 100 days") ||
+            i.message.includes("Array must contain at most 100")
+        )
+      ).toBe(true);
     }
   });
 });
 
 describe("eventCreateSchema cross-field validation", () => {
+  // Same rationale as the eventCreateSchema fixture above: stateCode is
+  // required when no venueId is set (see validations/index.ts:244).
   const validEvent = {
     name: "Summer Fair",
     promoterId: "promo-123",
+    stateCode: "ME",
   };
 
   it("rejects endDate before startDate", () => {
@@ -462,8 +488,12 @@ describe("eventCreateSchema cross-field validation", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some(i => i.path.includes("endDate"))).toBe(true);
-      expect(result.error.issues.some(i => i.message.includes("End date must be on or after start date"))).toBe(true);
+      expect(result.error.issues.some((i) => i.path.includes("endDate"))).toBe(true);
+      expect(
+        result.error.issues.some((i) =>
+          i.message.includes("End date must be on or after start date")
+        )
+      ).toBe(true);
     }
   });
 
@@ -501,8 +531,10 @@ describe("eventCreateSchema cross-field validation", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.some(i => i.path.includes("ticketPriceMax"))).toBe(true);
-      expect(result.error.issues.some(i => i.message.includes("Maximum ticket price"))).toBe(true);
+      expect(result.error.issues.some((i) => i.path.includes("ticketPriceMax"))).toBe(true);
+      expect(result.error.issues.some((i) => i.message.includes("Maximum ticket price"))).toBe(
+        true
+      );
     }
   });
 
@@ -589,21 +621,37 @@ describe("eventVendorCreateSchema", () => {
   });
 
   it("validates status enum", () => {
-    const statuses = ["INVITED", "INTERESTED", "APPLIED", "WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"];
+    const statuses = [
+      "INVITED",
+      "INTERESTED",
+      "APPLIED",
+      "WAITLISTED",
+      "APPROVED",
+      "CONFIRMED",
+      "REJECTED",
+      "WITHDRAWN",
+      "CANCELLED",
+    ];
     for (const status of statuses) {
-      expect(eventVendorCreateSchema.safeParse({
-        ...validEventVendor,
-        status,
-      }).success).toBe(true);
+      expect(
+        eventVendorCreateSchema.safeParse({
+          ...validEventVendor,
+          status,
+        }).success
+      ).toBe(true);
     }
-    expect(eventVendorCreateSchema.safeParse({
-      ...validEventVendor,
-      status: "INVALID",
-    }).success).toBe(false);
-    expect(eventVendorCreateSchema.safeParse({
-      ...validEventVendor,
-      status: "PENDING",
-    }).success).toBe(false);
+    expect(
+      eventVendorCreateSchema.safeParse({
+        ...validEventVendor,
+        status: "INVALID",
+      }).success
+    ).toBe(false);
+    expect(
+      eventVendorCreateSchema.safeParse({
+        ...validEventVendor,
+        status: "PENDING",
+      }).success
+    ).toBe(false);
   });
 
   it("defaults status to APPLIED", () => {
