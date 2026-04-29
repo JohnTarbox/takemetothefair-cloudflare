@@ -641,6 +641,32 @@ export const indexnowSubmissions = sqliteTable(
   (table) => [index("idx_indexnow_submissions_timestamp").on(table.timestamp)]
 );
 
+// URL Domain Classifications — see drizzle/0036_add_url_domain_classifications.sql
+// Gates which outbound URLs are legitimate as ticket / application destinations
+// or as ingestion sources. Three independent flags handle context asymmetry
+// (Eventbrite is a fine ticket dest but not a source; fairsandfestivals.net is
+// the inverse). Fail-open: unknown domains pass through. See src/lib/url-classification.ts.
+export const urlDomainClassifications = sqliteTable(
+  "url_domain_classifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    domain: text("domain").notNull().unique(),
+    domainType: text("domain_type").notNull(),
+    useAsTicketUrl: integer("use_as_ticket_url", { mode: "boolean" }).notNull().default(false),
+    useAsApplicationUrl: integer("use_as_application_url", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    useAsSource: integer("use_as_source", { mode: "boolean" }).notNull().default(false),
+    notes: text("notes"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    createdBy: text("created_by"),
+  },
+  (table) => [index("idx_udc_domain_type").on(table.domainType)]
+);
+
 // Error Logs table
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
@@ -675,3 +701,4 @@ export type HealthIssue = typeof healthIssues.$inferSelect;
 export type HealthIssueSnooze = typeof healthIssueSnoozes.$inferSelect;
 export type GscInspectionState = typeof gscInspectionState.$inferSelect;
 export type IndexnowSubmission = typeof indexnowSubmissions.$inferSelect;
+export type UrlDomainClassification = typeof urlDomainClassifications.$inferSelect;

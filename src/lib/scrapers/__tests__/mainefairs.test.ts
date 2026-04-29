@@ -39,8 +39,9 @@ describe("decodeHtmlEntities", () => {
   });
 
   it("handles mixed entities", () => {
-    expect(decodeHtmlEntities("Tom &amp; Jerry&#039;s &quot;Show&quot;"))
-      .toBe("Tom & Jerry's \"Show\"");
+    expect(decodeHtmlEntities("Tom &amp; Jerry&#039;s &quot;Show&quot;")).toBe(
+      'Tom & Jerry\'s "Show"'
+    );
   });
 
   it("leaves non-entity text unchanged", () => {
@@ -157,8 +158,8 @@ describe("scrapeMaineFairs", () => {
 
     expect(result.success).toBe(true);
     expect(result.events.length).toBe(2);
-    expect(result.events.map(e => e.name)).toContain("County Fair Festival");
-    expect(result.events.map(e => e.name)).toContain("Harvest Show Exhibition");
+    expect(result.events.map((e) => e.name)).toContain("County Fair Festival");
+    expect(result.events.map((e) => e.name)).toContain("Harvest Show Exhibition");
   });
 
   it("handles HTML entities in event names", async () => {
@@ -185,6 +186,60 @@ describe("scrapeMaineFairs", () => {
     }
   });
 
+  // The mainefairs.net detail page is not a legitimate ticket destination —
+  // see drizzle/0036_add_url_domain_classifications.sql. Both the primary and
+  // fallback parsers must leave ticketUrl unset so the URL classification gate
+  // doesn't have to clean up after the scraper.
+  it("does not assign the mainefairs detail URL as ticketUrl (primary parser)", async () => {
+    const mockHtml = `
+      <div class="tribe-events-calendar-list__event-date-tag">
+      </div>
+      <div>
+        <a href="https://mainefairs.net/event/no-ticket-fair/" class="tribe-events-calendar-list__event-title-link">
+          No Ticket Fair
+        </a>
+      </div>
+    `;
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve(mockHtml),
+    });
+
+    const result = await scrapeMaineFairs();
+
+    expect(result.success).toBe(true);
+    expect(result.events.length).toBeGreaterThanOrEqual(1);
+    for (const event of result.events) {
+      expect(event.ticketUrl).toBeUndefined();
+      expect(event.sourceUrl).toContain("mainefairs.net");
+    }
+  });
+
+  it("does not assign the mainefairs detail URL as ticketUrl (fallback parser)", async () => {
+    const mockHtml = `
+      <html>
+        <body>
+          <a href="https://mainefairs.net/event/county-fair/">County Fair Festival</a>
+          <a href="https://mainefairs.net/event/harvest-show/">Harvest Show Exhibition</a>
+        </body>
+      </html>
+    `;
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve(mockHtml),
+    });
+
+    const result = await scrapeMaineFairs();
+
+    expect(result.success).toBe(true);
+    expect(result.events.length).toBe(2);
+    for (const event of result.events) {
+      expect(event.ticketUrl).toBeUndefined();
+    }
+  });
+
   it("deduplicates events by sourceId", async () => {
     const mockHtml = `
       <html>
@@ -203,7 +258,7 @@ describe("scrapeMaineFairs", () => {
     const result = await scrapeMaineFairs();
 
     expect(result.success).toBe(true);
-    expect(result.events.filter(e => e.sourceId === "county-fair").length).toBe(1);
+    expect(result.events.filter((e) => e.sourceId === "county-fair").length).toBe(1);
   });
 });
 

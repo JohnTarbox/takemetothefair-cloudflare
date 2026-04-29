@@ -5,6 +5,7 @@ import { isAuthorized } from "@/lib/api-auth";
 import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { inArray, eq } from "drizzle-orm";
+import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 
 export const runtime = "edge";
 
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.json() as { event_ids?: string[] };
+    const body = (await request.json()) as { event_ids?: string[] };
     const eventIds = body.event_ids;
 
     if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0) {
@@ -27,10 +28,7 @@ export async function POST(request: Request) {
     }
 
     if (eventIds.length > 50) {
-      return NextResponse.json(
-        { error: "Maximum 50 events per request" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Maximum 50 events per request" }, { status: 400 });
     }
 
     // Fetch the requested events
@@ -63,6 +61,10 @@ export async function POST(request: Request) {
         error?: string;
       }[],
     };
+
+    // Load classifications once for the whole batch — used to gate any
+    // detail-scraped website URL before assigning it to ticket_url.
+    const urlClassifications = await loadClassifications(db);
 
     for (const event of targetEvents) {
       // Skip events without source info
@@ -101,16 +103,14 @@ export async function POST(request: Request) {
         }
         if (
           details.startDate &&
-          (!event.startDate ||
-            details.startDate.getTime() !== new Date(event.startDate).getTime())
+          (!event.startDate || details.startDate.getTime() !== new Date(event.startDate).getTime())
         ) {
           updates.startDate = details.startDate;
           fieldsUpdated.push("startDate");
         }
         if (
           details.endDate &&
-          (!event.endDate ||
-            details.endDate.getTime() !== new Date(event.endDate).getTime())
+          (!event.endDate || details.endDate.getTime() !== new Date(event.endDate).getTime())
         ) {
           updates.endDate = details.endDate;
           fieldsUpdated.push("endDate");
@@ -120,8 +120,13 @@ export async function POST(request: Request) {
           fieldsUpdated.push("imageUrl");
         }
         if (details.website && details.website !== event.ticketUrl) {
-          updates.ticketUrl = details.website;
-          fieldsUpdated.push("ticketUrl");
+          // Gate detail-scraped URL against classification — otherwise rescrape
+          // re-introduces aggregator URLs to events that were manually cleaned.
+          const gatedWebsite = gateUrlForField(details.website, "ticket", urlClassifications);
+          if (gatedWebsite !== event.ticketUrl) {
+            updates.ticketUrl = gatedWebsite;
+            fieldsUpdated.push("ticketUrl");
+          }
         }
 
         if (fieldsUpdated.length > 0) {
@@ -137,10 +142,7 @@ export async function POST(request: Request) {
           });
         } else {
           // Update sync timestamp even if nothing changed
-          await db
-            .update(events)
-            .set({ lastSyncedAt: new Date() })
-            .where(eq(events.id, event.id));
+          await db.update(events).set({ lastSyncedAt: new Date() }).where(eq(events.id, event.id));
           results.skipped++;
           results.details.push({
             id: event.id,
@@ -183,9 +185,6 @@ export async function POST(request: Request) {
       source: "api/admin/import/rescrape-events",
       request,
     });
-    return NextResponse.json(
-      { error: "Failed to re-scrape events" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to re-scrape events" }, { status: 500 });
   }
 }

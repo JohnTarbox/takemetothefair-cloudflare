@@ -10,6 +10,11 @@ import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
+import {
+  loadClassifications,
+  gateUrlForField,
+  shouldIngestFromSource,
+} from "@/lib/url-classification";
 
 // Helper function to find or create a venue
 // Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
@@ -279,8 +284,21 @@ export async function POST(request: Request) {
       updatedEvents: [] as { id: string; name: string; slug: string }[],
     };
 
+    // Load URL domain classifications once for the whole batch — used to gate
+    // ticket_url and source_url against known-aggregator domains.
+    const urlClassifications = await loadClassifications(db);
+
     for (const event of eventsToImport) {
       try {
+        // Source-level skip: if the event's source domain is classified with
+        // use_as_source=0, refuse to ingest. Distinct from field-level gating
+        // (which only nulls the field) — bad-source events shouldn't enter the DB.
+        if (!shouldIngestFromSource(event.sourceUrl, urlClassifications)) {
+          results.skipped++;
+          results.errors.push(`Skipped ${event.name}: source domain blocked by classification`);
+          continue;
+        }
+
         // Check if event already exists
         const existing = await db
           .select()
@@ -389,7 +407,11 @@ export async function POST(request: Request) {
             const updateData: Record<string, unknown> = {
               name: decodedEventName,
               description: decodedDescription,
-              ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,
+              ticketUrl: gateUrlForField(
+                eventData.website || eventData.ticketUrl || eventData.sourceUrl,
+                "ticket",
+                urlClassifications
+              ),
               imageUrl: eventData.imageUrl || existing[0].imageUrl,
               venueId: eventVenueId,
               lastSyncedAt: new Date(),
@@ -459,7 +481,11 @@ export async function POST(request: Request) {
           datesConfirmed: eventData.datesConfirmed ?? (eventData.startDate ? true : false),
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
-          ticketUrl: eventData.website || eventData.ticketUrl || eventData.sourceUrl,
+          ticketUrl: gateUrlForField(
+            eventData.website || eventData.ticketUrl || eventData.sourceUrl,
+            "ticket",
+            urlClassifications
+          ),
           imageUrl: eventData.imageUrl,
           status: "APPROVED",
           sourceName: eventData.sourceName,

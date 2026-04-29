@@ -388,6 +388,26 @@ export const errorLogs = sqliteTable("error_logs", {
   source: text("source"),
 });
 
+// URL Domain Classifications — see main-app src/lib/db/schema.ts urlDomainClassifications
+// and drizzle/0036_add_url_domain_classifications.sql. Kept in sync manually.
+// Used by mcp-server/src/url-classification.ts to gate URL writes from MCP tools.
+export const urlDomainClassifications = sqliteTable("url_domain_classifications", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  domain: text("domain").notNull().unique(),
+  domainType: text("domain_type").notNull(),
+  useAsTicketUrl: integer("use_as_ticket_url", { mode: "boolean" }).notNull().default(false),
+  useAsApplicationUrl: integer("use_as_application_url", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  useAsSource: integer("use_as_source", { mode: "boolean" }).notNull().default(false),
+  notes: text("notes"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  createdBy: text("created_by"),
+});
+
 // Content link index — see main-app src/lib/db/schema.ts contentLinks for
 // full documentation. Kept in sync manually.
 export const contentLinks = sqliteTable("content_links", {

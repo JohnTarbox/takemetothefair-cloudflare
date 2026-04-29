@@ -22,6 +22,7 @@ import {
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { loadClassifications, gateUrlForField } from "../url-classification.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -342,6 +343,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       venue_zip: z.string().optional().describe("Update linked venue's ZIP code"),
     },
     async (params) => {
+      // Load URL domain classifications once so the ticket_url / application_url
+      // transforms below can gate against known-aggregator domains.
+      // See mcp-server/src/url-classification.ts.
+      const urlClassifications = await loadClassifications(db);
+
       // Field mapping: snake_case param → camelCase Drizzle column + optional transform
       const fieldMap: Array<{
         param: string;
@@ -352,7 +358,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "venue_id", column: "venueId" },
         { param: "promoter_id", column: "promoterId" },
         { param: "dates_confirmed", column: "datesConfirmed" },
-        { param: "ticket_url", column: "ticketUrl" },
+        {
+          param: "ticket_url",
+          column: "ticketUrl",
+          transform: (v: string) => gateUrlForField(v, "ticket", urlClassifications),
+        },
         { param: "ticket_price_min", column: "ticketPriceMin" },
         { param: "ticket_price_max", column: "ticketPriceMax" },
         { param: "image_url", column: "imageUrl" },
@@ -369,7 +379,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           column: "applicationDeadline",
           transform: (v: string) => new Date(v),
         },
-        { param: "application_url", column: "applicationUrl" },
+        {
+          param: "application_url",
+          column: "applicationUrl",
+          transform: (v: string) => gateUrlForField(v, "application", urlClassifications),
+        },
         { param: "application_instructions", column: "applicationInstructions" },
         { param: "walk_ins_allowed", column: "walkInsAllowed" },
         { param: "source_url", column: "sourceUrl" },

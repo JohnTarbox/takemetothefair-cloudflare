@@ -5,6 +5,7 @@ import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
 import { parseJsonArray, formatDateRange, jsonContent, decodeHtmlEntities } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import { gateUrlOnce } from "../url-classification.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
@@ -751,6 +752,10 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         }
       }
 
+      // Gate the agent-supplied ticket URL against the domain classification
+      // table so MCP-driven suggestions can't reintroduce aggregator URLs.
+      const gatedTicketUrl = await gateUrlOnce(db, params.ticket_url, "ticket");
+
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
         id: eventId,
@@ -764,7 +769,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         datesConfirmed: startDate !== null,
         categories: JSON.stringify(["Event"]),
         tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
-        ticketUrl: params.ticket_url || null,
+        ticketUrl: gatedTicketUrl,
         status: "TENTATIVE",
         sourceName: "vendor-submission",
         sourceUrl: params.source_url || null,

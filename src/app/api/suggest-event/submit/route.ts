@@ -10,6 +10,7 @@ import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
+import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 
 export const runtime = "edge";
 
@@ -174,6 +175,21 @@ export async function POST(request: NextRequest) {
         ? ["community-suggestion", "vendor-submission"]
         : ["community-suggestion"];
 
+    // Gate URLs against the domain classification table — community/vendor
+    // submissions can include arbitrary URLs, so we filter aggregator domains
+    // out of ticket_url and application_url before insert.
+    const urlClassifications = await loadClassifications(db);
+    const gatedTicketUrl = gateUrlForField(
+      data.ticketUrl || data.sourceUrl || null,
+      "ticket",
+      urlClassifications
+    );
+    const gatedApplicationUrl = gateUrlForField(
+      data.applicationUrl ?? null,
+      "application",
+      urlClassifications
+    );
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -200,7 +216,7 @@ export async function POST(request: NextRequest) {
           : (inferCategoriesFromName(data.name) ?? ["Event"])
       ),
       tags: JSON.stringify(tagList),
-      ticketUrl: data.ticketUrl || data.sourceUrl || null,
+      ticketUrl: gatedTicketUrl,
       ticketPriceMin: data.ticketPriceMin ?? null,
       ticketPriceMax: data.ticketPriceMax ?? null,
       imageUrl: data.imageUrl || null,
@@ -218,7 +234,7 @@ export async function POST(request: NextRequest) {
       indoorOutdoor: data.indoorOutdoor ?? null,
       estimatedAttendance: data.estimatedAttendance ?? null,
       eventScale: data.eventScale ?? null,
-      applicationUrl: data.applicationUrl ?? null,
+      applicationUrl: gatedApplicationUrl,
       walkInsAllowed: data.walkInsAllowed ?? null,
     });
 

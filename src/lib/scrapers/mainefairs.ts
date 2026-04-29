@@ -61,7 +61,7 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
 // Extract slug from URL like "/event/springfield-fair/"
 function extractSlugFromUrl(url: string): string {
   const match = url.match(/\/event\/([^/]+)/);
-  return match ? match[1] : url.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  return match ? match[1] : url.replace(/[^a-z0-9]/gi, "-").toLowerCase();
 }
 
 export async function scrapeMaineFairs(): Promise<ScrapeResult> {
@@ -72,7 +72,7 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
     // Fetch the calendar page
     const response = await fetchWithTimeout(CALENDAR_URL, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
+        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
       },
       timeoutMs: 15000,
     });
@@ -98,17 +98,23 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
     // Match event links with their URLs
     // Find all event sections - they typically have a date marker followed by event info
     // Split by date markers
-    const sections = html.split(/<div[^>]*class="[^"]*tribe-events-calendar-list__event-date-tag[^"]*"[^>]*>/i);
+    const sections = html.split(
+      /<div[^>]*class="[^"]*tribe-events-calendar-list__event-date-tag[^"]*"[^>]*>/i
+    );
 
     for (let i = 1; i < sections.length; i++) {
       const section = sections[i];
 
       // Find event link in this section
-      const linkMatch = section.match(/<a[^>]*href="(https:\/\/mainefairs\.net\/event\/[^"]+)"[^>]*class="[^"]*tribe-events-calendar-list__event-title-link[^"]*"[^>]*>([^<]+)<\/a>/i);
+      const linkMatch = section.match(
+        /<a[^>]*href="(https:\/\/mainefairs\.net\/event\/[^"]+)"[^>]*class="[^"]*tribe-events-calendar-list__event-title-link[^"]*"[^>]*>([^<]+)<\/a>/i
+      );
 
       if (!linkMatch) {
         // Try alternative pattern
-        const altLinkMatch = section.match(/<a[^>]*href="(https:\/\/mainefairs\.net\/event\/[^"]+)"[^>]*>([^<]+)<\/a>/i);
+        const altLinkMatch = section.match(
+          /<a[^>]*href="(https:\/\/mainefairs\.net\/event\/[^"]+)"[^>]*>([^<]+)<\/a>/i
+        );
         if (!altLinkMatch) continue;
       }
 
@@ -118,8 +124,8 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
       if (!eventName || !eventUrl) continue;
 
       // Find date in this section
-      const dateMatch = section.match(/(\w+\s+\d+)\s*[-–]\s*(\w+\s+\d+)/i) ||
-                        section.match(/(\w+\s+\d+)/i);
+      const dateMatch =
+        section.match(/(\w+\s+\d+)\s*[-–]\s*(\w+\s+\d+)/i) || section.match(/(\w+\s+\d+)/i);
 
       let startDate = new Date();
       let endDate = new Date();
@@ -141,6 +147,11 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
 
       const sourceId = extractSlugFromUrl(eventUrl);
 
+      // Don't set ticketUrl: the mainefairs.net detail page is not a ticket
+      // URL. Detail-fetch later may discover a real promoter website to use
+      // (see scrapeEventDetails). The downstream ingestion gate
+      // (src/lib/url-classification.ts) would null this out anyway since
+      // mainefairs.net is classified as an aggregator.
       events.push({
         sourceId,
         sourceName: SOURCE_NAME,
@@ -149,7 +160,6 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
         startDate,
         endDate,
         imageUrl,
-        ticketUrl: eventUrl,
         state: "ME", // Maine fairs
       });
     }
@@ -157,18 +167,21 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
     // If the above parsing didn't work well, try a simpler approach
     if (events.length === 0) {
       // Look for all event links
-      const allLinks = html.matchAll(/<a[^>]*href="(https:\/\/mainefairs\.net\/event\/([^"]+))"[^>]*>([^<]*(?:Fair|Festival|Show|Exhibition)[^<]*)<\/a>/gi);
+      const allLinks = html.matchAll(
+        /<a[^>]*href="(https:\/\/mainefairs\.net\/event\/([^"]+))"[^>]*>([^<]*(?:Fair|Festival|Show|Exhibition)[^<]*)<\/a>/gi
+      );
 
       for (const match of allLinks) {
         const eventUrl = match[1];
-        const slug = match[2].replace(/\/$/, '');
+        const slug = match[2].replace(/\/$/, "");
         const eventName = decodeHtmlEntities(match[3].trim());
 
         if (!eventName) continue;
 
         // Check if we already have this event
-        if (events.some(e => e.sourceId === slug)) continue;
+        if (events.some((e) => e.sourceId === slug)) continue;
 
+        // Same fallback path; same reasoning — don't set ticketUrl.
         events.push({
           sourceId: slug,
           sourceName: SOURCE_NAME,
@@ -176,7 +189,6 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
           name: eventName,
           startDate: new Date(),
           endDate: new Date(),
-          ticketUrl: eventUrl,
           state: "ME",
         });
       }
@@ -200,7 +212,7 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
   try {
     const response = await fetchWithTimeout(eventUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
+        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
       },
       timeoutMs: 15000,
     });
@@ -213,18 +225,20 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
     const details: Partial<ScrapedEvent> = {};
 
     // First, try to extract dates from JSON-LD structured data (most reliable)
-    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+    const jsonLdMatch = html.match(
+      /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi
+    );
     if (jsonLdMatch) {
       for (const match of jsonLdMatch) {
         try {
-          const jsonContent = match.replace(/<script[^>]*>|<\/script>/gi, '').trim();
+          const jsonContent = match.replace(/<script[^>]*>|<\/script>/gi, "").trim();
           const data = JSON.parse(jsonContent);
 
           // Handle both single object and array of objects
           const items = Array.isArray(data) ? data : [data];
 
           for (const item of items) {
-            if (item['@type'] === 'Event' || item.startDate) {
+            if (item["@type"] === "Event" || item.startDate) {
               if (item.startDate) {
                 const start = new Date(item.startDate);
                 if (!isNaN(start.getTime())) {
@@ -241,22 +255,27 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
                 details.description = String(item.description).slice(0, 5000);
               }
               if (item.image && !details.imageUrl) {
-                details.imageUrl = typeof item.image === 'string' ? item.image : item.image?.url;
+                details.imageUrl = typeof item.image === "string" ? item.image : item.image?.url;
               }
               if (item.location) {
-                if (typeof item.location === 'object') {
+                if (typeof item.location === "object") {
                   details.location = item.location.name;
                   if (item.location.address) {
                     const addr = item.location.address;
                     details.city = addr.addressLocality;
                     details.state = addr.addressRegion;
-                    details.address = [addr.streetAddress, addr.addressLocality, addr.addressRegion, addr.postalCode]
+                    details.address = [
+                      addr.streetAddress,
+                      addr.addressLocality,
+                      addr.addressRegion,
+                      addr.postalCode,
+                    ]
                       .filter(Boolean)
-                      .join(', ');
+                      .join(", ");
 
                     // Build venue object with full details
                     details.venue = {
-                      name: item.location.name || details.location || '',
+                      name: item.location.name || details.location || "",
                       streetAddress: addr.streetAddress,
                       city: addr.addressLocality,
                       state: addr.addressRegion,
@@ -266,13 +285,13 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
                     // Location without detailed address
                     details.venue = {
                       name: item.location.name,
-                      state: 'ME', // Default to Maine for mainefairs.net
+                      state: "ME", // Default to Maine for mainefairs.net
                     };
                   }
                 }
               }
               // Extract website URL from JSON-LD if available (skip mainefairs.net URLs)
-              if (item.url && !details.website && !item.url.includes('mainefairs.net')) {
+              if (item.url && !details.website && !item.url.includes("mainefairs.net")) {
                 details.website = item.url;
               }
               break;
@@ -286,11 +305,13 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
 
     // Fallback: Try to extract description from HTML if not found in JSON-LD
     if (!details.description) {
-      const descMatch = html.match(/<div[^>]*class="[^"]*tribe-events-single-event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+      const descMatch = html.match(
+        /<div[^>]*class="[^"]*tribe-events-single-event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i
+      );
       if (descMatch) {
         details.description = descMatch[1]
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s+/g, ' ')
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
           .trim()
           .slice(0, 2000);
       }
@@ -298,7 +319,9 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
 
     // Fallback: Try to extract venue/location from HTML
     if (!details.location) {
-      const venueMatch = html.match(/<span[^>]*class="[^"]*tribe-venue[^"]*"[^>]*>([^<]+)<\/span>/i);
+      const venueMatch = html.match(
+        /<span[^>]*class="[^"]*tribe-venue[^"]*"[^>]*>([^<]+)<\/span>/i
+      );
       if (venueMatch) {
         details.location = venueMatch[1].trim();
       }
@@ -316,22 +339,28 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
     if (!details.website) {
       // Pattern 1: tribe-events-event-url span containing the link (mainefairs.net specific)
       // <span class="tribe-events-event-url tribe-events-meta-value"> <a href="...">
-      const tribeUrlMatch = html.match(/<span[^>]*class="[^"]*tribe-events-event-url\s+tribe-events-meta-value[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"/i);
+      const tribeUrlMatch = html.match(
+        /<span[^>]*class="[^"]*tribe-events-event-url\s+tribe-events-meta-value[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"/i
+      );
       if (tribeUrlMatch) {
         details.website = tribeUrlMatch[1];
       } else {
         // Pattern 2: Look for Website: label then find next anchor href (handles newlines)
         const websiteSectionMatch = html.match(/Website:?<\/span>[\s\S]*?<a[^>]*href="([^"]+)"/i);
-        if (websiteSectionMatch && !websiteSectionMatch[1].includes('mainefairs.net')) {
+        if (websiteSectionMatch && !websiteSectionMatch[1].includes("mainefairs.net")) {
           details.website = websiteSectionMatch[1];
         } else {
           // Pattern 3: "Website:" followed by closing tag then anchor tag
-          const websiteMatch = html.match(/Website:?\s*<\/?\w+[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+          const websiteMatch = html.match(
+            /Website:?\s*<\/?\w+[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i
+          );
           if (websiteMatch) {
             details.website = websiteMatch[1];
           } else {
             // Pattern 4: dt/dd pattern for Website
-            const dtDdMatch = html.match(/<dt[^>]*>Website:?<\/dt>\s*<dd[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i);
+            const dtDdMatch = html.match(
+              /<dt[^>]*>Website:?<\/dt>\s*<dd[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>/i
+            );
             if (dtDdMatch) {
               details.website = dtDdMatch[1];
             } else {
@@ -351,8 +380,8 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
       const dateMatch = html.match(/(\w+\s+\d+,?\s*\d*)\s*[-–]\s*(\w+\s+\d+,?\s*\d*)/i);
       if (dateMatch) {
         const year = new Date().getFullYear();
-        const startStr = dateMatch[1].includes(',') ? dateMatch[1] : `${dateMatch[1]}, ${year}`;
-        const endStr = dateMatch[2].includes(',') ? dateMatch[2] : `${dateMatch[2]}, ${year}`;
+        const startStr = dateMatch[1].includes(",") ? dateMatch[1] : `${dateMatch[1]}, ${year}`;
+        const endStr = dateMatch[2].includes(",") ? dateMatch[2] : `${dateMatch[2]}, ${year}`;
 
         if (!details.startDate) {
           const start = new Date(startStr);

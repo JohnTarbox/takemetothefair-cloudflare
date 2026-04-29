@@ -10,6 +10,7 @@ import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
+import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 
 export const runtime = "edge";
 
@@ -178,6 +179,15 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = venueRow[0]?.state ?? null;
     }
 
+    // Gate the ticket URL against the domain classification table — same lookup
+    // is reused below for the schema.org audit row.
+    const urlClassifications = await loadClassifications(db);
+    const gatedTicketUrl = gateUrlForField(
+      event.ticketUrl || sourceUrl || null,
+      "ticket",
+      urlClassifications
+    );
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -201,7 +211,7 @@ export async function POST(request: NextRequest) {
           : (inferCategoriesFromName(event.name) ?? ["Event"])
       ),
       tags: JSON.stringify(["imported", "url-import"]),
-      ticketUrl: event.ticketUrl || sourceUrl || null,
+      ticketUrl: gatedTicketUrl,
       ticketPriceMin: event.ticketPriceMin,
       ticketPriceMax: event.ticketPriceMax,
       imageUrl: event.imageUrl,
@@ -275,7 +285,9 @@ export async function POST(request: NextRequest) {
       try {
         const parseResult = parseJsonLd(jsonLd);
         const now = new Date();
-        const ticketUrl = event.ticketUrl || sourceUrl || null;
+        // Use the same gated ticket URL we wrote to events.ticket_url so the
+        // schema.org audit row stays consistent with what we actually link to.
+        const ticketUrl = gatedTicketUrl;
 
         await db.insert(eventSchemaOrg).values({
           id: crypto.randomUUID(),
