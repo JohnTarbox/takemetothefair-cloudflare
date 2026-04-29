@@ -3,8 +3,11 @@ compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = ".vercel/output/static"
 
-[ai]
-binding = "AI"
+# NOTE: This is wrangler.ci.toml — used by next.config.mjs:60 when CI=true.
+# It deliberately omits the [ai] binding (Workers AI requires a Cloudflare
+# remote proxy session, which CI runners aren't logged into). E2E tests don't
+# exercise AI-backed paths, so the missing binding is fine. Local development
+# uses wrangler.toml which keeps [ai].
 
 [[d1_databases]]
 binding = "DB"
