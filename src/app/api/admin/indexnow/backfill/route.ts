@@ -67,7 +67,7 @@ export async function POST(request: Request) {
   ];
 
   const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-  await pingIndexNow(urls, env);
+  await pingIndexNow(db, urls, env, "backfill");
 
   return NextResponse.json({
     success: true,

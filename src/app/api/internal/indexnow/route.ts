@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { pingIndexNow } from "@/lib/indexnow";
 
 export const runtime = "edge";
@@ -40,6 +40,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: "invalid_payload" }, { status: 400 });
   }
 
-  await pingIndexNow(parsed.data.urls, env);
+  const db = getCloudflareDb();
+  await pingIndexNow(db, parsed.data.urls, env, "internal-api");
   return NextResponse.json({ success: true, count: parsed.data.urls.length });
 }

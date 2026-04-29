@@ -207,7 +207,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         .limit(1);
       if (eventRow) {
         const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-        await pingIndexNow(indexNowUrlFor("events", eventRow.slug), env);
+        await pingIndexNow(db, indexNowUrlFor("events", eventRow.slug), env, "admin-event-vendors");
       }
     }
 

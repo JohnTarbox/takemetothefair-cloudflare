@@ -623,6 +623,24 @@ export const gscInspectionState = sqliteTable(
   (table) => [index("idx_gsc_inspection_state_stale").on(table.lastInspectedAt)]
 );
 
+// IndexNow Submissions table — records every pingIndexNow() attempt for observability
+export const indexnowSubmissions = sqliteTable(
+  "indexnow_submissions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    timestamp: integer("timestamp").notNull(),
+    source: text("source").notNull(),
+    urls: text("urls").notNull().default("[]"),
+    urlCount: integer("url_count").notNull().default(0),
+    status: text("status").notNull(),
+    httpStatus: integer("http_status"),
+    errorMessage: text("error_message"),
+  },
+  (table) => [index("idx_indexnow_submissions_timestamp").on(table.timestamp)]
+);
+
 // Error Logs table
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
@@ -656,3 +674,4 @@ export type AnalyticsEvent = typeof analyticsEvents.$inferSelect;
 export type HealthIssue = typeof healthIssues.$inferSelect;
 export type HealthIssueSnooze = typeof healthIssueSnoozes.$inferSelect;
 export type GscInspectionState = typeof gscInspectionState.$inferSelect;
+export type IndexnowSubmission = typeof indexnowSubmissions.$inferSelect;

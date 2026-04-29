@@ -248,7 +248,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     ) {
       const slug = (updateData.slug as string | undefined) ?? currentEvent.slug;
       const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(indexNowUrlFor("events", slug), env);
+      await pingIndexNow(db, indexNowUrlFor("events", slug), env, "admin-event-patch");
     }
 
     return NextResponse.json(updatedEvent);

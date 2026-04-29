@@ -9,8 +9,13 @@
  * src/app/[indexnowKey]/route.ts.
  *
  * NEVER throws to the caller. Logs success/failure to console for wrangler
- * tail observability.
+ * tail observability AND persists every attempt to the indexnow_submissions
+ * table for the /admin/analytics → IndexNow tab.
  */
+
+import { indexnowSubmissions } from "@/lib/db/schema";
+import { lt } from "drizzle-orm";
+import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 const HOST = "meetmeatthefair.com";
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -24,19 +29,63 @@ interface IndexNowEnv {
   INDEXNOW_KEY?: string;
 }
 
-export async function pingIndexNow(urls: string | string[], env: IndexNowEnv): Promise<void> {
-  const key = env.INDEXNOW_KEY;
-  if (!key) {
-    console.warn("[IndexNow] INDEXNOW_KEY not configured — skipping ping");
-    return;
-  }
+type Db = DrizzleD1Database<Record<string, unknown>> | null;
 
+type SubmissionStatus = "success" | "failure" | "no_key" | "no_eligible_urls";
+
+async function recordSubmission(
+  db: Db,
+  source: string,
+  urls: string[],
+  status: SubmissionStatus,
+  httpStatus: number | null,
+  errorMessage: string | null
+): Promise<void> {
+  if (!db) return;
+  try {
+    await db.insert(indexnowSubmissions).values({
+      timestamp: Math.floor(Date.now() / 1000),
+      source,
+      urls: JSON.stringify(urls),
+      urlCount: urls.length,
+      status,
+      httpStatus: httpStatus ?? undefined,
+      errorMessage: errorMessage ?? undefined,
+    });
+
+    // 1% probabilistic cleanup of submissions older than 30 days
+    if (Math.random() < 0.01) {
+      const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 2592000;
+      await db.delete(indexnowSubmissions).where(lt(indexnowSubmissions.timestamp, thirtyDaysAgo));
+    }
+  } catch (err) {
+    // Never throw from the logger
+    console.error("[IndexNow] Failed to persist submission record:", err);
+  }
+}
+
+export async function pingIndexNow(
+  db: Db,
+  urls: string | string[],
+  env: IndexNowEnv,
+  source: string
+): Promise<void> {
+  const key = env.INDEXNOW_KEY;
   const list = Array.isArray(urls) ? urls : [urls];
   const filtered = list
     .map((u) => u?.trim())
     .filter((u): u is string => Boolean(u && u.startsWith(`https://${HOST}/`)));
 
-  if (filtered.length === 0) return;
+  if (!key) {
+    console.warn("[IndexNow] INDEXNOW_KEY not configured — skipping ping");
+    await recordSubmission(db, source, filtered, "no_key", null, null);
+    return;
+  }
+
+  if (filtered.length === 0) {
+    await recordSubmission(db, source, [], "no_eligible_urls", null, null);
+    return;
+  }
 
   try {
     if (filtered.length === 1) {
@@ -50,6 +99,14 @@ export async function pingIndexNow(urls: string | string[], env: IndexNowEnv): P
       });
       const body = response.ok ? "" : (await response.text()).slice(0, 200);
       console.log(`[IndexNow] GET ${filtered[0]} → ${response.status}${body ? " " + body : ""}`);
+      await recordSubmission(
+        db,
+        source,
+        filtered,
+        response.ok ? "success" : "failure",
+        response.status,
+        response.ok ? null : body || `HTTP ${response.status}`
+      );
       return;
     }
 
@@ -70,9 +127,19 @@ export async function pingIndexNow(urls: string | string[], env: IndexNowEnv): P
       console.log(
         `[IndexNow] POST ${chunk.length} URLs → ${response.status}${body ? " " + body : ""}`
       );
+      await recordSubmission(
+        db,
+        source,
+        chunk,
+        response.ok ? "success" : "failure",
+        response.status,
+        response.ok ? null : body || `HTTP ${response.status}`
+      );
     }
   } catch (error) {
     console.error("[IndexNow] Network error:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    await recordSubmission(db, source, filtered, "failure", null, message);
   }
 }
 

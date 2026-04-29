@@ -207,7 +207,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (data.status === "PUBLISHED" && existing.status !== "PUBLISHED") {
       const finalSlug = (updateData.slug as string | undefined) ?? existing.slug;
       const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(indexNowUrlFor("blog", finalSlug), env);
+      await pingIndexNow(db, indexNowUrlFor("blog", finalSlug), env, "blog-patch");
     }
 
     return NextResponse.json({

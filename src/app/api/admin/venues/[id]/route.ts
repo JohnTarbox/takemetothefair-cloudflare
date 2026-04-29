@@ -163,7 +163,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.status === "ACTIVE" && currentVenue.status !== "ACTIVE") {
       const finalSlug = (updateData.slug as string | undefined) ?? currentVenue.slug;
       const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(indexNowUrlFor("venues", finalSlug), env);
+      await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, "admin-venue-patch");
     }
 
     return NextResponse.json(updatedVenue);

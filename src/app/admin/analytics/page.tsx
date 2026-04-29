@@ -3,7 +3,7 @@ import { ExternalLink, RefreshCw, Users, BarChart3 } from "lucide-react";
 import { desc, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { analyticsEvents } from "@/lib/db/schema";
+import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
 import {
   Ga4ApiError,
   Ga4ConfigError,
@@ -45,6 +45,7 @@ const TABS = [
   { key: "bing", label: "Bing" },
   { key: "site-health", label: "Site Health" },
   { key: "first-party-events", label: "First-party events" },
+  { key: "indexnow", label: "IndexNow" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -129,7 +130,107 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
       {tab === "first-party-events" && <FirstPartyEventsTab />}
+      {tab === "indexnow" && <IndexNowTab />}
     </div>
+  );
+}
+
+async function IndexNowTab() {
+  const db = getCloudflareDb();
+  const recent = await db
+    .select()
+    .from(indexnowSubmissions)
+    .orderBy(desc(indexnowSubmissions.timestamp))
+    .limit(25);
+
+  const statusBadge = (status: string) => {
+    const map: Record<string, string> = {
+      success: "bg-green-100 text-green-800",
+      failure: "bg-red-100 text-red-800",
+      no_key: "bg-gray-200 text-gray-700",
+      no_eligible_urls: "bg-yellow-100 text-yellow-800",
+    };
+    const cls = map[status] ?? "bg-gray-100 text-gray-700";
+    return (
+      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
+        {status}
+      </span>
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Recent IndexNow submissions (last 25)</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-600">
+            <tr>
+              <th className="text-left px-6 py-2 font-medium">Time</th>
+              <th className="text-left px-6 py-2 font-medium">Source</th>
+              <th className="text-right px-6 py-2 font-medium">URLs</th>
+              <th className="text-left px-6 py-2 font-medium">Status</th>
+              <th className="text-right px-6 py-2 font-medium">HTTP</th>
+              <th className="text-left px-6 py-2 font-medium">Detail</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {recent.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-6 text-gray-500">
+                  No IndexNow submissions recorded yet. Trigger one by editing a published blog post
+                  or transitioning an event to APPROVED.
+                </td>
+              </tr>
+            ) : (
+              recent.map((row) => {
+                let urlsArr: string[] = [];
+                try {
+                  urlsArr = JSON.parse(row.urls) as string[];
+                } catch {
+                  // leave empty
+                }
+                const firstUrl = urlsArr[0] ?? "";
+                const moreCount = Math.max(0, urlsArr.length - 1);
+                return (
+                  <tr key={row.id} className="align-top">
+                    <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
+                      {new Date(row.timestamp * 1000).toLocaleString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.source}</td>
+                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.urlCount)}</td>
+                    <td className="px-6 py-2">{statusBadge(row.status)}</td>
+                    <td className="px-6 py-2 text-right tabular-nums text-gray-700">
+                      {row.httpStatus ?? "—"}
+                    </td>
+                    <td className="px-6 py-2 text-xs text-gray-700 break-all max-w-md">
+                      {row.errorMessage ? (
+                        <span className="text-red-700">{row.errorMessage}</span>
+                      ) : firstUrl ? (
+                        <span>
+                          <span className="font-mono">{firstUrl}</span>
+                          {moreCount > 0 && (
+                            <span className="text-gray-500"> +{moreCount} more</span>
+                          )}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   );
 }
 
