@@ -144,16 +144,26 @@ export async function runReport(
 
   if (!res.ok) {
     const text = await res.text();
-    let detail = text.slice(0, 500);
+    let detail: string;
     try {
       const parsed = JSON.parse(text) as {
         error?: { status?: string; message?: string };
       };
       if (parsed?.error?.message) {
-        detail = `${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+        detail = `HTTP ${res.status} ${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+      } else {
+        detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
       }
     } catch {
-      /* keep raw text as detail */
+      // Non-JSON body (e.g. Google's HTML "Sorry / unusual traffic"
+      // interstitial). Report the status and content-type so the failure mode
+      // is identifiable without grepping the raw HTML.
+      const looksHtml = /^\s*<(html|!doctype)/i.test(text);
+      if (looksHtml) {
+        detail = `HTTP ${res.status} from analyticsdata.googleapis.com (HTML interstitial — likely transient Google rate-limit or anti-abuse page; try Refresh data or wait a few minutes)`;
+      } else {
+        detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
+      }
     }
     throw new Ga4ApiError(res.status, detail);
   }
