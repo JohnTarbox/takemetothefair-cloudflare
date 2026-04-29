@@ -82,7 +82,7 @@ jobs:
 
       - name: Create issue on failure
         if: steps.health.outputs.healthy == 'false' || steps.homepage.outputs.healthy == 'false' || steps.sitemap.outputs.healthy == 'false' || steps.robots.outputs.healthy == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const healthCode = '${{ steps.health.outputs.http_code }}';
