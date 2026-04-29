@@ -150,12 +150,12 @@ export default function ForVendorsPage() {
           your business grow.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
-          <a
+          <Link
             href="/login"
             className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
           >
             Get Started
-          </a>
+          </Link>
           <Link
             href="/events"
             className="inline-flex items-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
