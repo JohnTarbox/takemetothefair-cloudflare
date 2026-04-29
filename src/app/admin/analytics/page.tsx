@@ -191,8 +191,6 @@ async function IndexNowTab() {
                 } catch {
                   // leave empty
                 }
-                const firstUrl = urlsArr[0] ?? "";
-                const moreCount = Math.max(0, urlsArr.length - 1);
                 return (
                   <tr key={row.id} className="align-top">
                     <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
@@ -212,15 +210,41 @@ async function IndexNowTab() {
                     <td className="px-6 py-2 text-xs text-gray-700 break-all max-w-md">
                       {row.errorMessage ? (
                         <span className="text-red-700">{row.errorMessage}</span>
-                      ) : firstUrl ? (
-                        <span>
-                          <span className="font-mono">{firstUrl}</span>
-                          {moreCount > 0 && (
-                            <span className="text-gray-500"> +{moreCount} more</span>
-                          )}
-                        </span>
-                      ) : (
+                      ) : urlsArr.length === 0 ? (
                         "—"
+                      ) : urlsArr.length === 1 ? (
+                        <a
+                          href={urlsArr[0]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-blue-700 hover:underline"
+                        >
+                          {urlsArr[0]}
+                        </a>
+                      ) : (
+                        <details className="cursor-pointer">
+                          <summary className="select-none">
+                            <span className="font-mono">{urlsArr[0]}</span>
+                            <span className="text-gray-500">
+                              {" "}
+                              +{urlsArr.length - 1} more (click to expand)
+                            </span>
+                          </summary>
+                          <ul className="mt-2 space-y-1 pl-4 border-l-2 border-gray-200">
+                            {urlsArr.map((url, i) => (
+                              <li key={i} className="font-mono break-all">
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-700 hover:underline"
+                                >
+                                  {url}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
                       )}
                     </td>
                   </tr>
