@@ -1091,7 +1091,13 @@ function BingErrorPanel({
 async function SiteHealthTab() {
   const db = getCloudflareDb();
   const { getCurrentIssues } = await import("@/lib/site-health");
-  const issues = await getCurrentIssues(db, { hideSnoozed: false });
+  const { getUnclassifiedOutboundDestinations } =
+    await import("@/lib/url-classification-discovery");
+  const { ClassifyDomainButtons } = await import("@/components/admin/classify-domain-buttons");
+  const [issues, unclassifiedDestinations] = await Promise.all([
+    getCurrentIssues(db, { hideSnoozed: false }),
+    getUnclassifiedOutboundDestinations(db, { days: 7, minClicks: 5 }),
+  ]);
   const now = Math.floor(Date.now() / 1000);
   const activeSnoozeCount = issues.filter((i) => i.snoozedUntil && i.snoozedUntil > now).length;
   const errorCount = issues.filter(
@@ -1211,6 +1217,68 @@ async function SiteHealthTab() {
         <code>snooze_site_health_issue</code> MCP tools. A UI control row can layer on top in a
         follow-up.
       </p>
+
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle>Unclassified outbound destinations</CardTitle>
+          <p className="text-sm text-gray-600 mt-1">
+            Domains that received outbound ticket clicks in the last 7 days but aren&apos;t in{" "}
+            <code>url_domain_classifications</code> yet. Classify each one so the ingestion gate
+            (see <code>src/lib/url-classification.ts</code>) knows whether it&apos;s a legitimate
+            ticket destination, a promoter, an aggregator to block, etc.
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Domain</th>
+                <th className="text-right px-6 py-2 font-medium">7d clicks</th>
+                <th className="text-left px-6 py-2 font-medium">Sample event</th>
+                <th className="text-left px-6 py-2 font-medium">Classify as</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {unclassifiedDestinations.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-6 text-gray-500">
+                    No unclassified destinations with 5+ clicks in the last 7 days. The gate is
+                    holding.
+                  </td>
+                </tr>
+              ) : (
+                unclassifiedDestinations.map((row) => (
+                  <tr key={row.domain} className="align-top">
+                    <td className="px-6 py-3 font-mono text-xs text-gray-900 break-all">
+                      {row.domain}
+                    </td>
+                    <td className="px-6 py-3 text-right tabular-nums font-medium">
+                      {fmt(row.clicks)}
+                    </td>
+                    <td className="px-6 py-3 text-gray-700 break-all max-w-xs">
+                      {row.sampleEventSlug ? (
+                        <Link
+                          href={`/events/${row.sampleEventSlug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline font-mono text-xs"
+                        >
+                          {row.sampleEventSlug}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-6 py-3">
+                      <ClassifyDomainButtons domain={row.domain} />
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
     </>
   );
 }
