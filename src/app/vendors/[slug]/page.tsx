@@ -1,8 +1,7 @@
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
-  Store,
   Globe,
   CheckCircle,
   Calendar,
@@ -19,8 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { formatDateRange } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, users, eventVendors, events, venues } from "@/lib/db/schema";
-import { eq, and, asc } from "drizzle-orm";
+import { vendors, users, eventVendors, events, venues, vendorSlugHistory } from "@/lib/db/schema";
+import { eq, and, asc, desc } from "drizzle-orm";
+import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
+import { VendorContactForm } from "@/components/vendors/VendorContactForm";
+import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
@@ -39,6 +41,32 @@ export const revalidate = 300; // Cache for 5 minutes
 
 interface Props {
   params: Promise<{ slug: string }>;
+}
+
+/**
+ * Walks vendor_slug_history to find the current slug for a moved vendor.
+ * Returns null if the input slug isn't a known historical slug. Follows
+ * chains up to MAX_HOPS in case of consecutive renames.
+ */
+async function findCurrentSlugForOld(slug: string): Promise<string | null> {
+  const db = getCloudflareDb();
+  const MAX_HOPS = 5;
+  let cursor = slug;
+  for (let hop = 0; hop < MAX_HOPS; hop++) {
+    const rows = await db
+      .select({ newSlug: vendorSlugHistory.newSlug })
+      .from(vendorSlugHistory)
+      .where(eq(vendorSlugHistory.oldSlug, cursor))
+      .orderBy(desc(vendorSlugHistory.changedAt))
+      .limit(1);
+    if (rows.length === 0) {
+      // We've followed the chain to its end. cursor is either the original
+      // slug (no hops happened) or the latest known new_slug.
+      return hop === 0 ? null : cursor;
+    }
+    cursor = rows[0].newSlug;
+  }
+  return cursor;
 }
 
 async function getVendor(slug: string) {
@@ -148,6 +176,12 @@ export default async function VendorDetailPage({ params }: Props) {
   const vendor = await getVendor(slug);
 
   if (!vendor) {
+    // Before giving up, check the slug history table — if this URL was a
+    // previous slug for an existing vendor, 301-redirect to the current.
+    const currentSlug = await findCurrentSlugForOld(slug);
+    if (currentSlug) {
+      permanentRedirect(`/vendors/${currentSlug}`);
+    }
     notFound();
   }
 
@@ -172,6 +206,20 @@ export default async function VendorDetailPage({ params }: Props) {
   const products = parseJsonArray(vendor.products);
   const paymentMethods = parseJsonArray(vendor.paymentMethods);
 
+  // Enhanced Profile state — drives several render branches below.
+  const isEnhanced = !!vendor.enhancedProfile;
+  let galleryImages: GalleryImage[] = [];
+  try {
+    const parsed = JSON.parse(vendor.galleryImages || "[]");
+    if (Array.isArray(parsed)) galleryImages = parsed.slice(0, 2);
+  } catch {
+    // malformed JSON in gallery_images; treat as empty rather than throw
+  }
+  const expiresAt = vendor.enhancedProfileExpiresAt
+    ? new Date(vendor.enhancedProfileExpiresAt)
+    : null;
+  const inGrace = isEnhanced && expiresAt !== null && expiresAt.getTime() < now.getTime();
+
   return (
     <>
       <DetailPageTracker type="vendor" slug={vendor.slug} name={vendor.businessName} />
@@ -192,6 +240,7 @@ export default async function VendorDetailPage({ params }: Props) {
         paymentMethods={paymentMethods}
         socialLinks={vendor.socialLinks as Record<string, string> | null}
         products={products}
+        galleryImageUrls={isEnhanced ? galleryImages.map((g) => g.url) : undefined}
       />
       <BreadcrumbSchema
         items={[
@@ -203,30 +252,79 @@ export default async function VendorDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
-            <div className="flex items-start gap-6">
-              <div className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden">
-                {vendor.logoUrl ? (
-                  <Image
-                    src={vendor.logoUrl}
-                    alt={vendor.businessName}
-                    fill
-                    sizes="96px"
-                    className="object-cover rounded-xl"
-                  />
-                ) : (
-                  <Store className="w-12 h-12 text-gray-400" />
-                )}
+            {isAdmin && inGrace && expiresAt && (
+              <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
+                Enhanced Profile expired {expiresAt.toISOString().slice(0, 10)} — features still
+                visible during the 30-day grace period. Renew or it reverts in{" "}
+                {Math.max(
+                  0,
+                  Math.ceil((expiresAt.getTime() + 30 * 86400000 - now.getTime()) / 86400000)
+                )}{" "}
+                days.
               </div>
+            )}
+
+            <div className="flex items-start gap-6">
+              {isEnhanced ? (
+                <div
+                  className="w-[200px] h-[200px] rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden"
+                  data-testid="vendor-logo-enhanced"
+                >
+                  {vendor.logoUrl ? (
+                    <Image
+                      src={vendor.logoUrl}
+                      alt={vendor.businessName}
+                      fill
+                      sizes="200px"
+                      className="object-cover rounded-xl"
+                    />
+                  ) : (
+                    <VendorTypeIcon
+                      vendorType={vendor.vendorType}
+                      className="text-gray-400"
+                      size={96}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div
+                  className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0"
+                  data-testid="vendor-logo-free"
+                >
+                  <VendorTypeIcon
+                    vendorType={vendor.vendorType}
+                    className="text-gray-400"
+                    size={48}
+                  />
+                </div>
+              )}
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-3xl font-bold text-gray-900">{vendor.businessName}</h1>
-                  {vendor.verified && <CheckCircle className="w-6 h-6 text-royal" />}
+                  {isEnhanced && vendor.verified && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5"
+                      title="This vendor has an active Enhanced Profile subscription on MMATF."
+                    >
+                      <CheckCircle className="w-3 h-3" />
+                      Verified
+                    </span>
+                  )}
                 </div>
                 {vendor.vendorType && (
                   <p className="mt-1 text-lg text-gray-600">{vendor.vendorType}</p>
                 )}
+                {isEnhanced && (
+                  <div className="mt-3">
+                    <VendorContactForm vendorSlug={vendor.slug} vendorName={vendor.businessName} />
+                  </div>
+                )}
               </div>
             </div>
+
+            {isEnhanced && galleryImages.length > 0 && (
+              <VendorGallery images={galleryImages} vendorName={vendor.businessName} />
+            )}
 
             {vendor.description && (
               <div className="prose prose-gray max-w-none">

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { VendorEnhancedProfilePanel } from "@/components/admin/VendorEnhancedProfilePanel";
 
 export const runtime = "edge";
 
@@ -37,6 +38,13 @@ interface Vendor {
   paymentMethods: string | null;
   licenseInfo: string | null;
   insuranceInfo: string | null;
+  // Enhanced Profile (round-3) — read-only display + a child panel
+  // mutates these via PATCH directly.
+  enhancedProfile: boolean;
+  enhancedProfileStartedAt: string | null;
+  enhancedProfileExpiresAt: string | null;
+  galleryImages: string;
+  featuredPriority: number;
 }
 
 export default function EditVendorPage() {
@@ -44,6 +52,7 @@ export default function EditVendorPage() {
   const params = useParams();
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
+  const [vendor, setVendor] = useState<Vendor | null>(null);
   const [formData, setFormData] = useState({
     businessName: "",
     description: "",
@@ -78,7 +87,8 @@ export default function EditVendorPage() {
     try {
       const res = await fetch(`/api/admin/vendors/${params.id}`);
       if (res.ok) {
-        const data = await res.json() as Vendor;
+        const data = (await res.json()) as Vendor;
+        setVendor(data);
         // Parse paymentMethods from JSON string
         let paymentMethods: string[] = [];
         try {
@@ -140,7 +150,7 @@ export default function EditVendorPage() {
       if (res.ok) {
         router.push("/admin/vendors");
       } else {
-        const data = await res.json() as { error?: string };
+        const data = (await res.json()) as { error?: string };
         alert(data.error || "Failed to update vendor");
       }
     } catch (error) {
@@ -172,6 +182,24 @@ export default function EditVendorPage() {
         </Link>
       </div>
 
+      {vendor && (
+        <div className="mb-6">
+          <VendorEnhancedProfilePanel
+            vendorId={vendor.id}
+            enhancedProfile={vendor.enhancedProfile}
+            enhancedProfileStartedAt={
+              vendor.enhancedProfileStartedAt ? new Date(vendor.enhancedProfileStartedAt) : null
+            }
+            enhancedProfileExpiresAt={
+              vendor.enhancedProfileExpiresAt ? new Date(vendor.enhancedProfileExpiresAt) : null
+            }
+            galleryImages={vendor.galleryImages || "[]"}
+            slug={vendor.slug}
+            featuredPriority={vendor.featuredPriority ?? 0}
+          />
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Edit Vendor</CardTitle>
@@ -184,9 +212,7 @@ export default function EditVendorPage() {
                 <Input
                   id="businessName"
                   value={formData.businessName}
-                  onChange={(e) =>
-                    setFormData({ ...formData, businessName: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
                   required
                 />
               </div>
@@ -196,9 +222,7 @@ export default function EditVendorPage() {
                 <Input
                   id="vendorType"
                   value={formData.vendorType}
-                  onChange={(e) =>
-                    setFormData({ ...formData, vendorType: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, vendorType: e.target.value })}
                   placeholder="e.g., Food, Crafts, Services"
                 />
               </div>
@@ -209,9 +233,7 @@ export default function EditVendorPage() {
                   id="website"
                   type="url"
                   value={formData.website}
-                  onChange={(e) =>
-                    setFormData({ ...formData, website: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                   placeholder="https://example.com"
                 />
               </div>
@@ -222,9 +244,7 @@ export default function EditVendorPage() {
               <Textarea
                 id="description"
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 rows={4}
               />
             </div>
@@ -238,9 +258,7 @@ export default function EditVendorPage() {
                   <Input
                     id="contactName"
                     value={formData.contactName}
-                    onChange={(e) =>
-                      setFormData({ ...formData, contactName: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
                     placeholder="Primary contact person"
                   />
                 </div>
@@ -250,9 +268,7 @@ export default function EditVendorPage() {
                     id="contactEmail"
                     type="email"
                     value={formData.contactEmail}
-                    onChange={(e) =>
-                      setFormData({ ...formData, contactEmail: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
                     placeholder="contact@business.com"
                   />
                 </div>
@@ -262,9 +278,7 @@ export default function EditVendorPage() {
                     id="contactPhone"
                     type="tel"
                     value={formData.contactPhone}
-                    onChange={(e) =>
-                      setFormData({ ...formData, contactPhone: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, contactPhone: e.target.value })}
                     placeholder="(555) 123-4567"
                   />
                 </div>
@@ -280,9 +294,7 @@ export default function EditVendorPage() {
                   <Input
                     id="address"
                     value={formData.address}
-                    onChange={(e) =>
-                      setFormData({ ...formData, address: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                     placeholder="123 Main Street"
                   />
                 </div>
@@ -291,9 +303,7 @@ export default function EditVendorPage() {
                   <Input
                     id="city"
                     value={formData.city}
-                    onChange={(e) =>
-                      setFormData({ ...formData, city: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -302,9 +312,7 @@ export default function EditVendorPage() {
                     <Input
                       id="state"
                       value={formData.state}
-                      onChange={(e) =>
-                        setFormData({ ...formData, state: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, state: e.target.value })}
                       placeholder="ME"
                       maxLength={2}
                     />
@@ -314,9 +322,7 @@ export default function EditVendorPage() {
                     <Input
                       id="zip"
                       value={formData.zip}
-                      onChange={(e) =>
-                        setFormData({ ...formData, zip: e.target.value })
-                      }
+                      onChange={(e) => setFormData({ ...formData, zip: e.target.value })}
                       placeholder="04101"
                     />
                   </div>
@@ -334,9 +340,7 @@ export default function EditVendorPage() {
                     id="yearEstablished"
                     type="number"
                     value={formData.yearEstablished}
-                    onChange={(e) =>
-                      setFormData({ ...formData, yearEstablished: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, yearEstablished: e.target.value })}
                     placeholder="2020"
                     min={1800}
                     max={new Date().getFullYear()}
@@ -350,7 +354,10 @@ export default function EditVendorPage() {
                     onChange={(e) =>
                       setFormData({
                         ...formData,
-                        paymentMethods: e.target.value.split(",").map(s => s.trim()).filter(Boolean)
+                        paymentMethods: e.target.value
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean),
                       })
                     }
                     placeholder="Cash, Credit, Venmo"
@@ -362,9 +369,7 @@ export default function EditVendorPage() {
                   <Input
                     id="licenseInfo"
                     value={formData.licenseInfo}
-                    onChange={(e) =>
-                      setFormData({ ...formData, licenseInfo: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, licenseInfo: e.target.value })}
                     placeholder="License number or details"
                   />
                 </div>
@@ -373,9 +378,7 @@ export default function EditVendorPage() {
                   <Input
                     id="insuranceInfo"
                     value={formData.insuranceInfo}
-                    onChange={(e) =>
-                      setFormData({ ...formData, insuranceInfo: e.target.value })
-                    }
+                    onChange={(e) => setFormData({ ...formData, insuranceInfo: e.target.value })}
                     placeholder="Insurance details"
                   />
                 </div>
@@ -388,9 +391,7 @@ export default function EditVendorPage() {
                   type="checkbox"
                   id="verified"
                   checked={formData.verified}
-                  onChange={(e) =>
-                    setFormData({ ...formData, verified: e.target.checked })
-                  }
+                  onChange={(e) => setFormData({ ...formData, verified: e.target.checked })}
                   className="rounded border-gray-300"
                 />
                 <Label htmlFor="verified">Verified Vendor</Label>
@@ -400,9 +401,7 @@ export default function EditVendorPage() {
                   type="checkbox"
                   id="commercial"
                   checked={formData.commercial}
-                  onChange={(e) =>
-                    setFormData({ ...formData, commercial: e.target.checked })
-                  }
+                  onChange={(e) => setFormData({ ...formData, commercial: e.target.checked })}
                   className="rounded border-gray-300"
                 />
                 <Label htmlFor="commercial">Commercial Vendor</Label>
@@ -412,14 +411,14 @@ export default function EditVendorPage() {
                   type="checkbox"
                   id="canSelfConfirm"
                   checked={formData.canSelfConfirm}
-                  onChange={(e) =>
-                    setFormData({ ...formData, canSelfConfirm: e.target.checked })
-                  }
+                  onChange={(e) => setFormData({ ...formData, canSelfConfirm: e.target.checked })}
                   className="rounded border-gray-300"
                 />
                 <div>
                   <Label htmlFor="canSelfConfirm">Can Self-Confirm Events</Label>
-                  <p className="text-xs text-gray-500">Vendor can confirm participation without admin approval</p>
+                  <p className="text-xs text-gray-500">
+                    Vendor can confirm participation without admin approval
+                  </p>
                 </div>
               </div>
             </div>

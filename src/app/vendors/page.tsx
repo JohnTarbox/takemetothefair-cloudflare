@@ -13,6 +13,10 @@ import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
+import {
+  FeaturedVendorsSection,
+  type FeaturedVendor,
+} from "@/components/vendors/FeaturedVendorsSection";
 
 const PAGE_SIZE = 50;
 
@@ -245,6 +249,42 @@ async function getVendorTypes() {
   }
 }
 
+/**
+ * Pull all Enhanced-Profile vendors (optionally filtered to a category) for
+ * the Featured Vendors section. The component handles the daily rotation
+ * and caps to 6; we hand over the full eligible set so the rotation can
+ * shuffle across the full pool, not just whatever fits in 6 slots.
+ */
+async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]> {
+  const db = getCloudflareDb();
+  const conditions: ReturnType<typeof eq>[] = [eq(vendors.enhancedProfile, true)];
+  if (typeFilter) conditions.push(eq(vendors.vendorType, typeFilter));
+
+  try {
+    const rows = await db
+      .select({
+        id: vendors.id,
+        businessName: vendors.businessName,
+        slug: vendors.slug,
+        vendorType: vendors.vendorType,
+        city: vendors.city,
+        state: vendors.state,
+        logoUrl: vendors.logoUrl,
+        featuredPriority: vendors.featuredPriority,
+      })
+      .from(vendors)
+      .where(and(...conditions));
+    return rows;
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching featured vendors",
+      error: e,
+      source: "app/vendors/page.tsx:getFeaturedVendors",
+    });
+    return [];
+  }
+}
+
 export default async function VendorsPage({
   searchParams,
 }: {
@@ -256,9 +296,10 @@ export default async function VendorsPage({
 
   const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
-  const [vendorList, vendorTypes] = await Promise.all([
+  const [vendorList, vendorTypes, featuredVendors] = await Promise.all([
     getVendors(params, favoriteUserId),
     getVendorTypes(),
+    getFeaturedVendors(params.type),
   ]);
 
   const currentPage = Math.max(1, parseInt(params.page ?? "1", 10) || 1);
@@ -301,6 +342,8 @@ export default async function VendorsPage({
           )}
         </p>
       </div>
+
+      <FeaturedVendorsSection vendors={featuredVendors} />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         <aside className="lg:col-span-1">

@@ -145,8 +145,32 @@ const SCHEMA_SQL = `
     payment_methods TEXT DEFAULT '[]',
     license_info TEXT,
     insurance_info TEXT,
+    enhanced_profile INTEGER NOT NULL DEFAULT 0,
+    enhanced_profile_started_at INTEGER,
+    enhanced_profile_expires_at INTEGER,
+    gallery_images TEXT NOT NULL DEFAULT '[]',
+    featured_priority INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
+  );
+
+  CREATE TABLE vendor_slug_history (
+    id TEXT PRIMARY KEY,
+    vendor_id TEXT NOT NULL,
+    old_slug TEXT NOT NULL,
+    new_slug TEXT NOT NULL,
+    changed_at INTEGER NOT NULL,
+    changed_by TEXT
+  );
+
+  CREATE TABLE admin_actions (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    actor_user_id TEXT,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    payload_json TEXT,
+    created_at INTEGER NOT NULL
   );
 
   CREATE TABLE event_vendors (

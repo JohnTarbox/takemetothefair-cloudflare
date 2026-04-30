@@ -120,7 +120,34 @@ export const vendorCreateSchema = z.object({
   insuranceInfo: z.string().max(500).optional().nullable(),
 });
 
-export const vendorUpdateSchema = vendorCreateSchema.partial().omit({ userId: true });
+export const vendorUpdateSchema = vendorCreateSchema
+  .partial()
+  .omit({ userId: true })
+  .extend({
+    // Enhanced Profile (round-3) — most callers should go through the
+    // Enhanced Profile admin panel which posts these via PATCH. The MCP
+    // server has its own set_enhanced_profile tool that's preferred for
+    // activation/expiry; this PATCH path is for piecemeal field edits.
+    enhanced_profile: z.boolean().optional(),
+    enhanced_profile_expires_at: z.string().datetime().optional(),
+    gallery_images: z
+      .array(
+        z.object({
+          url: z.string().url().max(VALIDATION.URL_MAX_LENGTH),
+          alt: z.string().max(200),
+          caption: z.string().max(500).optional(),
+        })
+      )
+      .max(2)
+      .optional(),
+    slug: z
+      .string()
+      .min(1)
+      .max(VALIDATION.SLUG_MAX_LENGTH)
+      .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with hyphens only")
+      .optional(),
+    featured_priority: z.number().int().min(0).optional(),
+  });
 
 // Event Day schema (per-day schedule)
 export const eventDaySchema = z.object({

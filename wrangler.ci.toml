@@ -18,3 +18,9 @@ migrations_dir = "drizzle"
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "b7aeca316e7a41108fd375be2e152cff"
+
+# R2 bucket — see wrangler.toml. Mirrored here so CI builds resolve the
+# binding type, even though E2E tests don't exercise R2.
+[[r2_buckets]]
+binding = "VENDOR_ASSETS"
+bucket_name = "mmatf-vendor-assets"

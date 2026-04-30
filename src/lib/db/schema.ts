@@ -194,9 +194,59 @@ export const vendors = sqliteTable("vendors", {
   paymentMethods: text("payment_methods").default("[]"), // JSON array
   licenseInfo: text("license_info"),
   insuranceInfo: text("insurance_info"),
+  // Enhanced Profile (paid tier, round-3 — drizzle/0037)
+  enhancedProfile: integer("enhanced_profile", { mode: "boolean" }).notNull().default(false),
+  enhancedProfileStartedAt: integer("enhanced_profile_started_at", { mode: "timestamp" }),
+  enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
+  galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
+  featuredPriority: integer("featured_priority").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
+
+// Vendor slug history — for 301-redirecting old URLs after a slug change.
+// drizzle/0038
+export const vendorSlugHistory = sqliteTable(
+  "vendor_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").notNull(),
+    newSlug: text("new_slug").notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => ({
+    oldSlugIdx: index("idx_vendor_slug_history_old_slug").on(t.oldSlug),
+    vendorIdIdx: index("idx_vendor_slug_history_vendor_id").on(t.vendorId),
+  })
+);
+
+// Admin actions audit log — drizzle/0039.
+// Generic enough for non-vendor actions later; first user is the Enhanced
+// Profile lifecycle (activate / expire_set / auto_expire).
+export const adminActions = sqliteTable(
+  "admin_actions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    action: text("action").notNull(), // "enhanced_profile.activate", etc.
+    actorUserId: text("actor_user_id"), // null for cron-driven
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    payloadJson: text("payload_json"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    targetIdx: index("idx_admin_actions_target").on(t.targetType, t.targetId),
+    createdAtIdx: index("idx_admin_actions_created_at").on(t.createdAt),
+  })
+);
 
 // Event Vendors junction table
 export const eventVendors = sqliteTable(

@@ -16,3 +16,11 @@ migrations_dir = "drizzle"
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "b7aeca316e7a41108fd375be2e152cff"
+
+# R2 bucket for vendor assets (Enhanced Profile logos and galleries).
+# Public bucket served at cdn.meetmeatthefair.com — see CLAUDE.md.
+# Phase 1 does not write to R2 from code; admin uploads via dashboard or
+# `wrangler r2 object put`. The binding is here for future use.
+[[r2_buckets]]
+binding = "VENDOR_ASSETS"
+bucket_name = "mmatf-vendor-assets"

@@ -1,7 +1,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, like, inArray, isNull, sql } from "drizzle-orm";
-import { events, eventVendors, vendors, venues, promoters, users, eventDays } from "../schema.js";
+import {
+  events,
+  eventVendors,
+  vendors,
+  venues,
+  promoters,
+  users,
+  eventDays,
+  vendorSlugHistory,
+  adminActions,
+} from "../schema.js";
 import {
   formatDateRange,
   parseJsonArray,
@@ -1537,6 +1547,38 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .boolean()
         .optional()
         .describe("Whether vendor can auto-confirm applications"),
+      // Enhanced Profile (round-3) — most callers use set_enhanced_profile for
+      // activation; these params are escape hatches for one-off adjustments.
+      enhanced_profile: z
+        .boolean()
+        .optional()
+        .describe("Enhanced Profile flag (paid tier). Prefer set_enhanced_profile for activation."),
+      enhanced_profile_expires_at: z
+        .string()
+        .optional()
+        .describe("Enhanced Profile expiry as ISO 8601 string"),
+      gallery_images: z
+        .array(
+          z.object({
+            url: z.string(),
+            alt: z.string().transform(decodeHtmlEntities),
+            caption: z.string().transform(decodeHtmlEntities).optional(),
+          })
+        )
+        .max(2)
+        .optional()
+        .describe("Gallery images (max 2). Each: {url, alt, caption?}"),
+      slug: z
+        .string()
+        .optional()
+        .describe(
+          "Custom slug. Setting this writes a vendor_slug_history row for 301-redirect from old slug."
+        ),
+      featured_priority: z
+        .number()
+        .int()
+        .optional()
+        .describe("Featured rotation pin override; 0 = participate in shuffle, >0 = pinned high."),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -1560,6 +1602,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "verified", column: "verified" },
         { param: "commercial", column: "commercial" },
         { param: "can_self_confirm", column: "canSelfConfirm" },
+        { param: "enhanced_profile", column: "enhancedProfile" },
+        {
+          param: "enhanced_profile_expires_at",
+          column: "enhancedProfileExpiresAt",
+          transform: (v: string) => new Date(v),
+        },
+        {
+          param: "gallery_images",
+          column: "galleryImages",
+          transform: (v: unknown) => JSON.stringify(v),
+        },
+        { param: "featured_priority", column: "featuredPriority" },
       ];
 
       const updates: Record<string, unknown> = {};
@@ -1576,6 +1630,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.business_name !== undefined) {
         updates.businessName = params.business_name;
         requestedFields.push("business_name");
+      }
+
+      if (params.slug !== undefined) {
+        requestedFields.push("slug");
       }
 
       if (requestedFields.length === 0) {
@@ -1603,13 +1661,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const vendor = vendorRows[0];
 
-      // If business_name changed, regenerate slug
-      if (params.business_name !== undefined) {
-        const baseSlug = createSlug(params.business_name);
-        let finalSlug = baseSlug;
+      // If a custom slug was explicitly provided, it takes priority over the
+      // auto-generated slug from business_name. Both paths run through the
+      // collision check + write a vendor_slug_history row when the slug
+      // actually changes.
+      const explicitSlug = params.slug;
+      const slugSeed =
+        explicitSlug !== undefined
+          ? createSlug(explicitSlug)
+          : params.business_name !== undefined
+            ? createSlug(params.business_name)
+            : null;
+
+      if (slugSeed && slugSeed !== vendor.slug) {
+        let finalSlug = slugSeed;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const candidate = suffix > 0 ? `${slugSeed}-${suffix}` : slugSeed;
           const existing = await db
             .select({ id: vendors.id })
             .from(vendors)
@@ -1629,7 +1697,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             };
           }
         }
-        updates.slug = finalSlug;
+        if (finalSlug !== vendor.slug) {
+          updates.slug = finalSlug;
+        }
       }
 
       updates.updatedAt = new Date();
@@ -1650,7 +1720,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
 
+      // Slug change: record the old→new mapping for 301 redirects on /vendors/[slug].
+      if (updates.slug && updates.slug !== vendor.slug) {
+        await db.insert(vendorSlugHistory).values({
+          vendorId: vendor.id,
+          oldSlug: vendor.slug,
+          newSlug: updates.slug as string,
+          changedAt: new Date(),
+          changedBy: auth.userId,
+        });
+      }
+
       // IndexNow: ping when fields rendered on the public vendor page change.
+      // The material list now includes Enhanced Profile fields (round-3) since
+      // those changes affect what gets rendered on the public profile (gallery,
+      // verified badge, contact form vs raw email).
       if (env) {
         const materialFields = [
           "business_name",
@@ -1659,6 +1743,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           "products",
           "city",
           "state",
+          "enhanced_profile",
+          "gallery_images",
+          "slug",
         ];
         if (requestedFields.some((f) => materialFields.includes(f))) {
           const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
@@ -1682,6 +1769,142 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             fieldsUpdated: requestedFields,
             previousValues,
             newValues,
+          }),
+        ],
+      };
+    }
+  );
+
+  // ── set_enhanced_profile ──────────────────────────────────────
+  // One-shot activate / deactivate for the Enhanced Profile paid tier.
+  // Activation: flag=1, verified=1, started_at (only if not already set),
+  //   expires_at = now + duration_days, optional custom_slug change.
+  // Deactivation: sets expires_at=now to start the 30-day grace; the daily
+  //   sweep endpoint flips the flag. Does NOT immediately remove enhanced
+  //   features — that's the spec's intent so customers don't lose their
+  //   site presence the moment a payment lapses.
+  server.tool(
+    "set_enhanced_profile",
+    "Activate or deactivate Enhanced Profile (paid tier) for a vendor. Activation sets enhanced_profile=1, verified=1, expires_at = now + duration_days. Deactivation sets expires_at=now to start the 30-day grace period (the daily sweep endpoint flips the flag). Optionally sets a custom slug, which writes a vendor_slug_history row. Admin only.",
+    {
+      vendor_id: z.string().describe("Vendor ID (UUID)"),
+      active: z
+        .boolean()
+        .describe("true = activate, false = start grace period (no immediate flag flip)"),
+      duration_days: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Activation duration in days. Default 365."),
+      custom_slug: z
+        .string()
+        .optional()
+        .describe("Optional custom slug (e.g. branded URL). Triggers vendor_slug_history row."),
+    },
+    async (params) => {
+      const vendorRows = await db
+        .select()
+        .from(vendors)
+        .where(eq(vendors.id, params.vendor_id))
+        .limit(1);
+
+      if (vendorRows.length === 0) {
+        return { content: [{ type: "text", text: "Vendor not found." }], isError: true };
+      }
+      const vendor = vendorRows[0];
+      const now = new Date();
+      const updates: Record<string, unknown> = { updatedAt: now };
+
+      if (params.active) {
+        const durationDays = params.duration_days ?? 365;
+        updates.enhancedProfile = true;
+        updates.verified = true;
+        updates.enhancedProfileExpiresAt = new Date(now.getTime() + durationDays * 86400000);
+        // Preserve started_at across off→on cycles: only stamp on initial activation.
+        if (!vendor.enhancedProfileStartedAt) {
+          updates.enhancedProfileStartedAt = now;
+        }
+      } else {
+        // Soft-deactivate: start the grace period.
+        updates.enhancedProfileExpiresAt = now;
+      }
+
+      // Custom slug handling — same shape as update_vendor's slug logic.
+      let slugChanged: { from: string; to: string } | null = null;
+      if (params.custom_slug && params.custom_slug !== vendor.slug) {
+        const slugSeed = createSlug(params.custom_slug);
+        let finalSlug = slugSeed;
+        let suffix = 0;
+        while (true) {
+          const candidate = suffix > 0 ? `${slugSeed}-${suffix}` : slugSeed;
+          const existing = await db
+            .select({ id: vendors.id })
+            .from(vendors)
+            .where(eq(vendors.slug, candidate))
+            .limit(1);
+          if (existing.length === 0 || existing[0].id === vendor.id) {
+            finalSlug = candidate;
+            break;
+          }
+          suffix++;
+          if (suffix > 20) {
+            return {
+              content: [
+                { type: "text", text: "Too many slug collisions on the requested custom slug." },
+              ],
+              isError: true,
+            };
+          }
+        }
+        if (finalSlug !== vendor.slug) {
+          updates.slug = finalSlug;
+          slugChanged = { from: vendor.slug, to: finalSlug };
+        }
+      }
+
+      await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+
+      if (slugChanged) {
+        await db.insert(vendorSlugHistory).values({
+          vendorId: vendor.id,
+          oldSlug: slugChanged.from,
+          newSlug: slugChanged.to,
+          changedAt: now,
+          changedBy: auth.userId,
+        });
+      }
+
+      // Audit log row — captures the lifecycle transition for later analysis.
+      await db.insert(adminActions).values({
+        action: params.active ? "enhanced_profile.activate" : "enhanced_profile.expire_set",
+        actorUserId: auth.userId,
+        targetType: "vendor",
+        targetId: vendor.id,
+        payloadJson: JSON.stringify({
+          duration_days: params.duration_days,
+          slug_changed: slugChanged,
+          previous_expires_at: vendor.enhancedProfileExpiresAt,
+        }),
+        createdAt: now,
+      });
+
+      // IndexNow: this is a material change either way (profile content
+      // visibility flips or expires_at shifts), so always ping.
+      if (env) {
+        const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
+        await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update");
+      }
+
+      return {
+        content: [
+          jsonContent({
+            updated: true,
+            vendor: { id: vendor.id, businessName: vendor.businessName },
+            active: params.active,
+            enhancedProfile: updates.enhancedProfile ?? vendor.enhancedProfile,
+            expiresAt: (updates.enhancedProfileExpiresAt as Date).toISOString(),
+            slugChanged,
           }),
         ],
       };
