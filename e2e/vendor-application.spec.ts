@@ -32,7 +32,9 @@ test.describe("Vendor Application Flow - Public Event Pages", () => {
     await expect(page.locator("h1, h2")).toBeVisible();
   });
 
-  test.skip("event detail page shows vendor apply button when logged in as vendor", async ({ page }) => {
+  test.skip("event detail page shows vendor apply button when logged in as vendor", async ({
+    page,
+  }) => {
     // Skip: requires authentication and a real event slug
     await page.goto("/events/some-event-slug");
     await expect(page.getByRole("button", { name: /apply/i })).toBeVisible();
@@ -70,13 +72,16 @@ test.describe("Vendor Public Profiles", () => {
 
   test("vendors page has content", async ({ page }) => {
     await page.goto("/vendors");
-    // Should have a heading
-    await expect(page.locator("h1, h2")).toBeVisible();
+    // Should have at least one heading. Use .first() because the page may
+    // contain multiple h1/h2 elements (page title + section headings).
+    await expect(page.locator("h1, h2").first()).toBeVisible();
   });
 });
 
 test.describe("Vendor Application - Structure", () => {
-  test.skip("applications page shows empty state for vendor without applications", async ({ page }) => {
+  test.skip("applications page shows empty state for vendor without applications", async ({
+    page,
+  }) => {
     // Skip: requires authentication as a vendor user
     await page.goto("/vendor/applications");
 
@@ -87,7 +92,9 @@ test.describe("Vendor Application - Structure", () => {
     await expect(page.getByRole("link", { name: /browse events/i })).toBeVisible();
   });
 
-  test.skip("applications page shows application cards when vendor has applications", async ({ page }) => {
+  test.skip("applications page shows application cards when vendor has applications", async ({
+    page,
+  }) => {
     // Skip: requires authentication as a vendor with applications
     await page.goto("/vendor/applications");
 
