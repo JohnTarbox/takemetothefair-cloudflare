@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getVendorsWithCounts } from "@/lib/queries";
 import { vendorCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -21,7 +22,12 @@ export async function GET(request: NextRequest) {
     const vendorsWithCounts = await getVendorsWithCounts(db);
     return NextResponse.json(vendorsWithCounts);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch vendors", error, source: "api/admin/vendors", request });
+    await logError(db, {
+      message: "Failed to fetch vendors",
+      error,
+      source: "api/admin/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
 }
@@ -77,15 +83,21 @@ export async function POST(request: NextRequest) {
     // Update user role to VENDOR
     await db.update(users).set({ role: "VENDOR" }).where(eq(users.id, data.userId));
 
-    const [newVendor] = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, vendorId))
-      .limit(1);
+    const [newVendor] = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
+
+    if (newVendor?.slug) {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("vendors", newVendor.slug), env, "vendor-create");
+    }
 
     return NextResponse.json(newVendor, { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create vendor", error, source: "api/admin/vendors", request });
+    await logError(db, {
+      message: "Failed to create vendor",
+      error,
+      source: "api/admin/vendors",
+      request,
+    });
     return NextResponse.json({ error: "Failed to create vendor" }, { status: 500 });
   }
 }

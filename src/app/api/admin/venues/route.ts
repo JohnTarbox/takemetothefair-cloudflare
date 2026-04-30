@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { getVenuesWithEventCounts, findVenueByGooglePlaceId } from "@/lib/queries";
 import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -21,7 +22,12 @@ export async function GET(request: NextRequest) {
     const venuesWithCounts = await getVenuesWithEventCounts(db);
     return NextResponse.json(venuesWithCounts);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch venues", error, source: "api/admin/venues", request });
+    await logError(db, {
+      message: "Failed to fetch venues",
+      error,
+      source: "api/admin/venues",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch venues" }, { status: 500 });
   }
 }
@@ -91,15 +97,21 @@ export async function POST(request: NextRequest) {
       status: data.status,
     });
 
-    const [newVenue] = await db
-      .select()
-      .from(venues)
-      .where(eq(venues.id, venueId))
-      .limit(1);
+    const [newVenue] = await db.select().from(venues).where(eq(venues.id, venueId)).limit(1);
+
+    if (newVenue?.status === "ACTIVE") {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("venues", newVenue.slug), env, "venue-create");
+    }
 
     return NextResponse.json(newVenue, { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create venue", error, source: "api/admin/venues", request });
+    await logError(db, {
+      message: "Failed to create venue",
+      error,
+      source: "api/admin/venues",
+      request,
+    });
 
     // Provide more specific error messages
     const errorMessage = error instanceof Error ? error.message : String(error);

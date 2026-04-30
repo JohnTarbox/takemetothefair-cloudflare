@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
@@ -11,6 +11,10 @@ import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile"
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
+import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+
+const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
 export const runtime = "edge";
 
@@ -294,6 +298,14 @@ export async function POST(request: NextRequest) {
         // Non-blocking: event still created without schema.org data
         console.error("Failed to store schema.org data:", schemaError);
       }
+    }
+
+    // IndexNow: vendor submissions land as TENTATIVE (publicly visible) and
+    // bypass the PATCH-based hooks. Ping for those; PENDING community
+    // suggestions stay non-public until an admin promotes them.
+    if (PUBLIC_EVENT_SET.has(eventStatus)) {
+      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("events", finalEventSlug), cfEnv, "event-create");
     }
 
     return NextResponse.json({
