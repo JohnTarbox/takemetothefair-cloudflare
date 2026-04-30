@@ -62,7 +62,7 @@ test.describe("Keyboard Navigation - Basic Tab Order", () => {
     }
 
     // Should have tabbed through links and buttons
-    expect(focusedElements.some(el => el === "A" || el === "BUTTON")).toBe(true);
+    expect(focusedElements.some((el) => el === "A" || el === "BUTTON")).toBe(true);
   });
 });
 
@@ -71,18 +71,20 @@ test.describe("Keyboard Navigation - Form Inputs", () => {
     await page.goto("/login");
 
     // Tab to email field
-    const emailInput = page.locator('input[type="email"]');
+    const emailInput = page.locator('input[type="email"]').first();
     await emailInput.focus();
     await expect(emailInput).toBeFocused();
 
     // Tab to password field
     await page.keyboard.press("Tab");
-    const passwordInput = page.locator('input[type="password"]');
+    const passwordInput = page.locator('input[type="password"]').first();
     await expect(passwordInput).toBeFocused();
 
-    // Tab to submit button
+    // After password the form has a "Forgot password?" link before submit, so
+    // two Tabs are needed to reach the submit button.
     await page.keyboard.press("Tab");
-    const submitButton = page.locator('button[type="submit"]');
+    await page.keyboard.press("Tab");
+    const submitButton = page.locator('button[type="submit"]').first();
     await expect(submitButton).toBeFocused();
   });
 
@@ -90,15 +92,15 @@ test.describe("Keyboard Navigation - Form Inputs", () => {
     await page.goto("/login");
 
     // Fill email
-    await page.locator('input[type="email"]').fill("test@example.com");
+    await page.locator('input[type="email"]').first().fill("test@example.com");
     // Fill password
-    await page.locator('input[type="password"]').fill("testpassword");
+    await page.locator('input[type="password"]').first().fill("testpassword");
 
     // Press Enter to submit — expect it to fail with invalid credentials
     await page.keyboard.press("Enter");
 
     // Should still be on login-related page after failed submission
-    await expect(page.locator('input[type="email"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('input[type="email"]').first()).toBeVisible({ timeout: 10000 });
     expect(page.url()).toMatch(/login|error/);
   });
 });
@@ -108,7 +110,7 @@ test.describe("Keyboard Navigation - Interactive Elements", () => {
     await page.goto("/venues");
 
     // Find and focus a view toggle button (venues page has card/table view toggle)
-    const viewButton = page.locator('button[aria-pressed]').first();
+    const viewButton = page.locator("button[aria-pressed]").first();
     await expect(viewButton).toBeVisible({ timeout: 15000 });
     await viewButton.focus();
     await expect(viewButton).toBeFocused();
@@ -150,7 +152,7 @@ test.describe("Accessibility - Focus Visibility", () => {
     await page.goto("/login");
 
     // Focus the submit button
-    const submitButton = page.locator('button[type="submit"]');
+    const submitButton = page.locator('button[type="submit"]').first();
     await submitButton.focus();
 
     // Check that it has a focus-related CSS applied
@@ -195,7 +197,7 @@ test.describe("Accessibility - Screen Reader", () => {
     expect(count).toBeGreaterThan(0);
 
     // Check that the page has navigation links
-    const navLinks = page.locator('nav a, header a');
+    const navLinks = page.locator("nav a, header a");
     const navCount = await navLinks.count();
     expect(navCount).toBeGreaterThan(0);
   });
@@ -206,10 +208,10 @@ test.describe("Accessibility - Color and Contrast", () => {
     await page.goto("/login");
 
     // Submit empty form to trigger validation
-    await page.locator('button[type="submit"]').click();
+    await page.locator('button[type="submit"]').first().click();
 
     // The page should still be functional after triggering validation
-    const emailInput = page.locator('input[type="email"]');
+    const emailInput = page.locator('input[type="email"]').first();
     await expect(emailInput).toBeVisible();
   });
 });
@@ -224,7 +226,7 @@ test.describe("Accessibility - Responsive", () => {
     await expect(page.locator("h1").first()).toBeVisible({ timeout: 15000 });
 
     // Look for mobile menu button (aria-label="Open menu")
-    const menuButton = page.locator('button[aria-label*="menu" i]');
+    const menuButton = page.locator('button[aria-label*="menu" i]').first();
     await expect(menuButton).toBeVisible();
     await menuButton.focus();
     await expect(menuButton).toBeFocused();
@@ -232,8 +234,11 @@ test.describe("Accessibility - Responsive", () => {
     // Can activate with keyboard
     await page.keyboard.press("Enter");
 
-    // Menu should open — wait for mobile menu's link (has "block" class, desktop links don't)
-    await expect(page.locator('a.block[href="/events"]')).toBeVisible({ timeout: 5000 });
+    // Menu should open — the menu button's aria-label flips to "Close menu"
+    // when the drawer is open. Checking the button state is more robust than
+    // probing for specific drawer links (which differ between desktop dropdown
+    // and mobile drawer markup).
+    await expect(page.locator('button[aria-label="Close menu"]')).toBeVisible({ timeout: 5000 });
   });
 
   test("content is accessible on mobile", async ({ page }) => {
