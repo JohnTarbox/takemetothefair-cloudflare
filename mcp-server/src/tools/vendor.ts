@@ -2,19 +2,33 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, lte, sql } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
-import { parseJsonArray, formatDateRange, jsonContent, decodeHtmlEntities } from "../helpers.js";
+import {
+  parseJsonArray,
+  formatDateRange,
+  jsonContent,
+  decodeHtmlEntities,
+  publicUrlFor,
+  triggerIndexNow,
+} from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce } from "../url-classification.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
-export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext) {
+type IndexNowEnv = { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string };
+
+export function registerVendorTools(
+  server: McpServer,
+  db: Db,
+  auth: AuthContext,
+  env?: IndexNowEnv
+) {
   // suggest_event only needs userId, not a vendor profile — register it first
   console.log(
     `[VENDOR-TOOLS] Registering suggest_event for userId=${auth.userId} role=${auth.role} vendorId=${auth.vendorId || "none"}`
   );
-  registerSuggestEvent(server, db, auth);
+  registerSuggestEvent(server, db, auth, env);
 
   if (!auth.vendorId) {
     console.log(`[VENDOR-TOOLS] No vendorId — skipping profile/application tools`);
@@ -520,7 +534,7 @@ export function registerVendorTools(server: McpServer, db: Db, auth: AuthContext
 // ---------------------------------------------------------------------------
 // suggest_event — registered separately since it only needs userId, not vendorId
 // ---------------------------------------------------------------------------
-function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
+function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?: IndexNowEnv) {
   server.tool(
     "suggest_event",
     "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status.",
@@ -783,6 +797,26 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext) {
         lastSyncedAt: new Date(),
         submittedByUserId: auth.userId,
       });
+
+      // IndexNow: TENTATIVE is publicly visible; ping for the new event and
+      // any newly-created venue. Reused/matched venues are already indexed.
+      // The auto-created promoter (if any) is NOT pinged — no public
+      // /promoters/[slug] page exists.
+      if (env) {
+        await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-create");
+        if (venueResult && venueResult.matched === false) {
+          // newVenueSlug was generated above (finalVenueSlug); pull it from the
+          // freshly-inserted row's slug, which we know matches.
+          const newVenue = await db
+            .select({ slug: venues.slug })
+            .from(venues)
+            .where(eq(venues.id, venueResult.venueId))
+            .limit(1);
+          if (newVenue[0]?.slug) {
+            await triggerIndexNow(publicUrlFor("venues", newVenue[0].slug), env, "venue-create");
+          }
+        }
+      }
 
       return {
         content: [

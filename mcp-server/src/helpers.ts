@@ -112,10 +112,15 @@ export function publicUrlFor(kind: "events" | "venues" | "vendors" | "blog", slu
  *  Fire-and-forget: never throws to the caller. Failures are logged so they
  *  surface in `wrangler tail` but never break the MCP tool response.
  *
+ *  `source` lets the caller label the lifecycle event (e.g. "event-approve",
+ *  "vendor-create") so the analytics tab matches the labels emitted by the
+ *  main app's API routes. Falls back to "internal-api" if omitted.
+ *
  *  Requires MAIN_APP_URL and INTERNAL_API_KEY in the env. */
 export async function triggerIndexNow(
   urls: string | string[],
-  env: { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string }
+  env: { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string },
+  source?: string
 ): Promise<void> {
   if (!env.MAIN_APP_URL || !env.INTERNAL_API_KEY) {
     console.warn("[MCP/IndexNow] MAIN_APP_URL or INTERNAL_API_KEY missing — skipping ping");
@@ -130,7 +135,7 @@ export async function triggerIndexNow(
         "Content-Type": "application/json",
         "X-Internal-Key": env.INTERNAL_API_KEY,
       },
-      body: JSON.stringify({ urls: list }),
+      body: JSON.stringify(source ? { urls: list, source } : { urls: list }),
     });
     if (!response.ok) {
       const body = (await response.text()).slice(0, 200);

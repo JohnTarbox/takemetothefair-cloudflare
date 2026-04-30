@@ -249,10 +249,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .set({ status: params.status, updatedAt: new Date() })
         .where(eq(events.id, event.id));
 
-      // IndexNow: ping when transitioning into the public set so search
-      // engines pick up the new content within minutes.
-      if (env && PUBLIC_EVENT_SET.has(params.status) && !PUBLIC_EVENT_SET.has(previousStatus)) {
-        await triggerIndexNow(publicUrlFor("events", event.slug), env);
+      // IndexNow: distinguish first-publish from the TENTATIVE→APPROVED
+      // upgrade — both transitions matter to the analytics tab. A bare
+      // public-bucket guard misses TENTATIVE→APPROVED because both are public.
+      if (env) {
+        const wasPublic = PUBLIC_EVENT_SET.has(previousStatus);
+        const isPublic = PUBLIC_EVENT_SET.has(params.status);
+        let source: string | null = null;
+        if (!wasPublic && isPublic) {
+          source = "event-create";
+        } else if (previousStatus === "TENTATIVE" && params.status === "APPROVED") {
+          source = "event-approve";
+        }
+        if (source) {
+          await triggerIndexNow(publicUrlFor("events", event.slug), env, source);
+        }
       }
 
       return {
@@ -576,6 +587,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         await db.update(events).set(updates).where(eq(events.id, event.id));
       }
 
+      // IndexNow: ping if a material field changed on an already-public event.
+      // "Material" = fields rendered on the public detail page that affect SERP
+      // snippets — name, description, dates, venue. Other admin-y fields
+      // (featured, source_id, etc.) don't merit a re-index ping.
+      if (env && PUBLIC_EVENT_SET.has(event.status)) {
+        const materialFields = ["name", "description", "start_date", "end_date", "venue_id"];
+        if (requestedFields.some((f) => materialFields.includes(f))) {
+          const finalSlug = (updates.slug as string | undefined) ?? event.slug;
+          await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-update");
+        }
+      }
+
       // Build new values for confirmation
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
@@ -888,6 +911,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         city: loc.city,
         state: loc.state,
       });
+
+      // IndexNow: vendors have no status field — they're public on creation.
+      if (env) {
+        await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-create");
+      }
 
       return {
         content: [
@@ -1252,10 +1280,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       await db.update(venues).set(updates).where(eq(venues.id, venue.id));
 
-      // IndexNow: ping when venue transitions to ACTIVE.
-      if (env && params.status === "ACTIVE" && venue.status !== "ACTIVE") {
-        const finalSlug = (updates.slug as string | undefined) ?? venue.slug;
-        await triggerIndexNow(publicUrlFor("venues", finalSlug), env);
+      // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material
+      // edits on already-ACTIVE venues so analytics can attribute pings.
+      if (env) {
+        const wasActive = venue.status === "ACTIVE";
+        const newStatus = (updates.status as string | undefined) ?? venue.status;
+        const isActive = newStatus === "ACTIVE";
+        let venueSource: string | null = null;
+        if (!wasActive && isActive) {
+          venueSource = "venue-activate";
+        } else if (wasActive && isActive) {
+          const materialFields = ["name", "address", "city", "state", "description"];
+          if (requestedFields.some((f) => materialFields.includes(f))) {
+            venueSource = "venue-update";
+          }
+        }
+        if (venueSource) {
+          const finalSlug = (updates.slug as string | undefined) ?? venue.slug;
+          await triggerIndexNow(publicUrlFor("venues", finalSlug), env, venueSource);
+        }
       }
 
       const newValues: Record<string, unknown> = {};
@@ -1379,6 +1422,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         contactPhone: params.contact_phone ?? null,
         imageUrl: params.image_url ?? null,
       });
+
+      // IndexNow: venues created via this tool default to ACTIVE (public)
+      // immediately, so ping right away.
+      if (env) {
+        await triggerIndexNow(publicUrlFor("venues", finalSlug), env, "venue-create");
+      }
 
       return {
         content: [
@@ -1600,6 +1649,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+
+      // IndexNow: ping when fields rendered on the public vendor page change.
+      if (env) {
+        const materialFields = [
+          "business_name",
+          "vendor_type",
+          "description",
+          "products",
+          "city",
+          "state",
+        ];
+        if (requestedFields.some((f) => materialFields.includes(f))) {
+          const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
+          await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update");
+        }
+      }
 
       const newValues: Record<string, unknown> = {};
       for (const field of requestedFields) {

@@ -5,8 +5,12 @@ import { pingIndexNow } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
+// `source` is optional and free-form so callers can label the lifecycle event
+// (e.g. "event-approve", "vendor-create"). Falls back to "internal-api" for
+// legacy callers that don't set one.
 const bodySchema = z.object({
   urls: z.array(z.string().url()).min(1).max(10_000),
+  source: z.string().min(1).max(64).optional(),
 });
 
 /**
@@ -41,6 +45,6 @@ export async function POST(request: Request) {
   }
 
   const db = getCloudflareDb();
-  await pingIndexNow(db, parsed.data.urls, env, "internal-api");
+  await pingIndexNow(db, parsed.data.urls, env, parsed.data.source ?? "internal-api");
   return NextResponse.json({ success: true, count: parsed.data.urls.length });
 }

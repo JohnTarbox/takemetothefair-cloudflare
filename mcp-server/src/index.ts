@@ -156,7 +156,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
           `[INIT] Registering vendor tools for role=${auth.role} vendorId=${auth.vendorId || "none"}`
         );
         before = snapshot();
-        registerVendorTools(this.server, db, auth);
+        registerVendorTools(this.server, db, auth, this.env);
         groups.vendor = diff(before);
       }
       if (auth.role === "PROMOTER" || auth.role === "ADMIN") {
@@ -247,7 +247,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
 
   if (auth) {
     registerUserTools(server, db, auth);
-    if (auth.role === "VENDOR" || auth.role === "ADMIN") registerVendorTools(server, db, auth);
+    if (auth.role === "VENDOR" || auth.role === "ADMIN") registerVendorTools(server, db, auth, env);
     if (auth.role === "PROMOTER" || auth.role === "ADMIN") registerPromoterTools(server, db, auth);
     if (auth.role === "ADMIN") {
       registerAdminTools(server, db, auth, env);
