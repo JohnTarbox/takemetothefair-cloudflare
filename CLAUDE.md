@@ -21,6 +21,7 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 - **Account**: Use `search("list accounts")` to discover
 - **D1 Database**: `d449e416-3814-48a6-b9e8-b676333b2cdc` (name: `takemetothefair-db`)
 - **KV Namespace**: `b7aeca316e7a41108fd375be2e152cff` (binding: `RATE_LIMIT_KV`)
+- **R2 Bucket**: `mmatf-vendor-assets` (binding: `VENDOR_ASSETS`, served at `cdn.meetmeatthefair.com`)
 - **Pages Project**: `takemetothefair`
 - **Domain**: `meetmeatthefair.com`
 - **AI Model**: `@cf/meta/llama-3.1-8b-instruct`

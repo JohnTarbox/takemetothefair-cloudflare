@@ -62,6 +62,9 @@ interface VendorSchemaProps {
   socialLinks?: Record<string, string> | null;
   products?: string[];
   vendorType?: string | null;
+  // Round-3 additions: Enhanced Profile vendors emit an array of images
+  // (logo + gallery) so social/AI crawlers see the full visual set.
+  galleryImageUrls?: string[];
 }
 
 export function VendorSchema({
@@ -81,6 +84,7 @@ export function VendorSchema({
   socialLinks,
   products,
   vendorType,
+  galleryImageUrls,
 }: VendorSchemaProps) {
   const sameAs: string[] = [];
   if (website) sameAs.push(website);
@@ -90,12 +94,24 @@ export function VendorSchema({
     });
   }
 
+  // image: scalar for free vendors, array for Enhanced (logo + gallery).
+  // schema.org accepts both shapes; the array signals to crawlers that the
+  // entity has multiple representative images.
+  const imageField = (() => {
+    const images = [logoUrl, ...(galleryImageUrls ?? [])].filter(
+      (v): v is string => typeof v === "string" && v.length > 0
+    );
+    if (images.length === 0) return undefined;
+    if (images.length === 1) return images[0];
+    return images;
+  })();
+
   const schema = {
     "@context": "https://schema.org",
     "@type": getSchemaType(vendorType),
     name: businessName,
     description: description || undefined,
-    image: logoUrl || undefined,
+    image: imageField,
     url,
     address:
       city || address

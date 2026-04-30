@@ -16,7 +16,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { registerAdminTools } from "../src/tools/admin.js";
 import { registerVendorTools } from "../src/tools/vendor.js";
-import { users, venues, vendors, promoters, events } from "../src/schema.js";
+import {
+  users,
+  venues,
+  vendors,
+  promoters,
+  events,
+  vendorSlugHistory,
+  adminActions,
+} from "../src/schema.js";
+import { eq } from "drizzle-orm";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 const VENDOR_AUTH = { userId: "u-vendor", role: "VENDOR" as const, vendorId: "v-1" };
@@ -233,6 +242,87 @@ describe("update_vendor", () => {
     const id = seedVendor();
     await adminServer.invoke("update_vendor", { vendor_id: id, commercial: true });
     expect(mock.calls).toHaveLength(0);
+  });
+
+  // Round-3 additions: gallery_images, enhanced_profile, and slug are
+  // now part of the material list.
+  it("editing gallery_images fires vendor-update", async () => {
+    const id = seedVendor();
+    await adminServer.invoke("update_vendor", {
+      vendor_id: id,
+      gallery_images: [{ url: "https://cdn.meetmeatthefair.com/x.jpg", alt: "alt" }],
+    });
+    expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
+  });
+
+  it("editing slug fires vendor-update AND writes slug history", async () => {
+    const id = seedVendor({ slug: "old-slug" });
+    await adminServer.invoke("update_vendor", { vendor_id: id, slug: "new-branded-slug" });
+    expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
+
+    const history = db
+      .select()
+      .from(vendorSlugHistory)
+      .where(eq(vendorSlugHistory.vendorId, id))
+      .all();
+    expect(history).toHaveLength(1);
+    expect(history[0].oldSlug).toBe("old-slug");
+    expect(history[0].newSlug).toBe("new-branded-slug");
+  });
+});
+
+describe("set_enhanced_profile", () => {
+  it("active=true fires vendor-update AND sets flag/verified/timestamps", async () => {
+    const id = seedVendor();
+    await adminServer.invoke("set_enhanced_profile", { vendor_id: id, active: true });
+    expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
+
+    const v = db.select().from(vendors).where(eq(vendors.id, id)).all()[0];
+    expect(v.enhancedProfile).toBe(true);
+    expect(v.verified).toBe(true);
+    expect(v.enhancedProfileStartedAt).toBeTruthy();
+    expect(v.enhancedProfileExpiresAt).toBeTruthy();
+    // 365 days default
+    const ms = (v.enhancedProfileExpiresAt as Date).getTime() - Date.now();
+    expect(ms).toBeGreaterThan(364 * 86400000);
+    expect(ms).toBeLessThan(366 * 86400000);
+  });
+
+  it("active=false sets expires_at=now but does NOT immediately flip the flag", async () => {
+    const id = seedVendor({ enhancedProfile: true });
+    await adminServer.invoke("set_enhanced_profile", { vendor_id: id, active: false });
+
+    const v = db.select().from(vendors).where(eq(vendors.id, id)).all()[0];
+    // Flag stays on — daily sweep handles the 30-day grace.
+    expect(v.enhancedProfile).toBe(true);
+    expect((v.enhancedProfileExpiresAt as Date).getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("custom_slug change writes slug history row", async () => {
+    const id = seedVendor({ slug: "auto-slug" });
+    await adminServer.invoke("set_enhanced_profile", {
+      vendor_id: id,
+      active: true,
+      custom_slug: "branded",
+    });
+
+    const history = db
+      .select()
+      .from(vendorSlugHistory)
+      .where(eq(vendorSlugHistory.vendorId, id))
+      .all();
+    expect(history).toHaveLength(1);
+    expect(history[0].oldSlug).toBe("auto-slug");
+    expect(history[0].newSlug).toBe("branded");
+  });
+
+  it("writes an admin_actions audit row on activation", async () => {
+    const id = seedVendor();
+    await adminServer.invoke("set_enhanced_profile", { vendor_id: id, active: true });
+    const actions = db.select().from(adminActions).where(eq(adminActions.targetId, id)).all();
+    expect(actions).toHaveLength(1);
+    expect(actions[0].action).toBe("enhanced_profile.activate");
+    expect(actions[0].targetType).toBe("vendor");
   });
 });
 

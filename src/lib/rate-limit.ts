@@ -110,6 +110,14 @@ export const RATE_LIMITS = {
     authenticatedLimit: 120,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // Enhanced Profile vendor contact form — strict to prevent spam since
+  // each successful POST forwards an email. Anonymous-only in practice
+  // (the form is on a public page) so the authenticated cap mirrors.
+  "vendor-contact": {
+    anonymousLimit: 5,
+    authenticatedLimit: 10,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
