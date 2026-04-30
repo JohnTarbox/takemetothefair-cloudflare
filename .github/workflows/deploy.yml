@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare
 
 on:
   push:
@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Build & Deploy
+  deploy-pages:
+    name: Build & Deploy Main App (Pages)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -44,3 +44,46 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy .vercel/output/static --project-name=takemetothefair --branch=main --commit-dirty=true
+
+  deploy-mcp-server:
+    name: Build & Deploy MCP Server (Worker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: mcp-server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: mcp-server
+        run: npm ci
+
+      # Use trusted GitHub Actions context (github.sha is the 40-char commit SHA,
+      # github.run_started_at is the workflow start in ISO 8601). Routed through
+      # env vars to avoid embedding ${{ }} expressions inside shell command bodies.
+      - name: Compute build vars
+        id: vars
+        env:
+          FULL_SHA: ${{ github.sha }}
+          RUN_STARTED: ${{ github.run_started_at }}
+        run: |
+          echo "git_sha=${FULL_SHA:0:7}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$RUN_STARTED" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy MCP Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: mcp-server
+          command: deploy --var GIT_SHA:${{ steps.vars.outputs.git_sha }} --var BUILD_TIME:${{ steps.vars.outputs.build_time }}
