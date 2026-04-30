@@ -896,7 +896,7 @@ async function BingTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">IndexNow quota</p>
+            <p className="text-sm text-gray-600">Bing direct submit quota</p>
             <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
               {quota ? fmt(quota.dailyRemaining) : "—"}
               {quota && (
@@ -910,6 +910,10 @@ async function BingTab() {
               {quota
                 ? `${fmt(quota.monthlyRemaining)} of ${fmt(quota.monthlyQuota)} monthly`
                 : "Unavailable"}
+            </p>
+            <p className="text-xs text-gray-400 mt-2">
+              Bing Webmaster Tools URL submission API. Separate from indexnow.org pings — see the
+              IndexNow tab for our submission log.
             </p>
           </CardContent>
         </Card>
