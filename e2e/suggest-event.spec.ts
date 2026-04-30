@@ -34,8 +34,8 @@ test.describe("Suggest Event Page", () => {
   test("can toggle to manual paste mode", async ({ page }) => {
     await page.goto("/suggest-event");
 
-    // Click the checkbox to enable manual paste
-    await page.locator('input[type="checkbox"]').first().click();
+    // The "manual paste mode" toggle is a text button, not a checkbox.
+    await page.getByRole("button", { name: /enter details manually/i }).click();
 
     // Should show textarea for pasting content
     await expect(page.locator("textarea").first()).toBeVisible();
@@ -46,7 +46,7 @@ test.describe("Suggest Event Page", () => {
     await page.goto("/suggest-event");
 
     // Switch to manual paste mode
-    await page.locator('input[type="checkbox"]').first().click();
+    await page.getByRole("button", { name: /enter details manually/i }).click();
 
     // Paste event content
     await page

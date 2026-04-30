@@ -80,7 +80,9 @@ test.describe("Keyboard Navigation - Form Inputs", () => {
     const passwordInput = page.locator('input[type="password"]').first();
     await expect(passwordInput).toBeFocused();
 
-    // Tab to submit button
+    // After password the form has a "Forgot password?" link before submit, so
+    // two Tabs are needed to reach the submit button.
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     const submitButton = page.locator('button[type="submit"]').first();
     await expect(submitButton).toBeFocused();
@@ -232,9 +234,11 @@ test.describe("Accessibility - Responsive", () => {
     // Can activate with keyboard
     await page.keyboard.press("Enter");
 
-    // Menu should open — the mobile drawer renders multiple "/events" anchors
-    // (mobile and any submenu duplicates), so just check at least one is visible.
-    await expect(page.locator('a.block[href="/events"]').first()).toBeVisible({ timeout: 5000 });
+    // Menu should open — the menu button's aria-label flips to "Close menu"
+    // when the drawer is open. Checking the button state is more robust than
+    // probing for specific drawer links (which differ between desktop dropdown
+    // and mobile drawer markup).
+    await expect(page.locator('button[aria-label="Close menu"]')).toBeVisible({ timeout: 5000 });
   });
 
   test("content is accessible on mobile", async ({ page }) => {
