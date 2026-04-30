@@ -96,10 +96,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-    // Get current event to check if slug needs updating + capture prior status
-    // for IndexNow transition detection below.
+    // Get current event to check if slug needs updating + capture prior values
+    // for IndexNow transition / material-change detection below.
     const [currentEvent] = await db
-      .select({ slug: events.slug, status: events.status })
+      .select({
+        slug: events.slug,
+        status: events.status,
+        name: events.name,
+        description: events.description,
+        venueId: events.venueId,
+        startDate: events.startDate,
+        endDate: events.endDate,
+      })
       .from(events)
       .where(eq(events.id, id))
       .limit(1);
@@ -237,18 +245,40 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
-    // IndexNow: ping when the event transitions from non-public to public so
-    // search engines pick up the new content within minutes. Re-edits within
-    // the public set don't ping (avoids spam). Re-pings on public→public are
-    // also skipped — let the next genuine status change trigger.
-    if (
-      data.status &&
-      PUBLIC_EVENT_SET.has(data.status) &&
-      !PUBLIC_EVENT_SET.has(currentEvent.status)
-    ) {
+    // IndexNow: ping search engines on lifecycle transitions so they pick up
+    // changes within minutes. Three distinct sources let analytics distinguish
+    // first-publish, the TENTATIVE→APPROVED upgrade, and material edits to an
+    // already-APPROVED event.
+    const wasPublic = PUBLIC_EVENT_SET.has(currentEvent.status);
+    const newStatus = data.status ?? currentEvent.status;
+    const isPublic = PUBLIC_EVENT_SET.has(newStatus);
+
+    let indexNowSource: string | null = null;
+    if (!wasPublic && isPublic) {
+      indexNowSource = "event-create";
+    } else if (currentEvent.status === "TENTATIVE" && newStatus === "APPROVED") {
+      indexNowSource = "event-approve";
+    } else if (wasPublic && isPublic && newStatus === "APPROVED") {
+      const dateChanged = (a: Date | string | null | undefined, b: Date | null) => {
+        if (a === undefined) return false;
+        const aMs = a ? new Date(a).getTime() : NaN;
+        const bMs = b ? b.getTime() : NaN;
+        return aMs !== bMs && !(isNaN(aMs) && isNaN(bMs));
+      };
+      const materialChanged =
+        (data.name !== undefined && data.name !== currentEvent.name) ||
+        (data.description !== undefined && data.description !== currentEvent.description) ||
+        (data.venueId !== undefined && (data.venueId || null) !== currentEvent.venueId) ||
+        dateChanged(data.startDate, currentEvent.startDate) ||
+        dateChanged(data.endDate, currentEvent.endDate) ||
+        data.eventDays !== undefined;
+      if (materialChanged) indexNowSource = "event-update";
+    }
+
+    if (indexNowSource) {
       const slug = (updateData.slug as string | undefined) ?? currentEvent.slug;
       const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(db, indexNowUrlFor("events", slug), env, "admin-event-patch");
+      await pingIndexNow(db, indexNowUrlFor("events", slug), env, indexNowSource);
     }
 
     return NextResponse.json(updatedEvent);

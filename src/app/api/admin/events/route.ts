@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, eventDays, contentLinks, blogPosts, venues } from "@/lib/db/schema";
 import { eq, or, gt, lt, and, sql } from "drizzle-orm";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+
+const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
 export const runtime = "edge";
 
@@ -193,6 +197,12 @@ export async function POST(request: NextRequest) {
     }
 
     const [newEvent] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
+
+    // IndexNow: ping if the admin created this event already publicly visible.
+    if (newEvent && PUBLIC_EVENT_SET.has(newEvent.status)) {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("events", newEvent.slug), env, "event-create");
+    }
 
     return NextResponse.json(newEvent, { status: 201 });
   } catch (error) {

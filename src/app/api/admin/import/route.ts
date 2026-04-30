@@ -15,16 +15,18 @@ import {
   gateUrlForField,
   shouldIngestFromSource,
 } from "@/lib/url-classification";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 // Helper function to find or create a venue
 // Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
+// Returns { id, newSlug } where newSlug is set only when this call inserted a new venue.
 async function findOrCreateVenue(
   db: ReturnType<typeof getCloudflareDb>,
   scrapedVenue: ScrapedVenue,
   defaultVenueId: string | null
-): Promise<string | null> {
+): Promise<{ id: string | null; newSlug: string | null }> {
   if (!scrapedVenue.name) {
-    return defaultVenueId;
+    return { id: defaultVenueId, newSlug: null };
   }
 
   // Decode HTML entities in venue name to ensure consistent matching
@@ -40,7 +42,7 @@ async function findOrCreateVenue(
   if (existingVenues.length > 0 && venueCity) {
     const matchingVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
     if (matchingVenue) {
-      return matchingVenue.id;
+      return { id: matchingVenue.id, newSlug: null };
     }
     // Name matches but city doesn't - will create new venue with unique slug below
   } else if (existingVenues.length > 0 && !venueCity) {
@@ -51,7 +53,7 @@ async function findOrCreateVenue(
         console.log(
           `[findOrCreateVenue] Matched existing venue "${matchingVenue.name}" by state ${venueState}`
         );
-        return matchingVenue.id;
+        return { id: matchingVenue.id, newSlug: null };
       }
     }
     // No state match either - just use the first existing venue with this slug
@@ -59,7 +61,7 @@ async function findOrCreateVenue(
     console.log(
       `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
     );
-    return existingVenues[0].id;
+    return { id: existingVenues[0].id, newSlug: null };
   }
 
   // No existing venue found, or existing venue has different city - create new one
@@ -117,7 +119,7 @@ async function findOrCreateVenue(
     // Non-blocking: venue still created without coordinates
   }
 
-  return newVenueId;
+  return { id: newVenueId, newSlug: finalSlug };
 }
 
 export const runtime = "edge";
@@ -284,6 +286,9 @@ export async function POST(request: Request) {
       updatedEvents: [] as { id: string; name: string; slug: string }[],
     };
 
+    // Track slugs of newly-created venues so we can batch-ping IndexNow at the end.
+    const newVenueSlugsForIndexNow: string[] = [];
+
     // Load URL domain classifications once for the whole batch — used to gate
     // ticket_url and source_url against known-aggregator domains.
     const urlClassifications = await loadClassifications(db);
@@ -383,11 +388,14 @@ export async function POST(request: Request) {
             eventVenueId = matchedVenue.id;
           } else {
             // Create new venue (either no match at all, or same name but different city, or no city info)
-            const newVenueId = await findOrCreateVenue(db, eventData.venue, venueId || null);
-            if (newVenueId) {
-              eventVenueId = newVenueId;
-              results.venuesCreated++;
-              console.log(`[Venue Match] Created new venue: ${newVenueId}`);
+            const venueResult = await findOrCreateVenue(db, eventData.venue, venueId || null);
+            if (venueResult.id) {
+              eventVenueId = venueResult.id;
+              if (venueResult.newSlug) {
+                results.venuesCreated++;
+                newVenueSlugsForIndexNow.push(venueResult.newSlug);
+                console.log(`[Venue Match] Created new venue: ${venueResult.id}`);
+              }
             }
           }
         }
@@ -506,6 +514,21 @@ export async function POST(request: Request) {
         results.errors.push(
           `Failed to import ${event.name}: ${error instanceof Error ? error.message : "Unknown error"}`
         );
+      }
+    }
+
+    // IndexNow: bulk import inserts events directly as APPROVED, bypassing
+    // the PATCH-based hooks. Batch-ping all imported event URLs and any
+    // newly-created venue URLs in two POSTs (max 10k URLs each).
+    {
+      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      if (results.importedEvents.length > 0) {
+        const eventUrls = results.importedEvents.map((e) => indexNowUrlFor("events", e.slug));
+        await pingIndexNow(db, eventUrls, cfEnv, "event-create");
+      }
+      if (newVenueSlugsForIndexNow.length > 0) {
+        const venueUrls = newVenueSlugsForIndexNow.map((s) => indexNowUrlFor("venues", s));
+        await pingIndexNow(db, venueUrls, cfEnv, "venue-create");
       }
     }
 

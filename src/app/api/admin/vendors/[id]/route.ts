@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, eventVendors, events, users } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -51,7 +52,12 @@ export async function GET(request: NextRequest, { params }: Params) {
       })),
     });
   } catch (error) {
-    await logError(db, { message: "Failed to fetch vendor", error, source: "api/admin/vendors/[id]", request });
+    await logError(db, {
+      message: "Failed to fetch vendor",
+      error,
+      source: "api/admin/vendors/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch vendor" }, { status: 500 });
   }
 }
@@ -74,10 +80,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-
-    // Get current vendor to check if slug needs updating
+    // Get current vendor to check if slug needs updating + capture prior values
+    // for IndexNow material-change detection.
     const [currentVendor] = await db
-      .select({ slug: vendors.slug })
+      .select({
+        slug: vendors.slug,
+        businessName: vendors.businessName,
+        vendorType: vendors.vendorType,
+        description: vendors.description,
+        city: vendors.city,
+        state: vendors.state,
+      })
       .from(vendors)
       .where(eq(vendors.id, id))
       .limit(1);
@@ -100,10 +113,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           const existingSlug = await db
             .select({ id: vendors.id })
             .from(vendors)
-            .where(and(
-              eq(vendors.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
-              ne(vendors.id, id)
-            ))
+            .where(
+              and(
+                eq(vendors.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+                ne(vendors.id, id)
+              )
+            )
             .limit(1);
           if (existingSlug.length === 0) break;
           slugSuffix++;
@@ -129,21 +144,37 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.zip !== undefined) updateData.zip = data.zip;
     // Business Details
     if (data.yearEstablished !== undefined) updateData.yearEstablished = data.yearEstablished;
-    if (data.paymentMethods !== undefined) updateData.paymentMethods = JSON.stringify(data.paymentMethods);
+    if (data.paymentMethods !== undefined)
+      updateData.paymentMethods = JSON.stringify(data.paymentMethods);
     if (data.licenseInfo !== undefined) updateData.licenseInfo = data.licenseInfo;
     if (data.insuranceInfo !== undefined) updateData.insuranceInfo = data.insuranceInfo;
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
-    const [updatedVendor] = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, id))
-      .limit(1);
+    const [updatedVendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
+
+    // IndexNow: ping when fields rendered on the public vendor page change.
+    const vendorMaterialChanged =
+      (data.businessName !== undefined && data.businessName !== currentVendor.businessName) ||
+      (data.vendorType !== undefined && (data.vendorType ?? null) !== currentVendor.vendorType) ||
+      (data.description !== undefined &&
+        (data.description ?? null) !== currentVendor.description) ||
+      (data.city !== undefined && (data.city ?? null) !== currentVendor.city) ||
+      (data.state !== undefined && (data.state ?? null) !== currentVendor.state);
+    if (vendorMaterialChanged) {
+      const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("vendors", finalSlug), env, "vendor-update");
+    }
 
     return NextResponse.json(updatedVendor);
   } catch (error) {
-    await logError(db, { message: "Failed to update vendor", error, source: "api/admin/vendors/[id]", request });
+    await logError(db, {
+      message: "Failed to update vendor",
+      error,
+      source: "api/admin/vendors/[id]",
+      request,
+    });
     const message = error instanceof Error ? error.message : "Failed to update vendor";
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -160,11 +191,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   const db = getCloudflareDb();
   try {
     // Get vendor to find user
-    const vendor = await db
-      .select()
-      .from(vendors)
-      .where(eq(vendors.id, id))
-      .limit(1);
+    const vendor = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
 
     if (vendor.length > 0) {
       // Reset user role to USER
@@ -174,7 +201,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(vendors).where(eq(vendors.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to delete vendor", error, source: "api/admin/vendors/[id]", request });
+    await logError(db, {
+      message: "Failed to delete vendor",
+      error,
+      source: "api/admin/vendors/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to delete vendor" }, { status: 500 });
   }
 }

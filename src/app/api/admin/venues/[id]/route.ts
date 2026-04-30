@@ -74,10 +74,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-    // Get current venue to check if slug needs updating + capture prior status
-    // for IndexNow transition detection.
+    // Get current venue to check if slug needs updating + capture prior values
+    // for IndexNow transition / material-change detection.
     const [currentVenue] = await db
-      .select({ slug: venues.slug, status: venues.status })
+      .select({
+        slug: venues.slug,
+        status: venues.status,
+        name: venues.name,
+        address: venues.address,
+        city: venues.city,
+        state: venues.state,
+        description: venues.description,
+      })
       .from(venues)
       .where(eq(venues.id, id))
       .limit(1);
@@ -159,11 +167,29 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     const [updatedVenue] = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 
-    // IndexNow: ping when transitioning to ACTIVE from any other state.
-    if (data.status === "ACTIVE" && currentVenue.status !== "ACTIVE") {
+    // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material edits
+    // on already-ACTIVE venues so analytics can attribute indexing requests.
+    const wasActive = currentVenue.status === "ACTIVE";
+    const newStatus = data.status ?? currentVenue.status;
+    const isActive = newStatus === "ACTIVE";
+
+    let venueIndexNowSource: string | null = null;
+    if (!wasActive && isActive) {
+      venueIndexNowSource = "venue-activate";
+    } else if (wasActive && isActive) {
+      const materialChanged =
+        (data.name !== undefined && data.name !== currentVenue.name) ||
+        (data.address !== undefined && data.address !== currentVenue.address) ||
+        (data.city !== undefined && data.city !== currentVenue.city) ||
+        (data.state !== undefined && data.state !== currentVenue.state) ||
+        (data.description !== undefined && data.description !== currentVenue.description);
+      if (materialChanged) venueIndexNowSource = "venue-update";
+    }
+
+    if (venueIndexNowSource) {
       const finalSlug = (updateData.slug as string | undefined) ?? currentVenue.slug;
       const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, "admin-venue-patch");
+      await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, venueIndexNowSource);
     }
 
     return NextResponse.json(updatedVenue);

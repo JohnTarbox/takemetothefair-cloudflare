@@ -11,6 +11,7 @@ import { logError } from "@/lib/logger";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
 
     // Handle venue
     let venueId: string | null = null;
+    let newVenueSlug: string | null = null;
 
     if (venueOption.type === "existing") {
       // Verify venue exists
@@ -101,6 +103,7 @@ export async function POST(request: NextRequest) {
         status: "ACTIVE",
       });
       venueId = newVenueId;
+      newVenueSlug = finalVenueSlug;
 
       // Auto-geocode the new venue
       try {
@@ -322,6 +325,18 @@ export async function POST(request: NextRequest) {
         // Non-blocking: event still created without schema.org data
         console.error("Failed to store schema.org data:", schemaError);
       }
+    }
+
+    // IndexNow: this endpoint creates events directly as APPROVED, bypassing
+    // the PATCH-based hooks. Ping for the new event (always public on save) and
+    // any newly-created venue. Reused/existing venues are skipped — they're
+    // already indexed.
+    {
+      const cfEnv = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      if (newVenueSlug) {
+        await pingIndexNow(db, indexNowUrlFor("venues", newVenueSlug), cfEnv, "venue-create");
+      }
+      await pingIndexNow(db, indexNowUrlFor("events", finalEventSlug), cfEnv, "event-create");
     }
 
     return NextResponse.json({
