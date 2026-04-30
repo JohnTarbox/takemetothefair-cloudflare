@@ -7,7 +7,8 @@
     "vercel-build": "next build",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --var GIT_SHA:$(git describe --always --dirty --abbrev=7) --var BUILD_TIME:$(date -u +%FT%TZ)",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.3.3",
@@ -19,7 +20,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^11.10.0",
     "typescript": "^5",
+    "vitest": "^3.2.4",
     "wrangler": "^4.60.0"
   }
 }
