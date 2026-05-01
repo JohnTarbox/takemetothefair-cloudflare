@@ -8,6 +8,7 @@ import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { parseDateOnly } from "@/lib/datetime";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
@@ -114,8 +115,8 @@ export async function POST(request: NextRequest) {
     let endDate = data.endDate ? new Date(data.endDate) : null;
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
       const sorted = data.eventDays.map((d) => d.date).sort();
-      startDate = new Date(sorted[0] + "T00:00:00");
-      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
+      startDate = parseDateOnly(sorted[0]);
+      endDate = parseDateOnly(sorted[sorted.length - 1]);
     }
 
     // Auto-compute public date range (excluding vendor-only days)

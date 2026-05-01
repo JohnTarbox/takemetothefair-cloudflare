@@ -5,6 +5,7 @@ import { Copy, AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { parseDateOnly, formatDateOnly, toIsoDateOnly } from "@/lib/datetime";
 
 // Maximum number of event days allowed (SQLite variable limit is 999, with 7 vars per day = ~142 max)
 const MAX_EVENT_DAYS = 100;
@@ -31,23 +32,21 @@ interface DailyScheduleInputProps {
 }
 
 function formatDateDisplay(dateStr: string): string {
-  const date = new Date(dateStr + "T12:00:00"); // Use noon to avoid timezone issues
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  // parseDateOnly anchors to midnight UTC; formatDateOnly renders in UTC, so
+  // the displayed date matches the input regardless of host timezone.
+  return formatDateOnly(parseDateOnly(dateStr));
 }
 
 function getDatesInRange(start: string, end: string): { dates: string[]; truncated: boolean } {
   const dates: string[] = [];
-  const startDate = new Date(start + "T12:00:00");
-  const endDate = new Date(end + "T12:00:00");
+  const startDate = parseDateOnly(start);
+  const endDate = parseDateOnly(end);
+  if (!startDate || !endDate) return { dates: [], truncated: false };
 
   const current = new Date(startDate);
   while (current <= endDate) {
-    dates.push(current.toISOString().split("T")[0]);
-    current.setDate(current.getDate() + 1);
+    dates.push(toIsoDateOnly(current));
+    current.setUTCDate(current.getUTCDate() + 1);
   }
 
   // Truncate if exceeds max
@@ -190,15 +189,18 @@ export function DailyScheduleInput({
   // Discontinuous mode: add a new date row
   const handleAddDate = useCallback(() => {
     if (days.length >= MAX_EVENT_DAYS) return;
-    // Default to tomorrow or the day after the last date
+    // Default to tomorrow or the day after the last date (UTC-anchored to
+    // match storage; toIsoDateOnly is host-zone independent).
     let defaultDate = new Date();
-    defaultDate.setDate(defaultDate.getDate() + 1);
+    defaultDate.setUTCDate(defaultDate.getUTCDate() + 1);
     if (days.length > 0) {
-      const lastDate = new Date(days[days.length - 1].date + "T12:00:00");
-      lastDate.setDate(lastDate.getDate() + 1);
-      defaultDate = lastDate;
+      const lastDate = parseDateOnly(days[days.length - 1].date);
+      if (lastDate) {
+        lastDate.setUTCDate(lastDate.getUTCDate() + 1);
+        defaultDate = lastDate;
+      }
     }
-    const dateStr = defaultDate.toISOString().split("T")[0];
+    const dateStr = toIsoDateOnly(defaultDate);
     setDays((prev) => {
       const updated = [
         ...prev,

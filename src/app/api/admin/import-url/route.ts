@@ -8,6 +8,7 @@ import { createSlug } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
+import { parseDateOnly } from "@/lib/datetime";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
@@ -157,8 +158,8 @@ export async function POST(request: NextRequest) {
     if (hasSpecificDates) {
       // Auto-compute from specificDates
       const sorted = [...event.specificDates!].sort();
-      startDate = new Date(sorted[0] + "T00:00:00");
-      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
+      startDate = parseDateOnly(sorted[0]);
+      endDate = parseDateOnly(sorted[sorted.length - 1]);
     } else {
       if (event.startDate) {
         startDate = new Date(event.startDate);

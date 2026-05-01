@@ -11,6 +11,7 @@ import {
   eventCreateSchema,
   eventUpdateSchema,
   eventDaySchema,
+  promoterEventCreateSchema,
   eventVendorCreateSchema,
   eventVendorAddSchema,
   eventVendorUpdateSchema,
@@ -287,6 +288,17 @@ describe("eventDaySchema", () => {
     expect(eventDaySchema.safeParse({ ...validDay, date: "2025-3-15" }).success).toBe(false);
   });
 
+  it("rejects calendar-invalid dates (Feb 30, month 13, day 0)", () => {
+    // The plain regex would let these through; the .refine guard catches them.
+    expect(eventDaySchema.safeParse({ ...validDay, date: "2026-02-30" }).success).toBe(false);
+    expect(eventDaySchema.safeParse({ ...validDay, date: "2026-13-01" }).success).toBe(false);
+    expect(eventDaySchema.safeParse({ ...validDay, date: "2026-04-00" }).success).toBe(false);
+    expect(eventDaySchema.safeParse({ ...validDay, date: "2026-04-31" }).success).toBe(false);
+    // Leap year edges
+    expect(eventDaySchema.safeParse({ ...validDay, date: "2024-02-29" }).success).toBe(true);
+    expect(eventDaySchema.safeParse({ ...validDay, date: "2026-02-29" }).success).toBe(false);
+  });
+
   it("validates time format (HH:MM)", () => {
     expect(eventDaySchema.safeParse({ ...validDay, openTime: "09:00" }).success).toBe(true);
     expect(eventDaySchema.safeParse({ ...validDay, openTime: "23:59" }).success).toBe(true);
@@ -309,6 +321,61 @@ describe("eventDaySchema", () => {
     if (result.success) {
       expect(result.data.closed).toBe(false);
     }
+  });
+});
+
+describe("promoterEventCreateSchema date validation", () => {
+  // Common minimum-valid promoter event payload — only the date fields vary
+  // across these cases. Keep this minimal so test failures are about dates,
+  // not unrelated required fields.
+  const baseValidEvent = {
+    name: "Test Event",
+    promoterId: "promoter-uuid",
+    venueId: "venue-uuid",
+    stateCode: "ME",
+  };
+
+  it("accepts ISO 8601 datetime strings", () => {
+    const result = promoterEventCreateSchema.safeParse({
+      ...baseValidEvent,
+      startDate: "2026-04-30T00:00:00Z",
+      endDate: "2026-05-02T00:00:00Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects garbage strings as startDate (the .min(1) → .datetime() fix)", () => {
+    // Before the fix: .min(1) accepted any non-empty string.
+    // After: .datetime() requires ISO 8601 format.
+    expect(
+      promoterEventCreateSchema.safeParse({
+        ...baseValidEvent,
+        startDate: "not-a-date",
+        endDate: "2026-05-02T00:00:00Z",
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects YYYY-MM-DD without a time component", () => {
+    // Date-only strings don't match .datetime() — promoters should pass full
+    // ISO datetimes (the form converts before submission).
+    expect(
+      promoterEventCreateSchema.safeParse({
+        ...baseValidEvent,
+        startDate: "2026-04-30",
+        endDate: "2026-05-02",
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts null for startDate/endDate", () => {
+    expect(
+      promoterEventCreateSchema.safeParse({
+        ...baseValidEvent,
+        startDate: null,
+        endDate: null,
+      }).success
+    ).toBe(true);
   });
 });
 

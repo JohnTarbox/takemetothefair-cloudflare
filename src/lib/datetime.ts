@@ -96,6 +96,82 @@ export function parseTimestamp(raw: unknown): Date | null {
   return parseDateLoose(raw);
 }
 
+/**
+ * Combine a "YYYY-MM-DD" date and an "HH:MM" time, interpret them as
+ * wall-clock in the venue's zone (`VENUE_TZ`), and return the corresponding
+ * UTC `Date`.
+ *
+ * Use this for any user-entered datetime that represents "what the clock on
+ * the wall at the venue says." E.g. promoter enters "April 30 at 9:00 AM";
+ * we want this stored as 9:00 AM ET → 13:00 UTC (in EDT, summer) or 14:00
+ * UTC (in EST, winter), regardless of where the promoter's browser thinks
+ * it lives.
+ *
+ * Algorithm: build a tentative UTC ms with the same components, format it
+ * in the target zone to discover what wall-clock that ms-epoch represents,
+ * then offset by the difference. Standard "fold" approach, DST-safe except
+ * at the precise transition instant (which is ambiguous anyway).
+ *
+ * Returns `null` on unparseable inputs.
+ */
+export function parseWallClockInVenueZone(dateIso: string, timeIso: string): Date | null {
+  if (typeof dateIso !== "string" || typeof timeIso !== "string") return null;
+  const dm = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const tm = timeIso.match(/^(\d{2}):(\d{2})$/);
+  if (!dm || !tm) return null;
+  const year = parseInt(dm[1], 10);
+  const month = parseInt(dm[2], 10);
+  const day = parseInt(dm[3], 10);
+  const hour = parseInt(tm[1], 10);
+  const minute = parseInt(tm[2], 10);
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+  const targetMs = Date.UTC(year, month - 1, day, hour, minute);
+  if (isNaN(targetMs)) return null;
+  // Two passes converge across DST transitions: first pass uses the offset
+  // observed at the tentative ms; second pass uses the offset observed at the
+  // first-pass result, which catches cases where the answer crosses a DST
+  // boundary (e.g. wall-clock 3:00 AM on spring-forward Sunday — the tentative
+  // lands in EST but the answer is in EDT).
+  let result = targetMs;
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: VENUE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  for (let i = 0; i < 2; i++) {
+    const parts = fmt.formatToParts(new Date(result));
+    const get = (type: string) => parseInt(parts.find((p) => p.type === type)?.value ?? "0", 10);
+    let observedHour = get("hour");
+    if (observedHour === 24) observedHour = 0;
+    const observedMs = Date.UTC(
+      get("year"),
+      get("month") - 1,
+      get("day"),
+      observedHour,
+      get("minute")
+    );
+    const offsetMs = observedMs - result;
+    result = targetMs - offsetMs;
+  }
+  return new Date(result);
+}
+
 // ── Internal formatter cache ────────────────────────────────────────
 // Intl.DateTimeFormat construction is non-trivial; cache the formatters
 // so hot paths don't pay the cost on every render.

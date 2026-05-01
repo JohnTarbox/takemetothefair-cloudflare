@@ -8,6 +8,7 @@ import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { parseTimestamp, parseDateOnly } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -171,8 +172,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // Auto-compute startDate/endDate from eventDays when discontinuous
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
       const sorted = data.eventDays.map((d) => d.date).sort();
-      updateData.startDate = new Date(sorted[0] + "T00:00:00");
-      updateData.endDate = new Date(sorted[sorted.length - 1] + "T00:00:00");
+      updateData.startDate = parseDateOnly(sorted[0]);
+      updateData.endDate = parseDateOnly(sorted[sorted.length - 1]);
     }
 
     // Auto-compute public date range (excluding vendor-only days)
@@ -261,9 +262,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     } else if (wasPublic && isPublic && newStatus === "APPROVED") {
       const dateChanged = (a: Date | string | null | undefined, b: Date | null) => {
         if (a === undefined) return false;
-        const aMs = a ? new Date(a).getTime() : NaN;
-        const bMs = b ? b.getTime() : NaN;
-        return aMs !== bMs && !(isNaN(aMs) && isNaN(bMs));
+        // null vs null = unchanged; null vs Date = changed; ms-epoch comparison
+        // for two valid dates. parseTimestamp returns null on garbage, so a
+        // nonsensical incoming value is treated as null (no change unless the
+        // existing value was also non-null).
+        const aMs = a ? (parseTimestamp(a)?.getTime() ?? null) : null;
+        const bMs = b ? b.getTime() : null;
+        return aMs !== bMs;
       };
       const materialChanged =
         (data.name !== undefined && data.name !== currentEvent.name) ||

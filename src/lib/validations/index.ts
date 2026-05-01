@@ -14,6 +14,7 @@ import {
   EVENT_SCALE,
 } from "@/lib/constants";
 import { decodeHtmlEntities } from "@/lib/utils";
+import { parseDateOnly } from "@/lib/datetime";
 
 // Common field schemas
 const nameSchema = z
@@ -151,7 +152,10 @@ export const vendorUpdateSchema = vendorCreateSchema
 
 // Event Day schema (per-day schedule)
 export const eventDaySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format"),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format")
+    .refine((s) => parseDateOnly(s) !== null, "Invalid calendar date (e.g. Feb 30, month 13)"),
   openTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
   closeTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
   notes: z.string().max(200).optional().nullable(),
@@ -404,8 +408,8 @@ export const promoterEventCreateSchema = z
     venueId: z.string().min(1).optional().nullable(),
     stateCode: z.string().length(2).optional().nullable(),
     isStatewide: z.boolean().optional().default(false),
-    startDate: z.string().min(1).optional().nullable(),
-    endDate: z.string().min(1).optional().nullable(),
+    startDate: z.string().datetime().optional().nullable(),
+    endDate: z.string().datetime().optional().nullable(),
     discontinuousDates: z.boolean().optional().default(false),
     categories: z.array(z.string()).optional().default([]),
     tags: z.array(z.string()).optional().default([]),

@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
+import { parseDateOnly } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -94,12 +95,12 @@ export default function NewEventPage() {
 
     if (discontinuousDates && eventDays.length > 0) {
       const sorted = eventDays.map((d) => d.date).sort();
-      startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
-      endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+      startDateISO = parseDateOnly(sorted[0])?.toISOString() ?? null;
+      endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
     } else {
       startDateISO =
-        datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
-      endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
+        datesTBD || !startDate ? null : (parseDateOnly(startDate)?.toISOString() ?? null);
+      endDateISO = datesTBD || !endDate ? null : (parseDateOnly(endDate)?.toISOString() ?? null);
     }
 
     const promoterId = formData.get("promoterId") as string;
@@ -145,7 +146,7 @@ export default function NewEventPage() {
         : null,
       eventScale: formData.get("eventScale") || null,
       applicationDeadline: formData.get("applicationDeadline")
-        ? new Date((formData.get("applicationDeadline") as string) + "T00:00:00").toISOString()
+        ? (parseDateOnly(formData.get("applicationDeadline") as string)?.toISOString() ?? null)
         : null,
       applicationUrl: formData.get("applicationUrl") || null,
       applicationInstructions: formData.get("applicationInstructions") || null,

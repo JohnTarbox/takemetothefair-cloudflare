@@ -6,6 +6,7 @@ import { promoters, events, eventDays } from "@/lib/db/schema";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { parseDateOnly } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -77,8 +78,8 @@ export async function POST(request: NextRequest) {
     let endDate = data.endDate ?? null;
     if (isDiscontinuous && eventDaysInput.length > 0) {
       const sorted = eventDaysInput.map((d) => d.date).sort();
-      startDate = new Date(sorted[0] + "T00:00:00").toISOString();
-      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+      startDate = parseDateOnly(sorted[0])?.toISOString() ?? null;
+      endDate = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
     }
 
     // Public date range (excludes vendor-only days)

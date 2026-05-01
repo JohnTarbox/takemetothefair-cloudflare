@@ -6,6 +6,7 @@ import { eq, desc, or, gt, lt, and } from "drizzle-orm";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { parseDateOnly } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -113,8 +114,8 @@ export async function POST(request: NextRequest) {
     let endDate = rawEndDate;
     if (isDiscontinuous && eventDaysInput && eventDaysInput.length > 0) {
       const sorted = eventDaysInput.map((d) => d.date).sort();
-      startDate = new Date(sorted[0] + "T00:00:00").toISOString();
-      endDate = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+      startDate = parseDateOnly(sorted[0])?.toISOString() ?? null;
+      endDate = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
     }
 
     // Auto-compute public date range (excluding vendor-only days)

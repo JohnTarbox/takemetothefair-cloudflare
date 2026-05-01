@@ -22,6 +22,7 @@ import { DailyScheduleInput, type EventDayInput } from "@/components/events/Dail
 import { VenueComboSearch } from "@/components/venue-combo-search";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
+import { parseDateOnly, parseWallClockInVenueZone } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -107,11 +108,16 @@ function buildRequestBody(
   let endDateISO: string | null = null;
   if (discontinuousDates && eventDays.length > 0) {
     const sorted = eventDays.map((d) => d.date).sort();
-    startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
-    endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+    startDateISO = parseDateOnly(sorted[0])?.toISOString() ?? null;
+    endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
   } else if (form.startDate && form.endDate) {
-    startDateISO = new Date(`${form.startDate}T${form.startTime || "09:00"}`).toISOString();
-    endDateISO = new Date(`${form.endDate}T${form.endTime || "17:00"}`).toISOString();
+    // Promoter-entered times are wall-clock in the venue's zone (per the
+    // datetime architecture decision), not browser-local. parseWallClockInVenueZone
+    // converts "9:00 AM" entered by a promoter in any zone into 9:00 AM ET → UTC.
+    startDateISO =
+      parseWallClockInVenueZone(form.startDate, form.startTime || "09:00")?.toISOString() ?? null;
+    endDateISO =
+      parseWallClockInVenueZone(form.endDate, form.endTime || "17:00")?.toISOString() ?? null;
   }
 
   return {
@@ -143,7 +149,7 @@ function buildRequestBody(
     estimatedAttendance: form.estimatedAttendance ? parseInt(form.estimatedAttendance, 10) : null,
     eventScale: form.eventScale || null,
     applicationDeadline: form.applicationDeadline
-      ? new Date(form.applicationDeadline + "T00:00:00").toISOString()
+      ? (parseDateOnly(form.applicationDeadline)?.toISOString() ?? null)
       : null,
     applicationUrl: form.applicationUrl || null,
     applicationInstructions: form.applicationInstructions || null,

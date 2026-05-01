@@ -13,6 +13,7 @@ import { DailyScheduleInput, type EventDayInput } from "@/components/events/Dail
 import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
 import { RescrapePanel } from "@/components/admin/RescrapePanel";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
+import { parseDateOnly, toIsoDateOnly } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -190,12 +191,12 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
     if (discontinuousDates && eventDays.length > 0) {
       const sorted = eventDays.map((d) => d.date).sort();
-      startDateISO = new Date(sorted[0] + "T00:00:00").toISOString();
-      endDateISO = new Date(sorted[sorted.length - 1] + "T00:00:00").toISOString();
+      startDateISO = parseDateOnly(sorted[0])?.toISOString() ?? null;
+      endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
     } else {
       startDateISO =
-        datesTBD || !startDate ? null : new Date(startDate + "T00:00:00").toISOString();
-      endDateISO = datesTBD || !endDate ? null : new Date(endDate + "T00:00:00").toISOString();
+        datesTBD || !startDate ? null : (parseDateOnly(startDate)?.toISOString() ?? null);
+      endDateISO = datesTBD || !endDate ? null : (parseDateOnly(endDate)?.toISOString() ?? null);
     }
 
     const data = {
@@ -233,7 +234,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
         : null,
       eventScale: formData.get("eventScale") || null,
       applicationDeadline: formData.get("applicationDeadline")
-        ? new Date((formData.get("applicationDeadline") as string) + "T00:00:00").toISOString()
+        ? (parseDateOnly(formData.get("applicationDeadline") as string)?.toISOString() ?? null)
         : null,
       applicationUrl: formData.get("applicationUrl") || null,
       applicationInstructions: formData.get("applicationInstructions") || null,
@@ -263,8 +264,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
   const formatDateForInput = (dateStr: string) => {
     if (!dateStr) return "";
-    const date = new Date(dateStr);
-    return date.toISOString().slice(0, 10);
+    return toIsoDateOnly(dateStr);
   };
 
   if (loading) {

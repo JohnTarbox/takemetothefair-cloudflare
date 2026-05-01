@@ -4,6 +4,7 @@ import {
   parseDateOnly,
   parseDateLoose,
   parseTimestamp,
+  parseWallClockInVenueZone,
   formatDateOnly,
   formatDateRange,
   formatTimeOfDay,
@@ -157,6 +158,41 @@ describe("parseDateLoose / parseTimestamp", () => {
   it("does not throw on garbage that previously crashed the integration", () => {
     expect(() => parseDateLoose("/Date(notanumber)/")).not.toThrow();
     expect(parseDateLoose("/Date(notanumber)/")).toBeNull();
+  });
+});
+
+describe("parseWallClockInVenueZone", () => {
+  it("interprets a wall-clock time as venue-local during EDT (summer)", () => {
+    // July 15, 2026 9:00 AM ET (EDT, UTC-4) = 13:00 UTC
+    const d = parseWallClockInVenueZone("2026-07-15", "09:00");
+    expect(d).toBeInstanceOf(Date);
+    expect(d?.toISOString()).toBe("2026-07-15T13:00:00.000Z");
+  });
+
+  it("interprets a wall-clock time as venue-local during EST (winter)", () => {
+    // January 15, 2026 9:00 AM ET (EST, UTC-5) = 14:00 UTC
+    const d = parseWallClockInVenueZone("2026-01-15", "09:00");
+    expect(d?.toISOString()).toBe("2026-01-15T14:00:00.000Z");
+  });
+
+  it("handles the spring DST forward transition (March 8 2026)", () => {
+    // 3:00 AM ET on March 8, 2026 is after the spring-forward (was 2:00 EST,
+    // jumps to 3:00 EDT). 3:00 EDT = 07:00 UTC.
+    const d = parseWallClockInVenueZone("2026-03-08", "03:00");
+    expect(d?.toISOString()).toBe("2026-03-08T07:00:00.000Z");
+  });
+
+  it("handles the fall DST back transition (November 1 2026)", () => {
+    // 1:00 AM ET on November 1 2026 — first occurrence (still EDT, UTC-4) = 05:00 UTC
+    const d = parseWallClockInVenueZone("2026-11-01", "01:00");
+    expect(d?.toISOString()).toBe("2026-11-01T05:00:00.000Z");
+  });
+
+  it("returns null for malformed date or time", () => {
+    expect(parseWallClockInVenueZone("garbage", "09:00")).toBeNull();
+    expect(parseWallClockInVenueZone("2026-04-30", "garbage")).toBeNull();
+    expect(parseWallClockInVenueZone("2026-13-01", "09:00")).toBeNull();
+    expect(parseWallClockInVenueZone("2026-04-30", "25:00")).toBeNull();
   });
 });
 
