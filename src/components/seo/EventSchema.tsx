@@ -1,3 +1,5 @@
+import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from "@/lib/datetime";
+
 interface EventDay {
   date: string;
   openTime: string;
@@ -163,18 +165,25 @@ export function EventSchema({
     eventDays && eventDays.length > 0
       ? eventDays
           .filter((d) => !d.closed)
-          .map((day, i) => ({
-            "@type": "Event",
-            name: `${name} - Day ${i + 1}`,
-            startDate: `${day.date}T${day.openTime}:00`,
-            endDate: `${day.date}T${day.closeTime}:00`,
-            description: day.notes || description || `${name} - Day ${i + 1}`,
-            location,
-            image: resolvedImage,
-            eventStatus,
-            offers,
-            organizer: organizerBlock,
-          }))
+          .map((day, i) => {
+            // Sub-event open/close times are wall-clock in the venue's zone.
+            // Emit them as ISO with the proper offset (`-04:00`/`-05:00`)
+            // so calendar consumers and search crawlers don't have to guess.
+            const startWall = parseWallClockInVenueZone(day.date, day.openTime);
+            const endWall = parseWallClockInVenueZone(day.date, day.closeTime);
+            return {
+              "@type": "Event",
+              name: `${name} - Day ${i + 1}`,
+              startDate: formatIsoInVenueZone(startWall) || undefined,
+              endDate: formatIsoInVenueZone(endWall) || undefined,
+              description: day.notes || description || `${name} - Day ${i + 1}`,
+              location,
+              image: resolvedImage,
+              eventStatus,
+              offers,
+              organizer: organizerBlock,
+            };
+          })
       : undefined;
 
   const schema = {
@@ -184,8 +193,11 @@ export function EventSchema({
     description: description || `${name} - a fair and community event.`,
     ...(hasDates
       ? {
-          startDate: new Date(startDate).toISOString(),
-          endDate: new Date(endDate).toISOString(),
+          // Defensive: parseDateLoose returns null on Invalid Date instead of
+          // throwing on .toISOString() — protects the SSR render against bad
+          // input from upstream.
+          startDate: parseDateLoose(startDate)?.toISOString() ?? undefined,
+          endDate: parseDateLoose(endDate)?.toISOString() ?? undefined,
         }
       : {}),
     image: resolvedImage,

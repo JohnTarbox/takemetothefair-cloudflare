@@ -1,6 +1,15 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import slugify from "slugify";
+import {
+  formatDateOnly,
+  formatDateRange as datetimeFormatDateRange,
+  parseDateOnly,
+  parseWallClockInVenueZone,
+  formatIcsUtc,
+  formatIcsVenueZone,
+  VTIMEZONE_AMERICA_NEW_YORK,
+} from "@/lib/datetime";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -66,56 +75,32 @@ export function findUniqueSlug(baseSlug: string, existingSlugs: (string | null)[
   return `${baseSlug}-${i}`;
 }
 
+/**
+ * Display a date in UTC without a TZ label (date-only field convention).
+ * Delegates to the canonical formatter in `src/lib/datetime.ts`.
+ */
 export function formatDate(date: Date | string): string {
-  const d = new Date(date);
-  // Use UTC to avoid timezone shift (event dates are stored as midnight UTC)
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return formatDateOnly(date);
 }
 
+/**
+ * Display a date range. Delegates to the canonical formatter; legacy "TBD"
+ * contract is preserved.
+ */
 export function formatDateRange(
   start: Date | string | null | undefined,
   end: Date | string | null | undefined
 ): string {
-  if (!start) {
-    return "TBD";
-  }
-
-  const startDate = new Date(start);
-
-  // Check for invalid or epoch start date
-  if (isNaN(startDate.getTime()) || startDate.getTime() === 0) {
-    return "TBD";
-  }
-
-  // If end date is missing, invalid, or epoch (Jan 1 1970), show start only
-  const endDate = end ? new Date(end) : null;
-  if (!endDate || isNaN(endDate.getTime()) || endDate.getTime() === 0) {
-    return formatDate(startDate);
-  }
-
-  // Use UTC for comparison (event dates are midnight UTC)
-  if (
-    startDate.toLocaleDateString("en-US", { timeZone: "UTC" }) ===
-    endDate.toLocaleDateString("en-US", { timeZone: "UTC" })
-  ) {
-    return formatDate(startDate);
-  }
-
-  return `${formatDate(startDate)} - ${formatDate(endDate)}`;
+  return datetimeFormatDateRange(start, end);
 }
 
 export function formatDiscontinuousDates(days: { date: string }[]): string {
   if (!days?.length) return "TBD";
   const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  if (sorted.length === 1) return formatDate(new Date(sorted[0].date + "T12:00:00"));
-  const first = new Date(sorted[0].date + "T12:00:00");
-  const last = new Date(sorted[sorted.length - 1].date + "T12:00:00");
+  if (sorted.length === 1) return formatDate(parseDateOnly(sorted[0].date) ?? new Date(NaN));
+  const first = parseDateOnly(sorted[0].date);
+  const last = parseDateOnly(sorted[sorted.length - 1].date);
+  if (!first || !last) return "TBD";
   return `${formatDate(first)} — ${formatDate(last)} (${sorted.length} dates)`;
 }
 
@@ -133,8 +118,8 @@ export function computePublicDates(eventDays: { date: string; vendorOnly?: boole
   }
 
   return {
-    publicStartDate: new Date(publicDays[0] + "T00:00:00"),
-    publicEndDate: new Date(publicDays[publicDays.length - 1] + "T00:00:00"),
+    publicStartDate: parseDateOnly(publicDays[0]),
+    publicEndDate: parseDateOnly(publicDays[publicDays.length - 1]),
   };
 }
 
@@ -166,21 +151,14 @@ interface CalendarEventParams {
   url?: string;
 }
 
-function formatDateForGoogle(date: Date): string {
-  return date.toISOString().replace(/-|:|\.\d{3}/g, "");
-}
-
-function formatDateForICS(date: Date): string {
-  return date
-    .toISOString()
-    .replace(/-|:|\.\d{3}/g, "")
-    .slice(0, -1);
+// Google's "dates" param uses compact ISO (YYYYMMDDTHHmmSSZ); strip
+// dashes/colons from formatIcsUtc which already produces that form.
+function formatDateForGoogle(date: Date | string | null): string {
+  return formatIcsUtc(date);
 }
 
 export function generateGoogleCalendarUrl(params: CalendarEventParams): string {
   const { title, description, location, startDate, endDate, url } = params;
-  const start = new Date(startDate);
-  const end = new Date(endDate);
 
   const eventDescription = url
     ? `${description || ""}\n\nMore info: ${url}`.trim()
@@ -189,7 +167,7 @@ export function generateGoogleCalendarUrl(params: CalendarEventParams): string {
   const searchParams = new URLSearchParams({
     action: "TEMPLATE",
     text: title,
-    dates: `${formatDateForGoogle(start)}/${formatDateForGoogle(end)}`,
+    dates: `${formatDateForGoogle(startDate)}/${formatDateForGoogle(endDate)}`,
     details: eventDescription,
     location: location || "",
   });
@@ -221,8 +199,6 @@ export function generateOutlookCalendarUrl(params: CalendarEventParams): string 
 
 export function generateICSContent(params: CalendarEventParams): string {
   const { title, description, location, startDate, endDate, url } = params;
-  const start = new Date(startDate);
-  const end = new Date(endDate);
 
   const eventDescription = url
     ? `${description || ""}\\n\\nMore info: ${url}`.trim()
@@ -233,8 +209,8 @@ export function generateICSContent(params: CalendarEventParams): string {
     "VERSION:2.0",
     "PRODID:-//Meet Me at the Fair//EN",
     "BEGIN:VEVENT",
-    `DTSTART:${formatDateForICS(start)}Z`,
-    `DTEND:${formatDateForICS(end)}Z`,
+    `DTSTART:${formatIcsUtc(startDate)}`,
+    `DTEND:${formatIcsUtc(endDate)}`,
     `SUMMARY:${title}`,
     `DESCRIPTION:${eventDescription.replace(/\n/g, "\\n")}`,
     `LOCATION:${location || ""}`,
@@ -272,28 +248,37 @@ export function generateMultiDayICSContent(params: MultiDayCalendarParams): stri
     ? `${description || ""}\\n\\nMore info: ${url}`.trim()
     : description || "";
 
+  // Per-day open/close times are wall-clock in the venue's zone, not UTC.
+  // Emit them with TZID=America/New_York and include a VTIMEZONE block in
+  // the calendar body so Google/Apple/Outlook compute the right local time
+  // for attendees in any zone.
   const events = openDays.map((day) => {
-    const startDateTime = new Date(`${day.date}T${day.openTime}:00`);
-    const endDateTime = new Date(`${day.date}T${day.closeTime}:00`);
+    const startWallClock = parseWallClockInVenueZone(day.date, day.openTime);
+    const endWallClock = parseWallClockInVenueZone(day.date, day.closeTime);
+    const startIcs = formatIcsVenueZone(startWallClock);
+    const endIcs = formatIcsVenueZone(endWallClock);
     const dayTitle = day.notes ? `${title} - ${day.notes}` : title;
 
     return [
       "BEGIN:VEVENT",
       `UID:${day.date}-${crypto.randomUUID()}@meetmeatthefair.com`,
-      `DTSTART:${formatDateForICS(startDateTime)}Z`,
-      `DTEND:${formatDateForICS(endDateTime)}Z`,
+      startIcs ? `DTSTART;TZID=${startIcs.tzid}:${startIcs.value}` : "",
+      endIcs ? `DTEND;TZID=${endIcs.tzid}:${endIcs.value}` : "",
       `SUMMARY:${dayTitle}`,
       `DESCRIPTION:${eventDescription.replace(/\n/g, "\\n")}`,
       `LOCATION:${location || ""}`,
       `URL:${url || ""}`,
       "END:VEVENT",
-    ].join("\r\n");
+    ]
+      .filter(Boolean)
+      .join("\r\n");
   });
 
   return [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Meet Me at the Fair//EN",
+    VTIMEZONE_AMERICA_NEW_YORK,
     ...events,
     "END:VCALENDAR",
   ].join("\r\n");

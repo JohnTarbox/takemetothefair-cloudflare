@@ -18,6 +18,7 @@ import {
   diffDaysIso,
   formatIcsUtc,
   formatIcsVenueZone,
+  formatIsoInVenueZone,
   VTIMEZONE_AMERICA_NEW_YORK,
 } from "../datetime";
 
@@ -381,6 +382,22 @@ describe("ICS helpers", () => {
 
   it("formatIcsVenueZone returns null for Invalid Date", () => {
     expect(formatIcsVenueZone("garbage")).toBeNull();
+  });
+
+  it("formatIsoInVenueZone produces ISO 8601 with venue-zone offset (EDT)", () => {
+    // 17:00 UTC in July = 13:00 EDT (-04:00). Output should be 2026-07-15T13:00:00-04:00.
+    const out = formatIsoInVenueZone(new Date("2026-07-15T17:00:00Z"));
+    expect(out).toBe("2026-07-15T13:00:00-04:00");
+  });
+
+  it("formatIsoInVenueZone produces ISO 8601 with venue-zone offset (EST)", () => {
+    // 17:00 UTC in January = 12:00 EST (-05:00). Output should be 2026-01-15T12:00:00-05:00.
+    const out = formatIsoInVenueZone(new Date("2026-01-15T17:00:00Z"));
+    expect(out).toBe("2026-01-15T12:00:00-05:00");
+  });
+
+  it("formatIsoInVenueZone returns empty string for Invalid Date", () => {
+    expect(formatIsoInVenueZone("garbage")).toBe("");
   });
 
   it("VTIMEZONE_AMERICA_NEW_YORK contains both DST and STANDARD blocks", () => {

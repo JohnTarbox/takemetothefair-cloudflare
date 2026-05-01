@@ -35,6 +35,7 @@ import {
   type SiteSearchQueriesResult,
   type SitemapStatus,
 } from "@/lib/search-console";
+import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -194,12 +195,7 @@ async function IndexNowTab() {
                 return (
                   <tr key={row.id} className="align-top">
                     <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
-                      {new Date(row.timestamp * 1000).toLocaleString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
+                      {formatTimestampForServer(new Date(row.timestamp * 1000))}
                     </td>
                     <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.source}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.urlCount)}</td>
@@ -341,12 +337,7 @@ async function FirstPartyEventsTab() {
                 recent.map((row) => (
                   <tr key={row.id} className="align-top">
                     <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
-                      {new Date(row.timestamp * 1000).toLocaleString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
+                      {formatTimestampForServer(new Date(row.timestamp * 1000))}
                     </td>
                     <td className="px-6 py-2 text-gray-700">{row.eventCategory}</td>
                     <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
@@ -522,12 +513,8 @@ function MetricsView({ data }: { data: DashboardMetrics }) {
       </div>
 
       <p className="text-xs text-gray-500 mt-6">
-        Property {data.propertyId} · Generated{" "}
-        {new Date(data.generatedAt).toLocaleString("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        })}{" "}
-        · Cached up to 10 min
+        Property {data.propertyId} · Generated {formatTimestampForServer(data.generatedAt)} · Cached
+        up to 10 min
       </p>
     </>
   );
@@ -731,13 +718,7 @@ async function GoogleTab() {
                         {fmt(row.errors)}
                       </td>
                       <td className="px-6 py-2 text-gray-700">
-                        {row.lastSubmitted
-                          ? new Date(row.lastSubmitted).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            })
-                          : "—"}
+                        {row.lastSubmitted ? formatDateOnly(row.lastSubmitted) || "—" : "—"}
                       </td>
                     </tr>
                   );
@@ -1193,17 +1174,11 @@ async function SiteHealthTab() {
                         )}
                       </td>
                       <td className="px-6 py-2 tabular-nums text-gray-700">
-                        {new Date(row.lastDetectedAt * 1000).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                        })}
+                        {formatDateOnly(new Date(row.lastDetectedAt * 1000))}
                       </td>
                       <td className="px-6 py-2 text-gray-700">
                         {snoozed && row.snoozedUntil
-                          ? `until ${new Date(row.snoozedUntil * 1000).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                            })}`
+                          ? `until ${formatDateOnly(new Date(row.snoozedUntil * 1000))}`
                           : "—"}
                       </td>
                     </tr>

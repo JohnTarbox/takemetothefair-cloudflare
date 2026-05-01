@@ -1,5 +1,6 @@
 import { Clock } from "lucide-react";
 import type { EventDay } from "@/types";
+import { formatDateOnly, parseDateOnly } from "@/lib/datetime";
 
 interface DailyScheduleDisplayProps {
   days: EventDay[];
@@ -18,12 +19,9 @@ function formatTime(time24: string): string {
 }
 
 function formatDateShort(dateStr: string): string {
-  const date = new Date(dateStr + "T12:00:00");
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  // parseDateOnly anchors to midnight UTC; formatDateOnly renders in UTC, so
+  // the displayed date matches the input regardless of viewer timezone.
+  return formatDateOnly(parseDateOnly(dateStr));
 }
 
 function allSameHours(days: EventDay[]): boolean {

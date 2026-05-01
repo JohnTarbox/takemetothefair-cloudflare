@@ -1,10 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Check, AlertCircle, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  RefreshCw,
+  Check,
+  AlertCircle,
+  ExternalLink,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatDateOnly } from "@/lib/datetime";
 import type { EventSchemaOrg } from "@/lib/db/schema";
 
 interface EventData {
@@ -35,11 +43,7 @@ interface ComparisonField {
 function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (value instanceof Date) {
-    return value.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+    return formatDateOnly(value) || "-";
   }
   if (typeof value === "number") {
     return value.toString();
@@ -48,14 +52,7 @@ function formatValue(value: unknown): string {
 }
 
 function formatDateForComparison(date: Date | string | null): string {
-  if (!date) return "-";
-  const d = date instanceof Date ? date : new Date(date);
-  if (isNaN(d.getTime())) return "-";
-  return d.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return formatDateOnly(date) || "-";
 }
 
 export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps) {
@@ -72,7 +69,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
     try {
       const res = await fetch(`/api/admin/events/${eventId}/schema-org`);
       if (!res.ok) throw new Error("Failed to fetch data");
-      const data = await res.json() as { event: EventData; schemaOrg: EventSchemaOrg | null };
+      const data = (await res.json()) as { event: EventData; schemaOrg: EventSchemaOrg | null };
       setEvent(data.event);
       setSchemaOrg(data.schemaOrg);
     } catch (err) {
@@ -93,7 +90,11 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
       const res = await fetch(`/api/admin/events/${eventId}/schema-org`, {
         method: "POST",
       });
-      const data = await res.json() as { success: boolean; schemaOrg: EventSchemaOrg; error?: string };
+      const data = (await res.json()) as {
+        success: boolean;
+        schemaOrg: EventSchemaOrg;
+        error?: string;
+      };
       if (!data.success && data.error) {
         setError(data.error);
       }
@@ -116,7 +117,12 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields: Array.from(selectedFields) }),
       });
-      const data = await res.json() as { success: boolean; appliedFields: string[]; event: EventData; error?: string };
+      const data = (await res.json()) as {
+        success: boolean;
+        appliedFields: string[];
+        event: EventData;
+        error?: string;
+      };
       if (!data.success) {
         throw new Error(data.error || "Failed to apply fields");
       }
@@ -156,37 +162,44 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
         label: "Description",
         eventValue: event.description,
         schemaValue: schemaOrg.schemaDescription,
-        isDifferent: !!schemaOrg.schemaDescription && event.description !== schemaOrg.schemaDescription,
+        isDifferent:
+          !!schemaOrg.schemaDescription && event.description !== schemaOrg.schemaDescription,
       },
       {
         key: "startDate",
         label: "Start Date",
         eventValue: event.startDate,
         schemaValue: schemaOrg.schemaStartDate,
-        isDifferent: !!schemaOrg.schemaStartDate &&
-          formatDateForComparison(event.startDate) !== formatDateForComparison(schemaOrg.schemaStartDate),
+        isDifferent:
+          !!schemaOrg.schemaStartDate &&
+          formatDateForComparison(event.startDate) !==
+            formatDateForComparison(schemaOrg.schemaStartDate),
       },
       {
         key: "endDate",
         label: "End Date",
         eventValue: event.endDate,
         schemaValue: schemaOrg.schemaEndDate,
-        isDifferent: !!schemaOrg.schemaEndDate &&
-          formatDateForComparison(event.endDate) !== formatDateForComparison(schemaOrg.schemaEndDate),
+        isDifferent:
+          !!schemaOrg.schemaEndDate &&
+          formatDateForComparison(event.endDate) !==
+            formatDateForComparison(schemaOrg.schemaEndDate),
       },
       {
         key: "ticketPriceMin",
         label: "Min Price",
         eventValue: event.ticketPriceMin,
         schemaValue: schemaOrg.schemaPriceMin,
-        isDifferent: schemaOrg.schemaPriceMin !== null && event.ticketPriceMin !== schemaOrg.schemaPriceMin,
+        isDifferent:
+          schemaOrg.schemaPriceMin !== null && event.ticketPriceMin !== schemaOrg.schemaPriceMin,
       },
       {
         key: "ticketPriceMax",
         label: "Max Price",
         eventValue: event.ticketPriceMax,
         schemaValue: schemaOrg.schemaPriceMax,
-        isDifferent: schemaOrg.schemaPriceMax !== null && event.ticketPriceMax !== schemaOrg.schemaPriceMax,
+        isDifferent:
+          schemaOrg.schemaPriceMax !== null && event.ticketPriceMax !== schemaOrg.schemaPriceMax,
       },
       {
         key: "imageUrl",
@@ -265,7 +278,9 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
             size="sm"
             onClick={handleRefresh}
             disabled={refreshing || !hasTicketUrl}
-            title={!hasTicketUrl ? "No ticket URL configured" : "Fetch schema.org data from ticket URL"}
+            title={
+              !hasTicketUrl ? "No ticket URL configured" : "Fetch schema.org data from ticket URL"
+            }
           >
             <RefreshCw className={`w-4 h-4 mr-1 ${refreshing ? "animate-spin" : ""}`} />
             {refreshing ? "Fetching..." : "Refresh"}
@@ -284,7 +299,9 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
 
           {!hasTicketUrl && (
             <div className="p-4 bg-gray-50 rounded-md text-gray-600 text-sm">
-              <p>No ticket URL configured for this event. Add a ticket URL to fetch schema.org data.</p>
+              <p>
+                No ticket URL configured for this event. Add a ticket URL to fetch schema.org data.
+              </p>
             </div>
           )}
 
@@ -308,8 +325,8 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
           {schemaOrg && schemaOrg.status === "available" && (
             <>
               <p className="text-sm text-gray-500 mb-4">
-                Compare current event data with schema.org markup from the ticket URL.
-                Select fields to update and click &quot;Apply Selected&quot;.
+                Compare current event data with schema.org markup from the ticket URL. Select fields
+                to update and click &quot;Apply Selected&quot;.
               </p>
 
               {differingFields.length > 0 && (
@@ -345,17 +362,21 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                             />
                           )}
                         </td>
-                        <td className="py-2 pr-4 font-medium text-gray-700">
-                          {field.label}
-                        </td>
+                        <td className="py-2 pr-4 font-medium text-gray-700">{field.label}</td>
                         <td className="py-2 pr-4 text-gray-600 max-w-xs truncate">
                           {field.key === "description"
-                            ? (field.eventValue ? String(field.eventValue).substring(0, 100) + "..." : "-")
+                            ? field.eventValue
+                              ? String(field.eventValue).substring(0, 100) + "..."
+                              : "-"
                             : formatValue(field.eventValue)}
                         </td>
-                        <td className={`py-2 max-w-xs truncate ${field.isDifferent ? "text-yellow-700 font-medium" : "text-gray-600"}`}>
+                        <td
+                          className={`py-2 max-w-xs truncate ${field.isDifferent ? "text-yellow-700 font-medium" : "text-gray-600"}`}
+                        >
                           {field.key === "description"
-                            ? (field.schemaValue ? String(field.schemaValue).substring(0, 100) + "..." : "-")
+                            ? field.schemaValue
+                              ? String(field.schemaValue).substring(0, 100) + "..."
+                              : "-"
                             : formatValue(field.schemaValue)}
                         </td>
                       </tr>
@@ -366,11 +387,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
 
               {selectedFields.size > 0 && (
                 <div className="mt-4 flex items-center gap-4">
-                  <Button
-                    type="button"
-                    onClick={handleApply}
-                    disabled={applying}
-                  >
+                  <Button type="button" onClick={handleApply} disabled={applying}>
                     <Check className="w-4 h-4 mr-1" />
                     {applying ? "Applying..." : `Apply ${selectedFields.size} Selected`}
                   </Button>
@@ -387,14 +404,19 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               {/* Additional venue/organizer info */}
               {(schemaOrg.schemaVenueName || schemaOrg.schemaOrganizerName) && (
                 <div className="mt-6 pt-4 border-t">
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Additional Schema.org Info</h3>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Additional Schema.org Info
+                  </h3>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     {schemaOrg.schemaVenueName && (
                       <div>
                         <span className="text-gray-500">Venue:</span>{" "}
                         <span className="text-gray-900">{schemaOrg.schemaVenueName}</span>
                         {schemaOrg.schemaVenueCity && (
-                          <span className="text-gray-500"> - {schemaOrg.schemaVenueCity}, {schemaOrg.schemaVenueState}</span>
+                          <span className="text-gray-500">
+                            {" "}
+                            - {schemaOrg.schemaVenueCity}, {schemaOrg.schemaVenueState}
+                          </span>
                         )}
                       </div>
                     )}
@@ -416,13 +438,15 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
 
               {/* Last fetched info */}
               <div className="mt-4 pt-4 border-t text-xs text-gray-400">
-                Last fetched: {schemaOrg.lastFetchedAt
+                Last fetched:{" "}
+                {schemaOrg.lastFetchedAt
                   ? new Date(schemaOrg.lastFetchedAt).toLocaleString()
                   : "Never"}
                 {schemaOrg.fetchCount && ` (${schemaOrg.fetchCount} total fetches)`}
                 {schemaOrg.ticketUrl && (
                   <>
-                    {" "}from{" "}
+                    {" "}
+                    from{" "}
                     <a
                       href={schemaOrg.ticketUrl}
                       target="_blank"

@@ -389,6 +389,38 @@ export function formatIcsUtc(d: Date | string | number | null | undefined): stri
 }
 
 /**
+ * Format a Date as an ISO 8601 string in the venue's zone with the proper
+ * `±HH:MM` offset, e.g. "2026-04-30T09:00:00-04:00".
+ *
+ * Use for JSON-LD sub-event `startDate`/`endDate` fields where floating
+ * times (no offset) are ambiguous and schema.org best practice is to
+ * include the offset. Returns "" on Invalid Date.
+ */
+export function formatIsoInVenueZone(d: Date | string | number | null | undefined): string {
+  const date = coerce(d);
+  if (!date) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: VENUE_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "longOffset",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  let hour = get("hour");
+  if (hour === "24") hour = "00";
+  // `longOffset` produces "GMT-04:00" / "GMT+05:00"; strip the GMT prefix.
+  // Some engines return just the offset; tolerate either.
+  const tzPart = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  const offset = tzPart.replace(/^GMT/, "") || "Z";
+  return `${get("year")}-${get("month")}-${get("day")}T${hour}:${get("minute")}:${get("second")}${offset}`;
+}
+
+/**
  * Format a Date for an iCal `DTSTART;TZID=...:` field in the venue's zone.
  * Output: { value: "20260430T130000", tzid: "America/New_York" }
  *
