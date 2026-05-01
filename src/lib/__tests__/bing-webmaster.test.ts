@@ -14,6 +14,22 @@ describe("parseBingDate", () => {
     expect(d?.toISOString()).toBe("1969-12-31T00:00:00.000Z");
   });
 
+  it("parses WCF JSON with timezone offset suffix (the format Bing crawl-stats actually returns)", () => {
+    // Bing returns this exact format for GetCrawlStats: epoch is UTC,
+    // the suffix is informational. The legacy regex didn't accept the
+    // suffix, which crashed the whole integration with `RangeError:
+    // Invalid time value`.
+    const d = parseBingDate("/Date(1777532400000-0700)/");
+    expect(d).toBeInstanceOf(Date);
+    expect(d?.toISOString()).toBe("2026-04-30T07:00:00.000Z");
+  });
+
+  it("parses WCF JSON with positive timezone offset suffix", () => {
+    const d = parseBingDate("/Date(1714521600000+0500)/");
+    expect(d).toBeInstanceOf(Date);
+    expect(d?.toISOString()).toBe("2024-05-01T00:00:00.000Z");
+  });
+
   it("parses ISO 8601 strings", () => {
     const d = parseBingDate("2026-04-30T12:34:56Z");
     expect(d?.toISOString()).toBe("2026-04-30T12:34:56.000Z");

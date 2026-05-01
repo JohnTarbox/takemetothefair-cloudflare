@@ -75,7 +75,10 @@ export function parseBingDate(raw: unknown): Date | null {
     return isNaN(d.getTime()) ? null : d;
   }
   if (typeof raw !== "string") return null;
-  const wcf = raw.match(/^\/Date\((-?\d+)\)\/$/);
+  // WCF JSON `/Date(epochMs)/` — Bing also emits a timezone-offset variant
+  // for some endpoints, e.g. `/Date(1777532400000-0700)/`. The offset is
+  // informational (the epoch is already UTC), so we capture only the epoch.
+  const wcf = raw.match(/^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/);
   if (wcf) {
     const d = new Date(parseInt(wcf[1], 10));
     return isNaN(d.getTime()) ? null : d;
@@ -297,7 +300,10 @@ export async function getCrawlStats(
       CrawledPages?: number;
       CrawlErrors?: number;
       InLinks?: number;
+      // Bing renamed `TotalPagesInIndex` → `InIndex` in the current API
+      // revision. Accept either; the modern field wins as the fallback.
       TotalPagesInIndex?: number;
+      InIndex?: number;
       // Modern Bing CrawlStats also includes per-status-code buckets
       // (Code2xx, Code4xx, Code5xx, BlockedByRobotsTxt, etc.). We only
       // surface the legacy summary fields in the UI today; sum from the
@@ -326,7 +332,7 @@ export async function getCrawlStats(
         crawledPages: r.CrawledPages ?? (summedCrawled > 0 ? summedCrawled : 0),
         crawlErrors: r.CrawlErrors ?? (summedErrors > 0 ? summedErrors : 0),
         inLinks: r.InLinks ?? 0,
-        totalPages: r.TotalPagesInIndex ?? 0,
+        totalPages: r.TotalPagesInIndex ?? r.InIndex ?? 0,
       };
     });
   });
