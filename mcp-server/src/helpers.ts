@@ -1,32 +1,11 @@
 /** Shared helpers for MCP tool implementations */
 
-/** Re-exports the canonical decodeHtmlEntities from src/lib/utils.ts surface
- *  (see Phase A.2 — that module will move into packages/utils/). For now,
- *  keeping the local copy until A.2 lands its package. */
-export function decodeHtmlEntities(text: string): string {
-  if (!text) return text;
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
-}
+import { formatDateOnly as canonicalFormatDateOnly } from "@takemetothefair/datetime";
 
-/** Generate a URL-safe slug from text (no external dependency) */
-export function createSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // strip accents
-    .replace(/[^a-z0-9]+/g, "-") // non-alphanum → hyphen
-    .replace(/^-+|-+$/g, "") // trim leading/trailing hyphens
-    .slice(0, 100);
-}
+// Canonical decodeHtmlEntities and createSlug live in packages/utils.
+// Re-exported here so all existing `import { ... } from "../helpers.js"`
+// call sites in MCP tools keep working without churn.
+export { decodeHtmlEntities, createSlug } from "@takemetothefair/utils";
 
 /** Parse "City, ST" into { city, state }. Returns nulls if unparseable. */
 export function parseLocation(location: string): { city: string | null; state: string | null } {
@@ -46,8 +25,6 @@ export function parseJsonArray(value: string | null | undefined): string[] {
     return [];
   }
 }
-
-import { formatDateOnly as canonicalFormatDateOnly } from "@takemetothefair/datetime";
 
 /** Format a Date as "Mon, Jan 15, 2026" (UTC). MCP-specific contract:
  *  returns `null` (not "") for null/undefined input, because tool responses
