@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "mcp-server",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",
