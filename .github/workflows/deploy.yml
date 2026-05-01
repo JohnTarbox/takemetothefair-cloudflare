@@ -62,11 +62,13 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
-          cache-dependency-path: mcp-server/package-lock.json
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
 
-      - name: Install dependencies
-        working-directory: mcp-server
+      - name: Install dependencies (workspace-aware, runs from root)
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Use trusted GitHub Actions context (github.sha is the 40-char commit SHA,
       # github.run_started_at is the workflow start in ISO 8601). Routed through
