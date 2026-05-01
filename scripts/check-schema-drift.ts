@@ -30,13 +30,13 @@ const MAIN_SCHEMA = resolve(ROOT, "src/lib/db/schema.ts");
 const MCP_SCHEMA = resolve(ROOT, "mcp-server/src/schema.ts");
 
 /**
- * Tables that have pre-existing drift between the two files as of the
- * 2026-05-01 audit. Listed here so the script catches drift on tables
- * that are currently aligned without forcing the date-architecture plan
- * to also reconcile every historical schema divergence. Each entry is a
- * known follow-up to clean up in a separate pass.
+ * Tables with intentional, documented divergence between the two files.
+ * Empty as of 2026-05-01 — the three tables that were originally
+ * allowlisted (events, event_vendors, content_links) were reconciled.
+ * Add a table here only if MCP genuinely needs a different definition
+ * (rare; usually a sign of accidental drift).
  */
-const KNOWN_DRIFT_ALLOWLIST = new Set<string>(["events", "event_vendors", "content_links"]);
+const KNOWN_DRIFT_ALLOWLIST = new Set<string>();
 
 interface TableDef {
   exportName: string;

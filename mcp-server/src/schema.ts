@@ -93,6 +93,10 @@ export const events = sqliteTable("events", {
     .notNull()
     .references(() => promoters.id, { onDelete: "cascade" }),
   venueId: text("venue_id").references(() => venues.id, { onDelete: "set null" }),
+  // Denormalized from venue.state; required when venueId is null (enforced in validation).
+  stateCode: text("state_code"),
+  // True for events with no single physical venue (statewide tours, multi-location trails).
+  isStatewide: integer("is_statewide", { mode: "boolean" }).notNull().default(false),
   startDate: integer("start_date", { mode: "timestamp" }),
   endDate: integer("end_date", { mode: "timestamp" }),
   publicStartDate: integer("public_start_date", { mode: "timestamp" }),
@@ -243,6 +247,7 @@ export const eventVendors = sqliteTable("event_vendors", {
     .default("NOT_REQUIRED")
     .notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
 // Event Days table
@@ -446,11 +451,17 @@ export const urlDomainClassifications = sqliteTable("url_domain_classifications"
 // Content link index — see main-app src/lib/db/schema.ts contentLinks for
 // full documentation. Kept in sync manually.
 export const contentLinks = sqliteTable("content_links", {
-  id: text("id").primaryKey(),
-  sourceType: text("source_type").notNull(),
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  sourceType: text("source_type", { enum: ["BLOG_POST"] }).notNull(),
   sourceId: text("source_id").notNull(),
-  targetType: text("target_type").notNull(),
+  targetType: text("target_type", { enum: ["EVENT", "VENDOR", "VENUE"] }).notNull(),
   targetSlug: text("target_slug").notNull(),
   targetId: text("target_id"),
-  createdAt: integer("created_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  // Stamped after we successfully fire a promoter blog-mention email for
+  // this row. NULL means we haven't notified yet (or this link type isn't
+  // notifiable). See src/lib/content-links-sync.ts for the firing logic.
+  notifiedAt: integer("notified_at", { mode: "timestamp" }),
 });

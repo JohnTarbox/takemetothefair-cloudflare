@@ -80,6 +80,8 @@ const SCHEMA_SQL = `
     description TEXT,
     promoter_id TEXT NOT NULL,
     venue_id TEXT,
+    state_code TEXT,
+    is_statewide INTEGER NOT NULL DEFAULT 0,
     start_date INTEGER,
     end_date INTEGER,
     public_start_date INTEGER,
