@@ -61,6 +61,49 @@ async function hashRequest(obj: unknown): Promise<string> {
     .join("");
 }
 
+/**
+ * Bing has historically returned dates as WCF JSON `\/Date(epochMs)\/` strings,
+ * but field shape varies by endpoint and API revision (some calls now return
+ * ISO 8601, some return plain epoch ints, some omit the field entirely).
+ * Returns null on anything we can't parse — never throws — so a single bad
+ * row never blows up the whole `.map()`.
+ */
+export function parseBingDate(raw: unknown): Date | null {
+  if (raw == null) return null;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof raw !== "string") return null;
+  const wcf = raw.match(/^\/Date\((-?\d+)\)\/$/);
+  if (wcf) {
+    const d = new Date(parseInt(wcf[1], 10));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Fall back to Date.parse semantics — handles ISO 8601 / RFC 3339 / RFC 2822
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Bing's JSON envelope is `{ "d": [...] }` for collections, but the team has
+ * been observed to wrap rows differently across API revisions (`{d:{results:[]}}`,
+ * `{d:{GetXxxResult:[]}}`, etc.). Pull the row array out of any of the shapes
+ * we have seen, falling back to `[]` rather than crashing on `.map()`.
+ */
+export function extractRows<T>(data: unknown): T[] {
+  if (!data || typeof data !== "object") return [];
+  const d = (data as { d?: unknown }).d;
+  if (Array.isArray(d)) return d as T[];
+  if (d && typeof d === "object") {
+    const inner =
+      (d as { results?: unknown }).results ??
+      Object.values(d as Record<string, unknown>).find(Array.isArray);
+    if (Array.isArray(inner)) return inner as T[];
+  }
+  return [];
+}
+
 interface BingFetchOptions {
   method?: "GET" | "POST";
   query?: Record<string, string | number | undefined>;
@@ -110,11 +153,27 @@ async function bingFetch<T>(
     throw new BingApiError(res.status, detail);
   }
 
-  // Diagnostic: log a snippet of the raw response so empty-but-200 responses
-  // (which Bing returns while data is still accumulating for a fresh site)
-  // are visible via `wrangler pages tail`.
+  // Diagnostic: log a shape hint + a longer snippet of the raw response so
+  // envelope changes (Bing has migrated row shape at least once) are visible
+  // via `wrangler pages tail` without needing a redeploy.
   const raw = await res.text();
-  console.log(`[Bing] ${endpoint} OK ${raw.length}B: ${raw.slice(0, 200)}`);
+  let shapeHint = "empty";
+  if (raw.length > 0) {
+    try {
+      const parsed = JSON.parse(raw) as { d?: unknown };
+      const d = parsed?.d;
+      if (Array.isArray(d)) {
+        shapeHint = `d=array[${d.length}]`;
+      } else if (d && typeof d === "object") {
+        shapeHint = `d=object{${Object.keys(d).slice(0, 6).join(",")}}`;
+      } else {
+        shapeHint = `d=${typeof d}`;
+      }
+    } catch {
+      shapeHint = "unparseable";
+    }
+  }
+  console.log(`[Bing] ${endpoint} OK ${raw.length}B ${shapeHint}: ${raw.slice(0, 800)}`);
   try {
     return JSON.parse(raw) as T;
   } catch {
@@ -167,9 +226,10 @@ export async function getQueryStats(
 ): Promise<BingQueryRow[]> {
   const cacheKey = `bing:queries:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, REPORT_CACHE_TTL, opts.skipCache ?? false, async () => {
-    const data = await bingFetch<{ d: RawQueryStats[] }>(env, "GetQueryStats");
-    return (data.d ?? []).map((row) => {
-      const r = row.d ?? (row as unknown as RawQueryStats["d"]);
+    const data = await bingFetch<unknown>(env, "GetQueryStats");
+    const rows = extractRows<RawQueryStats | RawQueryStats["d"]>(data);
+    return rows.map((row) => {
+      const r = (row as RawQueryStats).d ?? (row as RawQueryStats["d"]);
       return {
         query: r.Query ?? "",
         clicks: r.Clicks ?? 0,
@@ -197,16 +257,15 @@ export async function getPageStats(
 ): Promise<BingPageRow[]> {
   const cacheKey = `bing:pages:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, REPORT_CACHE_TTL, opts.skipCache ?? false, async () => {
-    const data = await bingFetch<{
-      d: Array<{
-        Page?: string;
-        Clicks?: number;
-        Impressions?: number;
-        AvgClickPosition?: number;
-        AvgImpressionPosition?: number;
-      }>;
-    }>(env, "GetPageStats");
-    return (data.d ?? []).map((r) => ({
+    const data = await bingFetch<unknown>(env, "GetPageStats");
+    const rows = extractRows<{
+      Page?: string;
+      Clicks?: number;
+      Impressions?: number;
+      AvgClickPosition?: number;
+      AvgImpressionPosition?: number;
+    }>(data);
+    return rows.map((r) => ({
       page: r.Page ?? "",
       clicks: r.Clicks ?? 0,
       impressions: r.Impressions ?? 0,
@@ -232,24 +291,44 @@ export async function getCrawlStats(
 ): Promise<BingCrawlStatsRow[]> {
   const cacheKey = `bing:crawl:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, REPORT_CACHE_TTL, opts.skipCache ?? false, async () => {
-    const data = await bingFetch<{
-      d: Array<{
-        Date?: string;
-        CrawledPages?: number;
-        CrawlErrors?: number;
-        InLinks?: number;
-        TotalPagesInIndex?: number;
-      }>;
-    }>(env, "GetCrawlStats");
-    return (data.d ?? []).map((r) => ({
-      date: r.Date
-        ? new Date(parseInt(r.Date.replace(/\/Date\((\d+)\)\//, "$1"))).toISOString().slice(0, 10)
-        : "",
-      crawledPages: r.CrawledPages ?? 0,
-      crawlErrors: r.CrawlErrors ?? 0,
-      inLinks: r.InLinks ?? 0,
-      totalPages: r.TotalPagesInIndex ?? 0,
-    }));
+    const data = await bingFetch<unknown>(env, "GetCrawlStats");
+    const rows = extractRows<{
+      Date?: unknown;
+      CrawledPages?: number;
+      CrawlErrors?: number;
+      InLinks?: number;
+      TotalPagesInIndex?: number;
+      // Modern Bing CrawlStats also includes per-status-code buckets
+      // (Code2xx, Code4xx, Code5xx, BlockedByRobotsTxt, etc.). We only
+      // surface the legacy summary fields in the UI today; sum from the
+      // newer fields when the legacy ones are absent.
+      Code2xx?: number;
+      Code301?: number;
+      Code302?: number;
+      Code4xx?: number;
+      Code5xx?: number;
+      AllOtherCodes?: number;
+      ConnectionTimeout?: number;
+    }>(data);
+    return rows.map((r) => {
+      const parsed = parseBingDate(r.Date);
+      const code2xx = r.Code2xx ?? 0;
+      const code301 = r.Code301 ?? 0;
+      const code302 = r.Code302 ?? 0;
+      const code4xx = r.Code4xx ?? 0;
+      const code5xx = r.Code5xx ?? 0;
+      const allOther = r.AllOtherCodes ?? 0;
+      const timeout = r.ConnectionTimeout ?? 0;
+      const summedCrawled = code2xx + code301 + code302 + code4xx + code5xx + allOther;
+      const summedErrors = code4xx + code5xx + timeout;
+      return {
+        date: parsed ? parsed.toISOString().slice(0, 10) : "",
+        crawledPages: r.CrawledPages ?? (summedCrawled > 0 ? summedCrawled : 0),
+        crawlErrors: r.CrawlErrors ?? (summedErrors > 0 ? summedErrors : 0),
+        inLinks: r.InLinks ?? 0,
+        totalPages: r.TotalPagesInIndex ?? 0,
+      };
+    });
   });
 }
 
@@ -360,9 +439,7 @@ export async function getUrlInfo(
     return {
       url: r?.Url ?? url,
       isIndexed: r?.IsPage ?? null,
-      lastCrawled: r?.LastCrawledDate
-        ? new Date(parseInt(r.LastCrawledDate.replace(/\/Date\((\d+)\)\//, "$1"))).toISOString()
-        : null,
+      lastCrawled: parseBingDate(r?.LastCrawledDate)?.toISOString() ?? null,
       crawlError: r?.CrawlError ?? null,
       totalLinks: r?.TotalChildUrlCount ?? 0,
     };
@@ -385,26 +462,21 @@ export async function getSitemaps(
 ): Promise<BingSitemap[]> {
   const cacheKey = `bing:sitemaps:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, META_CACHE_TTL, opts.skipCache ?? false, async () => {
-    const data = await bingFetch<{
-      d: Array<{
-        Url?: string;
-        SubmittedDate?: string;
-        LastCrawledDate?: string;
-        UrlCount?: number;
-        Status?: string;
-      }>;
-    }>(env, "GetFeeds");
-    return (data.d ?? []).map((r) => {
-      const parseMsDate = (raw: string | undefined) =>
-        raw ? new Date(parseInt(raw.replace(/\/Date\((\d+)\)\//, "$1"))).toISOString() : null;
-      return {
-        url: r.Url ?? "",
-        submitted: parseMsDate(r.SubmittedDate),
-        lastCrawled: parseMsDate(r.LastCrawledDate),
-        urlCount: r.UrlCount ?? 0,
-        status: r.Status ?? "Unknown",
-      };
-    });
+    const data = await bingFetch<unknown>(env, "GetFeeds");
+    const rows = extractRows<{
+      Url?: string;
+      SubmittedDate?: unknown;
+      LastCrawledDate?: unknown;
+      UrlCount?: number;
+      Status?: string;
+    }>(data);
+    return rows.map((r) => ({
+      url: r.Url ?? "",
+      submitted: parseBingDate(r.SubmittedDate)?.toISOString() ?? null,
+      lastCrawled: parseBingDate(r.LastCrawledDate)?.toISOString() ?? null,
+      urlCount: r.UrlCount ?? 0,
+      status: r.Status ?? "Unknown",
+    }));
   });
 }
 
