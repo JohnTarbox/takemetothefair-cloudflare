@@ -11,25 +11,38 @@ const EVENTS_URL = "https://www.newenglandcraftfairs.com/maine-craft-fairs.html"
 // Parse date range like "June 27–28, 2026" or "June 27 & 28, 2026" or "Nov 14-15, 2026"
 function parseDateRange(dateText: string): { start: Date; end: Date } | null {
   // Clean up the text
-  const cleaned = dateText.trim()
-    .replace(/&#xa0;/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ');
+  const cleaned = dateText
+    .trim()
+    .replace(/&#xa0;/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ");
 
   // Month name mapping
   const monthMap: Record<string, number> = {
-    'january': 0, 'jan': 0,
-    'february': 1, 'feb': 1,
-    'march': 2, 'mar': 2,
-    'april': 3, 'apr': 3,
-    'may': 4,
-    'june': 5, 'jun': 5,
-    'july': 6, 'jul': 6,
-    'august': 7, 'aug': 7,
-    'september': 8, 'sep': 8, 'sept': 8,
-    'october': 9, 'oct': 9,
-    'november': 10, 'nov': 10,
-    'december': 11, 'dec': 11,
+    january: 0,
+    jan: 0,
+    february: 1,
+    feb: 1,
+    march: 2,
+    mar: 2,
+    april: 3,
+    apr: 3,
+    may: 4,
+    june: 5,
+    jun: 5,
+    july: 6,
+    jul: 6,
+    august: 7,
+    aug: 7,
+    september: 8,
+    sep: 8,
+    sept: 8,
+    october: 9,
+    oct: 9,
+    november: 10,
+    nov: 10,
+    december: 11,
+    dec: 11,
   };
 
   // Try pattern: "Month DD & DD, YYYY" or "Month DD–DD, YYYY" or "Month DD-DD, YYYY"
@@ -43,8 +56,11 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
     const month = monthMap[monthName];
 
     if (month !== undefined) {
-      const start = new Date(year, month, startDay, 9, 0, 0);
-      const end = new Date(year, month, endDay, 16, 0, 0); // Shows run 9am-4pm
+      // Date.UTC for explicit, host-zone-independent construction. Scraper
+      // semantics treat the times as venue-local (ET); we keep the existing
+      // behavior of storing them as if-UTC for now and let Phase 5 reinterpret.
+      const start = new Date(Date.UTC(year, month, startDay, 9, 0, 0));
+      const end = new Date(Date.UTC(year, month, endDay, 16, 0, 0)); // Shows run 9am-4pm
       if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
         return { start, end };
       }
@@ -61,8 +77,8 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
     const month = monthMap[monthName];
 
     if (month !== undefined) {
-      const start = new Date(year, month, day, 9, 0, 0);
-      const end = new Date(year, month, day, 16, 0, 0);
+      const start = new Date(Date.UTC(year, month, day, 9, 0, 0));
+      const end = new Date(Date.UTC(year, month, day, 16, 0, 0));
       if (!isNaN(start.getTime())) {
         return { start, end };
       }
@@ -86,7 +102,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Wells Junior High",
       address: "1470 Post Rd, Rt 1",
       city: "Wells",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "Wells 9th Annual Summerfest Arts & Craft Show",
@@ -94,7 +110,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Wells Junior High",
       address: "1470 Post Rd, Rt 1",
       city: "Wells",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "Annual Columbus Weekend Arts & Craft Show",
@@ -102,7 +118,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Westbrook Community Center",
       address: "426 Bridge St",
       city: "Westbrook",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "41st Annual Harvest Festival of Crafts",
@@ -110,7 +126,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Augusta Armory",
       address: "179 Western Ave",
       city: "Augusta",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "22nd Veterans Weekend Craft Show",
@@ -118,7 +134,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Augusta Armory",
       address: "179 Western Ave",
       city: "Augusta",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "5th Annual Makers Market Christmas Arts & Craft Show",
@@ -126,7 +142,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "South Portland High School",
       address: "637 Highland Ave",
       city: "South Portland",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "47th Annual Christmas in New England Arts and Craft Show",
@@ -134,7 +150,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Augusta Civic Center",
       address: "76 Community Dr",
       city: "Augusta",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "46th Annual Last Minute Christmas Arts & Craft Show",
@@ -142,7 +158,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Augusta Armory",
       address: "179 Western Ave",
       city: "Augusta",
-      state: "ME"
+      state: "ME",
     },
     {
       name: "47th Annual Last Minute Arts & Craft Show - Finale",
@@ -150,13 +166,14 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       venue: "Augusta Armory",
       address: "179 Western Ave",
       city: "Augusta",
-      state: "ME"
-    }
+      state: "ME",
+    },
   ];
 
   // Try to extract events dynamically from HTML first
   // Look for date patterns and nearby event info
-  const datePattern = /(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2}\s*[&–-]\s*\d{1,2},?\s*\d{4}/gi;
+  const datePattern =
+    /(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+\d{1,2}\s*[&–-]\s*\d{1,2},?\s*\d{4}/gi;
   const dateMatches = html.matchAll(datePattern);
 
   const foundDates = new Set<string>();
@@ -173,7 +190,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     const sourceId = createSlugFromName(eventInfo.name);
 
     // Check for duplicates
-    if (events.some(e => e.sourceId === sourceId)) continue;
+    if (events.some((e) => e.sourceId === sourceId)) continue;
 
     const venue: ScrapedVenue = {
       name: eventInfo.venue,
@@ -206,7 +223,7 @@ export async function scrapeNewEnglandCraftFairs(): Promise<ScrapeResult> {
   try {
     const response = await fetchWithTimeout(EVENTS_URL, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
+        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
       },
       timeoutMs: 15000,
     });
@@ -236,6 +253,8 @@ export async function scrapeNewEnglandCraftFairs(): Promise<ScrapeResult> {
 }
 
 // Since all event info is on one page, detail scraping returns empty
-export async function scrapeNewEnglandCraftFairsEventDetails(_eventUrl: string): Promise<Partial<ScrapedEvent>> {
+export async function scrapeNewEnglandCraftFairsEventDetails(
+  _eventUrl: string
+): Promise<Partial<ScrapedEvent>> {
   return {};
 }

@@ -5,6 +5,15 @@ import {
   type GoogleAuthEnv,
 } from "./google-auth";
 import { resolveDateRange, type DateRangeInput, type ResolvedDateRange } from "./analytics-params";
+import { parseDateLoose } from "@/lib/datetime";
+
+// Normalize an external-API date passthrough field into a canonical ISO 8601
+// string (or null if the value is missing/unparseable). Without this, GSC's
+// internal date format leaked into our consumers and any change in their
+// serialization could surprise downstream code.
+function normalizeApiDate(raw: unknown): string | null {
+  return parseDateLoose(raw)?.toISOString() ?? null;
+}
 
 const SC_API_BASE = "https://searchconsole.googleapis.com/webmasters/v3";
 const SC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
@@ -599,8 +608,8 @@ export async function getSitemapStatus(
   const sitemaps: SitemapRow[] = (data.sitemap ?? []).map((s) => ({
     path: s.path ?? "",
     type: s.type,
-    lastSubmitted: s.lastSubmitted,
-    lastDownloaded: s.lastDownloaded,
+    lastSubmitted: normalizeApiDate(s.lastSubmitted) ?? undefined,
+    lastDownloaded: normalizeApiDate(s.lastDownloaded) ?? undefined,
     isPending: s.isPending,
     isSitemapsIndex: s.isSitemapsIndex,
     warnings: toInt(s.warnings),
@@ -746,7 +755,7 @@ export async function inspectUrl(
       robotsTxtState: idx.robotsTxtState,
       indexingState: idx.indexingState,
       pageFetchState: idx.pageFetchState,
-      lastCrawlTime: idx.lastCrawlTime,
+      lastCrawlTime: normalizeApiDate(idx.lastCrawlTime) ?? undefined,
       googleCanonical: idx.googleCanonical,
       userCanonical: idx.userCanonical,
       crawledAs: idx.crawledAs,

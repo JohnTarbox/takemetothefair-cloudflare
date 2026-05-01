@@ -10,8 +10,18 @@ const BASE_URL = "https://www.fairsandfestivals.net";
 
 // Month name to number mapping
 const MONTH_MAP: Record<string, number> = {
-  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
-  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  january: 0,
+  february: 1,
+  march: 2,
+  april: 3,
+  may: 4,
+  june: 5,
+  july: 6,
+  august: 7,
+  september: 8,
+  october: 9,
+  november: 10,
+  december: 11,
 };
 
 /**
@@ -27,7 +37,9 @@ function parseEventDate(month: string, day: string, year: string): Date | null {
 
   if (isNaN(dayNum) || isNaN(yearNum)) return null;
 
-  const date = new Date(yearNum, monthNum, dayNum);
+  // Date.UTC is host-zone-independent (the local Date constructor would
+  // shift on non-UTC hosts).
+  const date = new Date(Date.UTC(yearNum, monthNum, dayNum));
   if (isNaN(date.getTime())) return null;
 
   return date;
@@ -38,19 +50,57 @@ function parseEventDate(month: string, day: string, year: string): Date | null {
  */
 function getStateCode(stateName: string): string {
   const stateMap: Record<string, string> = {
-    alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR",
-    california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE",
-    florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID",
-    illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS",
-    kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
-    massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS",
-    missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV",
-    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
-    "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK",
-    oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
-    "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT",
-    vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV",
-    wisconsin: "WI", wyoming: "WY", "district of columbia": "DC",
+    alabama: "AL",
+    alaska: "AK",
+    arizona: "AZ",
+    arkansas: "AR",
+    california: "CA",
+    colorado: "CO",
+    connecticut: "CT",
+    delaware: "DE",
+    florida: "FL",
+    georgia: "GA",
+    hawaii: "HI",
+    idaho: "ID",
+    illinois: "IL",
+    indiana: "IN",
+    iowa: "IA",
+    kansas: "KS",
+    kentucky: "KY",
+    louisiana: "LA",
+    maine: "ME",
+    maryland: "MD",
+    massachusetts: "MA",
+    michigan: "MI",
+    minnesota: "MN",
+    mississippi: "MS",
+    missouri: "MO",
+    montana: "MT",
+    nebraska: "NE",
+    nevada: "NV",
+    "new hampshire": "NH",
+    "new jersey": "NJ",
+    "new mexico": "NM",
+    "new york": "NY",
+    "north carolina": "NC",
+    "north dakota": "ND",
+    ohio: "OH",
+    oklahoma: "OK",
+    oregon: "OR",
+    pennsylvania: "PA",
+    "rhode island": "RI",
+    "south carolina": "SC",
+    "south dakota": "SD",
+    tennessee: "TN",
+    texas: "TX",
+    utah: "UT",
+    vermont: "VT",
+    virginia: "VA",
+    washington: "WA",
+    "west virginia": "WV",
+    wisconsin: "WI",
+    wyoming: "WY",
+    "district of columbia": "DC",
   };
 
   const normalized = stateName.toLowerCase().trim();
@@ -68,7 +118,7 @@ function getStateCode(stateName: string): string {
  */
 function extractSlugFromUrl(url: string): string {
   const match = url.match(/\/events\/details\/([^/]+)/);
-  return match ? match[1] : url.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  return match ? match[1] : url.replace(/[^a-z0-9]/gi, "-").toLowerCase();
 }
 
 /**
@@ -85,7 +135,10 @@ export async function scrapeFairsAndFestivals(stateCode: string): Promise<Scrape
  * @param url Full URL to scrape (e.g., state page, city page, search results)
  * @param defaultState Optional default state code for events without state info
  */
-export async function scrapeFairsAndFestivalsUrl(url: string, defaultState: string = "US"): Promise<ScrapeResult> {
+export async function scrapeFairsAndFestivalsUrl(
+  url: string,
+  defaultState: string = "US"
+): Promise<ScrapeResult> {
   // Validate URL is from fairsandfestivals.net
   if (!url.includes("fairsandfestivals.net")) {
     return {
@@ -110,7 +163,7 @@ export async function scrapeFairsAndFestivalsUrl(url: string, defaultState: stri
 
     const response = await fetchWithTimeout(fetchUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)',
+        "User-Agent": "Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)",
       },
       timeoutMs: 15000,
     });
@@ -137,7 +190,11 @@ export async function scrapeFairsAndFestivalsUrl(url: string, defaultState: stri
 /**
  * Parse events from HTML content
  */
-export function parseEventsFromHtml(html: string, defaultState: string, sourceUrl: string): ScrapeResult {
+export function parseEventsFromHtml(
+  html: string,
+  defaultState: string,
+  sourceUrl: string
+): ScrapeResult {
   const events: ScrapedEvent[] = [];
 
   // Split the HTML by event div markers
@@ -170,7 +227,9 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
 
         // Look for pattern: hidden month number, then visible month name in plain span
         // <span class="month"...>number</span><span>MonthName</span> DD,
-        const searchResultsMatch = dateContent.match(/<span[^>]*class="month"[^>]*>[^<]*<\/span>\s*<span>(\w+)<\/span>\s*(\d{1,2})/i);
+        const searchResultsMatch = dateContent.match(
+          /<span[^>]*class="month"[^>]*>[^<]*<\/span>\s*<span>(\w+)<\/span>\s*(\d{1,2})/i
+        );
         if (searchResultsMatch) {
           eventDate = parseEventDate(searchResultsMatch[1], searchResultsMatch[2], year);
         }
@@ -178,7 +237,9 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
         // Pattern 2: State page format - month name directly in class="month" span
         // <span class="month">February</span> 01 <span class="year">
         if (!eventDate) {
-          const statePageMatch = dateContent.match(/<span\s+class="month">([A-Za-z]+)<\/span>\s*(\d{1,2})/i);
+          const statePageMatch = dateContent.match(
+            /<span\s+class="month">([A-Za-z]+)<\/span>\s*(\d{1,2})/i
+          );
           if (statePageMatch) {
             eventDate = parseEventDate(statePageMatch[1], statePageMatch[2], year);
           }
@@ -195,7 +256,9 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
 
       // Pattern 4: Look for any "Month Day, Year" pattern in the section (fallback)
       if (!eventDate) {
-        const anyDateMatch = section.match(/(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b)\s+(\d{1,2}),?\s*(\d{4})/i);
+        const anyDateMatch = section.match(
+          /(\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b)\s+(\d{1,2}),?\s*(\d{4})/i
+        );
         if (anyDateMatch) {
           eventDate = parseEventDate(anyDateMatch[1], anyDateMatch[2], anyDateMatch[3]);
         }
@@ -203,8 +266,9 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
 
       // Pattern 5: Look for Unix timestamp in data-text or timestamp span
       if (!eventDate) {
-        const timestampMatch = section.match(/<span\s+class="timestamp"[^>]*>(\d{10,})<\/span>/i) ||
-                               section.match(/data-text="(\d{10,})"/);
+        const timestampMatch =
+          section.match(/<span\s+class="timestamp"[^>]*>(\d{10,})<\/span>/i) ||
+          section.match(/data-text="(\d{10,})"/);
         if (timestampMatch) {
           const timestamp = parseInt(timestampMatch[1], 10);
           const date = new Date(timestamp * 1000);
@@ -225,8 +289,8 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
       if (locationCellMatch) {
         // Remove the city and state spans, get remaining text
         const locationText = locationCellMatch[1]
-          .replace(/<span[^>]*>[^<]*<\/span>/gi, '')
-          .replace(/,/g, '')
+          .replace(/<span[^>]*>[^<]*<\/span>/gi, "")
+          .replace(/,/g, "")
           .trim();
         if (locationText) {
           venueName = decodeHtmlEntities(locationText);
@@ -238,51 +302,62 @@ export function parseEventsFromHtml(html: string, defaultState: string, sourceUr
 
       // Extract description
       let description = "";
-      const descMatch = section.match(/<td\s+class="field-name">Description:<\/td>\s*<td>([\s\S]*?)<\/td>/i);
+      const descMatch = section.match(
+        /<td\s+class="field-name">Description:<\/td>\s*<td>([\s\S]*?)<\/td>/i
+      );
       if (descMatch) {
         description = descMatch[1]
-          .replace(/<a[^>]*>.*?<\/a>/gi, '') // Remove "View more detail" links
-          .replace(/<[^>]+>/g, '') // Remove remaining HTML tags
-          .replace(/\s+/g, ' ')
+          .replace(/<a[^>]*>.*?<\/a>/gi, "") // Remove "View more detail" links
+          .replace(/<[^>]+>/g, "") // Remove remaining HTML tags
+          .replace(/\s+/g, " ")
           .trim();
         description = decodeHtmlEntities(description);
       }
 
       // Extract event detail URL
       let detailUrl = "";
-      const detailMatch = section.match(/<a\s+href="(\/events\/details\/[^"]+)"[^>]*>View more detail/i);
+      const detailMatch = section.match(
+        /<a\s+href="(\/events\/details\/[^"]+)"[^>]*>View more detail/i
+      );
       if (detailMatch) {
         detailUrl = BASE_URL + detailMatch[1];
       }
 
       // Extract vendor types (Art, Craft, Food, Commercial, etc.)
       const vendorTypes: string[] = [];
-      const vendorTypesMatch = section.match(/<td\s+class="field-name">Types of Vendor:<\/td>\s*<td>([\s\S]*?)<\/td>/i);
+      const vendorTypesMatch = section.match(
+        /<td\s+class="field-name">Types of Vendor:<\/td>\s*<td>([\s\S]*?)<\/td>/i
+      );
       if (vendorTypesMatch) {
         // The vendor types are listed as text, one per line
         const typesText = vendorTypesMatch[1]
-          .replace(/<[^>]+>/g, '') // Remove any HTML tags
+          .replace(/<[^>]+>/g, "") // Remove any HTML tags
           .trim();
         // Split by whitespace and filter out empty strings
-        const types = typesText.split(/\s+/).filter(t => t.length > 0);
+        const types = typesText.split(/\s+/).filter((t) => t.length > 0);
         vendorTypes.push(...types);
       }
 
       // Check if commercial vendors are allowed
-      const commercialVendorsAllowed = vendorTypes.some(
-        t => t.toLowerCase() === 'commercial'
-      );
+      const commercialVendorsAllowed = vendorTypes.some((t) => t.toLowerCase() === "commercial");
 
       // Generate source ID from the detail URL or event name
-      const sourceId = detailUrl ? extractSlugFromUrl(detailUrl) :
-                       name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-');
+      const sourceId = detailUrl
+        ? extractSlugFromUrl(detailUrl)
+        : name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/-+/g, "-");
 
       // Build venue object if we have enough info
-      const venue: ScrapedVenue | undefined = venueName || city ? {
-        name: venueName || `${city || 'Unknown'} Venue`,
-        city,
-        state,
-      } : undefined;
+      const venue: ScrapedVenue | undefined =
+        venueName || city
+          ? {
+              name: venueName || `${city || "Unknown"} Venue`,
+              city,
+              state,
+            }
+          : undefined;
 
       events.push({
         sourceId,
@@ -321,7 +396,7 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
   try {
     const response = await fetchWithTimeout(detailUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)',
+        "User-Agent": "Mozilla/5.0 (compatible; TakeMeToTheFair/1.0)",
       },
       timeoutMs: 15000,
     });
@@ -334,24 +409,27 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
     const details: Partial<ScrapedEvent> = {};
 
     // Extract og:image for event image
-    const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["'][^>]*>/i) ||
-                         html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["'][^>]*>/i);
+    const ogImageMatch =
+      html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["'][^>]*>/i) ||
+      html.match(/<meta[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["'][^>]*>/i);
     if (ogImageMatch) {
       details.imageUrl = ogImageMatch[1];
     }
 
     // Extract full description (matches both id="event-description" and class="event-description")
-    const descMatch = html.match(/<div[^>]*(?:id|class)="[^"]*event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    const descMatch = html.match(
+      /<div[^>]*(?:id|class)="[^"]*event-description[^"]*"[^>]*>([\s\S]*?)<\/div>/i
+    );
     if (descMatch) {
       let fullDesc = descMatch[1]
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
         .trim();
       // Strip boilerplate headers and disclaimers from fairsandfestivals.net
       fullDesc = fullDesc
-        .replace(/^Description of Event:\s*/i, '')
-        .replace(/\s*Information:\s*Some events do get cancelled.*$/i, '')
-        .replace(/\s*More Information about\s.*$/i, '')
+        .replace(/^Description of Event:\s*/i, "")
+        .replace(/\s*Information:\s*Some events do get cancelled.*$/i, "")
+        .replace(/\s*More Information about\s.*$/i, "")
         .trim();
       if (fullDesc.length > 50) {
         details.description = decodeHtmlEntities(fullDesc.substring(0, 5000));
@@ -387,24 +465,29 @@ export async function scrapeEventDetails(detailUrl: string): Promise<Partial<Scr
 
     // Extract venue info from "Event Location" section
     // Format: Event Location\nVenue Name\nStreet Address\nCity, State Zip
-    const locationSectionMatch = html.match(/<strong>Event Location<\/strong>\s*([\s\S]*?)(?:<a[^>]*>|<\/td>|<\/div>)/i);
+    const locationSectionMatch = html.match(
+      /<strong>Event Location<\/strong>\s*([\s\S]*?)(?:<a[^>]*>|<\/td>|<\/div>)/i
+    );
     if (locationSectionMatch) {
       const locationText = locationSectionMatch[1]
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<[^>]+>/g, '')
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
         .trim();
 
-      const lines = locationText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+      const lines = locationText
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
 
       if (lines.length >= 1) {
         // First line is venue name
         const venueName = decodeHtmlEntities(lines[0]);
 
         // Look for city, state pattern (e.g., "Burlington, VT 05403" or "Burlington, VT")
-        let venueCity = '';
-        let venueState = '';
-        let venueStreetAddress = '';
-        let venueZip = '';
+        let venueCity = "";
+        let venueState = "";
+        let venueStreetAddress = "";
+        let venueZip = "";
 
         for (let i = 1; i < lines.length; i++) {
           const line = lines[i];

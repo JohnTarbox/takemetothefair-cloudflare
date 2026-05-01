@@ -47,9 +47,9 @@ describe("parseEventsFromHtml — date parsing", () => {
     const event = result.events[0];
     expect(event.name).toBe("Springfield Fair");
     expect(event.startDate).toBeInstanceOf(Date);
-    expect(event.startDate?.getMonth()).toBe(1); // February
-    expect(event.startDate?.getDate()).toBe(1);
-    expect(event.startDate?.getFullYear()).toBe(2026);
+    expect(event.startDate?.getUTCMonth()).toBe(1); // February
+    expect(event.startDate?.getUTCDate()).toBe(1);
+    expect(event.startDate?.getUTCFullYear()).toBe(2026);
     expect(event.datesConfirmed).toBe(true);
   });
 
@@ -64,8 +64,8 @@ describe("parseEventsFromHtml — date parsing", () => {
     const result = parseEventsFromHtml(html, "ME", "https://www.fairsandfestivals.net/search");
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0].startDate?.getMonth()).toBe(0); // January
-    expect(result.events[0].startDate?.getDate()).toBe(31);
+    expect(result.events[0].startDate?.getUTCMonth()).toBe(0); // January
+    expect(result.events[0].startDate?.getUTCDate()).toBe(31);
   });
 
   it("falls back to 'Month Day, Year' anywhere in section when structured date missing", () => {
@@ -78,8 +78,8 @@ describe("parseEventsFromHtml — date parsing", () => {
     const result = parseEventsFromHtml(html, "ME", "https://www.fairsandfestivals.net/x");
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0].startDate?.getMonth()).toBe(5); // June
-    expect(result.events[0].startDate?.getDate()).toBe(15);
+    expect(result.events[0].startDate?.getUTCMonth()).toBe(5); // June
+    expect(result.events[0].startDate?.getUTCDate()).toBe(15);
   });
 
   it("falls back to Unix timestamp from data-text attribute", () => {
@@ -394,9 +394,9 @@ describe("scrapeEventDetails", () => {
     expect(result.description).toContain("wonderful fair");
     expect(result.description).not.toContain("Description of Event:");
     expect(result.description).not.toContain("Some events do get cancelled");
-    expect(result.startDate?.getMonth()).toBe(2); // March
-    expect(result.startDate?.getDate()).toBe(21);
-    expect(result.endDate?.getDate()).toBe(22);
+    expect(result.startDate?.getUTCMonth()).toBe(2); // March
+    expect(result.startDate?.getUTCDate()).toBe(21);
+    expect(result.endDate?.getUTCDate()).toBe(22);
     expect(result.website).toBe("https://burlingtonfair.org");
     expect(result.venue?.name).toBe("Memorial Auditorium");
     expect(result.venue?.city).toBe("Burlington");

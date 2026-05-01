@@ -62,31 +62,13 @@ async function hashRequest(obj: unknown): Promise<string> {
 }
 
 /**
- * Bing has historically returned dates as WCF JSON `\/Date(epochMs)\/` strings,
- * but field shape varies by endpoint and API revision (some calls now return
- * ISO 8601, some return plain epoch ints, some omit the field entirely).
- * Returns null on anything we can't parse — never throws — so a single bad
- * row never blows up the whole `.map()`.
+ * Bing-specific date parser. Folded into the canonical `parseDateLoose`
+ * helper in `src/lib/datetime.ts` (which handles the same WCF JSON variant
+ * + timezone-offset suffix Bing emits, plus ISO 8601 fallback). Re-exported
+ * here as an alias so existing callers / tests don't need updating.
  */
-export function parseBingDate(raw: unknown): Date | null {
-  if (raw == null) return null;
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  if (typeof raw !== "string") return null;
-  // WCF JSON `/Date(epochMs)/` — Bing also emits a timezone-offset variant
-  // for some endpoints, e.g. `/Date(1777532400000-0700)/`. The offset is
-  // informational (the epoch is already UTC), so we capture only the epoch.
-  const wcf = raw.match(/^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/);
-  if (wcf) {
-    const d = new Date(parseInt(wcf[1], 10));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  // Fall back to Date.parse semantics — handles ISO 8601 / RFC 3339 / RFC 2822
-  const d = new Date(raw);
-  return isNaN(d.getTime()) ? null : d;
-}
+export { parseDateLoose as parseBingDate } from "@/lib/datetime";
+import { parseDateLoose } from "@/lib/datetime";
 
 /**
  * Bing's JSON envelope is `{ "d": [...] }` for collections, but the team has
@@ -317,7 +299,7 @@ export async function getCrawlStats(
       ConnectionTimeout?: number;
     }>(data);
     return rows.map((r) => {
-      const parsed = parseBingDate(r.Date);
+      const parsed = parseDateLoose(r.Date);
       const code2xx = r.Code2xx ?? 0;
       const code301 = r.Code301 ?? 0;
       const code302 = r.Code302 ?? 0;
@@ -445,7 +427,7 @@ export async function getUrlInfo(
     return {
       url: r?.Url ?? url,
       isIndexed: r?.IsPage ?? null,
-      lastCrawled: parseBingDate(r?.LastCrawledDate)?.toISOString() ?? null,
+      lastCrawled: parseDateLoose(r?.LastCrawledDate)?.toISOString() ?? null,
       crawlError: r?.CrawlError ?? null,
       totalLinks: r?.TotalChildUrlCount ?? 0,
     };
@@ -478,8 +460,8 @@ export async function getSitemaps(
     }>(data);
     return rows.map((r) => ({
       url: r.Url ?? "",
-      submitted: parseBingDate(r.SubmittedDate)?.toISOString() ?? null,
-      lastCrawled: parseBingDate(r.LastCrawledDate)?.toISOString() ?? null,
+      submitted: parseDateLoose(r.SubmittedDate)?.toISOString() ?? null,
+      lastCrawled: parseDateLoose(r.LastCrawledDate)?.toISOString() ?? null,
       urlCount: r.UrlCount ?? 0,
       status: r.Status ?? "Unknown",
     }));

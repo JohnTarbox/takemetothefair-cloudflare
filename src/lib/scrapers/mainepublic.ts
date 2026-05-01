@@ -62,7 +62,9 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     const section = eventSections[i];
 
     // Find event link
-    const linkMatch = section.match(/<a[^>]*href="(https?:\/\/www\.mainepublic\.org\/community-calendar\/event\/([^"]+))"[^>]*>([^<]*)<\/a>/i);
+    const linkMatch = section.match(
+      /<a[^>]*href="(https?:\/\/www\.mainepublic\.org\/community-calendar\/event\/([^"]+))"[^>]*>([^<]*)<\/a>/i
+    );
     if (!linkMatch) continue;
 
     const eventUrl = linkMatch[1];
@@ -75,7 +77,9 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     if (events.some((e) => e.sourceId === slug)) continue;
 
     // Try to extract date - look for month patterns
-    const dateMatch = section.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:\s*,?\s*\d{4})?/i);
+    const dateMatch = section.match(
+      /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:\s*,?\s*\d{4})?/i
+    );
     let startDate: Date | undefined;
     let endDate: Date | undefined;
 
@@ -90,7 +94,9 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     }
 
     // Try to extract time
-    const timeMatch = section.match(/(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+    const timeMatch = section.match(
+      /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:AM|PM))/i
+    );
     if (timeMatch && startDate && endDate) {
       const startTime = parseTime(timeMatch[1]);
       const endTime = parseTime(timeMatch[2]);
@@ -134,7 +140,8 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
   // Fallback: If structured parsing didn't work, try simple link extraction
   if (events.length === 0) {
     let match;
-    const simplePattern = /<a[^>]*href="(https?:\/\/www\.mainepublic\.org\/community-calendar\/event\/([^"]+))"[^>]*>([^<]+)<\/a>/gi;
+    const simplePattern =
+      /<a[^>]*href="(https?:\/\/www\.mainepublic\.org\/community-calendar\/event\/([^"]+))"[^>]*>([^<]+)<\/a>/gi;
 
     while ((match = simplePattern.exec(html)) !== null) {
       const eventUrl = match[1];
@@ -169,7 +176,8 @@ export async function scrapeMainePublic(): Promise<ScrapeResult> {
 
       const response = await fetchWithTimeout(url, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+          "User-Agent":
+            "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
         },
         timeoutMs: 15000,
       });
@@ -216,7 +224,9 @@ export async function scrapeMainePublic(): Promise<ScrapeResult> {
 }
 
 // Fetch additional details from an event's detail page
-export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<Partial<ScrapedEvent>> {
+export async function scrapeMainePublicEventDetails(
+  eventUrl: string
+): Promise<Partial<ScrapedEvent>> {
   try {
     const response = await fetchWithTimeout(eventUrl, {
       headers: {
@@ -234,7 +244,9 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
     const details: Partial<ScrapedEvent> = {};
 
     // Try to extract from JSON-LD structured data first
-    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+    const jsonLdMatch = html.match(
+      /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi
+    );
     if (jsonLdMatch) {
       for (const match of jsonLdMatch) {
         try {
@@ -274,7 +286,12 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
                     const addr = item.location.address;
                     details.city = addr.addressLocality;
                     details.state = addr.addressRegion || "ME";
-                    details.address = [addr.streetAddress, addr.addressLocality, addr.addressRegion, addr.postalCode]
+                    details.address = [
+                      addr.streetAddress,
+                      addr.addressLocality,
+                      addr.addressRegion,
+                      addr.postalCode,
+                    ]
                       .filter(Boolean)
                       .join(", ");
 
@@ -332,7 +349,9 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
 
     // Extract og:description if no description found
     if (!details.description) {
-      const ogDescMatch = html.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"[^>]*>/i);
+      const ogDescMatch = html.match(
+        /<meta[^>]*property="og:description"[^>]*content="([^"]+)"[^>]*>/i
+      );
       if (ogDescMatch) {
         details.description = ogDescMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&");
       }
@@ -341,7 +360,9 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
     // Try to extract ticket/website URL
     if (!details.website) {
       // Look for "Tickets" or external links
-      const ticketMatch = html.match(/<a[^>]*href="(https?:\/\/(?!www\.mainepublic\.org)[^"]+)"[^>]*>[^<]*(?:ticket|buy|register|website|visit)[^<]*<\/a>/i);
+      const ticketMatch = html.match(
+        /<a[^>]*href="(https?:\/\/(?!www\.mainepublic\.org)[^"]+)"[^>]*>[^<]*(?:ticket|buy|register|website|visit)[^<]*<\/a>/i
+      );
       if (ticketMatch) {
         details.website = ticketMatch[1];
       }
@@ -350,11 +371,21 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
     // Extract venue/location from HTML if not found in JSON-LD
     // Look for Maine Public's specific venue structure
     if (!details.venue) {
-      const venueNameMatch = html.match(/<span[^>]*class="VenueInformation-name"[^>]*>([^<]+)<\/span>/i);
-      const streetMatch = html.match(/<div[^>]*class="VenueInformation-address-streetAddress"[^>]*>([^<]+)<\/div>/i);
-      const cityMatch = html.match(/<span[^>]*class="VenueInformation-address-city"[^>]*>([^<]+)<\/span>/i);
-      const stateMatch = html.match(/<span[^>]*class="VenueInformation-address-state"[^>]*>([^<]+)<\/span>/i);
-      const zipMatch = html.match(/<span[^>]*class="VenueInformation-address-zip"[^>]*>([^<]+)<\/span>/i);
+      const venueNameMatch = html.match(
+        /<span[^>]*class="VenueInformation-name"[^>]*>([^<]+)<\/span>/i
+      );
+      const streetMatch = html.match(
+        /<div[^>]*class="VenueInformation-address-streetAddress"[^>]*>([^<]+)<\/div>/i
+      );
+      const cityMatch = html.match(
+        /<span[^>]*class="VenueInformation-address-city"[^>]*>([^<]+)<\/span>/i
+      );
+      const stateMatch = html.match(
+        /<span[^>]*class="VenueInformation-address-state"[^>]*>([^<]+)<\/span>/i
+      );
+      const zipMatch = html.match(
+        /<span[^>]*class="VenueInformation-address-zip"[^>]*>([^<]+)<\/span>/i
+      );
 
       if (venueNameMatch) {
         const venueName = venueNameMatch[1].trim();
@@ -387,7 +418,8 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
     // Fallback: Extract date/time from text patterns like "10:00 AM - 12:00 PM on Tue, 27 Jan 2026"
     if (!details.startDate) {
       // Pattern: "HH:MM AM/PM - HH:MM AM/PM on Day, DD Mon YYYY"
-      const dateTimePattern = /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:AM|PM))\s+on\s+\w+,\s*(\d{1,2})\s+(\w+)\s+(\d{4})/i;
+      const dateTimePattern =
+        /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:AM|PM))\s+on\s+\w+,\s*(\d{1,2})\s+(\w+)\s+(\d{4})/i;
       const dtMatch = html.match(dateTimePattern);
       if (dtMatch) {
         const startTimeStr = dtMatch[1];
@@ -398,10 +430,29 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
 
         // Parse month
         const months: Record<string, number> = {
-          jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-          jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-          january: 0, february: 1, march: 2, april: 3, june: 5,
-          july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+          jan: 0,
+          feb: 1,
+          mar: 2,
+          apr: 3,
+          may: 4,
+          jun: 5,
+          jul: 6,
+          aug: 7,
+          sep: 8,
+          oct: 9,
+          nov: 10,
+          dec: 11,
+          january: 0,
+          february: 1,
+          march: 2,
+          april: 3,
+          june: 5,
+          july: 6,
+          august: 7,
+          september: 8,
+          october: 9,
+          november: 10,
+          december: 11,
         };
         const monthNum = months[monthStr.toLowerCase()];
 
@@ -410,20 +461,28 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
           const endTime = parseTime(endTimeStr);
 
           if (startTime) {
-            details.startDate = new Date(year, monthNum, day, startTime.hours, startTime.minutes);
+            // Date.UTC for explicit, host-zone-independent construction.
+            details.startDate = new Date(
+              Date.UTC(year, monthNum, day, startTime.hours, startTime.minutes)
+            );
             details.datesConfirmed = true;
-            console.log(`[MainePublic Scraper] Found date: ${details.startDate.toISOString()} for ${eventUrl}`);
+            console.log(
+              `[MainePublic Scraper] Found date: ${details.startDate.toISOString()} for ${eventUrl}`
+            );
           }
           if (endTime) {
-            details.endDate = new Date(year, monthNum, day, endTime.hours, endTime.minutes);
+            details.endDate = new Date(
+              Date.UTC(year, monthNum, day, endTime.hours, endTime.minutes)
+            );
           }
         }
       }
     }
 
     // Log final results
-    console.log(`[MainePublic Scraper] Extracted from ${eventUrl}: startDate=${details.startDate}, venue=${details.venue?.name}`);
-
+    console.log(
+      `[MainePublic Scraper] Extracted from ${eventUrl}: startDate=${details.startDate}, venue=${details.venue?.name}`
+    );
 
     // Additional fallback: "Day, DD Mon YYYY" without time
     if (!details.startDate) {
@@ -435,16 +494,35 @@ export async function scrapeMainePublicEventDetails(eventUrl: string): Promise<P
         const year = parseInt(dateMatch[4]);
 
         const months: Record<string, number> = {
-          jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-          jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-          january: 0, february: 1, march: 2, april: 3, june: 5,
-          july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+          jan: 0,
+          feb: 1,
+          mar: 2,
+          apr: 3,
+          may: 4,
+          jun: 5,
+          jul: 6,
+          aug: 7,
+          sep: 8,
+          oct: 9,
+          nov: 10,
+          dec: 11,
+          january: 0,
+          february: 1,
+          march: 2,
+          april: 3,
+          june: 5,
+          july: 6,
+          august: 7,
+          september: 8,
+          october: 9,
+          november: 10,
+          december: 11,
         };
         const monthNum = months[monthStr.toLowerCase()];
 
         if (monthNum !== undefined) {
-          details.startDate = new Date(year, monthNum, day, 9, 0);
-          details.endDate = new Date(year, monthNum, day, 17, 0);
+          details.startDate = new Date(Date.UTC(year, monthNum, day, 9, 0));
+          details.endDate = new Date(Date.UTC(year, monthNum, day, 17, 0));
           details.datesConfirmed = true;
         }
       }

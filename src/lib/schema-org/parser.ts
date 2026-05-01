@@ -7,6 +7,7 @@ import type {
   JsonLdOffer,
   JsonLdOrganizer,
 } from "./types";
+import { parseDateLoose } from "@/lib/datetime";
 
 /**
  * Parse raw JSON-LD into normalized SchemaOrgEventData
@@ -266,21 +267,13 @@ function sanitizeString(value: unknown, maxLength?: number): string | null {
   return str;
 }
 
+// Special-case sentinel values JSON-LD scrapers sometimes emit
+// ("", "null", "tbd"); otherwise delegate to the canonical parser.
 function parseDate(value: unknown): Date | null {
   if (value === null || value === undefined) return null;
-  const str = String(value).trim();
-  if (str === "" || str.toLowerCase() === "null" || str.toLowerCase() === "tbd") return null;
-
-  try {
-    const date = new Date(str);
-    if (!isNaN(date.getTime())) {
-      return date;
-    }
-  } catch {
-    // Parsing failed
-  }
-
-  return null;
+  const str = String(value).trim().toLowerCase();
+  if (str === "" || str === "null" || str === "tbd") return null;
+  return parseDateLoose(value);
 }
 
 function sanitizeState(value: unknown): string | null {
@@ -295,19 +288,56 @@ function sanitizeState(value: unknown): string | null {
 
   // Common state name to abbreviation mapping
   const stateMap: Record<string, string> = {
-    ALABAMA: "AL", ALASKA: "AK", ARIZONA: "AZ", ARKANSAS: "AR",
-    CALIFORNIA: "CA", COLORADO: "CO", CONNECTICUT: "CT", DELAWARE: "DE",
-    FLORIDA: "FL", GEORGIA: "GA", HAWAII: "HI", IDAHO: "ID",
-    ILLINOIS: "IL", INDIANA: "IN", IOWA: "IA", KANSAS: "KS",
-    KENTUCKY: "KY", LOUISIANA: "LA", MAINE: "ME", MARYLAND: "MD",
-    MASSACHUSETTS: "MA", MICHIGAN: "MI", MINNESOTA: "MN", MISSISSIPPI: "MS",
-    MISSOURI: "MO", MONTANA: "MT", NEBRASKA: "NE", NEVADA: "NV",
-    "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY",
-    "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", OHIO: "OH", OKLAHOMA: "OK",
-    OREGON: "OR", PENNSYLVANIA: "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
-    "SOUTH DAKOTA": "SD", TENNESSEE: "TN", TEXAS: "TX", UTAH: "UT",
-    VERMONT: "VT", VIRGINIA: "VA", WASHINGTON: "WA", "WEST VIRGINIA": "WV",
-    WISCONSIN: "WI", WYOMING: "WY",
+    ALABAMA: "AL",
+    ALASKA: "AK",
+    ARIZONA: "AZ",
+    ARKANSAS: "AR",
+    CALIFORNIA: "CA",
+    COLORADO: "CO",
+    CONNECTICUT: "CT",
+    DELAWARE: "DE",
+    FLORIDA: "FL",
+    GEORGIA: "GA",
+    HAWAII: "HI",
+    IDAHO: "ID",
+    ILLINOIS: "IL",
+    INDIANA: "IN",
+    IOWA: "IA",
+    KANSAS: "KS",
+    KENTUCKY: "KY",
+    LOUISIANA: "LA",
+    MAINE: "ME",
+    MARYLAND: "MD",
+    MASSACHUSETTS: "MA",
+    MICHIGAN: "MI",
+    MINNESOTA: "MN",
+    MISSISSIPPI: "MS",
+    MISSOURI: "MO",
+    MONTANA: "MT",
+    NEBRASKA: "NE",
+    NEVADA: "NV",
+    "NEW HAMPSHIRE": "NH",
+    "NEW JERSEY": "NJ",
+    "NEW MEXICO": "NM",
+    "NEW YORK": "NY",
+    "NORTH CAROLINA": "NC",
+    "NORTH DAKOTA": "ND",
+    OHIO: "OH",
+    OKLAHOMA: "OK",
+    OREGON: "OR",
+    PENNSYLVANIA: "PA",
+    "RHODE ISLAND": "RI",
+    "SOUTH CAROLINA": "SC",
+    "SOUTH DAKOTA": "SD",
+    TENNESSEE: "TN",
+    TEXAS: "TX",
+    UTAH: "UT",
+    VERMONT: "VT",
+    VIRGINIA: "VA",
+    WASHINGTON: "WA",
+    "WEST VIRGINIA": "WV",
+    WISCONSIN: "WI",
+    WYOMING: "WY",
   };
 
   return stateMap[str] || (str.length >= 2 ? str.substring(0, 2) : null);
