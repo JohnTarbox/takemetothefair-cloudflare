@@ -20,7 +20,7 @@ import {
   formatIcsVenueZone,
   formatIsoInVenueZone,
   VTIMEZONE_AMERICA_NEW_YORK,
-} from "../datetime";
+} from "./index";
 
 describe("parseDateOnly", () => {
   it("parses a valid ISO date as midnight UTC", () => {

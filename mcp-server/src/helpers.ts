@@ -1,8 +1,8 @@
 /** Shared helpers for MCP tool implementations */
 
-/** Decode common HTML entities in user-supplied text.
- *  Used at the MCP input boundary so dedup/storage/slug see literal characters.
- *  Mirrors src/lib/scrapers/utils.ts decodeHtmlEntities. */
+/** Re-exports the canonical decodeHtmlEntities from src/lib/utils.ts surface
+ *  (see Phase A.2 — that module will move into packages/utils/). For now,
+ *  keeping the local copy until A.2 lands its package. */
 export function decodeHtmlEntities(text: string): string {
   if (!text) return text;
   return text
@@ -47,19 +47,20 @@ export function parseJsonArray(value: string | null | undefined): string[] {
   }
 }
 
-/** Format a Date as "Mon, Jan 15, 2026" (UTC) */
+import { formatDateOnly as canonicalFormatDateOnly } from "@takemetothefair/datetime";
+
+/** Format a Date as "Mon, Jan 15, 2026" (UTC). MCP-specific contract:
+ *  returns `null` (not "") for null/undefined input, because tool responses
+ *  encode "missing date" semantically as null in JSON. Routes through the
+ *  canonical formatter from @takemetothefair/datetime for the actual format. */
 export function formatDate(date: Date | null | undefined): string | null {
   if (!date) return null;
-  return date.toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return canonicalFormatDateOnly(date) || null;
 }
 
-/** Format a date range as a human-readable string */
+/** Format a date range as a human-readable string. MCP-specific contract
+ *  with "Ends X" / "Starts X" prefixes when only one bound is set, distinct
+ *  from the canonical formatDateRange "TBD"/"start - end" semantics. */
 export function formatDateRange(
   start: Date | null | undefined,
   end: Date | null | undefined
