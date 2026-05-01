@@ -437,8 +437,9 @@ export const urlDomainClassifications = sqliteTable("url_domain_classifications"
     .default(false),
   useAsSource: integer("use_as_source", { mode: "boolean" }).notNull().default(false),
   notes: text("notes"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
+  // ms-epoch (mode: "timestamp"); migration 0040 backfilled raw-seconds values.
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   createdBy: text("created_by"),
 });
 

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = new Date();
 
     // Upsert: an admin clicking "classify" on a domain that's already in the
     // table should overwrite, not 409. Two admins racing on the same domain

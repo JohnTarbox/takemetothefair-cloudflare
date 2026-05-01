@@ -444,6 +444,11 @@ export const passwordResetTokens = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     expires: integer("expires", { mode: "timestamp" }).notNull(),
+    // NOTE: migration 0028 set the SQL default to `unixepoch('now')` (seconds),
+    // but mode: "timestamp" expects ms. Drizzle's $defaultFn wins on every
+    // insert path Drizzle controls, so the SQL default is dormant. If anyone
+    // ever inserts via raw `wrangler d1 execute`, they'll create 1970 dates.
+    // Don't lean on the SQL default — always go through Drizzle.
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => ({
@@ -710,8 +715,11 @@ export const urlDomainClassifications = sqliteTable(
       .default(false),
     useAsSource: integer("use_as_source", { mode: "boolean" }).notNull().default(false),
     notes: text("notes"),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    // Stored as ms-epoch (mode: "timestamp"), consistent with the rest of
+    // the operational tables. Migration 0040 backfilled raw-seconds values
+    // by multiplying by 1000.
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdBy: text("created_by"),
   },
   (table) => [index("idx_udc_domain_type").on(table.domainType)]

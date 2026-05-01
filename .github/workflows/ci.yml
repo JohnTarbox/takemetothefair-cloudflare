@@ -31,6 +31,9 @@ jobs:
       - name: Run unit tests with coverage
         run: npm run test:coverage -- --run
 
+      - name: Check MCP schema drift
+        run: npx tsx scripts/check-schema-drift.ts
+
   test-mcp-server:
     name: MCP Server Unit Tests
     runs-on: ubuntu-latest
