@@ -21,8 +21,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
 
       - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Run unit tests
@@ -44,8 +48,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
 
       - name: Install dependencies (workspace-aware, runs from root)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Run MCP server tests
@@ -64,8 +72,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
 
       - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Run linter
@@ -85,8 +97,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
 
       - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Initialize D1 database
@@ -128,8 +144,12 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
 
       - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci
 
       - name: Install Playwright browsers
