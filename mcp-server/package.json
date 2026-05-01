@@ -13,6 +13,7 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.3.3",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
     "@takemetothefair/db-schema": "*",
     "@takemetothefair/utils": "*",
