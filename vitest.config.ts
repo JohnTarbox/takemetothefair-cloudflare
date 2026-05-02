@@ -35,15 +35,23 @@ export default defineConfig({
         "src/lib/auth.ts",
       ],
       thresholds: {
-        // Tightened gate over a meaningful denominator (src/lib/ minus
-        // integration code). Floor is set ~2 points below current measured
-        // coverage so day-to-day fluctuations don't break CI; significant
-        // regressions still trip it. Raise as more lib helpers gain tests.
-        // Current measured: lines/statements ~35%, functions ~66%, branches ~76%.
-        lines: 33,
+        // Floor set ~2 points below current measured coverage so day-to-day
+        // fluctuations don't break CI; significant regressions still trip it.
+        // Raise as more lib helpers gain tests.
+        //
+        // Adjusted 2026-05-01 after Phase A.4 (validations moved into
+        // @takemetothefair/validation workspace package). The validation
+        // schemas had ~100% coverage and were mathematically over-weighted
+        // toward the main-app average; moving 568 lines of well-tested code
+        // out drags the measured % for the remaining src/lib/ down even
+        // though no real coverage was lost (the tests still pass, just in
+        // the package's own vitest run).
+        //
+        // Current measured: lines/statements ~30%, functions ~64%, branches ~74%.
+        lines: 28,
         functions: 60,
         branches: 70,
-        statements: 33,
+        statements: 28,
       },
     },
   },

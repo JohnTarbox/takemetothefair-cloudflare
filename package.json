@@ -61,6 +61,7 @@
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
     "@takemetothefair/utils": "*",
+    "@takemetothefair/validation": "*",
     "@tailwindcss/typography": "^0.5.19",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
