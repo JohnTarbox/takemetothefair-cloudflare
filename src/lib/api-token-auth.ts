@@ -50,12 +50,16 @@ export async function authenticateVendorToken(
 
   const { userId } = tokenResults[0];
 
-  // Update last used timestamp (fire and forget)
+  // Update last used timestamp (fire and forget). Don't route through
+  // logError — this is a hot-path background write; if D1 is degraded
+  // we don't want to compound the problem by logging to D1 too. The
+  // console log surfaces in `wrangler tail` for forensic diagnosis.
   db.update(apiTokens)
     .set({ lastUsedAt: new Date() })
     .where(eq(apiTokens.tokenHash, tokenHash))
-    .then(() => {})
-    .catch(() => {});
+    .catch((err) => {
+      console.error("[API Token] Failed to update lastUsedAt:", err);
+    });
 
   // Verify the vendor belongs to this user
   const vendorResults = await db

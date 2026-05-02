@@ -42,10 +42,18 @@ export async function logError(
       source,
     });
 
-    // 1% probabilistic cleanup of old logs
+    // 1% probabilistic cleanup of old logs. If the cleanup itself fails
+    // (D1 transient error, lock contention) the surrounding catch would
+    // swallow it silently, letting `errorLogs` grow unbounded. Wrap the
+    // cleanup so the failure surfaces in `wrangler tail` separately
+    // from the original log-write attempt.
     if (Math.random() < 0.01) {
       const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 2592000;
-      await db.delete(errorLogs).where(lt(errorLogs.timestamp, thirtyDaysAgo));
+      try {
+        await db.delete(errorLogs).where(lt(errorLogs.timestamp, thirtyDaysAgo));
+      } catch (cleanupErr) {
+        console.error("[logger] errorLogs cleanup failed:", cleanupErr);
+      }
     }
   } catch (logErr) {
     // Never throw from the logger

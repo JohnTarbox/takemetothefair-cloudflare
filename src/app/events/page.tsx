@@ -32,6 +32,7 @@ import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
+import { sanitizeLikeInput } from "@/lib/utils";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
@@ -140,7 +141,10 @@ async function getEvents(
     }
 
     if (searchParams.query) {
-      const query = searchParams.query.toLowerCase().trim();
+      // Strip LIKE wildcards (`%`, `_`) before constructing the pattern so a
+      // user query of "%" doesn't degenerate to "match every row." Drizzle
+      // parameterizes the value, so this is wildcard hygiene, not SQL escape.
+      const query = sanitizeLikeInput(searchParams.query.toLowerCase().trim());
       const searchTerm = `%${query}%`;
 
       // Build search conditions
