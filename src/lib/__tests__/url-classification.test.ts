@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   extractDomain,
   gateUrlForField,
   shouldIngestFromSource,
+  loadClassifications,
+  gateUrlOnce,
   type ClassificationMap,
 } from "../url-classification";
 
@@ -136,5 +138,148 @@ describe("shouldIngestFromSource", () => {
 
   it("returns false only for explicitly-blocked sources", () => {
     expect(shouldIngestFromSource("https://festivalnet.com/event/1", classifications)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DB-backed paths
+//
+// loadClassifications/gateUrlOnce wrap the pure helpers above with a Drizzle
+// query. We mock just the chain that's used: db.select(...).from(table).
+// ---------------------------------------------------------------------------
+
+interface FakeDb {
+  select: ReturnType<typeof vi.fn>;
+  from: ReturnType<typeof vi.fn>;
+}
+
+function makeDb(
+  rows: Array<{
+    domain: string;
+    useAsTicketUrl: boolean;
+    useAsApplicationUrl: boolean;
+    useAsSource: boolean;
+  }>
+): FakeDb {
+  const db: FakeDb = {
+    select: vi.fn(() => db),
+    from: vi.fn(async () => rows),
+  };
+  return db;
+}
+
+describe("loadClassifications", () => {
+  it("hydrates a Map keyed by domain", async () => {
+    const db = makeDb([
+      {
+        domain: "eventbrite.com",
+        useAsTicketUrl: true,
+        useAsApplicationUrl: true,
+        useAsSource: false,
+      },
+      {
+        domain: "festivalnet.com",
+        useAsTicketUrl: false,
+        useAsApplicationUrl: false,
+        useAsSource: false,
+      },
+    ]);
+
+    // Cast away the Drizzle Db type — the test mock only implements the
+    // narrow chain that's used (select(...).from(...)).
+    const map = await loadClassifications(
+      db as unknown as Parameters<typeof loadClassifications>[0]
+    );
+
+    expect(map.size).toBe(2);
+    expect(map.get("eventbrite.com")).toEqual({
+      useAsTicketUrl: true,
+      useAsApplicationUrl: true,
+      useAsSource: false,
+    });
+    expect(map.get("festivalnet.com")).toEqual({
+      useAsTicketUrl: false,
+      useAsApplicationUrl: false,
+      useAsSource: false,
+    });
+  });
+
+  it("returns an empty Map when no classification rows exist", async () => {
+    const db = makeDb([]);
+    const map = await loadClassifications(
+      db as unknown as Parameters<typeof loadClassifications>[0]
+    );
+    expect(map.size).toBe(0);
+  });
+});
+
+describe("gateUrlOnce", () => {
+  it("returns null for empty input without hitting the DB", async () => {
+    const db = makeDb([]);
+    const result = await gateUrlOnce(
+      db as unknown as Parameters<typeof gateUrlOnce>[0],
+      null,
+      "ticket"
+    );
+    expect(result).toBeNull();
+    // Short-circuit on null URL — no SQL roundtrip incurred.
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it("returns null for unparseable URLs without hitting the DB", async () => {
+    const db = makeDb([]);
+    const result = await gateUrlOnce(
+      db as unknown as Parameters<typeof gateUrlOnce>[0],
+      "not a url",
+      "ticket"
+    );
+    expect(result).toBeNull();
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it("blocks a URL whose domain is classified with useAsTicketUrl=false", async () => {
+    const db = makeDb([
+      {
+        domain: "fairsandfestivals.net",
+        useAsTicketUrl: false,
+        useAsApplicationUrl: false,
+        useAsSource: true,
+      },
+    ]);
+    const result = await gateUrlOnce(
+      db as unknown as Parameters<typeof gateUrlOnce>[0],
+      "https://www.fairsandfestivals.net/event/1",
+      "ticket"
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns the URL unchanged for known-good ticketing platforms", async () => {
+    const db = makeDb([
+      {
+        domain: "eventbrite.com",
+        useAsTicketUrl: true,
+        useAsApplicationUrl: true,
+        useAsSource: false,
+      },
+    ]);
+    const url = "https://www.eventbrite.com/e/12345";
+    const result = await gateUrlOnce(
+      db as unknown as Parameters<typeof gateUrlOnce>[0],
+      url,
+      "ticket"
+    );
+    expect(result).toBe(url);
+  });
+
+  it("returns the URL unchanged for unknown domains (fail-open)", async () => {
+    const db = makeDb([]);
+    const url = "https://unknown-promoter.example/show";
+    const result = await gateUrlOnce(
+      db as unknown as Parameters<typeof gateUrlOnce>[0],
+      url,
+      "application"
+    );
+    expect(result).toBe(url);
   });
 });
