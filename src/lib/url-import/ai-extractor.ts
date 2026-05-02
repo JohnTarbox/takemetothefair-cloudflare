@@ -176,8 +176,13 @@ export async function extractEventData(
   // Call Workers AI with Llama 3.1 8B using messages format for better instruction following
   console.log("[AI Extractor] Calling Workers AI, content length:", truncatedContent.length);
 
+  // Workers AI model name. The unquantized "@cf/meta/llama-3.1-8b-instruct"
+  // works at runtime but isn't included in @cloudflare/workers-types' typed
+  // AiModels registry (only -fp8 and -awq quantized variants are typed).
+  // Use `Parameters<...>[0]` to bypass the registry without `any` — runtime
+  // accepts any string Workers AI supports.
   const response = await withTimeout(
-    ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
+    ai.run("@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof ai.run>[0], {
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
@@ -242,7 +247,8 @@ export async function extractMultipleEvents(
   console.log("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);
 
   const response = await withTimeout(
-    ai.run("@cf/meta/llama-3.1-8b-instruct" as any, {
+    // See note on first ai.run call above re: typed model registry.
+    ai.run("@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof ai.run>[0], {
       messages: [
         { role: "system", content: MULTI_EVENT_SYSTEM_PROMPT },
         { role: "user", content: userPrompt },

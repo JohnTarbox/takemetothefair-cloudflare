@@ -255,7 +255,7 @@ async function mergePromoters(
     .update(events)
     .set({ promoterId: primaryId })
     .where(eq(events.promoterId, duplicateId));
-  transferred.events = (eventResult as any).rowsAffected || 0;
+  transferred.events = eventResult.meta?.changes ?? 0;
 
   // Get existing favorites
   const existingFavorites = await db
@@ -278,7 +278,7 @@ async function mergePromoters(
           notInArray(userFavorites.userId, existingUserIds)
         )
       );
-    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
+    transferred.favorites = favoriteResult.meta?.changes ?? 0;
   } else {
     const favoriteResult = await db
       .update(userFavorites)
@@ -289,7 +289,7 @@ async function mergePromoters(
           eq(userFavorites.favoritableId, duplicateId)
         )
       );
-    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
+    transferred.favorites = favoriteResult.meta?.changes ?? 0;
   }
 
   // Delete remaining duplicate favorites
@@ -426,7 +426,7 @@ async function mergeVendors(
     .update(eventVendors)
     .set({ vendorId: primaryId })
     .where(eq(eventVendors.vendorId, duplicateId));
-  transferred.eventVendors = (eventVendorResult as any).rowsAffected || 0;
+  transferred.eventVendors = eventVendorResult.meta?.changes ?? 0;
 
   // Get existing favorites
   const existingFavorites = await db
@@ -449,7 +449,7 @@ async function mergeVendors(
           notInArray(userFavorites.userId, existingUserIds)
         )
       );
-    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
+    transferred.favorites = favoriteResult.meta?.changes ?? 0;
   } else {
     const favoriteResult = await db
       .update(userFavorites)
@@ -460,7 +460,7 @@ async function mergeVendors(
           eq(userFavorites.favoritableId, duplicateId)
         )
       );
-    transferred.favorites = (favoriteResult as any).rowsAffected || 0;
+    transferred.favorites = favoriteResult.meta?.changes ?? 0;
   }
 
   // Delete remaining duplicate favorites
