@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq, or, like } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
+import { logError } from "@/lib/logger";
 import { venues } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -122,10 +123,7 @@ export async function POST(request: NextRequest) {
 
         // Boost score if city matches
         if (venueCity && venue.city) {
-          const cityMatch = similarity(
-            normalizeName(venueCity),
-            normalizeName(venue.city)
-          );
+          const cityMatch = similarity(normalizeName(venueCity), normalizeName(venue.city));
           if (cityMatch > 0.8) {
             score += 0.15;
           }
@@ -179,10 +177,13 @@ export async function POST(request: NextRequest) {
       })),
     });
   } catch (error) {
-    console.error("[Match Venue] Error:", error);
-    return NextResponse.json(
-      { success: false, error: "Failed to match venue" },
-      { status: 500 }
-    );
+    await logError(getCloudflareDb(), {
+      message: "Match-venue route failure",
+      error,
+      source: "suggest-event-match-venue",
+      request,
+      statusCode: 500,
+    });
+    return NextResponse.json({ success: false, error: "Failed to match venue" }, { status: 500 });
   }
 }

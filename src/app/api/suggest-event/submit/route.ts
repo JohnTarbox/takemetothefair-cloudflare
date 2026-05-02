@@ -295,8 +295,14 @@ export async function POST(request: NextRequest) {
           updatedAt: now,
         });
       } catch (schemaError) {
-        // Non-blocking: event still created without schema.org data
-        console.error("Failed to store schema.org data:", schemaError);
+        // Non-blocking: event still created without schema.org data.
+        // Routes through logError so the failure surfaces in /admin/logs.
+        await logError(db, {
+          message: "Failed to store schema.org data during suggest-event submit",
+          error: schemaError,
+          source: "suggest-event-submit",
+          request,
+        });
       }
     }
 

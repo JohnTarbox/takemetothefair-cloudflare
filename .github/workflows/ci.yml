@@ -83,6 +83,9 @@ jobs:
       - name: Run linter
         run: npm run lint
 
+      - name: Check edge runtime declarations
+        run: npx tsx scripts/check-edge-runtime.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
