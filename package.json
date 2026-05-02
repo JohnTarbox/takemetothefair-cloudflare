@@ -28,6 +28,7 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
+    "test:all": "npm test -- --run && npm test --workspace mcp-server && npm test --workspaces --if-present",
     "pretest:e2e": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
