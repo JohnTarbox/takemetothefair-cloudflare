@@ -85,6 +85,7 @@
   "devDependencies": {
     "@cloudflare/next-on-pages": "^1.13.16",
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@eslint/eslintrc": "^3.3.5",
     "@playwright/test": "^1.40.0",
     "@testing-library/react": "^14.0.0",
     "@types/better-sqlite3": "^7.6.13",
@@ -95,7 +96,7 @@
     "@vitest/coverage-v8": "^2.1.9",
     "better-sqlite3": "^12.6.2",
     "drizzle-kit": "^0.30.1",
-    "eslint": "^8",
+    "eslint": "^9.39.4",
     "eslint-config-next": "^15.1.0",
     "husky": "^9.1.7",
     "jsdom": "^24.0.0",
