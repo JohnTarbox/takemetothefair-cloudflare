@@ -203,7 +203,7 @@ interface EventDayForICS {
   openTime: string; // HH:MM
   closeTime: string; // HH:MM
   notes?: string | null;
-  closed?: boolean;
+  closed?: boolean | null;
 }
 
 interface MultiDayCalendarParams {

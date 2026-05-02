@@ -723,7 +723,7 @@ export default async function EventDetailPage({ params }: Props) {
                       endDate={event.endDate}
                       url={`https://meetmeatthefair.com/events/${event.slug}`}
                       variant="icon"
-                      eventDays={event.eventDays as any}
+                      eventDays={event.eventDays}
                     />
                   </div>
                   {event.eventDays && event.eventDays.length > 0 ? (

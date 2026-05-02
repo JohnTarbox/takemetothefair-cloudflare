@@ -13,6 +13,7 @@ import {
   users,
   userFavorites,
 } from "@/lib/db/schema";
+import type { EventStatus, FavoritableType } from "@takemetothefair/constants";
 
 // Types for query results
 export type VenueWithCount = typeof venues.$inferSelect & {
@@ -160,7 +161,9 @@ export async function getEventsWithRelations(
   // Build conditions
   const conditions = [];
   if (status) {
-    conditions.push(eq(events.status, status as any));
+    // Narrowing the runtime string to the column's typed enum. Invalid
+    // values silently match no rows — that's the existing contract.
+    conditions.push(eq(events.status, status as EventStatus));
   }
   if (futureOnly) {
     conditions.push(gte(events.endDate, new Date()));
@@ -336,7 +339,7 @@ export async function countFavorites(
     .from(userFavorites)
     .where(
       and(
-        eq(userFavorites.favoritableType, favoritableType as any),
+        eq(userFavorites.favoritableType, favoritableType as FavoritableType),
         eq(userFavorites.favoritableId, favoritableId)
       )
     );

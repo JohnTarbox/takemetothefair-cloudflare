@@ -17,7 +17,14 @@ interface EventDay {
   openTime: string;
   closeTime: string;
   notes?: string | null;
-  closed?: boolean;
+  closed?: boolean | null;
+  // Allow vendorOnly because the DB schema includes it (vendor-only days
+  // are excluded from public ICS output by generateMultiDayICSContent).
+  vendorOnly?: boolean | null;
+  // Extra DB-row fields ignored by the calendar generator but tolerated
+  // for assignability from the canonical EventDay row type.
+  eventId?: string;
+  createdAt?: Date | null;
 }
 
 interface AddToCalendarProps {
