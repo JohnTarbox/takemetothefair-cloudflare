@@ -1,6 +1,44 @@
 /**
- * Application-wide constants
+ * Application-wide constants.
+ *
+ * Schema-relevant enums (statuses, roles, categories) live in
+ * `packages/constants/` so the main app and MCP server share one source
+ * of truth. App-only constants (pagination limits, listing-route slugs,
+ * validation limits) stay here.
  */
+
+// Re-exports from the canonical workspace package. Existing imports of the
+// shared enums from "@/lib/constants" continue to work.
+export {
+  EVENT_STATUS,
+  EVENT_STATUS_VALUES,
+  PUBLIC_EVENT_STATUSES,
+  VENUE_STATUS,
+  USER_ROLE,
+  EVENT_VENDOR_STATUS,
+  EVENT_VENDOR_STATUS_VALUES,
+  PUBLIC_VENDOR_STATUSES,
+  PAYMENT_STATUS,
+  PAYMENT_STATUS_VALUES,
+  BLOG_POST_STATUS,
+  FAVORITABLE_TYPE,
+  INDOOR_OUTDOOR,
+  EVENT_SCALE,
+  EVENT_CATEGORIES,
+  VENDOR_STATUS_TRANSITIONS,
+  type EventStatus,
+  type VenueStatus,
+  type UserRole,
+  type EventVendorStatus,
+  type PaymentStatus,
+  type BlogPostStatus,
+  type FavoritableType,
+  type IndoorOutdoor,
+  type EventScale,
+  type EventCategory,
+} from "@takemetothefair/constants";
+
+// ── App-only constants ─────────────────────────────────────────────
 
 // Pagination
 export const PAGINATION = {
@@ -9,95 +47,6 @@ export const PAGINATION = {
   RECENT_ITEMS_LIMIT: 5,
   MAX_PAGE_SIZE: 100,
 } as const;
-
-// Event statuses
-export const EVENT_STATUS = {
-  DRAFT: "DRAFT",
-  PENDING: "PENDING",
-  TENTATIVE: "TENTATIVE",
-  APPROVED: "APPROVED",
-  REJECTED: "REJECTED",
-  CANCELLED: "CANCELLED",
-} as const;
-
-// Statuses visible on public pages
-export const PUBLIC_EVENT_STATUSES = [EVENT_STATUS.APPROVED, EVENT_STATUS.TENTATIVE] as const;
-
-// Venue statuses
-export const VENUE_STATUS = {
-  ACTIVE: "ACTIVE",
-  INACTIVE: "INACTIVE",
-} as const;
-
-// User roles
-export const USER_ROLE = {
-  ADMIN: "ADMIN",
-  PROMOTER: "PROMOTER",
-  VENDOR: "VENDOR",
-  USER: "USER",
-} as const;
-
-// Event vendor statuses (application lifecycle)
-export const EVENT_VENDOR_STATUS = {
-  INVITED: "INVITED",
-  INTERESTED: "INTERESTED",
-  APPLIED: "APPLIED",
-  WAITLISTED: "WAITLISTED",
-  APPROVED: "APPROVED",
-  CONFIRMED: "CONFIRMED",
-  REJECTED: "REJECTED",
-  WITHDRAWN: "WITHDRAWN",
-  CANCELLED: "CANCELLED",
-} as const;
-
-// Statuses visible on public pages
-export const PUBLIC_VENDOR_STATUSES = [
-  EVENT_VENDOR_STATUS.APPROVED,
-  EVENT_VENDOR_STATUS.CONFIRMED,
-] as const;
-
-// Payment statuses (orthogonal to application status)
-export const PAYMENT_STATUS = {
-  NOT_REQUIRED: "NOT_REQUIRED",
-  PENDING: "PENDING",
-  PAID: "PAID",
-  REFUNDED: "REFUNDED",
-  OVERDUE: "OVERDUE",
-} as const;
-
-// Blog post statuses
-export const BLOG_POST_STATUS = {
-  DRAFT: "DRAFT",
-  PUBLISHED: "PUBLISHED",
-} as const;
-
-// Favoritable types
-export const FAVORITABLE_TYPE = {
-  EVENT: "EVENT",
-  VENUE: "VENUE",
-  VENDOR: "VENDOR",
-  PROMOTER: "PROMOTER",
-} as const;
-
-// Event categories (advisory taxonomy for dropdowns/filters)
-export const EVENT_CATEGORIES = [
-  "Agricultural Fair",
-  "Antique Show",
-  "Art Walk",
-  "Car Show",
-  "Craft Fair",
-  "Craft Show",
-  "Farmers Market",
-  "Festival",
-  "Fiber Arts Festival",
-  "Flea Market",
-  "Food Festival",
-  "Holiday Market",
-  "Home Show",
-  "Music Festival",
-  "Trade Show",
-  "Other",
-] as const;
 
 /**
  * Event URL slugs that are actually listing routes (category or state pages),
@@ -124,22 +73,7 @@ export const EVENT_LISTING_SLUGS = new Set<string>([
   "rhode-island",
 ]);
 
-// Indoor/outdoor designation
-export const INDOOR_OUTDOOR = {
-  INDOOR: "INDOOR",
-  OUTDOOR: "OUTDOOR",
-  MIXED: "MIXED",
-} as const;
-
-// Event scale (rough size categories)
-export const EVENT_SCALE = {
-  SMALL: "SMALL",
-  MEDIUM: "MEDIUM",
-  LARGE: "LARGE",
-  MAJOR: "MAJOR",
-} as const;
-
-// Validation limits
+// Validation limits (used by Zod schemas in src/lib/validations/index.ts)
 export const VALIDATION = {
   NAME_MIN_LENGTH: 1,
   NAME_MAX_LENGTH: 255,
@@ -160,15 +94,3 @@ export const DUPLICATE_DETECTION = {
   MIN_THRESHOLD: 0.5,
   MAX_THRESHOLD: 1.0,
 } as const;
-
-// Type exports for type safety
-export type EventStatus = (typeof EVENT_STATUS)[keyof typeof EVENT_STATUS];
-export type VenueStatus = (typeof VENUE_STATUS)[keyof typeof VENUE_STATUS];
-export type UserRole = (typeof USER_ROLE)[keyof typeof USER_ROLE];
-export type EventVendorStatus = (typeof EVENT_VENDOR_STATUS)[keyof typeof EVENT_VENDOR_STATUS];
-export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
-export type FavoritableType = (typeof FAVORITABLE_TYPE)[keyof typeof FAVORITABLE_TYPE];
-export type BlogPostStatus = (typeof BLOG_POST_STATUS)[keyof typeof BLOG_POST_STATUS];
-export type EventCategory = (typeof EVENT_CATEGORIES)[number];
-export type IndoorOutdoor = (typeof INDOOR_OUTDOOR)[keyof typeof INDOOR_OUTDOOR];
-export type EventScale = (typeof EVENT_SCALE)[keyof typeof EVENT_SCALE];

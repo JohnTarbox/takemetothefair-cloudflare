@@ -64,13 +64,9 @@ export function escapeLike(s: string): string {
   return s.replace(/[%_]/g, "");
 }
 
-/** Statuses visible to the public for events
- *  KEEP IN SYNC with: src/lib/event-status.ts (isPublicEventStatus / PUBLIC_EVENT_STATUSES) */
-export const PUBLIC_EVENT_STATUSES = ["APPROVED", "TENTATIVE"] as const;
-
-/** Statuses visible to the public for event vendors
- *  KEEP IN SYNC with: src/lib/vendor-status.ts (isPublicVendorStatus / PUBLIC_VENDOR_STATUSES) */
-export const PUBLIC_VENDOR_STATUSES = ["APPROVED", "CONFIRMED"] as const;
+// PUBLIC_EVENT_STATUSES and PUBLIC_VENDOR_STATUSES re-exported from
+// the canonical @takemetothefair/constants package. Single source of truth.
+export { PUBLIC_EVENT_STATUSES, PUBLIC_VENDOR_STATUSES } from "@takemetothefair/constants";
 
 /** Build a concise text content response for MCP */
 export function jsonContent(data: unknown): { type: "text"; text: string } {
@@ -144,54 +140,15 @@ export function computePublicDates(days: { date: string; vendorOnly?: boolean | 
   };
 }
 
-// ---------------------------------------------------------------------------
-// Status enums & transitions — shared between admin.ts and promoter.ts.
-// KEEP IN SYNC with:
-//   - VALID_TRANSITIONS: src/lib/vendor-status.ts
-//   - EVENT_STATUS_ENUM:  src/lib/constants.ts (EventStatus)
-//   - VENDOR_STATUS_ENUM: src/lib/constants.ts (VendorStatus)
-//   - PAYMENT_STATUS_ENUM: src/lib/constants.ts (PaymentStatus)
-// ---------------------------------------------------------------------------
-export const VALID_TRANSITIONS: Record<string, string[]> = {
-  INVITED: ["INTERESTED", "APPLIED", "REJECTED", "WITHDRAWN", "CANCELLED"],
-  INTERESTED: ["APPLIED", "WITHDRAWN", "CANCELLED"],
-  APPLIED: ["WAITLISTED", "APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN"],
-  WAITLISTED: ["APPROVED", "CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"],
-  APPROVED: ["CONFIRMED", "REJECTED", "WITHDRAWN", "CANCELLED"],
-  CONFIRMED: ["WITHDRAWN", "CANCELLED"],
-  REJECTED: ["APPLIED", "INVITED"],
-  WITHDRAWN: ["APPLIED", "INTERESTED"],
-  CANCELLED: ["INVITED"],
-};
-
-export const EVENT_STATUS_ENUM = [
-  "DRAFT",
-  "PENDING",
-  "TENTATIVE",
-  "APPROVED",
-  "REJECTED",
-  "CANCELLED",
-] as const;
-
-export const VENDOR_STATUS_ENUM = [
-  "INVITED",
-  "INTERESTED",
-  "APPLIED",
-  "WAITLISTED",
-  "APPROVED",
-  "CONFIRMED",
-  "REJECTED",
-  "WITHDRAWN",
-  "CANCELLED",
-] as const;
-
-export const PAYMENT_STATUS_ENUM = [
-  "NOT_REQUIRED",
-  "PENDING",
-  "PAID",
-  "REFUNDED",
-  "OVERDUE",
-] as const;
+// Status enums + transition state machine — sourced from the canonical
+// @takemetothefair/constants package. Aliases kept for backwards compat
+// with existing imports inside mcp-server/.
+export {
+  VENDOR_STATUS_TRANSITIONS as VALID_TRANSITIONS,
+  EVENT_STATUS_VALUES as EVENT_STATUS_ENUM,
+  EVENT_VENDOR_STATUS_VALUES as VENDOR_STATUS_ENUM,
+  PAYMENT_STATUS_VALUES as PAYMENT_STATUS_ENUM,
+} from "@takemetothefair/constants";
 
 // ---------------------------------------------------------------------------
 // Fuzzy token-overlap scoring for event name matching
