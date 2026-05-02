@@ -47,11 +47,12 @@ export default defineConfig({
         // though no real coverage was lost (the tests still pass, just in
         // the package's own vitest run).
         //
-        // Current measured: lines/statements ~30%, functions ~64%, branches ~74%.
-        lines: 28,
-        functions: 60,
-        branches: 70,
-        statements: 28,
+        // Current measured: lines/statements ~30.4%, functions ~65.5%, branches ~74.9%.
+        // Last raised 2026-05-02 with api-token-auth.test.ts (+10 tests).
+        lines: 29,
+        functions: 61,
+        branches: 71,
+        statements: 29,
       },
     },
   },
