@@ -47,12 +47,12 @@ export default defineConfig({
         // though no real coverage was lost (the tests still pass, just in
         // the package's own vitest run).
         //
-        // Current measured: lines/statements ~35.8%, functions ~72.5%, branches ~80.2%.
-        // Last raised 2026-05-02 with indexnow.test.ts (+14 tests).
-        lines: 34,
-        functions: 71,
+        // Current measured: lines/statements ~38.0%, functions ~74.0%, branches ~80.1%.
+        // Last raised 2026-05-02 with site-health.test.ts (+18 tests).
+        lines: 36,
+        functions: 72,
         branches: 78,
-        statements: 34,
+        statements: 36,
       },
     },
   },
