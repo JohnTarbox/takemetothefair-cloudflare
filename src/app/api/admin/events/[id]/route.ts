@@ -215,7 +215,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.walkInsAllowed !== undefined) updateData.walkInsAllowed = data.walkInsAllowed;
     if (data.syncEnabled !== undefined) updateData.syncEnabled = data.syncEnabled;
 
-    await db.update(events).set(updateData).where(eq(events.id, id));
+    // The slug check above is check-then-set — between SELECT and UPDATE
+    // a concurrent admin can claim the same slug. The unique constraint
+    // on events.slug catches it; convert that into a friendly 409 instead
+    // of letting the generic catch surface a 500.
+    try {
+      await db.update(events).set(updateData).where(eq(events.id, id));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("UNIQUE constraint failed: events.slug")) {
+        return NextResponse.json(
+          { error: "Another event already uses that slug. Pick a different name or slug." },
+          { status: 409 }
+        );
+      }
+      throw err;
+    }
 
     // Handle eventDays update if provided
     if (data.eventDays !== undefined) {

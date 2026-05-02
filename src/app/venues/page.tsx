@@ -7,6 +7,7 @@ import { eq, and, sql, isNotNull, isNull } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
+import { sanitizeLikeInput } from "@/lib/utils";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
@@ -78,8 +79,12 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
     }
 
     if (searchParams.q) {
+      // Strip LIKE wildcards from user input so a query of "%" doesn't
+      // match every venue. Drizzle parameterizes the value, so this is
+      // wildcard hygiene rather than SQL escape.
+      const q = sanitizeLikeInput(searchParams.q);
       conditions.push(
-        sql`(${venues.name} LIKE ${"%" + searchParams.q + "%"} OR ${venues.city} LIKE ${"%" + searchParams.q + "%"})`
+        sql`(${venues.name} LIKE ${"%" + q + "%"} OR ${venues.city} LIKE ${"%" + q + "%"})`
       );
     }
 
