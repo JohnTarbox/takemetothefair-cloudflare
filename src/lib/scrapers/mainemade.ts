@@ -4,11 +4,11 @@
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import { decodeHtmlEntities } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 const SOURCE_NAME = "mainemade.com";
 const BASE_URL = "https://www.mainemade.com/events/";
 const MAX_PAGES = 10; // Safety limit
-
 
 // Parse events from HTML
 function parseEventsFromHtml(html: string): ScrapedEvent[] {
@@ -23,7 +23,9 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     const content = parts[i];
 
     // Extract event URL from anchor tag with /event/ in href
-    const urlMatch = content.match(/<a[^>]*href="(https?:\/\/www\.mainemade\.com\/event\/([^"]+))"[^>]*>/i);
+    const urlMatch = content.match(
+      /<a[^>]*href="(https?:\/\/www\.mainemade\.com\/event\/([^"]+))"[^>]*>/i
+    );
     if (!urlMatch) continue;
 
     const eventUrl = urlMatch[1];
@@ -33,7 +35,9 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     if (events.some((e) => e.sourceId === slug)) continue;
 
     // Extract event name from title div
-    const titleMatch = content.match(/<div[^>]*class="all_events__container__item__content__title"[^>]*>([^<]+)<\/div>/i);
+    const titleMatch = content.match(
+      /<div[^>]*class="all_events__container__item__content__title"[^>]*>([^<]+)<\/div>/i
+    );
     const eventName = titleMatch ? decodeHtmlEntities(titleMatch[1].trim()) : "";
 
     if (!eventName || eventName.length < 3) continue;
@@ -47,13 +51,19 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     // Also look for endDate span
     const endDateSpanMatch = content.match(/<span[^>]*itemprop="endDate"[^>]*>([^<]+)<\/span>/i);
     // Also look for the full date div content for time info
-    const dateContainerMatch = content.match(/<div[^>]*class="all_events__container__item__content__date"[^>]*>([\s\S]*?)<\/div>/i);
+    const dateContainerMatch = content.match(
+      /<div[^>]*class="all_events__container__item__content__date"[^>]*>([\s\S]*?)<\/div>/i
+    );
 
     const dateText = startDateMatch ? startDateMatch[1] : "";
-    const fullDateContent = dateContainerMatch ? dateContainerMatch[1].replace(/<[^>]+>/g, " ").trim() : "";
+    const fullDateContent = dateContainerMatch
+      ? dateContainerMatch[1].replace(/<[^>]+>/g, " ").trim()
+      : "";
 
     // Pattern: "February 7 @ 2:00 PM - 7:00 PM" or "March 21 - March 22"
-    const dateMatch = (dateText || fullDateContent).match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+    const dateMatch = (dateText || fullDateContent).match(
+      /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i
+    );
     if (dateMatch) {
       const year = new Date().getFullYear();
       const month = dateMatch[1];
@@ -76,7 +86,9 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
         // Check for end date from itemprop span first
         if (endDateSpanMatch) {
           const endDateText = endDateSpanMatch[1];
-          const endDateParsed = endDateText.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+          const endDateParsed = endDateText.match(
+            /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i
+          );
           if (endDateParsed) {
             endDate = new Date(`${endDateParsed[1]} ${endDateParsed[2]}, ${year}`);
             endDate.setHours(21, 0, 0, 0);
@@ -147,7 +159,7 @@ export async function scrapeMaineMade(): Promise<ScrapeResult> {
 
       const response = await fetchWithTimeout(url, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+          "User-Agent": SCRAPER_USER_AGENT,
         },
         timeoutMs: 15000,
       });
@@ -196,11 +208,13 @@ export async function scrapeMaineMade(): Promise<ScrapeResult> {
 }
 
 // Fetch additional details from an event's detail page
-export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Partial<ScrapedEvent>> {
+export async function scrapeMaineMadeEventDetails(
+  eventUrl: string
+): Promise<Partial<ScrapedEvent>> {
   try {
     const response = await fetchWithTimeout(eventUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });
@@ -213,7 +227,9 @@ export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Par
     const details: Partial<ScrapedEvent> = {};
 
     // Try to extract from JSON-LD structured data first (most reliable)
-    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi);
+    const jsonLdMatch = html.match(
+      /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi
+    );
     if (jsonLdMatch) {
       for (const match of jsonLdMatch) {
         try {
@@ -250,13 +266,19 @@ export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Par
                 if (typeof item.location === "object") {
                   details.location = item.location.name;
                   if (item.location.address) {
-                    const addr = typeof item.location.address === "string"
-                      ? { streetAddress: item.location.address }
-                      : item.location.address;
+                    const addr =
+                      typeof item.location.address === "string"
+                        ? { streetAddress: item.location.address }
+                        : item.location.address;
 
                     details.city = addr.addressLocality;
                     details.state = addr.addressRegion || "ME";
-                    details.address = [addr.streetAddress, addr.addressLocality, addr.addressRegion, addr.postalCode]
+                    details.address = [
+                      addr.streetAddress,
+                      addr.addressLocality,
+                      addr.addressRegion,
+                      addr.postalCode,
+                    ]
                       .filter(Boolean)
                       .join(", ");
 
@@ -317,7 +339,9 @@ export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Par
 
     // Extract og:description if no description found
     if (!details.description) {
-      const ogDescMatch = html.match(/<meta[^>]*property="og:description"[^>]*content="([^"]+)"[^>]*>/i);
+      const ogDescMatch = html.match(
+        /<meta[^>]*property="og:description"[^>]*content="([^"]+)"[^>]*>/i
+      );
       if (ogDescMatch) {
         details.description = ogDescMatch[1]
           .replace(/&quot;/g, '"')
@@ -329,7 +353,9 @@ export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Par
     // Try to extract external website link
     if (!details.website) {
       // Look for "Click For More Information" or similar links
-      const websiteMatch = html.match(/<a[^>]*href="(https?:\/\/(?!www\.mainemade\.com)[^"]+)"[^>]*>[^<]*(?:more information|website|visit|register|tickets)[^<]*<\/a>/i);
+      const websiteMatch = html.match(
+        /<a[^>]*href="(https?:\/\/(?!www\.mainemade\.com)[^"]+)"[^>]*>[^<]*(?:more information|website|visit|register|tickets)[^<]*<\/a>/i
+      );
       if (websiteMatch) {
         details.website = websiteMatch[1];
       }
@@ -337,7 +363,9 @@ export async function scrapeMaineMadeEventDetails(eventUrl: string): Promise<Par
 
     // Extract venue/location from HTML if not found in JSON-LD
     if (!details.location) {
-      const venueMatch = html.match(/<span[^>]*class="[^"]*tribe-venue[^"]*"[^>]*>([^<]+)<\/span>/i);
+      const venueMatch = html.match(
+        /<span[^>]*class="[^"]*tribe-venue[^"]*"[^>]*>([^<]+)<\/span>/i
+      );
       if (venueMatch) {
         details.location = venueMatch[1].trim();
       }

@@ -6,6 +6,20 @@
  * limits stay in src/lib/constants.ts in the main app.
  */
 
+// ── Site identity ─────────────────────────────────────────────────
+// Single source of truth for the canonical site URL, hostname, and the
+// support/from email address. Use SITE_URL when constructing absolute
+// links, SITE_HOSTNAME for cases like iCal UIDs that need a bare host,
+// SUPPORT_EMAIL for the noreply From address, and SCRAPER_USER_AGENT
+// for outbound HTTP requests so polite-bot identification stays
+// consistent across every scraper.
+
+export const SITE_URL = "https://meetmeatthefair.com";
+export const SITE_HOSTNAME = "meetmeatthefair.com";
+export const SUPPORT_EMAIL = "noreply@meetmeatthefair.com";
+export const SCRAPER_USER_AGENT =
+  "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)";
+
 // ── Event statuses ────────────────────────────────────────────────
 
 export const EVENT_STATUS = {

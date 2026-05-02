@@ -19,8 +19,9 @@
 import { indexnowSubmissions } from "@/lib/db/schema";
 import { lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
+import { SITE_HOSTNAME } from "@takemetothefair/constants";
 
-const HOST = "meetmeatthefair.com";
+const HOST = SITE_HOSTNAME;
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 const MAX_BATCH_SIZE = 10_000;
 

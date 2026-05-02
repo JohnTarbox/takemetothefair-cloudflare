@@ -1,6 +1,7 @@
 import { extractMetadata } from "@/lib/url-import/html-parser";
 import { parseJsonLd } from "./parser";
 import type { FetchSchemaOrgResult, SchemaOrgStatus } from "./types";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 const FETCH_TIMEOUT = 15000; // 15 seconds
 
@@ -36,12 +37,12 @@ function isInternalUrl(urlString: string): boolean {
   if (ipMatch) {
     const [, a, b] = ipMatch.map(Number);
     if (
-      a === 127 ||                          // 127.0.0.0/8
-      a === 10 ||                           // 10.0.0.0/8
-      (a === 172 && b >= 16 && b <= 31) ||  // 172.16.0.0/12
-      (a === 192 && b === 168) ||           // 192.168.0.0/16
-      (a === 169 && b === 254) ||           // 169.254.0.0/16
-      a === 0                               // 0.0.0.0/8
+      a === 127 || // 127.0.0.0/8
+      a === 10 || // 10.0.0.0/8
+      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+      (a === 192 && b === 168) || // 192.168.0.0/16
+      (a === 169 && b === 254) || // 169.254.0.0/16
+      a === 0 // 0.0.0.0/8
     ) {
       return true;
     }
@@ -89,8 +90,7 @@ export async function fetchSchemaOrg(url: string): Promise<FetchSchemaOrgResult>
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": SCRAPER_USER_AGENT,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
       },

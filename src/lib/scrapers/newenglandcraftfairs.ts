@@ -4,6 +4,7 @@
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities, createSlugFromName } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 const SOURCE_NAME = "newenglandcraftfairs.com";
 const EVENTS_URL = "https://www.newenglandcraftfairs.com/maine-craft-fairs.html";
@@ -223,7 +224,7 @@ export async function scrapeNewEnglandCraftFairs(): Promise<ScrapeResult> {
   try {
     const response = await fetchWithTimeout(EVENTS_URL, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });

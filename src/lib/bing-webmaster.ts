@@ -12,8 +12,11 @@
  * `RATE_LIMIT_KV` to avoid hammering the API on every admin pageview.
  */
 
+import { SITE_URL as CANONICAL_SITE_URL } from "@takemetothefair/constants";
+
 const BING_API_BASE = "https://ssl.bing.com/webmaster/api.svc/json";
-const SITE_URL = "https://meetmeatthefair.com/";
+// Bing's API requires the property URL with a trailing slash; SITE_URL has none.
+const SITE_URL = `${CANONICAL_SITE_URL}/`;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 const REPORT_CACHE_TTL = 900; // 15 min — search/page/crawl stats

@@ -19,13 +19,14 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { events, venues, blogPosts, gscInspectionState, healthIssues } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { fingerprintFor } from "@/lib/site-health";
 
 type Db = DrizzleD1Database<typeof schema>;
 
 const DEFAULT_BATCH_SIZE = 200;
-const HOST = "https://meetmeatthefair.com";
+const HOST = SITE_URL;
 
 function pathFromUrl(url: string): string {
   return url.replace(HOST, "") || "/";

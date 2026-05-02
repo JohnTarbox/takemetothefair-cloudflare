@@ -4,29 +4,43 @@
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities, createSlugFromName } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 // Parse date strings like "July 15-19", "Aug 7-9", "Sept 4-7", "Oct 2-12"
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
   // Clean up the text
-  const cleaned = dateText.trim()
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
+  const cleaned = dateText
+    .trim()
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
   // Month name mapping (handle abbreviations)
   const monthMap: Record<string, string> = {
-    'jan': 'January', 'january': 'January',
-    'feb': 'February', 'february': 'February',
-    'mar': 'March', 'march': 'March',
-    'apr': 'April', 'april': 'April',
-    'may': 'May',
-    'jun': 'June', 'june': 'June',
-    'jul': 'July', 'july': 'July',
-    'aug': 'August', 'august': 'August',
-    'sep': 'September', 'sept': 'September', 'september': 'September',
-    'oct': 'October', 'october': 'October',
-    'nov': 'November', 'november': 'November',
-    'dec': 'December', 'december': 'December',
+    jan: "January",
+    january: "January",
+    feb: "February",
+    february: "February",
+    mar: "March",
+    march: "March",
+    apr: "April",
+    april: "April",
+    may: "May",
+    jun: "June",
+    june: "June",
+    jul: "July",
+    july: "July",
+    aug: "August",
+    august: "August",
+    sep: "September",
+    sept: "September",
+    september: "September",
+    oct: "October",
+    october: "October",
+    nov: "November",
+    november: "November",
+    dec: "December",
+    december: "December",
   };
 
   // Try to match patterns like "July 15-19" or "Aug 7-9" (same month range)
@@ -81,7 +95,7 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
     // Fetch the page
     const response = await fetchWithTimeout(CALENDAR_URL, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });
@@ -109,7 +123,7 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
     let match;
     while ((match = spanPattern.exec(html)) !== null) {
       const text = decodeHtmlEntities(match[1]);
-      if (text.length > 0 && text !== '*****') {
+      if (text.length > 0 && text !== "*****") {
         allSpans.push({ index: match.index, text });
       }
     }
@@ -130,7 +144,9 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
       const text = span.text;
 
       // Check if this is a date
-      const dateMatch = text.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+/i);
+      const dateMatch = text.match(
+        /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+/i
+      );
       if (dateMatch) {
         const parsed = parseDateRange(text, pageYear);
         if (parsed) {
@@ -145,7 +161,7 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
       }
 
       // Check if this looks like a fair name (contains "Fair" or location pattern)
-      if (text.includes('Fair') || text.includes(' - ') || text.includes('4-H')) {
+      if (text.includes("Fair") || text.includes(" - ") || text.includes("4-H")) {
         if (!currentDate) {
           // No date yet, skip
           continue;
@@ -153,7 +169,7 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
 
         // Extract fair name and location
         const fairName = text;
-        let location = '';
+        let location = "";
         const locationMatch = text.match(/^(.+?)\s+-\s+(.+)$/);
         if (locationMatch) {
           location = locationMatch[2];
@@ -168,7 +184,9 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
           if (nextText.match(/^www\./i)) {
             // Found website in next span, also get the full URL from anchor
             const matchingUrl = websiteUrls.find(
-              u => u.index > span.index && u.index < (i + 2 < allSpans.length ? allSpans[i + 2].index : Infinity)
+              (u) =>
+                u.index > span.index &&
+                u.index < (i + 2 < allSpans.length ? allSpans[i + 2].index : Infinity)
             );
             website = matchingUrl?.url || `http://${nextText}`;
           }
@@ -178,13 +196,13 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
 
         // Create venue from fair name
         const venue: ScrapedVenue = {
-          name: fairName.replace(/\s+-\s+.+$/, '').trim(), // Remove location part
+          name: fairName.replace(/\s+-\s+.+$/, "").trim(), // Remove location part
           city: location || undefined,
-          state: 'MA',
+          state: "MA",
         };
 
         // Check if we already have this fair (avoid duplicates)
-        if (!events.some(e => e.sourceId === sourceId)) {
+        if (!events.some((e) => e.sourceId === sourceId)) {
           events.push({
             sourceId,
             sourceName: SOURCE_NAME,
@@ -196,7 +214,7 @@ export async function scrapeMafaFairs(): Promise<ScrapeResult> {
             ticketUrl: website,
             venue,
             city: location || undefined,
-            state: 'MA',
+            state: "MA",
           });
         }
       }
