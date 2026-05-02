@@ -73,20 +73,10 @@ export const EVENT_LISTING_SLUGS = new Set<string>([
   "rhode-island",
 ]);
 
-// Validation limits (used by Zod schemas in src/lib/validations/index.ts)
-export const VALIDATION = {
-  NAME_MIN_LENGTH: 1,
-  NAME_MAX_LENGTH: 255,
-  DESCRIPTION_MAX_LENGTH: 5000,
-  SLUG_MAX_LENGTH: 255,
-  URL_MAX_LENGTH: 2048,
-  EMAIL_MAX_LENGTH: 255,
-  PHONE_MAX_LENGTH: 50,
-  ADDRESS_MAX_LENGTH: 500,
-  ZIP_MAX_LENGTH: 20,
-  STATE_MAX_LENGTH: 50,
-  CITY_MAX_LENGTH: 100,
-} as const;
+// Validation limits live in @takemetothefair/validation (schema-layer concern).
+// Re-exported here so any legacy `import { VALIDATION } from "@/lib/constants"`
+// keeps working until those imports migrate.
+export { VALIDATION } from "@takemetothefair/validation";
 
 // Similarity thresholds for duplicate detection
 export const DUPLICATE_DETECTION = {

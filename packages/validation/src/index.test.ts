@@ -17,7 +17,7 @@ import {
   eventVendorUpdateSchema,
   userUpdateSchema,
   validateRequestBody,
-} from "../index";
+} from "./index";
 import { z } from "zod";
 
 describe("venueCreateSchema", () => {

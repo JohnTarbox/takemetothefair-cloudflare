@@ -17,6 +17,7 @@
     "@takemetothefair/datetime": "*",
     "@takemetothefair/db-schema": "*",
     "@takemetothefair/utils": "*",
+    "@takemetothefair/validation": "*",
     "agents": "^0.8.7",
     "drizzle-orm": "^0.38.3",
     "hono": "^4.12.9",
