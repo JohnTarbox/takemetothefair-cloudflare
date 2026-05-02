@@ -45,10 +45,10 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
       try {
         const response = await fetch(`/api/favorites?type=${type}`);
         if (response.ok) {
-          const data = await response.json() as any;
-          const favorited = data.favorites.some(
-            (fav: { favoritableId: string }) => fav.favoritableId === id
-          );
+          const data = (await response.json()) as {
+            favorites: Array<{ id: string; favoritableType: string; favoritableId: string }>;
+          };
+          const favorited = data.favorites.some((fav) => fav.favoritableId === id);
           setIsFavorited(favorited);
         }
       } catch (error) {
@@ -135,9 +135,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
         className={cn(
           sizeClasses[size],
           "transition-colors",
-          isFavorited
-            ? "fill-red-500 text-red-500"
-            : "text-gray-500 hover:text-red-400"
+          isFavorited ? "fill-red-500 text-red-500" : "text-gray-500 hover:text-red-400"
         )}
       />
     </button>

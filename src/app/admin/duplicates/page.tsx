@@ -28,10 +28,7 @@ const THRESHOLDS = [
 ];
 
 // Helper to get display name based on entity type
-function getDisplayName(
-  entity: Record<string, unknown>,
-  type: DuplicateEntityType
-): string {
+function getDisplayName(entity: Record<string, unknown>, type: DuplicateEntityType): string {
   switch (type) {
     case "vendors":
       return entity.businessName as string;
@@ -43,10 +40,7 @@ function getDisplayName(
 }
 
 // Helper to get entity count label
-function getCountLabel(
-  entity: Record<string, unknown>,
-  type: DuplicateEntityType
-): string {
+function getCountLabel(entity: Record<string, unknown>, type: DuplicateEntityType): string {
   const count = entity._count as Record<string, number>;
   switch (type) {
     case "venues":
@@ -116,25 +110,23 @@ export default function AdminDuplicatesPage() {
     setError(null);
 
     try {
-      const res = await fetch(
-        `/api/admin/duplicates?type=${entityType}&threshold=${threshold}`
-      );
+      const res = await fetch(`/api/admin/duplicates?type=${entityType}&threshold=${threshold}`);
 
       // Handle 503 timeout from Cloudflare before trying to parse JSON
       if (res.status === 503) {
         throw new Error(
           `The search timed out while comparing ${entityType}. ` +
-          `Try increasing the similarity threshold (e.g., 80% or 90%) to reduce the number of comparisons.`
+            `Try increasing the similarity threshold (e.g., 80% or 90%) to reduce the number of comparisons.`
         );
       }
 
       let data: { duplicates?: DuplicatePair[]; totalEntities?: number; error?: string };
       try {
-        data = await res.json() as any;
+        data = (await res.json()) as typeof data;
       } catch {
         throw new Error(
           `Server returned an invalid response (status ${res.status}). ` +
-          `This may indicate a timeout or server error.`
+            `This may indicate a timeout or server error.`
         );
       }
 
@@ -196,7 +188,7 @@ export default function AdminDuplicatesPage() {
         throw new Error("Failed to generate preview");
       }
 
-      const data: MergePreviewResponse = await res.json() as MergePreviewResponse;
+      const data: MergePreviewResponse = (await res.json()) as MergePreviewResponse;
       setPreview(data);
     } catch (err) {
       console.error("Failed to generate preview:", err);
@@ -244,7 +236,7 @@ export default function AdminDuplicatesPage() {
 
       let data: { error?: string };
       try {
-        data = await res.json() as any;
+        data = (await res.json()) as typeof data;
       } catch {
         throw new Error(
           `Server returned an invalid response (status ${res.status}). The merge may have partially completed - please refresh and verify.`
@@ -275,9 +267,7 @@ export default function AdminDuplicatesPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Find &amp; Merge Duplicates
-          </h1>
+          <h1 className="text-2xl font-bold text-gray-900">Find &amp; Merge Duplicates</h1>
           <p className="text-sm text-gray-600 mt-1">
             Review and merge duplicate records to keep your data clean
           </p>
@@ -334,12 +324,7 @@ export default function AdminDuplicatesPage() {
               </label>
             )}
 
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={fetchDuplicates}
-              isLoading={loading}
-            >
+            <Button variant="secondary" size="sm" onClick={fetchDuplicates} isLoading={loading}>
               Refresh
             </Button>
           </div>
@@ -350,10 +335,7 @@ export default function AdminDuplicatesPage() {
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
           {error}
-          <button
-            onClick={() => setError(null)}
-            className="ml-2 text-red-500 hover:text-red-700"
-          >
+          <button onClick={() => setError(null)} className="ml-2 text-red-500 hover:text-red-700">
             Dismiss
           </button>
         </div>
@@ -368,13 +350,14 @@ export default function AdminDuplicatesPage() {
                 ? "Searching..."
                 : (() => {
                     // Filter duplicates if same dates filter is active
-                    const filteredDuplicates = entityType === "events" && sameDatesOnly
-                      ? duplicates.filter((pair) => {
-                          const e1 = pair.entity1 as Record<string, unknown>;
-                          const e2 = pair.entity2 as Record<string, unknown>;
-                          return datesMatch(e1.startDate, e2.startDate);
-                        })
-                      : duplicates;
+                    const filteredDuplicates =
+                      entityType === "events" && sameDatesOnly
+                        ? duplicates.filter((pair) => {
+                            const e1 = pair.entity1 as Record<string, unknown>;
+                            const e2 = pair.entity2 as Record<string, unknown>;
+                            return datesMatch(e1.startDate, e2.startDate);
+                          })
+                        : duplicates;
                     return sameDatesOnly && entityType === "events"
                       ? `Showing ${filteredDuplicates.length} of ${duplicates.length} pairs with matching dates`
                       : `Found ${duplicates.length} potential duplicate pairs from ${totalEntities} ${entityType}`;
@@ -385,13 +368,14 @@ export default function AdminDuplicatesPage() {
         <CardContent>
           {(() => {
             // Filter duplicates if same dates filter is active
-            const filteredDuplicates = entityType === "events" && sameDatesOnly
-              ? duplicates.filter((pair) => {
-                  const e1 = pair.entity1 as Record<string, unknown>;
-                  const e2 = pair.entity2 as Record<string, unknown>;
-                  return datesMatch(e1.startDate, e2.startDate);
-                })
-              : duplicates;
+            const filteredDuplicates =
+              entityType === "events" && sameDatesOnly
+                ? duplicates.filter((pair) => {
+                    const e1 = pair.entity1 as Record<string, unknown>;
+                    const e2 = pair.entity2 as Record<string, unknown>;
+                    return datesMatch(e1.startDate, e2.startDate);
+                  })
+                : duplicates;
 
             if (loading) {
               return (
@@ -427,60 +411,56 @@ export default function AdminDuplicatesPage() {
                   const entity1 = pair.entity1 as Record<string, unknown>;
                   const entity2 = pair.entity2 as Record<string, unknown>;
 
-                return (
-                  <div
-                    key={`${entity1.id}-${entity2.id}`}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1">
-                        {/* Entity 1 */}
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">
-                            {getDisplayName(entity1, entityType)}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {getCountLabel(entity1, entityType)}
-                          </p>
+                  return (
+                    <div
+                      key={`${entity1.id}-${entity2.id}`}
+                      className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4 flex-1">
+                          {/* Entity 1 */}
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-900">
+                              {getDisplayName(entity1, entityType)}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {getCountLabel(entity1, entityType)}
+                            </p>
+                          </div>
+
+                          {/* Similarity Badge */}
+                          <div className="flex flex-col items-center">
+                            <Badge
+                              variant={
+                                pair.similarity >= 0.9
+                                  ? "danger"
+                                  : pair.similarity >= 0.8
+                                    ? "warning"
+                                    : "info"
+                              }
+                            >
+                              {formatSimilarity(pair.similarity)}
+                            </Badge>
+                            <ArrowRight className="w-4 h-4 text-gray-400 my-1" />
+                          </div>
+
+                          {/* Entity 2 */}
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-900">
+                              {getDisplayName(entity2, entityType)}
+                            </p>
+                            <p className="text-sm text-gray-500">
+                              {getCountLabel(entity2, entityType)}
+                            </p>
+                          </div>
                         </div>
 
-                        {/* Similarity Badge */}
-                        <div className="flex flex-col items-center">
-                          <Badge
-                            variant={
-                              pair.similarity >= 0.9
-                                ? "danger"
-                                : pair.similarity >= 0.8
-                                  ? "warning"
-                                  : "info"
-                            }
-                          >
-                            {formatSimilarity(pair.similarity)}
-                          </Badge>
-                          <ArrowRight className="w-4 h-4 text-gray-400 my-1" />
-                        </div>
-
-                        {/* Entity 2 */}
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">
-                            {getDisplayName(entity2, entityType)}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {getCountLabel(entity2, entityType)}
-                          </p>
-                        </div>
+                        {/* Review Button */}
+                        <Button variant="secondary" size="sm" onClick={() => handleReview(pair)}>
+                          Review
+                        </Button>
                       </div>
-
-                      {/* Review Button */}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => handleReview(pair)}
-                      >
-                        Review
-                      </Button>
                     </div>
-                  </div>
                   );
                 })}
               </div>
@@ -492,20 +472,14 @@ export default function AdminDuplicatesPage() {
       {/* Review Modal */}
       {selectedPair && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={handleCloseReview}
-          ></div>
+          <div className="absolute inset-0 bg-black/50" onClick={handleCloseReview}></div>
           <div className="relative bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b">
               <h2 className="text-lg font-semibold text-gray-900">
                 Review Duplicate {entityType.slice(0, -1)}
               </h2>
-              <button
-                onClick={handleCloseReview}
-                className="text-gray-400 hover:text-gray-600"
-              >
+              <button onClick={handleCloseReview} className="text-gray-400 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -517,12 +491,8 @@ export default function AdminDuplicatesPage() {
                   <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Check className="w-8 h-8 text-green-600" />
                   </div>
-                  <h3 className="text-lg font-medium text-gray-900">
-                    Merge Successful!
-                  </h3>
-                  <p className="text-gray-600 mt-2">
-                    The records have been merged successfully.
-                  </p>
+                  <h3 className="text-lg font-medium text-gray-900">Merge Successful!</h3>
+                  <p className="text-gray-600 mt-2">The records have been merged successfully.</p>
                 </div>
               ) : (
                 <>
@@ -532,166 +502,205 @@ export default function AdminDuplicatesPage() {
                       Select the primary record to keep:
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {[selectedPair.entity1, selectedPair.entity2].map(
-                        (entity) => {
-                          const e = entity as Record<string, unknown>;
-                          const isSelected = primaryId === e.id;
-                          const count = e._count as Record<string, number>;
+                      {[selectedPair.entity1, selectedPair.entity2].map((entity) => {
+                        const e = entity as Record<string, unknown>;
+                        const isSelected = primaryId === e.id;
+                        const count = e._count as Record<string, number>;
 
-                          return (
-                            <div
-                              key={e.id as string}
-                              onClick={() => {
+                        return (
+                          <div
+                            key={e.id as string}
+                            onClick={() => {
+                              setPrimaryId(e.id as string);
+                              setPreview(null);
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(ev) => {
+                              if (ev.key === "Enter" || ev.key === " ") {
                                 setPrimaryId(e.id as string);
                                 setPreview(null);
-                              }}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { setPrimaryId(e.id as string); setPreview(null); } }}
-                              className={`text-left p-4 border-2 rounded-lg transition-colors cursor-pointer ${
-                                isSelected
-                                  ? "border-blue-500 bg-blue-50"
-                                  : "border-gray-200 hover:border-gray-300"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between">
-                                <div>
-                                  <p className="font-medium text-gray-900">
-                                    {getDisplayName(e, entityType)}
-                                  </p>
-                                  <p className="text-sm text-gray-500 mt-1">
-                                    Slug: {e.slug as string}
-                                  </p>
-                                </div>
-                                {isSelected && (
-                                  <Badge variant="success">Primary</Badge>
-                                )}
+                              }
+                            }}
+                            className={`text-left p-4 border-2 rounded-lg transition-colors cursor-pointer ${
+                              isSelected
+                                ? "border-blue-500 bg-blue-50"
+                                : "border-gray-200 hover:border-gray-300"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <p className="font-medium text-gray-900">
+                                  {getDisplayName(e, entityType)}
+                                </p>
+                                <p className="text-sm text-gray-500 mt-1">
+                                  Slug: {e.slug as string}
+                                </p>
                               </div>
-
-                              <div className="mt-3 space-y-1 text-sm">
-                                {entityType === "venues" && (
-                                  <>
-                                    <p className="text-gray-600">
-                                      {e.address as string}
-                                    </p>
-                                    <p className="text-gray-600">
-                                      {e.city as string}, {e.state as string} {e.zip as string}
-                                    </p>
-                                    {(e.latitude || e.longitude) && (
-                                      <p className="text-gray-400 text-xs">
-                                        {e.latitude as number}, {e.longitude as number}
-                                      </p>
-                                    )}
-                                    <p className="text-gray-600">
-                                      {count?.events || 0} events
-                                    </p>
-                                    {e.contactPhone && (
-                                      <p className="text-gray-600">Phone: {e.contactPhone as string}</p>
-                                    )}
-                                    {e.contactEmail && (
-                                      <p className="text-gray-600">Email: {e.contactEmail as string}</p>
-                                    )}
-                                    {e.website && (
-                                      <p className="text-gray-600 truncate">Web: {e.website as string}</p>
-                                    )}
-                                    {e.capacity && (
-                                      <p className="text-gray-600">Capacity: {e.capacity as number}</p>
-                                    )}
-                                    {e.description && (
-                                      <p className="text-gray-400 text-xs line-clamp-2 mt-1">{e.description as string}</p>
-                                    )}
-                                    {e.imageUrl && (
-                                      <img src={e.imageUrl as string} alt="" className="mt-2 max-h-20 rounded" />
-                                    )}
-                                    {/* Google Places fields */}
-                                    <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
-                                      <p className="text-xs font-medium text-gray-500">Google Places</p>
-                                      <p className="text-gray-400 text-xs truncate">
-                                        Place ID: {(e.googlePlaceId as string) || "—"}
-                                      </p>
-                                      <p className="text-xs text-gray-600">
-                                        Maps: {(e.googleMapsUrl as string) ? "yes" : "—"}
-                                      </p>
-                                      <p className="text-gray-600 text-xs">
-                                        Rating: {e.googleRating != null ? `${e.googleRating as number}/5 (${e.googleRatingCount as number} reviews)` : "—"}
-                                      </p>
-                                      <p className="text-gray-600 text-xs">
-                                        Types: {e.googleTypes ? (() => {
-                                          try {
-                                            return (JSON.parse(e.googleTypes as string) as string[]).slice(0, 5).map(t => t.replace(/_/g, " ")).join(", ");
-                                          } catch { return "—"; }
-                                        })() : "—"}
-                                      </p>
-                                      <p className="text-gray-600 text-xs">
-                                        Hours: {e.openingHours ? "yes" : "—"}
-                                      </p>
-                                      <p className="text-gray-600 text-xs">
-                                        Accessibility: {e.accessibility ? (() => {
-                                          try {
-                                            const opts = Object.entries(JSON.parse(e.accessibility as string) as Record<string, boolean>).filter(([, v]) => v).map(([k]) => k.replace(/([A-Z])/g, " $1").trim());
-                                            return opts.length ? opts.join(", ") : "—";
-                                          } catch { return "—"; }
-                                        })() : "—"}
-                                      </p>
-                                      <p className="text-gray-600 text-xs">
-                                        Parking: {e.parking ? (() => {
-                                          try {
-                                            const opts = Object.entries(JSON.parse(e.parking as string) as Record<string, boolean>).filter(([, v]) => v).map(([k]) => k.replace(/([A-Z])/g, " $1").trim());
-                                            return opts.length ? opts.join(", ") : "—";
-                                          } catch { return "—"; }
-                                        })() : "—"}
-                                      </p>
-                                    </div>
-                                  </>
-                                )}
-                                {entityType === "events" && (
-                                  <>
-                                    <p className="text-gray-600">
-                                      {formatDate(e.startDate)} - {formatDate(e.endDate)}
-                                    </p>
-                                    <p className="text-gray-600">
-                                      Venue:{" "}
-                                      {(e.venue as Record<string, string>)?.name || "N/A"}
-                                    </p>
-                                    <p className="text-gray-600">
-                                      {count?.eventVendors || 0} vendors
-                                    </p>
-                                    <p className="text-gray-600">
-                                      {e.viewCount as number} views
-                                    </p>
-                                  </>
-                                )}
-                                {entityType === "vendors" && (
-                                  <>
-                                    <p className="text-gray-600">
-                                      Type: {(e.vendorType as string) || "N/A"}
-                                    </p>
-                                    <p className="text-gray-600">
-                                      {count?.eventVendors || 0} events
-                                    </p>
-                                  </>
-                                )}
-                                {entityType === "promoters" && (
-                                  <p className="text-gray-600">
-                                    {count?.events || 0} events
-                                  </p>
-                                )}
-                              </div>
+                              {isSelected && <Badge variant="success">Primary</Badge>}
                             </div>
-                          );
-                        }
-                      )}
+
+                            <div className="mt-3 space-y-1 text-sm">
+                              {entityType === "venues" && (
+                                <>
+                                  <p className="text-gray-600">{e.address as string}</p>
+                                  <p className="text-gray-600">
+                                    {e.city as string}, {e.state as string} {e.zip as string}
+                                  </p>
+                                  {(e.latitude || e.longitude) && (
+                                    <p className="text-gray-400 text-xs">
+                                      {e.latitude as number}, {e.longitude as number}
+                                    </p>
+                                  )}
+                                  <p className="text-gray-600">{count?.events || 0} events</p>
+                                  {e.contactPhone && (
+                                    <p className="text-gray-600">
+                                      Phone: {e.contactPhone as string}
+                                    </p>
+                                  )}
+                                  {e.contactEmail && (
+                                    <p className="text-gray-600">
+                                      Email: {e.contactEmail as string}
+                                    </p>
+                                  )}
+                                  {e.website && (
+                                    <p className="text-gray-600 truncate">
+                                      Web: {e.website as string}
+                                    </p>
+                                  )}
+                                  {e.capacity && (
+                                    <p className="text-gray-600">
+                                      Capacity: {e.capacity as number}
+                                    </p>
+                                  )}
+                                  {e.description && (
+                                    <p className="text-gray-400 text-xs line-clamp-2 mt-1">
+                                      {e.description as string}
+                                    </p>
+                                  )}
+                                  {e.imageUrl && (
+                                    <img
+                                      src={e.imageUrl as string}
+                                      alt=""
+                                      className="mt-2 max-h-20 rounded"
+                                    />
+                                  )}
+                                  {/* Google Places fields */}
+                                  <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                                    <p className="text-xs font-medium text-gray-500">
+                                      Google Places
+                                    </p>
+                                    <p className="text-gray-400 text-xs truncate">
+                                      Place ID: {(e.googlePlaceId as string) || "—"}
+                                    </p>
+                                    <p className="text-xs text-gray-600">
+                                      Maps: {(e.googleMapsUrl as string) ? "yes" : "—"}
+                                    </p>
+                                    <p className="text-gray-600 text-xs">
+                                      Rating:{" "}
+                                      {e.googleRating != null
+                                        ? `${e.googleRating as number}/5 (${e.googleRatingCount as number} reviews)`
+                                        : "—"}
+                                    </p>
+                                    <p className="text-gray-600 text-xs">
+                                      Types:{" "}
+                                      {e.googleTypes
+                                        ? (() => {
+                                            try {
+                                              return (
+                                                JSON.parse(e.googleTypes as string) as string[]
+                                              )
+                                                .slice(0, 5)
+                                                .map((t) => t.replace(/_/g, " "))
+                                                .join(", ");
+                                            } catch {
+                                              return "—";
+                                            }
+                                          })()
+                                        : "—"}
+                                    </p>
+                                    <p className="text-gray-600 text-xs">
+                                      Hours: {e.openingHours ? "yes" : "—"}
+                                    </p>
+                                    <p className="text-gray-600 text-xs">
+                                      Accessibility:{" "}
+                                      {e.accessibility
+                                        ? (() => {
+                                            try {
+                                              const opts = Object.entries(
+                                                JSON.parse(e.accessibility as string) as Record<
+                                                  string,
+                                                  boolean
+                                                >
+                                              )
+                                                .filter(([, v]) => v)
+                                                .map(([k]) => k.replace(/([A-Z])/g, " $1").trim());
+                                              return opts.length ? opts.join(", ") : "—";
+                                            } catch {
+                                              return "—";
+                                            }
+                                          })()
+                                        : "—"}
+                                    </p>
+                                    <p className="text-gray-600 text-xs">
+                                      Parking:{" "}
+                                      {e.parking
+                                        ? (() => {
+                                            try {
+                                              const opts = Object.entries(
+                                                JSON.parse(e.parking as string) as Record<
+                                                  string,
+                                                  boolean
+                                                >
+                                              )
+                                                .filter(([, v]) => v)
+                                                .map(([k]) => k.replace(/([A-Z])/g, " $1").trim());
+                                              return opts.length ? opts.join(", ") : "—";
+                                            } catch {
+                                              return "—";
+                                            }
+                                          })()
+                                        : "—"}
+                                    </p>
+                                  </div>
+                                </>
+                              )}
+                              {entityType === "events" && (
+                                <>
+                                  <p className="text-gray-600">
+                                    {formatDate(e.startDate)} - {formatDate(e.endDate)}
+                                  </p>
+                                  <p className="text-gray-600">
+                                    Venue: {(e.venue as Record<string, string>)?.name || "N/A"}
+                                  </p>
+                                  <p className="text-gray-600">
+                                    {count?.eventVendors || 0} vendors
+                                  </p>
+                                  <p className="text-gray-600">{e.viewCount as number} views</p>
+                                </>
+                              )}
+                              {entityType === "vendors" && (
+                                <>
+                                  <p className="text-gray-600">
+                                    Type: {(e.vendorType as string) || "N/A"}
+                                  </p>
+                                  <p className="text-gray-600">{count?.eventVendors || 0} events</p>
+                                </>
+                              )}
+                              {entityType === "promoters" && (
+                                <p className="text-gray-600">{count?.events || 0} events</p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
                   {/* Preview Button */}
                   {primaryId && !preview && (
                     <div className="mb-6">
-                      <Button
-                        onClick={handlePreview}
-                        isLoading={previewLoading}
-                        className="w-full"
-                      >
+                      <Button onClick={handlePreview} isLoading={previewLoading} className="w-full">
                         Preview Merge
                       </Button>
                     </div>
@@ -706,9 +715,7 @@ export default function AdminDuplicatesPage() {
                           <div className="flex items-start gap-3">
                             <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
                             <div>
-                              <p className="font-medium text-yellow-800">
-                                Warnings
-                              </p>
+                              <p className="font-medium text-yellow-800">Warnings</p>
                               <ul className="mt-1 text-sm text-yellow-700 space-y-1">
                                 {preview.warnings.map((warning, i) => (
                                   <li key={i}>{warning}</li>
@@ -725,8 +732,7 @@ export default function AdminDuplicatesPage() {
                           Relationships to Transfer
                         </h4>
                         <div className="grid grid-cols-2 gap-4 text-sm">
-                          {preview.relationshipsToTransfer.events !==
-                            undefined && (
+                          {preview.relationshipsToTransfer.events !== undefined && (
                             <div className="flex justify-between">
                               <span className="text-gray-600">Events:</span>
                               <span className="font-medium">
@@ -734,19 +740,15 @@ export default function AdminDuplicatesPage() {
                               </span>
                             </div>
                           )}
-                          {preview.relationshipsToTransfer.eventVendors !==
-                            undefined && (
+                          {preview.relationshipsToTransfer.eventVendors !== undefined && (
                             <div className="flex justify-between">
-                              <span className="text-gray-600">
-                                Event-Vendor Links:
-                              </span>
+                              <span className="text-gray-600">Event-Vendor Links:</span>
                               <span className="font-medium">
                                 {preview.relationshipsToTransfer.eventVendors}
                               </span>
                             </div>
                           )}
-                          {preview.relationshipsToTransfer.favorites !==
-                            undefined && (
+                          {preview.relationshipsToTransfer.favorites !== undefined && (
                             <div className="flex justify-between">
                               <span className="text-gray-600">Favorites:</span>
                               <span className="font-medium">
@@ -773,8 +775,7 @@ export default function AdminDuplicatesPage() {
                       {!preview.canMerge && (
                         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
                           <p className="text-red-700">
-                            These records cannot be merged. Please review the
-                            warnings above.
+                            These records cannot be merged. Please review the warnings above.
                           </p>
                         </div>
                       )}
