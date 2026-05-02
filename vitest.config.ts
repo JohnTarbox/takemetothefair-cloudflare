@@ -47,12 +47,13 @@ export default defineConfig({
         // though no real coverage was lost (the tests still pass, just in
         // the package's own vitest run).
         //
-        // Current measured: lines/statements ~33.1%, functions ~69.2%, branches ~78.7%.
-        // Last raised 2026-05-02 with vendor-status.test.ts (+20 tests).
-        lines: 32,
-        functions: 67,
-        branches: 76,
-        statements: 32,
+        // Current measured: lines/statements ~34.3%, functions ~71.2%, branches ~79.7%.
+        // Last raised 2026-05-02 with url-classification-discovery.test.ts
+        // and DB-backed url-classification tests (+17 tests).
+        lines: 33,
+        functions: 69,
+        branches: 77,
+        statements: 33,
       },
     },
   },
