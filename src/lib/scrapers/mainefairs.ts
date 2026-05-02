@@ -8,6 +8,7 @@ export { decodeHtmlEntities } from "./utils";
 import { decodeHtmlEntities } from "./utils";
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 // Parse date strings like "June 11 - June 14" with year context
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
@@ -72,7 +73,7 @@ export async function scrapeMaineFairs(): Promise<ScrapeResult> {
     // Fetch the calendar page
     const response = await fetchWithTimeout(CALENDAR_URL, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });
@@ -212,7 +213,7 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
   try {
     const response = await fetchWithTimeout(eventUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });

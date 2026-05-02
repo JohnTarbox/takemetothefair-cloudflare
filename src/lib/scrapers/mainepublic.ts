@@ -4,6 +4,7 @@
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import { decodeHtmlEntities } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 const SOURCE_NAME = "mainepublic.org";
 const CALENDAR_URL = "https://www.mainepublic.org/community-calendar";
@@ -176,8 +177,7 @@ export async function scrapeMainePublic(): Promise<ScrapeResult> {
 
       const response = await fetchWithTimeout(url, {
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+          "User-Agent": SCRAPER_USER_AGENT,
         },
         timeoutMs: 15000,
       });
@@ -230,7 +230,7 @@ export async function scrapeMainePublicEventDetails(
   try {
     const response = await fetchWithTimeout(eventUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });

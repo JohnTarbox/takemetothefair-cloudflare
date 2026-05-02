@@ -14,6 +14,8 @@ import {
 // imports keep working. Source of truth lives in @takemetothefair/utils.
 export { createSlug, decodeHtmlEntities } from "@takemetothefair/utils";
 
+import { SITE_HOSTNAME } from "@takemetothefair/constants";
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -236,7 +238,7 @@ export function generateMultiDayICSContent(params: MultiDayCalendarParams): stri
 
     return [
       "BEGIN:VEVENT",
-      `UID:${day.date}-${crypto.randomUUID()}@meetmeatthefair.com`,
+      `UID:${day.date}-${crypto.randomUUID()}@${SITE_HOSTNAME}`,
       startIcs ? `DTSTART;TZID=${startIcs.tzid}:${startIcs.value}` : "",
       endIcs ? `DTEND;TZID=${endIcs.tzid}:${endIcs.value}` : "",
       `SUMMARY:${dayTitle}`,

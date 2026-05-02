@@ -4,21 +4,28 @@
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 import { decodeHtmlEntities, createSlugFromName } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
+import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 // Parse date strings like "April 25-27th", "June 6 - 8", "July 29 - August 2"
 // Returns null for dates, with datesConfirmed=false for TBD/unknown dates
-function parseDateRange(dateText: string, year: number): { start: Date | null; end: Date | null; datesConfirmed: boolean } {
+function parseDateRange(
+  dateText: string,
+  year: number
+): { start: Date | null; end: Date | null; datesConfirmed: boolean } {
   // Clean up the text - remove "th", "nd", "st", "rd" suffixes and trim
-  const cleaned = dateText.trim()
-    .replace(/(\d+)(st|nd|rd|th)/gi, '$1')
-    .replace(/&nbsp;/g, ' ')
+  const cleaned = dateText
+    .trim()
+    .replace(/(\d+)(st|nd|rd|th)/gi, "$1")
+    .replace(/&nbsp;/g, " ")
     .trim();
 
   // Check for "To be determined", TBD, or "No fair" - return with datesConfirmed=false
-  if (cleaned.toLowerCase().includes('to be determined') ||
-      cleaned.toLowerCase().includes('tbd') ||
-      cleaned.toLowerCase().includes('no fair') ||
-      cleaned === '') {
+  if (
+    cleaned.toLowerCase().includes("to be determined") ||
+    cleaned.toLowerCase().includes("tbd") ||
+    cleaned.toLowerCase().includes("no fair") ||
+    cleaned === ""
+  ) {
     return { start: null, end: null, datesConfirmed: false };
   }
 
@@ -102,7 +109,7 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
     // Fetch the page
     const response = await fetchWithTimeout(config.url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)',
+        "User-Agent": SCRAPER_USER_AGENT,
       },
       timeoutMs: 15000,
     });
@@ -123,12 +130,16 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
     const pageYear = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
 
     // Extract all fair names with positions (spans with font-size:20px)
-    const fairNamePattern = /<span[^>]*style="[^"]*font-size:\s*20px[^"]*"[^>]*class="[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
+    const fairNamePattern =
+      /<span[^>]*style="[^"]*font-size:\s*20px[^"]*"[^>]*class="[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
 
     // Extract date/contact info with positions
-    const color15Pattern = /<span[^>]*class="[^"]*color_15[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
-    const fontSize16Pattern = /<span[^>]*style="[^"]*font-size:\s*16px[^"]*"[^>]*class="[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
-    const letterSpacingPattern = /<span[^>]*style="[^"]*letter-spacing:\s*0em[^"]*"[^>]*class="[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
+    const color15Pattern =
+      /<span[^>]*class="[^"]*color_15[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
+    const fontSize16Pattern =
+      /<span[^>]*style="[^"]*font-size:\s*16px[^"]*"[^>]*class="[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
+    const letterSpacingPattern =
+      /<span[^>]*style="[^"]*letter-spacing:\s*0em[^"]*"[^>]*class="[^"]*wixui-rich-text__text[^"]*"[^>]*>([^<]+)<\/span>/gi;
 
     // Extract all website URLs with positions
     const websitePattern = /<a[^>]*href="([^"]+)"[^>]*>[^<]*(?:<[^>]*>)*\s*Visit Website/gi;
@@ -150,7 +161,7 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
     color15Pattern.lastIndex = 0;
     while ((match = color15Pattern.exec(html)) !== null) {
       const text = decodeHtmlEntities(match[1].trim());
-      if (text.length > 0 && text !== '​' && text !== 'Visit Website') {
+      if (text.length > 0 && text !== "​" && text !== "Visit Website") {
         allInfoItems.push({ index: match.index, text });
       }
     }
@@ -158,7 +169,7 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
     fontSize16Pattern.lastIndex = 0;
     while ((match = fontSize16Pattern.exec(html)) !== null) {
       const text = decodeHtmlEntities(match[1].trim());
-      if (text.length > 0 && text !== '​' && text !== 'Visit Website') {
+      if (text.length > 0 && text !== "​" && text !== "Visit Website") {
         allInfoItems.push({ index: match.index, text });
       }
     }
@@ -166,7 +177,7 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
     letterSpacingPattern.lastIndex = 0;
     while ((match = letterSpacingPattern.exec(html)) !== null) {
       const text = decodeHtmlEntities(match[1].trim());
-      if (text.length > 0 && text !== '​' && text !== 'Visit Website') {
+      if (text.length > 0 && text !== "​" && text !== "Visit Website") {
         allInfoItems.push({ index: match.index, text });
       }
     }
@@ -188,23 +199,28 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
 
       // Find info items between this fair and the next
       const fairInfoItems = allInfoItems.filter(
-        item => item.index > fair.index && item.index < nextFairIndex
+        (item) => item.index > fair.index && item.index < nextFairIndex
       );
 
       // Find website URL between this fair and the next
       const fairWebsite = websiteUrls.find(
-        url => url.index > fair.index && url.index < nextFairIndex
+        (url) => url.index > fair.index && url.index < nextFairIndex
       );
 
       // Extract date and contact from info items
-      let dateText = '';
-      let contactText = '';
+      let dateText = "";
+      let contactText = "";
 
       for (const item of fairInfoItems) {
         // Check if this looks like a date (starts with a month name)
-        if (!dateText && item.text.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i)) {
+        if (
+          !dateText &&
+          item.text.match(
+            /^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d/i
+          )
+        ) {
           dateText = item.text;
-        } else if (item.text.toLowerCase().includes('contact')) {
+        } else if (item.text.toLowerCase().includes("contact")) {
           contactText = item.text;
         } else if (!dateText) {
           // Use first item as date if nothing else matches
@@ -220,7 +236,7 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
 
       // Create venue from fair name
       const venue: ScrapedVenue = {
-        name: fair.text.replace(/\s*\([^)]+\)\s*/g, '').trim(),
+        name: fair.text.replace(/\s*\([^)]+\)\s*/g, "").trim(),
         state: config.state,
       };
 
@@ -232,7 +248,9 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
         startDate: start || undefined,
         endDate: end || undefined,
         datesConfirmed,
-        description: contactText ? `Contact: ${contactText.replace(/Contact:\s*/i, '').trim()}` : undefined,
+        description: contactText
+          ? `Contact: ${contactText.replace(/Contact:\s*/i, "").trim()}`
+          : undefined,
         website,
         ticketUrl: website,
         venue,

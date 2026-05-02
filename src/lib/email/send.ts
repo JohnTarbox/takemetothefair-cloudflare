@@ -1,5 +1,6 @@
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { logError } from "@/lib/logger";
+import { SITE_URL, SUPPORT_EMAIL } from "@takemetothefair/constants";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 export interface SendEmailArgs {
@@ -27,7 +28,7 @@ async function sendViaResend(
   args: SendEmailArgs,
   apiKey: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const from = args.from ?? "Meet Me at the Fair <noreply@meetmeatthefair.com>";
+  const from = args.from ?? `Meet Me at the Fair <${SUPPORT_EMAIL}>`;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -118,5 +119,5 @@ export function getSiteUrl(request?: Request): string {
       /* fall through */
     }
   }
-  return "https://meetmeatthefair.com";
+  return SITE_URL;
 }
