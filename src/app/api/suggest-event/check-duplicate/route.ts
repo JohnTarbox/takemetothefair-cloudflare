@@ -4,6 +4,7 @@ import { eq, and, gte, lte } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -123,12 +124,7 @@ export async function POST(request: NextRequest) {
           status: events.status,
         })
         .from(events)
-        .where(
-          and(
-            gte(events.startDate, minDate),
-            lte(events.startDate, maxDate)
-          )
-        );
+        .where(and(gte(events.startDate, minDate), lte(events.startDate, maxDate)));
 
       // Check string similarity with threshold
       const threshold = 0.85;
@@ -162,7 +158,13 @@ export async function POST(request: NextRequest) {
       isDuplicate: false,
     });
   } catch (error) {
-    console.error("[Check Duplicate] Error:", error);
+    await logError(getCloudflareDb(), {
+      message: "Check-duplicate route failure",
+      error,
+      source: "suggest-event-check-duplicate",
+      request,
+      statusCode: 500,
+    });
     return NextResponse.json(
       { success: false, error: "Failed to check for duplicates" },
       { status: 500 }
