@@ -53,9 +53,9 @@ export default function NewEventPage() {
         console.error("Failed to fetch venues:", res.status);
         return;
       }
-      const data = (await res.json()) as any;
+      const data: unknown = await res.json();
       if (Array.isArray(data)) {
-        setVenues(data);
+        setVenues(data as Venue[]);
       }
     } catch (err) {
       console.error("Failed to fetch venues:", err);
@@ -69,9 +69,9 @@ export default function NewEventPage() {
         console.error("Failed to fetch promoters:", res.status);
         return;
       }
-      const data = (await res.json()) as any;
+      const data: unknown = await res.json();
       if (Array.isArray(data)) {
-        setPromoters(data);
+        setPromoters(data as Promoter[]);
       }
     } catch (err) {
       console.error("Failed to fetch promoters:", err);
