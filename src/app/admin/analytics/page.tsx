@@ -683,6 +683,9 @@ async function RecommendationsTab() {
     if (item.targetType === "event" && item.payload && typeof item.payload.slug === "string") {
       return `/events/${item.payload.slug}`;
     }
+    if (item.targetType === "venue" && item.payload && typeof item.payload.slug === "string") {
+      return `/venues/${item.payload.slug}`;
+    }
     return null;
   }
 
@@ -702,14 +705,18 @@ async function RecommendationsTab() {
   function targetMeta(item: Item): string | null {
     // Compact second-line metadata per target type.
     const p = item.payload ?? {};
+    const descLen = typeof p.descriptionLength === "number" ? `${p.descriptionLength} chars` : null;
     if (item.targetType === "vendor") {
       const loc = typeof p.location === "string" ? p.location : null;
       const exp = typeof p.daysUntil === "number" ? `${p.daysUntil}d to expiry` : null;
-      return [loc, exp].filter(Boolean).join(" · ") || null;
+      return [loc, exp, descLen].filter(Boolean).join(" · ") || null;
     }
     if (item.targetType === "event") {
       const views = typeof p.views30d === "number" ? `${p.views30d} views/30d` : null;
-      return views;
+      return [views, descLen].filter(Boolean).join(" · ") || null;
+    }
+    if (item.targetType === "venue") {
+      return descLen;
     }
     if (item.targetType === "gsc_query") {
       const pos = typeof p.position === "number" ? `pos ${p.position}` : null;
