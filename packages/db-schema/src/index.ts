@@ -740,6 +740,49 @@ export const errorLogs = sqliteTable("error_logs", {
   source: text("source"),
 });
 
+// Recommendations engine — drizzle/0042. See migration file for design notes.
+export const recommendationRules = sqliteTable("recommendation_rules", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  ruleKey: text("rule_key").notNull().unique(),
+  title: text("title").notNull(),
+  rationaleTemplate: text("rationale_template").notNull(),
+  // "red" | "yellow" | "blue"
+  severity: text("severity").notNull(),
+  category: text("category"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const recommendationItems = sqliteTable(
+  "recommendation_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => recommendationRules.id, { onDelete: "cascade" }),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id"),
+    payloadJson: text("payload_json"),
+    // All four timestamps stored as raw INTEGER seconds-epoch, matching
+    // health_issue_snoozes / indexnow_submissions / analytics_events.
+    firstSeenAt: integer("first_seen_at").notNull(),
+    lastSeenAt: integer("last_seen_at").notNull(),
+    dismissedAt: integer("dismissed_at"),
+    dismissedUntil: integer("dismissed_until"),
+    dismissedReason: text("dismissed_reason"),
+    actedAt: integer("acted_at"),
+  },
+  (t) => [
+    index("idx_recommendation_items_rule_id").on(t.ruleId),
+    index("idx_recommendation_items_dismissed_until").on(t.dismissedUntil),
+    index("idx_recommendation_items_last_seen_at").on(t.lastSeenAt),
+  ]
+);
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type Venue = typeof venues.$inferSelect;
@@ -760,3 +803,5 @@ export type HealthIssueSnooze = typeof healthIssueSnoozes.$inferSelect;
 export type GscInspectionState = typeof gscInspectionState.$inferSelect;
 export type IndexnowSubmission = typeof indexnowSubmissions.$inferSelect;
 export type UrlDomainClassification = typeof urlDomainClassifications.$inferSelect;
+export type RecommendationRule = typeof recommendationRules.$inferSelect;
+export type RecommendationItem = typeof recommendationItems.$inferSelect;
