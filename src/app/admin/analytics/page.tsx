@@ -612,40 +612,71 @@ async function RecommendationsTab() {
   const items = await getActiveItems(db);
 
   type Sev = "red" | "yellow" | "blue";
-  const groups: Record<Sev, typeof items> = { red: [], yellow: [], blue: [] };
-  for (const it of items) groups[it.severity as Sev].push(it);
+  type Item = (typeof items)[number];
+
+  // Group by rule first (one card per rule); keep the rule's own severity for
+  // bucketing into red / yellow / blue sections.
+  type RuleGroup = {
+    ruleId: string;
+    ruleKey: string;
+    title: string;
+    rationaleTemplate: string;
+    severity: Sev;
+    items: Item[];
+  };
+  const ruleGroups = new Map<string, RuleGroup>();
+  for (const it of items) {
+    let g = ruleGroups.get(it.ruleId);
+    if (!g) {
+      g = {
+        ruleId: it.ruleId,
+        ruleKey: it.ruleKey,
+        title: it.title,
+        rationaleTemplate: it.rationaleTemplate,
+        severity: it.severity as Sev,
+        items: [],
+      };
+      ruleGroups.set(it.ruleId, g);
+    }
+    g.items.push(it);
+  }
+
+  const bySeverity: Record<Sev, RuleGroup[]> = { red: [], yellow: [], blue: [] };
+  for (const g of ruleGroups.values()) bySeverity[g.severity].push(g);
+  // Within each severity bucket, larger rules surface first.
+  for (const sev of ["red", "yellow", "blue"] as Sev[]) {
+    bySeverity[sev].sort((a, b) => b.items.length - a.items.length);
+  }
 
   const severityMeta: Record<
     Sev,
-    { label: string; cardBorder: string; badge: string; icon: string }
+    { label: string; cardBorder: string; badge: string; chip: string }
   > = {
     red: {
       label: "Action required",
       cardBorder: "border-red-300",
       badge: "bg-red-100 text-red-800 border-red-200",
-      icon: "text-red-600",
+      chip: "bg-red-50 text-red-800 border-red-200",
     },
     yellow: {
       label: "High-impact opportunities",
       cardBorder: "border-amber-300",
       badge: "bg-amber-100 text-amber-800 border-amber-200",
-      icon: "text-amber-600",
+      chip: "bg-amber-50 text-amber-800 border-amber-200",
     },
     blue: {
       label: "Nice to have",
       cardBorder: "border-blue-300",
       badge: "bg-blue-100 text-blue-800 border-blue-200",
-      icon: "text-blue-600",
+      chip: "bg-blue-50 text-blue-800 border-blue-200",
     },
   };
 
-  function rationaleFor(item: (typeof items)[number]): string {
-    // {n} → number of items in the same rule. Other tokens left as-is for now.
-    const n = items.filter((i) => i.ruleId === item.ruleId).length;
-    return item.rationaleTemplate.replace(/\{n\}/g, String(n));
+  function rationaleFor(group: RuleGroup): string {
+    return group.rationaleTemplate.replace(/\{n\}/g, String(group.items.length));
   }
 
-  function targetLink(item: (typeof items)[number]): string | null {
+  function targetLink(item: Item): string | null {
     if (item.targetType === "vendor" && item.payload && typeof item.payload.slug === "string") {
       return `/admin/vendors/${item.payload.slug}`;
     }
@@ -655,15 +686,40 @@ async function RecommendationsTab() {
     return null;
   }
 
-  function targetLabel(item: (typeof items)[number]): string {
+  function targetLabel(item: Item): string {
     if (item.payload && typeof item.payload.businessName === "string") {
       return item.payload.businessName;
     }
     if (item.payload && typeof item.payload.name === "string") {
       return item.payload.name;
     }
+    if (item.payload && typeof item.payload.query === "string") {
+      return item.payload.query;
+    }
     return item.targetId ?? "(global)";
   }
+
+  function targetMeta(item: Item): string | null {
+    // Compact second-line metadata per target type.
+    const p = item.payload ?? {};
+    if (item.targetType === "vendor") {
+      const loc = typeof p.location === "string" ? p.location : null;
+      const exp = typeof p.daysUntil === "number" ? `${p.daysUntil}d to expiry` : null;
+      return [loc, exp].filter(Boolean).join(" · ") || null;
+    }
+    if (item.targetType === "event") {
+      const views = typeof p.views30d === "number" ? `${p.views30d} views/30d` : null;
+      return views;
+    }
+    if (item.targetType === "gsc_query") {
+      const pos = typeof p.position === "number" ? `pos ${p.position}` : null;
+      const impr = typeof p.impressions === "number" ? `${p.impressions} impr` : null;
+      return [pos, impr].filter(Boolean).join(" · ") || null;
+    }
+    return null;
+  }
+
+  const totalRules = ruleGroups.size;
 
   return (
     <>
@@ -671,18 +727,16 @@ async function RecommendationsTab() {
         <p className="text-sm text-gray-600">
           {items.length === 0
             ? "No active recommendations. Run a scan to surface new ones."
-            : `${items.length} active recommendation${items.length === 1 ? "" : "s"} across ${
-                Object.values(groups).filter((g) => g.length > 0).length
-              } severity bucket${
-                Object.values(groups).filter((g) => g.length > 0).length === 1 ? "" : "s"
-              }.`}
+            : `${items.length} active item${items.length === 1 ? "" : "s"} across ${totalRules} rule${
+                totalRules === 1 ? "" : "s"
+              }. Click any rule to expand affected targets.`}
         </p>
         <RecommendationScanButton />
       </div>
 
       {(["red", "yellow", "blue"] as Sev[]).map((sev) => {
-        const bucket = groups[sev];
-        if (bucket.length === 0) return null;
+        const groups = bySeverity[sev];
+        if (groups.length === 0) return null;
         const meta = severityMeta[sev];
         return (
           <div key={sev} className="mb-8">
@@ -692,35 +746,64 @@ async function RecommendationsTab() {
               >
                 {meta.label}
               </span>
-              <span className="text-gray-500 font-normal">{bucket.length}</span>
+              <span className="text-gray-500 font-normal">{groups.length}</span>
             </h2>
             <div className="space-y-3">
-              {bucket.map((item) => {
-                const link = targetLink(item);
+              {groups.map((group) => {
+                const count = group.items.length;
+                // Auto-expand single-item rules; keep multi-item rules collapsed by default.
+                const defaultOpen = count === 1;
                 return (
-                  <Card key={item.itemId} className={meta.cardBorder}>
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between gap-4 flex-wrap">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-gray-900">{item.title}</p>
-                          <p className="text-sm text-gray-700 mt-1">{rationaleFor(item)}</p>
-                          {item.targetId && (
-                            <p className="text-xs text-gray-500 mt-2">
-                              Target:{" "}
-                              {link ? (
-                                <Link href={link} className="text-blue-600 hover:underline">
-                                  {targetLabel(item)}
-                                </Link>
-                              ) : (
-                                <span className="font-mono">{targetLabel(item)}</span>
-                              )}
-                              <span className="ml-2 text-gray-400">· rule {item.ruleKey}</span>
+                  <Card key={group.ruleId} className={meta.cardBorder}>
+                    <details open={defaultOpen} className="group">
+                      <summary className="cursor-pointer p-5 list-none [&::-webkit-details-marker]:hidden">
+                        <div className="flex items-start justify-between gap-4 flex-wrap">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-gray-400 group-open:rotate-90 transition-transform inline-block">
+                                ▶
+                              </span>
+                              <p className="text-sm font-semibold text-gray-900">{group.title}</p>
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${meta.chip}`}
+                              >
+                                {count} affected
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-700 mt-1.5 ml-6">
+                              {rationaleFor(group)}
                             </p>
-                          )}
+                            <p className="text-xs text-gray-400 mt-1 ml-6">rule {group.ruleKey}</p>
+                          </div>
                         </div>
-                        <RecommendationActions itemId={item.itemId} />
+                      </summary>
+                      <div className="border-t border-gray-100 divide-y divide-gray-100">
+                        {group.items.map((item) => {
+                          const link = targetLink(item);
+                          const meta2 = targetMeta(item);
+                          return (
+                            <div
+                              key={item.itemId}
+                              className="px-5 py-3 flex items-start justify-between gap-4 flex-wrap hover:bg-gray-50"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm text-gray-900">
+                                  {link ? (
+                                    <Link href={link} className="text-blue-600 hover:underline">
+                                      {targetLabel(item)}
+                                    </Link>
+                                  ) : (
+                                    <span className="font-mono">{targetLabel(item)}</span>
+                                  )}
+                                </p>
+                                {meta2 && <p className="text-xs text-gray-500 mt-0.5">{meta2}</p>}
+                              </div>
+                              <RecommendationActions itemId={item.itemId} />
+                            </div>
+                          );
+                        })}
                       </div>
-                    </CardContent>
+                    </details>
                   </Card>
                 );
               })}
@@ -730,9 +813,9 @@ async function RecommendationsTab() {
       })}
 
       <p className="text-xs text-gray-500 mt-6">
-        Active items refresh on scan or when an item&apos;s match expires the 7-day window. Dismiss
-        / Snooze hides an item temporarily; Mark done resolves it permanently. All actions are
-        logged to <code>admin_actions</code>.
+        Active items refresh on scan or when an item&apos;s match expires the 7-day window.
+        Per-target Snooze hides an item temporarily; Mark done resolves it permanently. All actions
+        are logged to <code>admin_actions</code>.
       </p>
     </>
   );
