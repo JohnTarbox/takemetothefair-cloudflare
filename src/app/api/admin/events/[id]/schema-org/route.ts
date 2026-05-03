@@ -5,6 +5,7 @@ import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
+import { dollarsToCents } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -132,8 +133,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       schemaVenueLng: result.data?.venueLng || null,
       schemaImageUrl: result.data?.imageUrl || null,
       schemaTicketUrl: result.data?.ticketUrl || null,
-      schemaPriceMin: result.data?.priceMin || null,
-      schemaPriceMax: result.data?.priceMax || null,
+      schemaPriceMinCents: dollarsToCents(result.data?.priceMin),
+      schemaPriceMaxCents: dollarsToCents(result.data?.priceMax),
       schemaEventStatus: result.data?.eventStatus || null,
       schemaOrganizerName: result.data?.organizerName || null,
       schemaOrganizerUrl: result.data?.organizerUrl || null,
@@ -220,8 +221,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       description: { eventField: "description", schemaValue: schemaOrg.schemaDescription },
       startDate: { eventField: "startDate", schemaValue: schemaOrg.schemaStartDate },
       endDate: { eventField: "endDate", schemaValue: schemaOrg.schemaEndDate },
-      ticketPriceMin: { eventField: "ticketPriceMin", schemaValue: schemaOrg.schemaPriceMin },
-      ticketPriceMax: { eventField: "ticketPriceMax", schemaValue: schemaOrg.schemaPriceMax },
+      // Both sides are integer cents post-0048. Pre-0048 this had two latent
+      // bugs that masked each other: eventField pointed at the legacy
+      // `ticketPriceMin/Max` columns that #56 dropped, and schemaValue pulled
+      // a float dollar from `schemaPriceMin/Max`. Now both columns exist as
+      // *_cents and the "apply this schema-org field" path actually works.
+      ticketPriceMin: {
+        eventField: "ticketPriceMinCents",
+        schemaValue: schemaOrg.schemaPriceMinCents,
+      },
+      ticketPriceMax: {
+        eventField: "ticketPriceMaxCents",
+        schemaValue: schemaOrg.schemaPriceMaxCents,
+      },
       imageUrl: { eventField: "imageUrl", schemaValue: schemaOrg.schemaImageUrl },
       ticketUrl: { eventField: "ticketUrl", schemaValue: schemaOrg.schemaTicketUrl },
     };
