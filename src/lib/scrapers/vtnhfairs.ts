@@ -207,9 +207,12 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
         (url) => url.index > fair.index && url.index < nextFairIndex
       );
 
-      // Extract date and contact from info items
+      // Extract date from info items. Contact info is intentionally not pulled —
+      // we used to write `description: "Contact: …"` here, but that polluted
+      // events.description (used for meta tags + the recommendations rule that
+      // flags missing descriptions). The contact line has no current home in
+      // ScrapedEvent; if we want to surface it, add a dedicated field.
       let dateText = "";
-      let contactText = "";
 
       for (const item of fairInfoItems) {
         // Check if this looks like a date (starts with a month name)
@@ -221,7 +224,7 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
         ) {
           dateText = item.text;
         } else if (item.text.toLowerCase().includes("contact")) {
-          contactText = item.text;
+          // Skipped — see comment above.
         } else if (!dateText) {
           // Use first item as date if nothing else matches
           dateText = item.text;
@@ -248,9 +251,6 @@ async function scrapeVtNhFairsPage(config: PageConfig): Promise<ScrapeResult> {
         startDate: start || undefined,
         endDate: end || undefined,
         datesConfirmed,
-        description: contactText
-          ? `Contact: ${contactText.replace(/Contact:\s*/i, "").trim()}`
-          : undefined,
         website,
         ticketUrl: website,
         venue,

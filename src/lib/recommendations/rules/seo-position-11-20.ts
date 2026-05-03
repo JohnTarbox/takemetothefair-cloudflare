@@ -15,7 +15,6 @@ import type { ItemMatch, RuleDefinition } from "../engine";
 const POSITION_MIN = 11;
 const POSITION_MAX = 20;
 const MIN_IMPRESSIONS = 10;
-const RESULT_LIMIT = 25;
 
 export const seoPosition1120Rule: RuleDefinition = {
   ruleKey: "seo_position_11_20",
@@ -24,6 +23,8 @@ export const seoPosition1120Rule: RuleDefinition = {
     "{n} GSC queries are getting impressions but ranking just below page 1 (positions 11–20). Title/meta tweaks could push them up.",
   severity: "yellow",
   category: "seo",
+  // No autoResolve: GSC API failures return [] silently (see catch below);
+  // auto-resolving on empty would clobber valid items during a transient outage.
   async run(): Promise<ItemMatch[]> {
     const env = getCloudflareEnv() as unknown as ScEnv;
     let queries;
@@ -48,8 +49,7 @@ export const seoPosition1120Rule: RuleDefinition = {
           q.impressions >= MIN_IMPRESSIONS &&
           q.clicks === 0
       )
-      .sort((a, b) => b.impressions - a.impressions)
-      .slice(0, RESULT_LIMIT);
+      .sort((a, b) => b.impressions - a.impressions);
 
     return matches.map((q) => {
       const topPage = q.topPages[0];

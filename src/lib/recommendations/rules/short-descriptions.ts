@@ -17,12 +17,11 @@
  * these cover the "wrote something but it's too short" case.
  */
 
-import { and, eq, gt, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { events, vendors, venues } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
 const SHORT_THRESHOLD = 70;
-const RESULT_LIMIT = 25;
 
 export const eventsShortDescriptionRule: RuleDefinition = {
   ruleKey: "events_short_description",
@@ -31,6 +30,7 @@ export const eventsShortDescriptionRule: RuleDefinition = {
     "{n} APPROVED events have a description shorter than 70 characters. Bing flags these as too short to provide context.",
   severity: "yellow",
   category: "seo",
+  autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     const rows = await db
       .select({
@@ -47,8 +47,7 @@ export const eventsShortDescriptionRule: RuleDefinition = {
           ne(events.description, ""),
           sql`LENGTH(${events.description}) < ${SHORT_THRESHOLD}`
         )
-      )
-      .limit(RESULT_LIMIT);
+      );
 
     return rows.map((r) => ({
       targetType: "event",
@@ -59,8 +58,6 @@ export const eventsShortDescriptionRule: RuleDefinition = {
         descriptionLength: r.len,
       },
     }));
-
-    void gt;
   },
 };
 
@@ -71,6 +68,7 @@ export const venuesShortDescriptionRule: RuleDefinition = {
     "{n} venues have a description shorter than 70 characters. Bing flags these as too short to provide context.",
   severity: "yellow",
   category: "seo",
+  autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     const rows = await db
       .select({
@@ -86,8 +84,7 @@ export const venuesShortDescriptionRule: RuleDefinition = {
           ne(venues.description, ""),
           sql`LENGTH(${venues.description}) < ${SHORT_THRESHOLD}`
         )
-      )
-      .limit(RESULT_LIMIT);
+      );
 
     return rows.map((r) => ({
       targetType: "venue",
@@ -108,6 +105,7 @@ export const vendorsShortDescriptionRule: RuleDefinition = {
     "{n} vendors have a description shorter than 70 characters. Complement to vendors-no-description: these wrote something but it's too short.",
   severity: "yellow",
   category: "seo",
+  autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     const rows = await db
       .select({
@@ -123,8 +121,7 @@ export const vendorsShortDescriptionRule: RuleDefinition = {
           ne(vendors.description, ""),
           sql`LENGTH(${vendors.description}) < ${SHORT_THRESHOLD}`
         )
-      )
-      .limit(RESULT_LIMIT);
+      );
 
     return rows.map((r) => ({
       targetType: "vendor",

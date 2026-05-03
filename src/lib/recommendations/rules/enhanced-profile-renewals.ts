@@ -14,8 +14,6 @@ import { and, eq, gt, lte } from "drizzle-orm";
 import { vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
-const RESULT_LIMIT = 50;
-
 function buildRule(
   ruleKey: string,
   title: string,
@@ -30,6 +28,7 @@ function buildRule(
     rationaleTemplate,
     severity,
     category: "revenue",
+    autoResolve: true,
     async run(db): Promise<ItemMatch[]> {
       const now = Date.now();
       // minDays..maxDays from now (inclusive). Bucket boundaries are picked so
@@ -51,8 +50,7 @@ function buildRule(
             gt(vendors.enhancedProfileExpiresAt, minExpiry),
             lte(vendors.enhancedProfileExpiresAt, maxExpiry)
           )
-        )
-        .limit(RESULT_LIMIT);
+        );
 
       return rows.map((r) => {
         const daysUntil = r.expiresAt
