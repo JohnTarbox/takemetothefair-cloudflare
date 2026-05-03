@@ -39,8 +39,8 @@ export async function GET(request: NextRequest) {
         stackTrace: errorLogs.stackTrace,
         userAgent: errorLogs.userAgent,
         source: errorLogs.source,
-        // strftime/datetime expect seconds; column is now ms (post-0043).
-        time: sql<string>`datetime(${errorLogs.timestamp} / 1000, 'unixepoch')`.as("time"),
+        // strftime/datetime expect seconds; column stores seconds (mode:"timestamp").
+        time: sql<string>`datetime(${errorLogs.timestamp}, 'unixepoch')`.as("time"),
       })
       .from(errorLogs)
       .where(conditions.length > 0 ? and(...conditions) : undefined)

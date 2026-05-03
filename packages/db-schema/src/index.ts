@@ -622,7 +622,7 @@ export const blogPostsRelations = relations(blogPosts, ({ one }) => ({
 }));
 
 // Analytics Events table — server-side event tracking.
-// timestamp: ms-epoch (Drizzle mode:"timestamp"). Migrated from raw seconds
+// timestamp: seconds-epoch (Drizzle mode:"timestamp" stores Math.floor(date.getTime() / 1000)). Migrated from raw seconds
 // in 0043 — single timestamp convention across the codebase.
 export const analyticsEvents = sqliteTable(
   "analytics_events",
@@ -644,7 +644,7 @@ export const analyticsEvents = sqliteTable(
 );
 
 // Site Health — see drizzle/0034_add_site_health.sql
-// All *At columns: ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
+// All *At columns: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const healthIssues = sqliteTable(
   "health_issues",
   {
@@ -688,7 +688,7 @@ export const gscInspectionState = sqliteTable(
 );
 
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
-// timestamp: ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
+// timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
   "indexnow_submissions",
   {
@@ -725,7 +725,7 @@ export const urlDomainClassifications = sqliteTable(
       .default(false),
     useAsSource: integer("use_as_source", { mode: "boolean" }).notNull().default(false),
     notes: text("notes"),
-    // Stored as ms-epoch (mode: "timestamp"), consistent with the rest of
+    // Stored as seconds-epoch (mode: "timestamp"), consistent with the rest of
     // the operational tables. Migration 0040 backfilled raw-seconds values
     // by multiplying by 1000.
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -736,7 +736,7 @@ export const urlDomainClassifications = sqliteTable(
 );
 
 // Error Logs table.
-// timestamp: ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
+// timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
   timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
@@ -763,7 +763,7 @@ export const recommendationRules = sqliteTable("recommendation_rules", {
   severity: text("severity").notNull(),
   category: text("category"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  // ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
+  // seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
@@ -779,7 +779,7 @@ export const recommendationItems = sqliteTable(
     targetType: text("target_type").notNull(),
     targetId: text("target_id"),
     payloadJson: text("payload_json"),
-    // All five timestamps: ms-epoch (mode:"timestamp"). Migrated from raw
+    // All five timestamps: seconds-epoch (mode:"timestamp"). Migrated from raw
     // seconds in 0043 alongside the other historically-seconds tables.
     firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
     lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),

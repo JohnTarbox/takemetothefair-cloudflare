@@ -6,12 +6,11 @@
  * Site Health) into a single snapshot for at-a-glance triage. Deeper analysis
  * lives in the per-source tabs and the GA4 sub-route.
  *
- * Timestamp note: this module normalizes between two storage conventions in the
- * codebase — Drizzle `mode: "timestamp"` columns (ms-epoch, e.g. adminActions,
- * vendors.createdAt, events.createdAt) and raw INTEGER columns that hold
- * seconds-epoch (analyticsEvents.timestamp, indexnowSubmissions.timestamp,
- * errorLogs.timestamp). The activity feed merges all three after normalizing to
- * ms-epoch.
+ * Timestamp note: post-0043 + 0045, every operational timestamp column uses
+ * Drizzle `mode: "timestamp"` which stores SECONDS-epoch (not ms — that's
+ * `mode: "timestamp_ms"`). Reads/writes via Date objects, Drizzle handles
+ * the conversion. .getTime() returns ms (browser-side); the activity feed
+ * uses ms internally for sort/render.
  */
 
 import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
@@ -178,7 +177,7 @@ export async function loadOverviewSnapshot(
   window: WindowKey
 ): Promise<OverviewSnapshot> {
   // All windows expressed as Date objects now that every operational table
-  // uses Drizzle mode:"timestamp" (ms-epoch). Past code juggled both seconds
+  // uses Drizzle mode:"timestamp" (seconds-epoch in storage; reads/writes via Date)
   // and ms — see plan file for the cleanup workstream.
   const days = windowDays(window);
   const nowMs = Date.now();
@@ -632,8 +631,8 @@ function fillDailySeries(rawByDate: Map<string, number>, days: number): Sparklin
 }
 
 async function loadConversionsSparkline(db: Db, sinceDate: Date): Promise<SparklinePoint[]> {
-  // strftime expects seconds; columns now store ms (post-0043), so divide by 1000.
-  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${analyticsEvents.timestamp} / 1000, 'unixepoch')`;
+  // strftime expects seconds; columns store seconds (mode:"timestamp").
+  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${analyticsEvents.timestamp}, 'unixepoch')`;
   const rows = await db
     .select({
       day: dayExpr,
@@ -657,8 +656,8 @@ async function loadPublishingSparkline(db: Db, sinceDate: Date): Promise<Sparkli
   // Publishing activity = successful IndexNow submissions per day. Reflects
   // how often we ship indexable content (event approvals, new venues, etc.)
   // and the cache TTL hides this from GSC for ~24h, so this is the freshest
-  // proxy available. strftime expects seconds; columns now store ms (post-0043).
-  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${indexnowSubmissions.timestamp} / 1000, 'unixepoch')`;
+  // proxy available. strftime expects seconds; columns store seconds.
+  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${indexnowSubmissions.timestamp}, 'unixepoch')`;
   const rows = await db
     .select({
       day: dayExpr,
@@ -733,7 +732,7 @@ async function loadActivity(db: Db, sinceDate: Date): Promise<ActivityEntry[]> {
   const merged: ActivityEntry[] = [];
 
   for (const r of adminRows) {
-    // All three source columns are now ms-epoch Date objects post-0043;
+    // All three source columns are Date objects (Drizzle mode:"timestamp" reads as Date);
     // .getTime() everywhere, no more dual-format normalization needed.
     merged.push({
       ts: (r.createdAt as Date).getTime(),
