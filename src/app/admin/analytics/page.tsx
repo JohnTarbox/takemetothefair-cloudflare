@@ -1782,10 +1782,15 @@ async function SiteHealthTab() {
   const { getUnclassifiedOutboundDestinations } =
     await import("@/lib/url-classification-discovery");
   const { ClassifyDomainButtons } = await import("@/components/admin/classify-domain-buttons");
-  const [issues, unclassifiedDestinations] = await Promise.all([
+  const { SiteHealthSweepButton } = await import("@/components/admin/site-health-sweep-button");
+  const { gscInspectionState } = await import("@/lib/db/schema");
+  const { count: dCount } = await import("drizzle-orm");
+  const [issues, unclassifiedDestinations, inspectionRow] = await Promise.all([
     getCurrentIssues(db, { hideSnoozed: false }),
     getUnclassifiedOutboundDestinations(db, { days: 7, minClicks: 5 }),
+    db.select({ c: dCount() }).from(gscInspectionState),
   ]);
+  const inspectionCount = inspectionRow[0]?.c ?? 0;
   const now = Math.floor(Date.now() / 1000);
   const activeSnoozeCount = issues.filter((i) => i.snoozedUntil && i.snoozedUntil > now).length;
   const errorCount = issues.filter(
@@ -1893,11 +1898,26 @@ async function SiteHealthTab() {
         </CardContent>
       </Card>
 
+      <div className="mt-6 flex items-start justify-between flex-wrap gap-3 rounded-md border border-gray-200 bg-gray-50 p-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-900">URL Inspection sweep</p>
+          <p className="text-xs text-gray-600 mt-1">
+            Inspects up to 200 URLs per click against GSC&apos;s URL Inspection API and persists
+            verdicts to <code>gsc_inspection_state</code>. Drives the Google tab&apos;s &quot;real
+            indexed&quot; count and detects new health issues. Run repeatedly until inspected count
+            stops growing.
+          </p>
+          <p className="text-xs text-gray-500 mt-1 tabular-nums">
+            Currently inspected: {fmt(inspectionCount)} URLs
+          </p>
+        </div>
+        <SiteHealthSweepButton />
+      </div>
+
       <p className="text-xs text-gray-500 mt-4">
-        Snooze and refresh actions are exposed via the API endpoints under{" "}
-        <code>/api/admin/site-health/*</code> and the <code>get_site_health_issues</code> /{" "}
-        <code>snooze_site_health_issue</code> MCP tools. A UI control row can layer on top in a
-        follow-up.
+        Snooze actions are exposed via the API endpoints under <code>/api/admin/site-health/*</code>{" "}
+        and the <code>get_site_health_issues</code> / <code>snooze_site_health_issue</code> MCP
+        tools.
       </p>
 
       <Card className="mt-8">
