@@ -2063,6 +2063,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         contactPhone: params.contact_phone ?? null,
       });
 
+      // IndexNow: ping the new public promoter URL. Round 6 (PR #66) shipped
+      // /promoters/[slug] as a real public surface, so this no longer pings a
+      // 404. Mirrors the main-app POST /api/admin/promoters hook.
+      if (env) {
+        await triggerIndexNow(publicUrlFor("promoters", finalSlug), env, "promoter-create");
+      }
+
       return {
         content: [
           jsonContent({
@@ -2212,6 +2219,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (params.name !== undefined && updates.slug) {
         newValues.slug = updates.slug;
+      }
+
+      // IndexNow: ping the canonical promoter URL on update. Include the
+      // prior slug too if the name change generated a new slug, so engines
+      // can crawl-and-redirect from the old URL. Mirrors the main-app PATCH
+      // /api/admin/promoters/[id] hook.
+      if (env) {
+        const newSlug = (updates.slug as string | undefined) ?? promoter.slug;
+        const indexNowUrls: string[] = [publicUrlFor("promoters", newSlug)];
+        if (updates.slug && updates.slug !== promoter.slug) {
+          indexNowUrls.push(publicUrlFor("promoters", promoter.slug));
+        }
+        await triggerIndexNow(indexNowUrls, env, "promoter-update");
       }
 
       return {
