@@ -3,7 +3,13 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, eventDays, contentLinks, blogPosts, venues } from "@/lib/db/schema";
 import { eq, or, gt, lt, and, sql } from "drizzle-orm";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
+import {
+  createSlug,
+  getSlugPrefixBounds,
+  findUniqueSlug,
+  computePublicDates,
+  dollarsToCents,
+} from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -155,8 +161,8 @@ export async function POST(request: NextRequest) {
       categories: JSON.stringify(data.categories),
       tags: JSON.stringify(data.tags),
       ticketUrl: data.ticketUrl,
-      ticketPriceMin: data.ticketPriceMin,
-      ticketPriceMax: data.ticketPriceMax,
+      ticketPriceMinCents: dollarsToCents(data.ticketPriceMin),
+      ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
       imageUrl: data.imageUrl,
       featured: data.featured,
       commercialVendorsAllowed: data.commercialVendorsAllowed,
@@ -164,8 +170,8 @@ export async function POST(request: NextRequest) {
       sourceName: data.sourceName,
       sourceUrl: data.sourceUrl,
       sourceId: data.sourceId,
-      vendorFeeMin: data.vendorFeeMin,
-      vendorFeeMax: data.vendorFeeMax,
+      vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
+      vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
       vendorFeeNotes: data.vendorFeeNotes,
       indoorOutdoor: data.indoorOutdoor,
       estimatedAttendance: data.estimatedAttendance,

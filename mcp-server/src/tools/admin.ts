@@ -33,6 +33,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
+import { dollarsToCents } from "../helpers.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -58,7 +59,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     source_url: events.sourceUrl,
     categories: events.categories,
     tags: events.tags,
-    vendor_fee: events.vendorFeeMin,
+    vendor_fee: events.vendorFeeMinCents,
     indoor_outdoor: events.indoorOutdoor,
     event_scale: events.eventScale,
     application_url: events.applicationUrl,
@@ -400,13 +401,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           column: "ticketUrl",
           transform: (v: string) => gateUrlForField(v, "ticket", urlClassifications),
         },
-        { param: "ticket_price_min", column: "ticketPriceMin" },
-        { param: "ticket_price_max", column: "ticketPriceMax" },
+        // MCP accepts dollar input; storage is integer cents (post-0044).
+        { param: "ticket_price_min", column: "ticketPriceMinCents", transform: dollarsToCents },
+        { param: "ticket_price_max", column: "ticketPriceMaxCents", transform: dollarsToCents },
         { param: "image_url", column: "imageUrl" },
         { param: "featured", column: "featured" },
         { param: "commercial_vendors_allowed", column: "commercialVendorsAllowed" },
-        { param: "vendor_fee_min", column: "vendorFeeMin" },
-        { param: "vendor_fee_max", column: "vendorFeeMax" },
+        { param: "vendor_fee_min", column: "vendorFeeMinCents", transform: dollarsToCents },
+        { param: "vendor_fee_max", column: "vendorFeeMaxCents", transform: dollarsToCents },
         { param: "vendor_fee_notes", column: "vendorFeeNotes" },
         { param: "indoor_outdoor", column: "indoorOutdoor" },
         { param: "estimated_attendance", column: "estimatedAttendance" },

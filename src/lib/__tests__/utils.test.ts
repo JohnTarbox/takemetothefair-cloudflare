@@ -113,6 +113,7 @@ describe("formatDateRange", () => {
 });
 
 describe("formatPrice", () => {
+  // Inputs are integer CENTS (post-0044). $10 = 1000 cents, $10.50 = 1050.
   it('returns "Free" when no prices provided', () => {
     expect(formatPrice()).toBe("Free");
     expect(formatPrice(null, null)).toBe("Free");
@@ -120,26 +121,32 @@ describe("formatPrice", () => {
   });
 
   it("returns single price when min equals max", () => {
-    expect(formatPrice(10, 10)).toBe("$10");
+    expect(formatPrice(1000, 1000)).toBe("$10");
   });
 
   it("returns single price when only min provided", () => {
-    expect(formatPrice(15)).toBe("$15");
-    expect(formatPrice(15, null)).toBe("$15");
+    expect(formatPrice(1500)).toBe("$15");
+    expect(formatPrice(1500, null)).toBe("$15");
   });
 
   it('returns "Up to" format when only max provided', () => {
-    expect(formatPrice(null, 25)).toBe("Up to $25");
-    expect(formatPrice(undefined, 25)).toBe("Up to $25");
+    expect(formatPrice(null, 2500)).toBe("Up to $25");
+    expect(formatPrice(undefined, 2500)).toBe("Up to $25");
   });
 
   it("returns range format when both min and max differ", () => {
-    expect(formatPrice(10, 25)).toBe("$10 - $25");
+    expect(formatPrice(1000, 2500)).toBe("$10 - $25");
   });
 
   it("handles zero values correctly", () => {
-    expect(formatPrice(0, 10)).toBe("Up to $10");
+    expect(formatPrice(0, 1000)).toBe("Up to $10");
     expect(formatPrice(0, 0)).toBe("Free");
+  });
+
+  it("renders cents with two decimals when not whole dollars", () => {
+    expect(formatPrice(1050)).toBe("$10.50");
+    expect(formatPrice(99)).toBe("$0.99");
+    expect(formatPrice(1050, 2575)).toBe("$10.50 - $25.75");
   });
 });
 

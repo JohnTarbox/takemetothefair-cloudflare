@@ -3,7 +3,13 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventDays } from "@/lib/db/schema";
 import { eq, desc, or, gt, lt, and } from "drizzle-orm";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
+import {
+  createSlug,
+  getSlugPrefixBounds,
+  findUniqueSlug,
+  computePublicDates,
+  dollarsToCents,
+} from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
@@ -180,12 +186,12 @@ export async function POST(request: NextRequest) {
       categories: JSON.stringify(categories || []),
       tags: JSON.stringify(tags || []),
       ticketUrl,
-      ticketPriceMin,
-      ticketPriceMax,
+      ticketPriceMinCents: dollarsToCents(ticketPriceMin),
+      ticketPriceMaxCents: dollarsToCents(ticketPriceMax),
       imageUrl,
       status: "PENDING",
-      vendorFeeMin,
-      vendorFeeMax,
+      vendorFeeMinCents: dollarsToCents(vendorFeeMin),
+      vendorFeeMaxCents: dollarsToCents(vendorFeeMax),
       vendorFeeNotes,
       indoorOutdoor,
       estimatedAttendance,

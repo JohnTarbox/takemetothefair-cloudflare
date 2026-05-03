@@ -100,11 +100,41 @@ export function computePublicDates(eventDays: { date: string; vendorOnly?: boole
   };
 }
 
-export function formatPrice(min?: number | null, max?: number | null): string {
-  if (!min && !max) return "Free";
-  if (min === max || !max) return `$${min}`;
-  if (!min) return `Up to $${max}`;
-  return `$${min} - $${max}`;
+/**
+ * Convert dollars (float, from form input) to integer cents (storage). Use
+ * at the API/MCP boundary when accepting price input from validation
+ * schemas that still parse as dollars. Keep this and formatPrice as the
+ * ONLY two conversion sites between cents and dollars.
+ */
+export function dollarsToCents(dollars: number | null | undefined): number | null {
+  if (dollars == null) return null;
+  return Math.round(dollars * 100);
+}
+
+/**
+ * Format a price range stored as integer CENTS (post-0044). Dividing by 100
+ * is the only place in the codebase that converts between cents and dollars
+ * — keep it that way. If you find yourself writing `something / 100` or
+ * `something * 100` outside this function or dollarsToCents above, you've
+ * reintroduced the convention drift the 0044 migration eliminated.
+ *
+ * Display drops trailing .00 for whole dollars (e.g. "$25" not "$25.00")
+ * but renders cents when present (e.g. "$10.50").
+ */
+export function formatPrice(minCents?: number | null, maxCents?: number | null): string {
+  const renderOne = (cents: number) => {
+    const dollars = cents / 100;
+    return dollars % 1 === 0 ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+  };
+  // Treat 0 as "no value" to match the historical UX: a {min:0, max:10} pair
+  // means "free entry possible up to $10" and renders as "Up to $10", not
+  // "$0 - $10". A {min:0, max:0} pair renders as "Free".
+  const min = !minCents ? null : minCents;
+  const max = !maxCents ? null : maxCents;
+  if (min == null && max == null) return "Free";
+  if (min === max || max == null) return renderOne(min!);
+  if (min == null) return `Up to ${renderOne(max)}`;
+  return `${renderOne(min)} - ${renderOne(max)}`;
 }
 
 export function truncate(text: string, length: number): string {

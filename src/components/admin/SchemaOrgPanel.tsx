@@ -185,21 +185,27 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
           formatDateForComparison(event.endDate) !==
             formatDateForComparison(schemaOrg.schemaEndDate),
       },
+      // event.ticketPriceMin/Max are integer cents (post-0044). schemaOrg.schemaPriceMin/Max
+      // are still float dollars from the JSON-LD scrape (eventSchemaOrg table not yet
+      // migrated). Multiply schema by 100 to compare apples-to-apples.
+      // TODO: migrate eventSchemaOrg.schemaPriceMin/Max to cents in a follow-up PR.
       {
         key: "ticketPriceMin",
-        label: "Min Price",
+        label: "Min Price (cents)",
         eventValue: event.ticketPriceMin,
-        schemaValue: schemaOrg.schemaPriceMin,
+        schemaValue: schemaOrg.schemaPriceMin == null ? null : schemaOrg.schemaPriceMin * 100,
         isDifferent:
-          schemaOrg.schemaPriceMin !== null && event.ticketPriceMin !== schemaOrg.schemaPriceMin,
+          schemaOrg.schemaPriceMin !== null &&
+          event.ticketPriceMin !== Math.round(schemaOrg.schemaPriceMin * 100),
       },
       {
         key: "ticketPriceMax",
-        label: "Max Price",
+        label: "Max Price (cents)",
         eventValue: event.ticketPriceMax,
-        schemaValue: schemaOrg.schemaPriceMax,
+        schemaValue: schemaOrg.schemaPriceMax == null ? null : schemaOrg.schemaPriceMax * 100,
         isDifferent:
-          schemaOrg.schemaPriceMax !== null && event.ticketPriceMax !== schemaOrg.schemaPriceMax,
+          schemaOrg.schemaPriceMax !== null &&
+          event.ticketPriceMax !== Math.round(schemaOrg.schemaPriceMax * 100),
       },
       {
         key: "imageUrl",

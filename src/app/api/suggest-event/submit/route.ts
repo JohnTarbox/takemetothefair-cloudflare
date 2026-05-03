@@ -4,7 +4,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug, computePublicDates, decodeHtmlEntities } from "@/lib/utils";
+import { createSlug, computePublicDates, decodeHtmlEntities, dollarsToCents } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
@@ -221,8 +221,8 @@ export async function POST(request: NextRequest) {
       ),
       tags: JSON.stringify(tagList),
       ticketUrl: gatedTicketUrl,
-      ticketPriceMin: data.ticketPriceMin ?? null,
-      ticketPriceMax: data.ticketPriceMax ?? null,
+      ticketPriceMinCents: dollarsToCents(data.ticketPriceMin),
+      ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
       imageUrl: data.imageUrl || null,
       status: eventStatus,
       sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
@@ -232,8 +232,8 @@ export async function POST(request: NextRequest) {
       lastSyncedAt: new Date(),
       suggesterEmail: data.suggesterEmail || null,
       submittedByUserId: data.submittedByUserId || null,
-      vendorFeeMin: data.vendorFeeMin ?? null,
-      vendorFeeMax: data.vendorFeeMax ?? null,
+      vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
+      vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
       vendorFeeNotes: data.vendorFeeNotes ?? null,
       indoorOutdoor: data.indoorOutdoor ?? null,
       estimatedAttendance: data.estimatedAttendance ?? null,
