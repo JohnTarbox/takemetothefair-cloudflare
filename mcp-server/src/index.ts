@@ -341,6 +341,15 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Workflow exports
+// ---------------------------------------------------------------------------
+//
+// Cloudflare Workflows require the WorkflowEntrypoint class to be exported
+// from the Worker entry module. The wrangler.toml [[workflows]] binding
+// matches by `class_name`. See mcp-server/src/workflows/ for the impls.
+export { SchemaOrgSyncWorkflow } from "./workflows/schema-org-sync.js";
+
+// ---------------------------------------------------------------------------
 // Queue consumer
 // ---------------------------------------------------------------------------
 //
