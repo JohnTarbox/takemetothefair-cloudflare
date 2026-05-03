@@ -4,11 +4,10 @@
  * conversion gap: vendors who'd want to apply but have nowhere to click.
  */
 
-import { and, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, gte, isNull, or, sql } from "drizzle-orm";
 import { analyticsEvents, events } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
-const RESULT_LIMIT = 25;
 const TRAFFIC_LOOKBACK_DAYS = 30;
 
 export const eventsMissingApplicationUrlRule: RuleDefinition = {
@@ -18,6 +17,7 @@ export const eventsMissingApplicationUrlRule: RuleDefinition = {
     "{n} APPROVED upcoming events with traffic have no vendor application URL. Vendors interested have nowhere to click.",
   severity: "yellow",
   category: "conversion",
+  autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     // Step 1: aggregate event slugs by view count over the last 30d.
     // analyticsEvents.timestamp is raw INTEGER seconds (per migration 0035).
@@ -58,11 +58,10 @@ export const eventsMissingApplicationUrlRule: RuleDefinition = {
         )
       );
 
-    // Step 3: rank by traffic, take top N.
+    // Step 3: rank by traffic. Return all matches; engine handles storage.
     const ranked = candidates
       .map((c) => ({ ...c, views: viewsBySlug.get(c.slug) ?? 0 }))
-      .sort((a, b) => b.views - a.views)
-      .slice(0, RESULT_LIMIT);
+      .sort((a, b) => b.views - a.views);
 
     return ranked.map((c) => ({
       targetType: "event",
@@ -74,7 +73,5 @@ export const eventsMissingApplicationUrlRule: RuleDefinition = {
         startDate: c.startDate ? c.startDate.toISOString() : null,
       },
     }));
-
-    void inArray;
   },
 };

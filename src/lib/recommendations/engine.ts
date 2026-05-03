@@ -7,18 +7,28 @@
  * defines:
  *   - ruleKey (stable identifier, used to look up the row in recommendation_rules)
  *   - title, severity, rationaleTemplate (display metadata, ensured-into-DB on scan)
- *   - run(db) → ItemMatch[]   (the SQL query, returning target_id + payload)
+ *   - run(db) → ItemMatch[]   (returns ALL current matches; engine handles
+ *     storage and resolution. Rules used to LIMIT to 25 internally; that's
+ *     gone — see "auto-resolve" below.)
+ *   - autoResolve?: boolean   (DB-backed rules set true; the engine treats
+ *     run()'s output as the complete current match set and resolves stale
+ *     items. External-fetch rules — GSC API, static-page scrapers — leave
+ *     this false because an empty result set might mean "fetch failed" rather
+ *     than "all resolved.")
  *
  * Scan flow:
  *   1. ensureRulesRegistered() upserts each rule's display metadata (cheap, idempotent)
- *   2. For each enabled rule, run() returns current matches
- *   3. Per match: INSERT ... ON CONFLICT (rule_id, target_id) DO UPDATE last_seen_at
- *   4. Items that no longer match are simply not touched; the active-list query's
- *      `last_seen_at > now - 7d` filter auto-resolves them out of view.
+ *   2. For each enabled rule, run() returns ALL current matches
+ *   3. Per match: refresh existing item (last_seen_at + payload_json) or insert new
+ *   4. If autoResolve: items in DB but NOT in current match set are marked
+ *      acted (resolved), so they drop out of the active list immediately —
+ *      no longer wait for the 7-day decay window.
+ *   5. recommendation_rules.total_match_count + last_scanned_at are written
+ *      so the admin UI can show "Showing N of M" when items are dismissed.
  *
  * Active list filter:
- *   - last_seen_at > now - 7d (fresh)
- *   - acted_at IS NULL (not yet acted)
+ *   - last_seen_at > now - 7d (fresh; safety net for non-autoResolve rules)
+ *   - acted_at IS NULL (not yet acted; auto-resolved items drop out here)
  *   - dismissed_until IS NULL OR dismissed_until < now (snooze expired)
  */
 
@@ -47,6 +57,12 @@ export interface RuleDefinition {
   rationaleTemplate: string;
   severity: Severity;
   category?: string;
+  // When true, run()'s matches are treated as the complete current state:
+  // existing items not in this set get auto-resolved (acted_at = now). Set on
+  // DB-backed rules where SELECT-with-predicate is authoritative. Leave false
+  // (default) for external-fetch rules so a transient API failure returning
+  // [] doesn't clobber the active list.
+  autoResolve?: boolean;
   run(db: Db): Promise<ItemMatch[]>;
 }
 
@@ -58,6 +74,10 @@ export type ActiveItem = {
   rationaleTemplate: string;
   severity: Severity;
   category: string | null;
+  // Total matches for this rule from the most recent scan (unbounded — not
+  // affected by dismissals). Denormalized onto each row for convenience; the
+  // UI groups items by rule and reads this once per group.
+  ruleTotalMatchCount: number;
   targetType: string;
   targetId: string | null;
   payload: Record<string, unknown> | null;
@@ -69,7 +89,14 @@ export type ScanResult = {
   scannedRules: number;
   inserted: number;
   refreshed: number;
-  perRule: Array<{ ruleKey: string; matched: number; inserted: number; refreshed: number }>;
+  resolved: number;
+  perRule: Array<{
+    ruleKey: string;
+    matched: number;
+    inserted: number;
+    refreshed: number;
+    resolved: number;
+  }>;
 };
 
 const ACTIVE_WINDOW_MS = 7 * 86400 * 1000;
@@ -122,6 +149,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
 
   let totalInserted = 0;
   let totalRefreshed = 0;
+  let totalResolved = 0;
   const perRule: ScanResult["perRule"] = [];
 
   for (const def of defs) {
@@ -132,27 +160,42 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     const matches = await def.run(db);
     let inserted = 0;
     let refreshed = 0;
+    let resolved = 0;
 
-    // Pull existing items for this rule so we can decide insert vs update without
-    // relying on D1's UPSERT semantics (which would also clobber dismissed_until).
+    // Pull existing items for this rule so we can decide insert vs update vs
+    // resolve without relying on D1's UPSERT semantics (which would clobber
+    // dismissed_until).
     const existing = await db
-      .select({ id: recommendationItems.id, targetId: recommendationItems.targetId })
+      .select({
+        id: recommendationItems.id,
+        targetId: recommendationItems.targetId,
+        actedAt: recommendationItems.actedAt,
+      })
       .from(recommendationItems)
       .where(eq(recommendationItems.ruleId, ruleId));
-    const existingByTarget = new Map<string, string>();
+    const existingByTarget = new Map<string, { id: string; actedAt: Date | null }>();
     for (const e of existing) {
-      existingByTarget.set(e.targetId ?? "", e.id);
+      existingByTarget.set(e.targetId ?? "", { id: e.id, actedAt: e.actedAt });
     }
 
+    const matchedTargets = new Set<string>();
     for (const m of matches) {
       const key = m.targetId ?? "";
-      const existingId = existingByTarget.get(key);
+      matchedTargets.add(key);
+      const existingRow = existingByTarget.get(key);
       const payloadJson = m.payload ? JSON.stringify(m.payload) : null;
-      if (existingId) {
+      if (existingRow) {
+        // Refresh: bump last_seen_at + payload. Don't clear acted_at — both
+        // manual "Mark done" and prior auto-resolve set it, and we can't tell
+        // them apart. Manually-acted items should stay terminal: admin said
+        // they handled it, even if the entity is technically still matching.
+        // If admin wants the rule to re-surface, they delete or undo the row
+        // (or wait for the entity to leave + re-enter the match set, which
+        // creates a brand-new item).
         await db
           .update(recommendationItems)
           .set({ lastSeenAt: now, payloadJson })
-          .where(eq(recommendationItems.id, existingId));
+          .where(eq(recommendationItems.id, existingRow.id));
         refreshed++;
       } else {
         await db.insert(recommendationItems).values({
@@ -168,15 +211,45 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
       }
     }
 
-    perRule.push({ ruleKey: def.ruleKey, matched: matches.length, inserted, refreshed });
+    // Auto-resolve: existing items whose target_id is no longer in the current
+    // match set get marked acted, so they drop out of the active list. Skipped
+    // for rules where the match set might be empty due to fetch failure (see
+    // RuleDefinition.autoResolve docs).
+    if (def.autoResolve) {
+      for (const [targetId, existingRow] of existingByTarget.entries()) {
+        if (matchedTargets.has(targetId)) continue;
+        if (existingRow.actedAt) continue; // already resolved/acted; skip
+        await db
+          .update(recommendationItems)
+          .set({ actedAt: now })
+          .where(eq(recommendationItems.id, existingRow.id));
+        resolved++;
+      }
+    }
+
+    // Record total + last-scan for the "Showing N of M" UI label.
+    await db
+      .update(recommendationRules)
+      .set({ totalMatchCount: matches.length, lastScannedAt: now })
+      .where(eq(recommendationRules.id, ruleId));
+
+    perRule.push({
+      ruleKey: def.ruleKey,
+      matched: matches.length,
+      inserted,
+      refreshed,
+      resolved,
+    });
     totalInserted += inserted;
     totalRefreshed += refreshed;
+    totalResolved += resolved;
   }
 
   return {
     scannedRules: perRule.length,
     inserted: totalInserted,
     refreshed: totalRefreshed,
+    resolved: totalResolved,
     perRule,
   };
 }
@@ -194,6 +267,7 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
       rationaleTemplate: recommendationRules.rationaleTemplate,
       severity: recommendationRules.severity,
       category: recommendationRules.category,
+      totalMatchCount: recommendationRules.totalMatchCount,
       targetType: recommendationItems.targetType,
       targetId: recommendationItems.targetId,
       payloadJson: recommendationItems.payloadJson,
@@ -235,6 +309,7 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
       rationaleTemplate: r.rationaleTemplate,
       severity: r.severity as Severity,
       category: r.category,
+      ruleTotalMatchCount: r.totalMatchCount ?? 0,
       targetType: r.targetType,
       targetId: r.targetId,
       payload,

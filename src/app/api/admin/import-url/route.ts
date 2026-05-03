@@ -198,7 +198,10 @@ export async function POST(request: NextRequest) {
       id: newEventId,
       name: event.name,
       slug: finalEventSlug,
-      description: event.description || `${event.name} - imported from URL`,
+      // Leave null when the URL extractor didn't pull a description; the
+      // meta-description fallback chain handles SEO. Previously this wrote
+      // "{name} - imported from URL" which polluted descriptions.
+      description: event.description || null,
       promoterId,
       venueId,
       stateCode: resolvedStateCode,

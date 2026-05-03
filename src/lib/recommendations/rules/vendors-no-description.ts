@@ -9,8 +9,6 @@ import { eq, or, sql } from "drizzle-orm";
 import { vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
-const RESULT_LIMIT = 25;
-
 export const vendorsNoDescriptionRule: RuleDefinition = {
   ruleKey: "vendors_no_description",
   title: "Vendors with no description",
@@ -18,6 +16,7 @@ export const vendorsNoDescriptionRule: RuleDefinition = {
     "{n} vendors have no description on file. Adding even a sentence improves SEO and helps event organizers evaluate them.",
   severity: "yellow",
   category: "data_quality",
+  autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     const rows = await db
       .select({
@@ -26,8 +25,7 @@ export const vendorsNoDescriptionRule: RuleDefinition = {
         slug: vendors.slug,
       })
       .from(vendors)
-      .where(or(sql`${vendors.description} IS NULL`, eq(vendors.description, "")))
-      .limit(RESULT_LIMIT);
+      .where(or(sql`${vendors.description} IS NULL`, eq(vendors.description, "")));
 
     return rows.map((r) => ({
       targetType: "vendor",

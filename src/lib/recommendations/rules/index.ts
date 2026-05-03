@@ -17,6 +17,7 @@ import {
   vendorsShortDescriptionRule,
   venuesShortDescriptionRule,
 } from "./short-descriptions";
+import { slugSuffixDuplicatesRule } from "./slug-suffix-duplicates";
 import { staticPagesShortDescriptionRule } from "./static-pages-short-description";
 import { vendorsNoDescriptionRule } from "./vendors-no-description";
 
@@ -28,6 +29,7 @@ export const ALL_RULES: RuleDefinition[] = [
   eventsShortDescriptionRule,
   venuesShortDescriptionRule,
   vendorsShortDescriptionRule,
+  slugSuffixDuplicatesRule,
   staticPagesShortDescriptionRule,
   enhancedProfileRenewalCriticalRule,
   enhancedProfileRenewalWarningRule,

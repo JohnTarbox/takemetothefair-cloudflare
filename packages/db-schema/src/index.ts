@@ -765,6 +765,11 @@ export const recommendationRules = sqliteTable("recommendation_rules", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   // seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  // Last scan's unbounded match count. Drives the "Showing N of M" UI label
+  // and lets us tell "still 0 matches" from "this rule has never run". Added
+  // in 0046; engine writes on every scanAll().
+  totalMatchCount: integer("total_match_count").default(0),
+  lastScannedAt: integer("last_scanned_at", { mode: "timestamp" }),
 });
 
 export const recommendationItems = sqliteTable(

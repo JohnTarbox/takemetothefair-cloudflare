@@ -5,11 +5,9 @@
  * most from Enhanced Profile features.
  */
 
-import { and, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import { eventVendors, events, vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
-
-const RESULT_LIMIT = 25;
 
 export const enhancedProfileCohortRule: RuleDefinition = {
   ruleKey: "enhanced_profile_cohort",
@@ -18,6 +16,7 @@ export const enhancedProfileCohortRule: RuleDefinition = {
     "{n} vendors are confirmed at upcoming events but have no logo. Prime cohort candidates for Enhanced Profile activation.",
   severity: "yellow",
   category: "revenue",
+  autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
     // Two-step to keep the query readable: find approved-upcoming-event vendor ids,
     // then filter the vendors table by those ids + missing-logo + non-paying.
@@ -46,8 +45,7 @@ export const enhancedProfileCohortRule: RuleDefinition = {
           eq(vendors.enhancedProfile, false),
           or(isNull(vendors.logoUrl), eq(vendors.logoUrl, ""))
         )
-      )
-      .limit(RESULT_LIMIT);
+      );
 
     return rows.map((r) => ({
       targetType: "vendor",
@@ -59,9 +57,5 @@ export const enhancedProfileCohortRule: RuleDefinition = {
         location: [r.city, r.state].filter(Boolean).join(", "),
       },
     }));
-
-    // Suppress unused-import warnings for ne/sql (kept for future filter additions)
-    void ne;
-    void sql;
   },
 };

@@ -473,9 +473,13 @@ export async function POST(request: Request) {
 
         // Insert the event
         // Use website for ticketUrl (Event Website button), fall back to sourceUrl
+        // Description: leave null when the scraper didn't extract one — the
+        // round-2 meta-description fallback chain (venue/category-derived)
+        // takes over in that case. Previously we wrote `${name} - imported
+        // from ${source}` which polluted SEO metadata across 43 events.
         const decodedNewDescription = eventData.description
           ? decodeHtmlEntities(eventData.description)
-          : `${decodedNewEventName} - imported from ${eventData.sourceName}`;
+          : null;
         const newEventId = crypto.randomUUID();
         await db.insert(events).values({
           id: newEventId,

@@ -217,7 +217,12 @@ describe("scrapeVtFairs", () => {
     expect(result.events[0].name).toBe("Smith & Jones Family Fair");
   });
 
-  it("extracts contact info into description when present", async () => {
+  it("does not stash contact info in description (would pollute SEO meta)", async () => {
+    // Pre-fix behavior: contact text was written into description as
+    // `Contact: Jane Doe (802) 555-1234`. That polluted meta descriptions
+    // on imported events and caused the recommendations rule for missing
+    // descriptions to silently pass them. Description is now left undefined
+    // so the meta-description fallback chain takes over downstream.
     const html = buildHtml({
       year: 2026,
       fairs: [
@@ -232,7 +237,7 @@ describe("scrapeVtFairs", () => {
 
     const result = await scrapeVtFairs();
 
-    expect(result.events[0].description).toContain("Jane Doe");
+    expect(result.events[0].description).toBeUndefined();
   });
 
   it("parses multiple fairs from a single page in correct order", async () => {

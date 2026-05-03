@@ -745,6 +745,10 @@ async function RecommendationsTab() {
     title: string;
     rationaleTemplate: string;
     severity: Sev;
+    // Total matches the last scan saw (unbounded). Used to show "12 of 42"
+    // when some items are dismissed/snoozed and the active list is smaller
+    // than reality.
+    totalMatchCount: number;
     items: Item[];
   };
   const ruleGroups = new Map<string, RuleGroup>();
@@ -757,6 +761,7 @@ async function RecommendationsTab() {
         title: it.title,
         rationaleTemplate: it.rationaleTemplate,
         severity: it.severity as Sev,
+        totalMatchCount: it.ruleTotalMatchCount,
         items: [],
       };
       ruleGroups.set(it.ruleId, g);
@@ -913,7 +918,9 @@ async function RecommendationsTab() {
                               <span
                                 className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${meta.chip}`}
                               >
-                                {count} affected
+                                {group.totalMatchCount > count
+                                  ? `${count} of ${group.totalMatchCount} affected`
+                                  : `${count} affected`}
                               </span>
                             </div>
                             <p className="text-sm text-gray-700 mt-1.5 ml-6">

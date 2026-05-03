@@ -74,6 +74,10 @@ export const staticPagesShortDescriptionRule: RuleDefinition = {
     "{n} static pages have meta descriptions shorter than 70 chars (or missing entirely). Fix in the route's generateMetadata() / metadata export.",
   severity: "yellow",
   category: "seo",
+  // No autoResolve: fetchMetaDescription returns "fetch_failed" on network
+  // errors and is filtered out, so a transient outage could leave matches
+  // empty (= "all good") when nothing was actually checked. Auto-resolving
+  // would clobber valid items. Items decay via the 7-day window instead.
   async run(): Promise<ItemMatch[]> {
     const results = await Promise.all(
       STATIC_PAGES.map(async (page) => {
