@@ -30,6 +30,7 @@ import {
   BingApiError,
   BingConfigError,
   getIndexNowQuota,
+  getQueryStats,
   type BingEnv,
   type BingIndexNowQuota,
 } from "@/lib/bing-webmaster";
@@ -77,7 +78,19 @@ export type Delta = {
 };
 
 export type SearchVisibilityCard =
-  | { ok: true; current: number; previous: number; trend: Trend; windowDays: number }
+  | {
+      ok: true;
+      current: number;
+      previous: number;
+      trend: Trend;
+      windowDays: number;
+      // BWT companion clicks. Bing's API only exposes aggregate query stats
+      // (no day-windowed totals), so we surface BWT clicks as a footer hint
+      // rather than fold them into the day-bucketed GSC trend. null when
+      // BWT is misconfigured or returned an error — non-fatal, the GSC
+      // headline still renders.
+      bingTotal: number | null;
+    }
   | { ok: false; reason: string };
 
 export type ConversionsCard = Delta;
@@ -332,10 +345,16 @@ async function loadRecommendationsSummary(db: Db): Promise<RecommendationsSummar
 
 // ── Row 1 — KPI cards ──────────────────────────────────────────────
 
-async function loadSearchVisibility(env: ScEnv, days: number): Promise<SearchVisibilityCard> {
+async function loadSearchVisibility(
+  env: ScEnv & BingEnv,
+  days: number
+): Promise<SearchVisibilityCard> {
   // GSC supports 1d/7d/28d/30d/90d ranges; map non-preset windows to a custom range.
-  // We always pull GSC clicks-only (BWT data isn't easily windowable; users drill
-  // into the Bing tab for BWT specifics).
+  // The headline is GSC-only (Google's API gives day-bucketed totals); BWT clicks
+  // are added as a footer hint via getQueryStats() — Bing's API doesn't expose a
+  // windowable totals endpoint, so combining 7d-GSC + lifetime-BWT into a single
+  // number would mislead. Surfacing both honestly fixes the analyst's complaint
+  // that "-100%" reads as catastrophic when Bing is delivering ~28 clicks fine.
   try {
     const presetByDays: Record<number, "last_7d" | "last_28d" | "last_90d"> = {
       7: "last_7d",
@@ -371,12 +390,26 @@ async function loadSearchVisibility(env: ScEnv, days: number): Promise<SearchVis
     });
     const previous = priorResult.totals.clicks;
 
+    // BWT companion: best-effort. A failure here doesn't sink the whole card —
+    // the GSC headline is the load-bearing signal.
+    let bingTotal: number | null = null;
+    try {
+      const bingRows = await getQueryStats(env);
+      bingTotal = bingRows.reduce((sum, row) => sum + row.clicks, 0);
+    } catch (e) {
+      if (!(e instanceof BingApiError) && !(e instanceof BingConfigError)) {
+        // Unexpected — let it surface in logs but don't break the page.
+        console.warn("[search-visibility] BWT companion failed:", e);
+      }
+    }
+
     return {
       ok: true,
       current,
       previous,
       trend: trendOf(current, previous),
       windowDays: days,
+      bingTotal,
     };
   } catch (error) {
     if (error instanceof ScConfigError) return { ok: false, reason: "GSC not configured" };
