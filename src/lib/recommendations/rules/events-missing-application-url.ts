@@ -21,7 +21,7 @@ export const eventsMissingApplicationUrlRule: RuleDefinition = {
   async run(db): Promise<ItemMatch[]> {
     // Step 1: aggregate event slugs by view count over the last 30d.
     // analyticsEvents.timestamp is raw INTEGER seconds (per migration 0035).
-    const sinceSec = Math.floor(Date.now() / 1000) - TRAFFIC_LOOKBACK_DAYS * 86400;
+    const sinceDate = new Date(Date.now() - TRAFFIC_LOOKBACK_DAYS * 86400 * 1000);
     const trafficRows = await db
       .select({
         slug: sql<string>`json_extract(${analyticsEvents.properties}, '$.eventSlug')`,
@@ -31,7 +31,7 @@ export const eventsMissingApplicationUrlRule: RuleDefinition = {
       .where(
         and(
           eq(analyticsEvents.eventName, "view_event_detail"),
-          gte(analyticsEvents.timestamp, sinceSec)
+          gte(analyticsEvents.timestamp, sinceDate)
         )
       )
       .groupBy(sql`json_extract(${analyticsEvents.properties}, '$.eventSlug')`);

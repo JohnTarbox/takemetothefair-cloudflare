@@ -30,7 +30,7 @@ export async function trackServerEvent(
       id: crypto.randomUUID(),
       eventName: options.eventName,
       eventCategory: options.eventCategory,
-      timestamp: Math.floor(Date.now() / 1000),
+      timestamp: new Date(),
       properties: options.properties ? JSON.stringify(options.properties) : "{}",
       userId: options.userId,
       source: options.source,

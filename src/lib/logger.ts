@@ -30,7 +30,7 @@ export async function logError(
   try {
     await db.insert(errorLogs).values({
       id: crypto.randomUUID(),
-      timestamp: Math.floor(Date.now() / 1000),
+      timestamp: new Date(),
       level,
       message: fullMessage,
       context: context ? JSON.stringify(context) : "{}",
@@ -48,7 +48,7 @@ export async function logError(
     // cleanup so the failure surfaces in `wrangler tail` separately
     // from the original log-write attempt.
     if (Math.random() < 0.01) {
-      const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 2592000;
+      const thirtyDaysAgo = new Date(Date.now() - 2592000 * 1000);
       try {
         await db.delete(errorLogs).where(lt(errorLogs.timestamp, thirtyDaysAgo));
       } catch (cleanupErr) {

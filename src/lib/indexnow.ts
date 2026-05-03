@@ -48,7 +48,7 @@ async function recordSubmission(
   if (!db) return;
   try {
     await db.insert(indexnowSubmissions).values({
-      timestamp: Math.floor(Date.now() / 1000),
+      timestamp: new Date(),
       source,
       urls: JSON.stringify(urls),
       urlCount: urls.length,
@@ -59,7 +59,7 @@ async function recordSubmission(
 
     // 1% probabilistic cleanup of submissions older than 30 days
     if (Math.random() < 0.01) {
-      const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 2592000;
+      const thirtyDaysAgo = new Date(Date.now() - 2592000 * 1000);
       await db.delete(indexnowSubmissions).where(lt(indexnowSubmissions.timestamp, thirtyDaysAgo));
     }
   } catch (err) {

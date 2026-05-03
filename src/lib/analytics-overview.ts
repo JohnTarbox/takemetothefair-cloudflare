@@ -177,29 +177,19 @@ export async function loadOverviewSnapshot(
   env: ScEnv & BingEnv,
   window: WindowKey
 ): Promise<OverviewSnapshot> {
+  // All windows expressed as Date objects now that every operational table
+  // uses Drizzle mode:"timestamp" (ms-epoch). Past code juggled both seconds
+  // and ms — see plan file for the cleanup workstream.
   const days = windowDays(window);
   const nowMs = Date.now();
-  const nowSec = Math.floor(nowMs / 1000);
-  const sinceSec = nowSec - days * 86400;
-  const priorStartSec = nowSec - days * 2 * 86400;
-  const priorEndSec = sinceSec;
-  const sinceMs = sinceSec * 1000;
-  const priorStartMs = priorStartSec * 1000;
-  const priorEndMs = priorEndSec * 1000;
-  const sinceDate = new Date(sinceMs);
-  const priorStartDate = new Date(priorStartMs);
-  const priorEndDate = new Date(priorEndMs);
-
-  const sparklineSinceSec = nowSec - SPARKLINE_DAYS * 86400;
-
-  const todayStartUtcMs = Date.UTC(
-    new Date().getUTCFullYear(),
-    new Date().getUTCMonth(),
-    new Date().getUTCDate()
+  const sinceDate = new Date(nowMs - days * 86400 * 1000);
+  const priorStartDate = new Date(nowMs - days * 2 * 86400 * 1000);
+  const priorEndDate = sinceDate;
+  const sparklineSinceDate = new Date(nowMs - SPARKLINE_DAYS * 86400 * 1000);
+  const todayStartUtcDate = new Date(
+    Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())
   );
-  const todayStartUtcSec = Math.floor(todayStartUtcMs / 1000);
-
-  const last24hSec = nowSec - 86400;
+  const last24hDate = new Date(nowMs - 86400 * 1000);
 
   const [
     searchVisibility,
@@ -217,18 +207,18 @@ export async function loadOverviewSnapshot(
     activity,
   ] = await Promise.all([
     loadSearchVisibility(env, days),
-    loadConversions(db, sinceSec, priorStartSec, priorEndSec, days),
+    loadConversions(db, sinceDate, priorStartDate, priorEndDate, days),
     loadCatalogGrowth(db, sinceDate, priorStartDate, priorEndDate, days),
     loadEnhancedProfileRevenue(db, sinceDate, priorStartDate, priorEndDate, days),
     loadSiteHealth(db),
-    loadIndexNow(db, env, todayStartUtcSec),
-    loadRecentErrors(db, last24hSec),
+    loadIndexNow(db, env, todayStartUtcDate),
+    loadRecentErrors(db, last24hDate),
     loadRecommendationsSummary(db),
     loadBlogCoverage(db),
-    loadConversionsSparkline(db, sparklineSinceSec),
-    loadPublishingSparkline(db, sparklineSinceSec),
+    loadConversionsSparkline(db, sparklineSinceDate),
+    loadPublishingSparkline(db, sparklineSinceDate),
     loadSearchVisibilitySparkline(env),
-    loadActivity(db, sinceMs, sinceSec),
+    loadActivity(db, sinceDate),
   ]);
 
   return {
@@ -411,9 +401,9 @@ function isoFromDate(d: Date): string {
 
 async function loadConversions(
   db: Db,
-  sinceSec: number,
-  priorStartSec: number,
-  priorEndSec: number,
+  sinceDate: Date,
+  priorStartDate: Date,
+  priorEndDate: Date,
   days: number
 ): Promise<ConversionsCard> {
   const [currentRows, priorRows] = await Promise.all([
@@ -423,7 +413,7 @@ async function loadConversions(
       .where(
         and(
           inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, sinceSec)
+          gte(analyticsEvents.timestamp, sinceDate)
         )
       ),
     db
@@ -432,8 +422,8 @@ async function loadConversions(
       .where(
         and(
           inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, priorStartSec),
-          lt(analyticsEvents.timestamp, priorEndSec)
+          gte(analyticsEvents.timestamp, priorStartDate),
+          lt(analyticsEvents.timestamp, priorEndDate)
         )
       ),
   ]);
@@ -566,14 +556,14 @@ async function loadSiteHealth(db: Db): Promise<SiteHealthCard> {
   return { errors, warnings, notices, total: errors + warnings + notices };
 }
 
-async function loadIndexNow(db: Db, env: BingEnv, todayStartSec: number): Promise<IndexNowCard> {
+async function loadIndexNow(db: Db, env: BingEnv, todayStartDate: Date): Promise<IndexNowCard> {
   const todayRows = await db
     .select({
       status: indexnowSubmissions.status,
       c: count(),
     })
     .from(indexnowSubmissions)
-    .where(gte(indexnowSubmissions.timestamp, todayStartSec))
+    .where(gte(indexnowSubmissions.timestamp, todayStartDate))
     .groupBy(indexnowSubmissions.status);
 
   let total = 0;
@@ -604,14 +594,14 @@ async function loadIndexNow(db: Db, env: BingEnv, todayStartSec: number): Promis
   };
 }
 
-async function loadRecentErrors(db: Db, sinceSec: number): Promise<RecentErrorsCard> {
+async function loadRecentErrors(db: Db, sinceDate: Date): Promise<RecentErrorsCard> {
   const rows = await db
     .select({
       source: errorLogs.source,
       c: count(),
     })
     .from(errorLogs)
-    .where(gte(errorLogs.timestamp, sinceSec))
+    .where(gte(errorLogs.timestamp, sinceDate))
     .groupBy(errorLogs.source)
     .orderBy(desc(sql`COUNT(*)`));
 
@@ -641,8 +631,9 @@ function fillDailySeries(rawByDate: Map<string, number>, days: number): Sparklin
   return series;
 }
 
-async function loadConversionsSparkline(db: Db, sinceSec: number): Promise<SparklinePoint[]> {
-  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${analyticsEvents.timestamp}, 'unixepoch')`;
+async function loadConversionsSparkline(db: Db, sinceDate: Date): Promise<SparklinePoint[]> {
+  // strftime expects seconds; columns now store ms (post-0043), so divide by 1000.
+  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${analyticsEvents.timestamp} / 1000, 'unixepoch')`;
   const rows = await db
     .select({
       day: dayExpr,
@@ -652,7 +643,7 @@ async function loadConversionsSparkline(db: Db, sinceSec: number): Promise<Spark
     .where(
       and(
         inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-        gte(analyticsEvents.timestamp, sinceSec)
+        gte(analyticsEvents.timestamp, sinceDate)
       )
     )
     .groupBy(dayExpr);
@@ -662,12 +653,12 @@ async function loadConversionsSparkline(db: Db, sinceSec: number): Promise<Spark
   return fillDailySeries(byDate, SPARKLINE_DAYS);
 }
 
-async function loadPublishingSparkline(db: Db, sinceSec: number): Promise<SparklinePoint[]> {
+async function loadPublishingSparkline(db: Db, sinceDate: Date): Promise<SparklinePoint[]> {
   // Publishing activity = successful IndexNow submissions per day. Reflects
   // how often we ship indexable content (event approvals, new venues, etc.)
   // and the cache TTL hides this from GSC for ~24h, so this is the freshest
-  // proxy available.
-  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${indexnowSubmissions.timestamp}, 'unixepoch')`;
+  // proxy available. strftime expects seconds; columns now store ms (post-0043).
+  const dayExpr = sql<string>`strftime('%Y-%m-%d', ${indexnowSubmissions.timestamp} / 1000, 'unixepoch')`;
   const rows = await db
     .select({
       day: dayExpr,
@@ -675,7 +666,7 @@ async function loadPublishingSparkline(db: Db, sinceSec: number): Promise<Sparkl
     })
     .from(indexnowSubmissions)
     .where(
-      and(gte(indexnowSubmissions.timestamp, sinceSec), eq(indexnowSubmissions.status, "success"))
+      and(gte(indexnowSubmissions.timestamp, sinceDate), eq(indexnowSubmissions.status, "success"))
     )
     .groupBy(dayExpr);
 
@@ -686,9 +677,8 @@ async function loadPublishingSparkline(db: Db, sinceSec: number): Promise<Sparkl
 
 // ── Row 4 — Activity feed ──────────────────────────────────────────
 
-async function loadActivity(db: Db, sinceMs: number, sinceSec: number): Promise<ActivityEntry[]> {
+async function loadActivity(db: Db, sinceDate: Date): Promise<ActivityEntry[]> {
   const limit = 20;
-  const sinceDate = new Date(sinceMs);
 
   const [adminRows, indexnowRows, conversionRows] = await Promise.all([
     db
@@ -715,7 +705,7 @@ async function loadActivity(db: Db, sinceMs: number, sinceSec: number): Promise<
       .from(indexnowSubmissions)
       .where(
         and(
-          gte(indexnowSubmissions.timestamp, sinceSec),
+          gte(indexnowSubmissions.timestamp, sinceDate),
           inArray(indexnowSubmissions.source, [...HIGH_PRIORITY_INDEXNOW_SOURCES]),
           eq(indexnowSubmissions.status, "success")
         )
@@ -733,7 +723,7 @@ async function loadActivity(db: Db, sinceMs: number, sinceSec: number): Promise<
       .where(
         and(
           inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, sinceSec)
+          gte(analyticsEvents.timestamp, sinceDate)
         )
       )
       .orderBy(desc(analyticsEvents.timestamp))
@@ -743,8 +733,10 @@ async function loadActivity(db: Db, sinceMs: number, sinceSec: number): Promise<
   const merged: ActivityEntry[] = [];
 
   for (const r of adminRows) {
+    // All three source columns are now ms-epoch Date objects post-0043;
+    // .getTime() everywhere, no more dual-format normalization needed.
     merged.push({
-      ts: r.createdAt instanceof Date ? r.createdAt.getTime() : Number(r.createdAt) * 1000,
+      ts: (r.createdAt as Date).getTime(),
       kind: "admin",
       description: `${r.action} on ${r.targetType} ${r.targetId.slice(0, 8)}`,
       actor: r.actorUserId ? r.actorUserId.slice(0, 8) : null,
@@ -760,7 +752,7 @@ async function loadActivity(db: Db, sinceMs: number, sinceSec: number): Promise<
       // ignore — leave firstUrl null
     }
     merged.push({
-      ts: r.timestamp * 1000,
+      ts: r.timestamp.getTime(),
       kind: "indexnow",
       description: `IndexNow ${r.source}${firstUrl ? ` · ${firstUrl}` : ""}`,
       href: firstUrl ?? undefined,
@@ -782,7 +774,7 @@ async function loadActivity(db: Db, sinceMs: number, sinceSec: number): Promise<
     }
     const label = r.eventName === "outbound_ticket_click" ? "Ticket click" : "Application click";
     merged.push({
-      ts: r.timestamp * 1000,
+      ts: r.timestamp.getTime(),
       kind: "conversion",
       description: `${label}${slug ? ` · ${slug}` : ""}`,
       href: url ?? undefined,

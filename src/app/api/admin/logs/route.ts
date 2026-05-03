@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
         stackTrace: errorLogs.stackTrace,
         userAgent: errorLogs.userAgent,
         source: errorLogs.source,
-        time: sql<string>`datetime(${errorLogs.timestamp}, 'unixepoch')`.as("time"),
+        // strftime/datetime expect seconds; column is now ms (post-0043).
+        time: sql<string>`datetime(${errorLogs.timestamp} / 1000, 'unixepoch')`.as("time"),
       })
       .from(errorLogs)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -78,7 +79,7 @@ export async function DELETE(request: NextRequest) {
       if (isNaN(days) || days < 1) {
         return NextResponse.json({ error: "olderThan must be a positive number" }, { status: 400 });
       }
-      const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+      const cutoff = new Date(Date.now() - days * 86400 * 1000);
       const result = await db.delete(errorLogs).where(lt(errorLogs.timestamp, cutoff));
       return NextResponse.json({ deleted: result.meta?.changes ?? 0 });
     }

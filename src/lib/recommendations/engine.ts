@@ -61,8 +61,8 @@ export type ActiveItem = {
   targetType: string;
   targetId: string | null;
   payload: Record<string, unknown> | null;
-  firstSeenAt: number;
-  lastSeenAt: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
 };
 
 export type ScanResult = {
@@ -72,10 +72,10 @@ export type ScanResult = {
   perRule: Array<{ ruleKey: string; matched: number; inserted: number; refreshed: number }>;
 };
 
-const ACTIVE_WINDOW_SECONDS = 7 * 86400;
+const ACTIVE_WINDOW_MS = 7 * 86400 * 1000;
 
 async function ensureRulesRegistered(db: Db, defs: RuleDefinition[]): Promise<Map<string, string>> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = new Date();
   const existing = await db.select().from(recommendationRules);
   const byKey = new Map<string, string>();
   for (const r of existing) byKey.set(r.ruleKey, r.id);
@@ -118,7 +118,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     .from(recommendationRules)
     .where(eq(recommendationRules.enabled, true));
   const enabledKeys = new Set(enabled.map((r) => r.ruleKey));
-  const now = Math.floor(Date.now() / 1000);
+  const now = new Date();
 
   let totalInserted = 0;
   let totalRefreshed = 0;
@@ -182,8 +182,8 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
 }
 
 export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
-  const now = Math.floor(Date.now() / 1000);
-  const cutoff = now - ACTIVE_WINDOW_SECONDS;
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - ACTIVE_WINDOW_MS);
 
   const rows = await db
     .select({
@@ -210,7 +210,9 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
         isNull(recommendationItems.actedAt),
         or(
           isNull(recommendationItems.dismissedUntil),
-          sql`${recommendationItems.dismissedUntil} < ${now}`
+          // ms-epoch comparison. The "snooze forever" sentinel below uses
+          // a far-future Date so this check still cleanly filters it out.
+          sql`${recommendationItems.dismissedUntil} < ${now.getTime()}`
         ),
         eq(recommendationRules.enabled, true)
       )
@@ -242,29 +244,32 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
   });
 }
 
+// Snooze-forever sentinel: a date far past anything we'd see in practice but
+// well within the safe Date range. Picked deliberately to land in the year
+// 9999 so the active-list filter (dismissedUntil < now) cleanly excludes it.
+const SNOOZE_FOREVER_DATE = new Date(8640000000000000); // ~year 275760, max valid Date
+
 export async function dismissItem(
   db: Db,
   itemId: string,
   opts: { days: number | null; reason?: string }
 ): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  // days === null => snooze forever (use a far-future sentinel so the active-list
-  // filter still applies cleanly without special-casing NULL).
-  const dismissedUntil = opts.days === null ? null : now + opts.days * 86400;
+  const now = new Date();
+  const dismissedUntil =
+    opts.days === null ? SNOOZE_FOREVER_DATE : new Date(now.getTime() + opts.days * 86400 * 1000);
   await db
     .update(recommendationItems)
     .set({
       dismissedAt: now,
-      dismissedUntil: opts.days === null ? Number.MAX_SAFE_INTEGER : dismissedUntil,
+      dismissedUntil,
       dismissedReason: opts.reason ?? null,
     })
     .where(eq(recommendationItems.id, itemId));
 }
 
 export async function markActed(db: Db, itemId: string): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
   await db
     .update(recommendationItems)
-    .set({ actedAt: now })
+    .set({ actedAt: new Date() })
     .where(eq(recommendationItems.id, itemId));
 }
