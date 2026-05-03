@@ -487,8 +487,11 @@ export const eventSchemaOrg = sqliteTable("event_schema_org", {
   schemaVenueLng: real("schema_venue_lng"),
   schemaImageUrl: text("schema_image_url"),
   schemaTicketUrl: text("schema_ticket_url"),
-  schemaPriceMin: real("schema_price_min"),
-  schemaPriceMax: real("schema_price_max"),
+  // Integer cents (post-0048). Mirrors the events.ticket_price_*_cents +
+  // vendor_fee_*_cents convention so SchemaOrgPanel can compare without
+  // multiplying. Inputs converted at the API boundary via dollarsToCents().
+  schemaPriceMinCents: integer("schema_price_min_cents"),
+  schemaPriceMaxCents: integer("schema_price_max_cents"),
   schemaEventStatus: text("schema_event_status"), // EventScheduled, EventCancelled, etc.
   schemaOrganizerName: text("schema_organizer_name"),
   schemaOrganizerUrl: text("schema_organizer_url"),
