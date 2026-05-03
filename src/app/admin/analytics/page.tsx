@@ -1275,6 +1275,23 @@ async function GoogleTab() {
   const sitemapWarningCount =
     sitemaps?.sitemaps.reduce((acc, s) => acc + (s.warnings ?? 0), 0) ?? 0;
 
+  // Compute true indexed count from gsc_inspection_state. The Sitemaps API's
+  // per-content `indexed` field has been deprecated by Google for years
+  // (always returns 0 now) — the real per-URL signal lives in URL Inspection,
+  // which our daily sweep persists into gsc_inspection_state.
+  const { gscInspectionState } = await import("@/lib/db/schema");
+  const { count, inArray } = await import("drizzle-orm");
+  const dbForIndexed = getCloudflareDb();
+  const [indexedRow, inspectedRow] = await Promise.all([
+    dbForIndexed
+      .select({ c: count() })
+      .from(gscInspectionState)
+      .where(inArray(gscInspectionState.lastVerdict, ["PASS", "SUCCESS"])),
+    dbForIndexed.select({ c: count() }).from(gscInspectionState),
+  ]);
+  const indexedCount = indexedRow[0]?.c ?? 0;
+  const inspectedCount = inspectedRow[0]?.c ?? 0;
+
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -1304,7 +1321,7 @@ async function GoogleTab() {
           <CardContent className="p-6">
             <p className="text-sm text-gray-600">Sitemap status</p>
             <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
-              {fmt(sitemaps?.totals.indexed ?? 0)} /{" "}
+              {fmt(indexedCount)} /{" "}
               <span className="text-base font-normal text-gray-500">
                 {fmt(sitemaps?.totals.submitted ?? 0)}
               </span>
@@ -1312,6 +1329,10 @@ async function GoogleTab() {
             <p className="text-xs text-gray-500 mt-1">
               indexed / submitted · {fmt(sitemapErrorCount)} errors · {fmt(sitemapWarningCount)}{" "}
               warnings
+            </p>
+            <p className="text-xs text-gray-400 mt-2">
+              Indexed = URLs with PASS verdict in our URL Inspection sweep ({fmt(inspectedCount)}{" "}
+              inspected). GSC Sitemaps API stopped reporting per-URL indexed counts in 2022.
             </p>
           </CardContent>
         </Card>
