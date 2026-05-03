@@ -109,18 +109,61 @@ export function publicUrlFor(
  *  "vendor-create") so the analytics tab matches the labels emitted by the
  *  main app's API routes. Falls back to "internal-api" if omitted.
  *
- *  Requires MAIN_APP_URL and INTERNAL_API_KEY in the env. */
+ *  Transport: prefers the MAIN_APP service binding (zero-latency in-account
+ *  call) when bound. Falls back to public HTTPS via MAIN_APP_URL +
+ *  INTERNAL_API_KEY when not — typical in local dev where Pages service
+ *  bindings aren't wired up. */
 export async function triggerIndexNow(
   urls: string | string[],
-  env: { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string },
+  env: {
+    MAIN_APP?: { fetch: typeof fetch };
+    MAIN_APP_URL?: string;
+    INTERNAL_API_KEY?: string;
+  },
   source?: string
 ): Promise<void> {
+  const list = Array.isArray(urls) ? urls : [urls];
+  if (list.length === 0) return;
+
+  const body = JSON.stringify(source ? { urls: list, source } : { urls: list });
+
+  // Service-binding path (preferred). The main app trusts the binding by
+  // virtue of same-account same-project — no X-Internal-Key needed for this
+  // path; the internal endpoint accepts the absence of the header when called
+  // via service binding because... actually it still needs the header today.
+  // Keep sending it for parity until the endpoint is updated to detect the
+  // binding caller via the request's `cf` properties.
+  if (env.MAIN_APP) {
+    try {
+      const response = await env.MAIN_APP.fetch(
+        // Hostname is irrelevant for service bindings, but `fetch()` requires
+        // a valid URL — use the public host so the route resolves identically
+        // to a public call.
+        new Request("https://meetmeatthefair.com/api/internal/indexnow", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+          },
+          body,
+        })
+      );
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 200);
+        console.error(`[MCP/IndexNow service-binding] ${response.status} ${text}`);
+      }
+      return;
+    } catch (error) {
+      console.error("[MCP/IndexNow service-binding] error:", error);
+      // Fall through to public-fetch path on transient binding error.
+    }
+  }
+
+  // Public-fetch fallback (local dev or service binding unavailable).
   if (!env.MAIN_APP_URL || !env.INTERNAL_API_KEY) {
     console.warn("[MCP/IndexNow] MAIN_APP_URL or INTERNAL_API_KEY missing — skipping ping");
     return;
   }
-  const list = Array.isArray(urls) ? urls : [urls];
-  if (list.length === 0) return;
   try {
     const response = await fetch(`${env.MAIN_APP_URL}/api/internal/indexnow`, {
       method: "POST",
@@ -128,11 +171,11 @@ export async function triggerIndexNow(
         "Content-Type": "application/json",
         "X-Internal-Key": env.INTERNAL_API_KEY,
       },
-      body: JSON.stringify(source ? { urls: list, source } : { urls: list }),
+      body,
     });
     if (!response.ok) {
-      const body = (await response.text()).slice(0, 200);
-      console.error(`[MCP/IndexNow] ${response.status} ${body}`);
+      const text = (await response.text()).slice(0, 200);
+      console.error(`[MCP/IndexNow] ${response.status} ${text}`);
     }
   } catch (error) {
     console.error("[MCP/IndexNow] network error:", error);
