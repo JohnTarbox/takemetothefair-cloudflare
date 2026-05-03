@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDays, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug } from "@/lib/utils";
+import { createSlug, dollarsToCents } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
@@ -216,8 +216,8 @@ export async function POST(request: NextRequest) {
       ),
       tags: JSON.stringify(["imported", "url-import"]),
       ticketUrl: gatedTicketUrl,
-      ticketPriceMin: event.ticketPriceMin,
-      ticketPriceMax: event.ticketPriceMax,
+      ticketPriceMinCents: dollarsToCents(event.ticketPriceMin),
+      ticketPriceMaxCents: dollarsToCents(event.ticketPriceMax),
       imageUrl: event.imageUrl,
       status: "APPROVED",
       sourceName: "url-import",

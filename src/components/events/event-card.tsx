@@ -172,10 +172,10 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                 </div>
               )
             )}
-            {event.ticketPriceMin !== null && (
+            {event.ticketPriceMinCents !== null && (
               <div className="flex items-center">
                 <Tag className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span>{formatPrice(event.ticketPriceMin, event.ticketPriceMax)}</span>
+                <span>{formatPrice(event.ticketPriceMinCents, event.ticketPriceMaxCents)}</span>
               </div>
             )}
           </div>

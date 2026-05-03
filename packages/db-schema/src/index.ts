@@ -108,13 +108,13 @@ export const events = sqliteTable(
     categories: text("categories").default("[]"),
     tags: text("tags").default("[]"),
     ticketUrl: text("ticket_url"),
-    // UNIT: dollars (float). NOT cents. Centralized parser/formatter at
-    // src/lib/format.ts:formatPrice. Don't introduce *100 / /100 conversions
-    // anywhere — if penny precision is ever needed (e.g. payment processing),
-    // migrate to integer cents in a dedicated workstream rather than mixing
-    // conventions.
-    ticketPriceMin: real("ticket_price_min"),
-    ticketPriceMax: real("ticket_price_max"),
+    // UNIT: integer cents. Migrated from REAL dollars in 0044. Display
+    // converts to dollars via formatPrice() in src/lib/format.ts (divides
+    // by 100 at the formatter boundary). Never reintroduce float dollars
+    // anywhere — accumulating arithmetic loses precision and breaks any
+    // future payment-processing integration.
+    ticketPriceMinCents: integer("ticket_price_min_cents"),
+    ticketPriceMaxCents: integer("ticket_price_max_cents"),
     imageUrl: text("image_url"),
     featured: integer("featured", { mode: "boolean" }).default(false),
     commercialVendorsAllowed: integer("commercial_vendors_allowed", { mode: "boolean" }).default(
@@ -134,10 +134,10 @@ export const events = sqliteTable(
     lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
     // Discontinuous dates: when true, eventDays hold arbitrary (non-contiguous) dates
     discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),
-    // Vendor decision-support fields
-    // UNIT: dollars (float). Same convention as ticketPriceMin/Max above.
-    vendorFeeMin: real("vendor_fee_min"),
-    vendorFeeMax: real("vendor_fee_max"),
+    // Vendor decision-support fields. Same integer-cents convention as
+    // ticketPriceMin/MaxCents above.
+    vendorFeeMinCents: integer("vendor_fee_min_cents"),
+    vendorFeeMaxCents: integer("vendor_fee_max_cents"),
     vendorFeeNotes: text("vendor_fee_notes"),
     indoorOutdoor: text("indoor_outdoor"), // INDOOR, OUTDOOR, MIXED
     estimatedAttendance: integer("estimated_attendance"),

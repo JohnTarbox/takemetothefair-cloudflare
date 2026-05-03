@@ -3,7 +3,13 @@ import { and, eq, gt, lt, or } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, eventDays } from "@/lib/db/schema";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug, computePublicDates } from "@/lib/utils";
+import {
+  createSlug,
+  getSlugPrefixBounds,
+  findUniqueSlug,
+  computePublicDates,
+  dollarsToCents,
+} from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
@@ -126,11 +132,11 @@ export async function POST(request: NextRequest) {
           categories: JSON.stringify(data.categories ?? []),
           tags: JSON.stringify(data.tags ?? []),
           ticketUrl: data.ticketUrl,
-          ticketPriceMin: data.ticketPriceMin,
-          ticketPriceMax: data.ticketPriceMax,
+          ticketPriceMinCents: dollarsToCents(data.ticketPriceMin),
+          ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
           imageUrl: data.imageUrl,
-          vendorFeeMin: data.vendorFeeMin,
-          vendorFeeMax: data.vendorFeeMax,
+          vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
+          vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
           vendorFeeNotes: data.vendorFeeNotes,
           indoorOutdoor: data.indoorOutdoor,
           estimatedAttendance: data.estimatedAttendance,
@@ -205,12 +211,12 @@ export async function POST(request: NextRequest) {
       categories: JSON.stringify(data.categories ?? []),
       tags: JSON.stringify(data.tags ?? []),
       ticketUrl: data.ticketUrl,
-      ticketPriceMin: data.ticketPriceMin,
-      ticketPriceMax: data.ticketPriceMax,
+      ticketPriceMinCents: dollarsToCents(data.ticketPriceMin),
+      ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
       imageUrl: data.imageUrl,
       status: finalStatus,
-      vendorFeeMin: data.vendorFeeMin,
-      vendorFeeMax: data.vendorFeeMax,
+      vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),
+      vendorFeeMaxCents: dollarsToCents(data.vendorFeeMax),
       vendorFeeNotes: data.vendorFeeNotes,
       indoorOutdoor: data.indoorOutdoor,
       estimatedAttendance: data.estimatedAttendance,

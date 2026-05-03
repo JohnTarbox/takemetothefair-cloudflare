@@ -50,12 +50,28 @@ export function formatDateRange(
   return s === e ? s! : `${s} – ${e}`;
 }
 
-/** Format price range */
-export function formatPrice(min?: number | null, max?: number | null): string {
-  if (!min && !max) return "Free";
-  if (min === max || !max) return `$${min}`;
-  if (!min) return `Up to $${max}`;
-  return `$${min} – $${max}`;
+/** Format price range. Inputs are integer CENTS (post-0044). $10 = 1000. */
+export function formatPrice(minCents?: number | null, maxCents?: number | null): string {
+  const renderOne = (cents: number) => {
+    const dollars = cents / 100;
+    return dollars % 1 === 0 ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+  };
+  const min = !minCents ? null : minCents;
+  const max = !maxCents ? null : maxCents;
+  if (min == null && max == null) return "Free";
+  if (min === max || max == null) return renderOne(min!);
+  if (min == null) return `Up to ${renderOne(max)}`;
+  return `${renderOne(min)} – ${renderOne(max)}`;
+}
+
+/** Convert dollars (float, MCP input) to integer cents (storage). Use at the
+ *  field-mapping boundary in admin tools. Match-paired with main app's
+ *  src/lib/utils.ts:dollarsToCents — single conversion convention. */
+export function dollarsToCents(dollars: unknown): number | null {
+  if (dollars == null) return null;
+  const n = typeof dollars === "number" ? dollars : Number(dollars);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
 }
 
 /** Strip LIKE wildcards from user input to prevent wildcard injection.

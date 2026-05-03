@@ -519,8 +519,8 @@ export default async function EventDetailPage({ params }: Props) {
                 url: "https://meetmeatthefair.com",
               }
         }
-        ticketPriceMin={event.ticketPriceMin}
-        ticketPriceMax={event.ticketPriceMax}
+        ticketPriceMin={event.ticketPriceMinCents}
+        ticketPriceMax={event.ticketPriceMaxCents}
         ticketUrl={event.ticketUrl}
         categories={parseJsonArray(event.categories)}
         datesConfirmed={event.datesConfirmed}
@@ -793,19 +793,19 @@ export default async function EventDetailPage({ params }: Props) {
                 <Tag className="w-5 h-5 text-royal mt-0.5" />
                 <div>
                   <p className="font-medium text-gray-900">
-                    {formatPrice(event.ticketPriceMin, event.ticketPriceMax)}
+                    {formatPrice(event.ticketPriceMinCents, event.ticketPriceMaxCents)}
                   </p>
                 </div>
               </div>
 
               {/* Vendor Decision Fields */}
-              {(event.vendorFeeMin != null || event.vendorFeeMax != null) && (
+              {(event.vendorFeeMinCents != null || event.vendorFeeMaxCents != null) && (
                 <div className="flex items-start gap-3">
                   <DollarSign className="w-5 h-5 text-green-600 mt-0.5" />
                   <div>
                     <p className="text-sm text-gray-500">Vendor/Booth Fee</p>
                     <p className="font-medium text-gray-900">
-                      {formatPrice(event.vendorFeeMin, event.vendorFeeMax)}
+                      {formatPrice(event.vendorFeeMinCents, event.vendorFeeMaxCents)}
                     </p>
                     {event.vendorFeeNotes && (
                       <p className="text-xs text-gray-500 mt-0.5">{event.vendorFeeNotes}</p>
