@@ -210,7 +210,7 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
         isNull(recommendationItems.actedAt),
         or(
           isNull(recommendationItems.dismissedUntil),
-          // ms-epoch comparison. The "snooze forever" sentinel below uses
+          // Date comparison via .getTime() ms. The "snooze forever" sentinel below uses
           // a far-future Date so this check still cleanly filters it out.
           sql`${recommendationItems.dismissedUntil} < ${now.getTime()}`
         ),
