@@ -8,6 +8,11 @@ import type {
 import { withTimeout } from "@/lib/fetch-timeout";
 import { EVENT_CATEGORIES } from "@/lib/constants";
 
+// Logging: diagnostic output here uses console.warn so it surfaces in
+// `wrangler tail` for an admin running an import while still satisfying the
+// no-console lint rule (warn/error allowed). The "[AI Extractor]" prefix
+// makes these easy to grep.
+
 const SYSTEM_PROMPT = `You are an expert at extracting event information from webpage text. You always respond with valid JSON only, no explanations.`;
 
 const MULTI_EVENT_SYSTEM_PROMPT = `You are an expert at extracting multiple event listings from webpage text. You find ALL events mentioned and return them as a JSON array. You always respond with valid JSON only, no explanations.`;
@@ -174,7 +179,7 @@ export async function extractEventData(
   const userPrompt = buildUserPrompt(truncatedContent, contextInfo);
 
   // Call Workers AI with Llama 3.1 8B using messages format for better instruction following
-  console.log("[AI Extractor] Calling Workers AI, content length:", truncatedContent.length);
+  console.warn("[AI Extractor] Calling Workers AI, content length:", truncatedContent.length);
 
   // Workers AI model name. The unquantized "@cf/meta/llama-3.1-8b-instruct"
   // works at runtime but isn't included in @cloudflare/workers-types' typed
@@ -197,13 +202,13 @@ export async function extractEventData(
   // Log raw response for debugging
   const responseText =
     typeof response === "string" ? response : (response as { response?: string }).response || "";
-  console.log("[AI Extractor] Raw AI response:", responseText.substring(0, 1500));
+  console.warn("[AI Extractor] Raw AI response:", responseText.substring(0, 1500));
 
   // Parse the response
   const extracted = parseAiResponse(response as AiTextGenerationOutput, metadata);
   const confidence = calculateConfidence(extracted, metadata);
 
-  console.log("[AI Extractor] Parsed extraction:", JSON.stringify(extracted, null, 2));
+  console.warn("[AI Extractor] Parsed extraction:", JSON.stringify(extracted, null, 2));
 
   return { extracted, confidence };
 }
@@ -244,7 +249,7 @@ export async function extractMultipleEvents(
   const userPrompt = buildMultiEventPrompt(truncatedContent, contextInfo);
 
   // Call Workers AI with Llama 3.1 8B using messages format
-  console.log("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);
+  console.warn("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);
 
   const response = await withTimeout(
     // See note on first ai.run call above re: typed model registry.
@@ -263,13 +268,13 @@ export async function extractMultipleEvents(
   // Log raw response for debugging
   const responseText =
     typeof response === "string" ? response : (response as { response?: string }).response || "";
-  console.log("[AI Extractor Multi] Raw AI response:", responseText.substring(0, 2000));
+  console.warn("[AI Extractor Multi] Raw AI response:", responseText.substring(0, 2000));
 
   // Parse the response as array
   const events = parseMultiEventResponse(response as AiTextGenerationOutput, metadata);
   const confidence = calculateMultiEventConfidence(events, metadata);
 
-  console.log("[AI Extractor Multi] Parsed", events.length, "events");
+  console.warn("[AI Extractor Multi] Parsed", events.length, "events");
 
   return { events, confidence };
 }
