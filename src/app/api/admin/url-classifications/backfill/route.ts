@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { eq, isNotNull, or } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { loadClassifications, gateUrlForField, extractDomain } from "@/lib/url-classification";
@@ -32,10 +32,8 @@ interface AffectedRow {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const fail = await requireAdminAuth(request);
+  if (fail) return fail;
 
   const db = getCloudflareDb();
   try {
