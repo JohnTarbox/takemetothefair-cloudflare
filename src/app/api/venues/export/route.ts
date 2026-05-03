@@ -37,7 +37,7 @@ export async function GET(request: Request) {
 
     if (query) {
       conditions.push(
-        sql`(${venues.name} LIKE ${'%' + sanitizeLikeInput(query) + '%'} OR ${venues.city} LIKE ${'%' + sanitizeLikeInput(query) + '%'})`
+        sql`(${venues.name} LIKE ${"%" + sanitizeLikeInput(query) + "%"} OR ${venues.city} LIKE ${"%" + sanitizeLikeInput(query) + "%"})`
       );
     }
 
@@ -53,12 +53,14 @@ export async function GET(request: Request) {
         capacity: venues.capacity,
         amenities: venues.amenities,
         website: venues.website,
+        // end_date is ms-epoch; unixepoch() is seconds — multiply for an apples
+        // comparison. See venues/page.tsx for the same pattern + rationale.
         eventCount: sql<number>`(
           SELECT COUNT(*) FROM events
           WHERE events.venue_id = venues.id
           AND events.status = 'APPROVED'
-          AND events.end_date >= unixepoch('now')
-        )`.as('event_count'),
+          AND events.end_date >= (unixepoch('now') * 1000)
+        )`.as("event_count"),
       })
       .from(venues)
       .where(and(...conditions))
@@ -75,7 +77,17 @@ export async function GET(request: Request) {
     };
 
     // Build CSV
-    const headers = ["Venue", "Address", "City", "State", "Zip", "Capacity", "Amenities", "Website", "Upcoming Events"];
+    const headers = [
+      "Venue",
+      "Address",
+      "City",
+      "State",
+      "Zip",
+      "Capacity",
+      "Amenities",
+      "Website",
+      "Upcoming Events",
+    ];
     const rows = results.map((v) => {
       const amenities = parseJsonArray(v.amenities);
       return [
@@ -101,7 +113,12 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    await logError(db, { message: "Error exporting venues", error, source: "api/venues/export", request });
+    await logError(db, {
+      message: "Error exporting venues",
+      error,
+      source: "api/venues/export",
+      request,
+    });
     return NextResponse.json({ error: "Failed to export venues" }, { status: 500 });
   }
 }

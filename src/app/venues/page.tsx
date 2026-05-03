@@ -97,12 +97,15 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
       return [];
     }
 
-    // Single query: Get venues with event counts using subquery
+    // Single query: Get venues with event counts using subquery.
+    // events.end_date is ms-epoch (Drizzle mode:"timestamp"), unixepoch() returns
+    // seconds — multiply by 1000 to compare apples to apples. Without this, the
+    // filter is always-true (1.78e12 >= 1.78e9) and silently includes past events.
     const eventCountSubquery = sql<number>`(
       SELECT COUNT(*) FROM events
       WHERE events.venue_id = venues.id
       AND events.status = 'APPROVED'
-      AND events.end_date >= unixepoch('now')
+      AND events.end_date >= (unixepoch('now') * 1000)
     )`;
 
     if (searchParams.missingGoogle === "true") {
