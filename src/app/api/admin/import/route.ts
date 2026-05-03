@@ -50,7 +50,7 @@ async function findOrCreateVenue(
     if (venueState) {
       const matchingVenue = existingVenues.find((v) => v.state.toUpperCase().trim() === venueState);
       if (matchingVenue) {
-        console.log(
+        console.warn(
           `[findOrCreateVenue] Matched existing venue "${matchingVenue.name}" by state ${venueState}`
         );
         return { id: matchingVenue.id, newSlug: null };
@@ -58,7 +58,7 @@ async function findOrCreateVenue(
     }
     // No state match either - just use the first existing venue with this slug
     // This is safer than creating duplicates with no distinguishing info
-    console.log(
+    console.warn(
       `[findOrCreateVenue] Using existing venue "${existingVenues[0].name}" for "${decodedName}" (no city/state match available)`
     );
     return { id: existingVenues[0].id, newSlug: null };
@@ -323,10 +323,10 @@ export async function POST(request: Request) {
             }
             // Log if scraper didn't find dates
             if (!details.startDate && event.sourceName === "mainepublic.org") {
-              console.log(
+              console.warn(
                 `[Import Debug] No dates found for ${event.name} from ${event.sourceUrl}`
               );
-              console.log(`[Import Debug] Details returned:`, JSON.stringify(details));
+              console.warn(`[Import Debug] Details returned:`, JSON.stringify(details));
             }
           } catch (scrapeError) {
             await logError(db, {
@@ -350,18 +350,18 @@ export async function POST(request: Request) {
           const decodedVenueName = decodeHtmlEntities(eventData.venue.name);
           const venueSlug = createSlug(decodedVenueName);
 
-          console.log(
+          console.warn(
             `[Venue Match] Event: ${eventData.name}, Venue: ${decodedVenueName}, City from scraper: "${venueCity}"`
           );
 
           // Check if venue exists with matching name AND city
           const existingVenues = await db.select().from(venues).where(eq(venues.slug, venueSlug));
 
-          console.log(
+          console.warn(
             `[Venue Match] Found ${existingVenues.length} existing venue(s) with slug "${venueSlug}"`
           );
           existingVenues.forEach((v, i) => {
-            console.log(
+            console.warn(
               `[Venue Match]   ${i + 1}. "${v.name}" in "${v.city}", ${v.state} (id: ${v.id})`
             );
           });
@@ -371,14 +371,14 @@ export async function POST(request: Request) {
             // Look for venue with matching city
             matchedVenue = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
             if (matchedVenue) {
-              console.log(`[Venue Match] Matched existing venue by name+city: ${matchedVenue.id}`);
+              console.warn(`[Venue Match] Matched existing venue by name+city: ${matchedVenue.id}`);
             } else {
-              console.log(`[Venue Match] No venue matched city "${venueCity}" - will create new`);
+              console.warn(`[Venue Match] No venue matched city "${venueCity}" - will create new`);
             }
           } else if (existingVenues.length > 0 && !venueCity) {
             // No city from scraper - DON'T fall back to first match, create new venue instead
             // This prevents matching "DoubleTree Portland" when we don't know the city
-            console.log(
+            console.warn(
               `[Venue Match] No city from scraper - will create new venue to avoid wrong match`
             );
             matchedVenue = null;
@@ -394,7 +394,7 @@ export async function POST(request: Request) {
               if (venueResult.newSlug) {
                 results.venuesCreated++;
                 newVenueSlugsForIndexNow.push(venueResult.newSlug);
-                console.log(`[Venue Match] Created new venue: ${venueResult.id}`);
+                console.warn(`[Venue Match] Created new venue: ${venueResult.id}`);
               }
             }
           }
