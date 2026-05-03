@@ -37,7 +37,8 @@ import {
   contentLinks,
 } from "@/lib/db/schema";
 import { eq, and, sql, ne, gte, lt, like, desc, or } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { isPublicVendorStatus, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
+import type { EventVendorStatus } from "@/lib/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
@@ -941,13 +942,9 @@ export default async function EventDetailPage({ params }: Props) {
                   <div className="text-center">
                     <Badge
                       variant={
-                        vendorInfo.existingApplication.status === "CONFIRMED" ||
-                        vendorInfo.existingApplication.status === "APPROVED"
-                          ? "success"
-                          : vendorInfo.existingApplication.status === "REJECTED" ||
-                              vendorInfo.existingApplication.status === "CANCELLED"
-                            ? "danger"
-                            : "warning"
+                        STATUS_BADGE_VARIANTS[
+                          vendorInfo.existingApplication.status as EventVendorStatus
+                        ] ?? "warning"
                       }
                     >
                       Application {vendorInfo.existingApplication.status}
