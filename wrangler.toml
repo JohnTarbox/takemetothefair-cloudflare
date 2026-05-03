@@ -31,3 +31,17 @@ id = "b7aeca316e7a41108fd375be2e152cff"
 [[r2_buckets]]
 binding = "VENDOR_ASSETS"
 bucket_name = "mmatf-vendor-assets"
+
+# Queue producers: writes go from request handlers to a queue, the MCP
+# Worker drains and dispatches asynchronously. Lets us return responses
+# without waiting for IndexNow API or Resend round-trips.
+#
+# Pages projects can produce but not consume — see mcp-server/wrangler.toml
+# for the consumer registration.
+[[queues.producers]]
+binding = "EMAIL_JOBS"
+queue = "email-jobs"
+
+[[queues.producers]]
+binding = "INDEXNOW_PINGS"
+queue = "indexnow-pings"

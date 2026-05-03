@@ -28,6 +28,16 @@ interface Env {
   // typically absent in local dev. When present, internal API calls (IndexNow
   // ping, future cross-Worker calls) skip the public-internet round-trip.
   MAIN_APP?: Fetcher;
+  // Cloudflare Queues — producer side. Same bindings as the main app, so
+  // MCP tools can enqueue work to the same consumer (this Worker, below).
+  EMAIL_JOBS?: Queue;
+  INDEXNOW_PINGS?: Queue;
+  // Resend API key — consumer needs it to actually send emails. Set via
+  // `wrangler secret put RESEND_API_KEY`.
+  RESEND_API_KEY?: string;
+  // IndexNow API key — same pattern, for the queue consumer to call
+  // api.indexnow.org directly without going through the main app.
+  INDEXNOW_KEY?: string;
   // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
   // Empty in local dev; populated in production so `whoami` can answer
   // "which bundle is the server running?" without a client round-trip.
@@ -331,9 +341,38 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Queue consumer
+// ---------------------------------------------------------------------------
+//
+// Two queues land here:
+//   - email-jobs    → drain & send via Resend (fan-out, max_batch_size=10)
+//   - indexnow-pings → aggregate URLs across batch, single Bing submit
+//
+// Dispatch by `batch.queue` since a single Worker can subscribe to multiple
+// queues and the handler needs to know which one fired. Implementations
+// live in queue-consumers.ts to keep this file focused on routing.
+import { handleEmailBatch, handleIndexNowBatch } from "./queue-consumers.js";
+
+type EmailJobMessage = Parameters<typeof handleEmailBatch>[0]["messages"][number]["body"];
+type IndexNowMessage = Parameters<typeof handleIndexNowBatch>[0]["messages"][number]["body"];
+
+// ---------------------------------------------------------------------------
 // Main fetch handler
 // ---------------------------------------------------------------------------
 export default {
+  async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (batch.queue === "email-jobs") {
+      await handleEmailBatch(batch as MessageBatch<EmailJobMessage>, env);
+      return;
+    }
+    if (batch.queue === "indexnow-pings") {
+      await handleIndexNowBatch(batch as MessageBatch<IndexNowMessage>, env);
+      return;
+    }
+    console.warn(`[queue] unknown queue '${batch.queue}' — acking without action`);
+    for (const m of batch.messages) m.ack();
+  },
+
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     // Cron pattern from wrangler.toml drives `controller.cron`. We don't
     // currently dispatch on it (only one cron registered), but logging it

@@ -55,3 +55,37 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # handler in src/index.ts dispatches based on which cron expression fires.
 [triggers]
 crons = ["0 6 * * *"] # 06:00 UTC daily — overnight in NA, low-traffic window
+
+# Queue producers — also wired here so MCP tools can enqueue (e.g., MCP's
+# create_event triggers an IndexNow ping; same code path as the main app).
+[[queues.producers]]
+binding = "EMAIL_JOBS"
+queue = "email-jobs"
+
+[[queues.producers]]
+binding = "INDEXNOW_PINGS"
+queue = "indexnow-pings"
+
+# Queue consumers — only Workers can consume (Pages projects cannot), so
+# all queue dispatch logic lives in this Worker.
+#
+# Tuning knobs:
+# - max_batch_size: drain up to N messages per invocation. IndexNow's API
+#   accepts up to 10k URLs per submit, so batching is high-leverage. Email
+#   has no batch endpoint, so size=1 is fine — bigger batches just mean
+#   longer per-invocation runtime.
+# - max_batch_timeout: how long to wait for a batch to fill before draining
+#   what we have. Longer = better batching, but delays delivery.
+# - max_retries: queue-level retry count before message goes to DLQ.
+#   Defaults to 3. Beyond that, Cloudflare drops to DLQ if configured.
+[[queues.consumers]]
+queue = "email-jobs"
+max_batch_size = 10
+max_batch_timeout = 5     # seconds — emails should feel near-real-time
+max_retries = 3
+
+[[queues.consumers]]
+queue = "indexnow-pings"
+max_batch_size = 100      # batch many URLs into one Bing submit
+max_batch_timeout = 30    # tolerable; IndexNow doesn't need to be instant
+max_retries = 3
