@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { VendorEnhancedProfilePanel } from "@/components/admin/VendorEnhancedProfilePanel";
+import { VendorLogoUpload } from "@/components/admin/VendorLogoUpload";
 
 export const runtime = "edge";
 
@@ -21,6 +22,7 @@ interface Vendor {
   description: string | null;
   vendorType: string | null;
   website: string | null;
+  logoUrl: string | null;
   verified: boolean;
   commercial: boolean;
   canSelfConfirm: boolean;
@@ -183,7 +185,8 @@ export default function EditVendorPage() {
       </div>
 
       {vendor && (
-        <div className="mb-6">
+        <div className="mb-6 space-y-6">
+          <VendorLogoUpload vendorId={vendor.id} currentLogoUrl={vendor.logoUrl} />
           <VendorEnhancedProfilePanel
             vendorId={vendor.id}
             enhancedProfile={vendor.enhancedProfile}
