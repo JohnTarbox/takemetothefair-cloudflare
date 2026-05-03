@@ -149,7 +149,7 @@ export async function pingIndexNow(
 
 /** Construct the canonical public URL for a content slug. */
 export function indexNowUrlFor(
-  kind: "events" | "venues" | "vendors" | "blog",
+  kind: "events" | "venues" | "vendors" | "promoters" | "blog",
   slug: string
 ): string {
   return `https://${HOST}/${kind}/${slug}`;
