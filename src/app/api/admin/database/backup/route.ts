@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
-import { auth } from "@/lib/auth";
+import { requireAdminAuth } from "@/lib/api-auth";
 import { logError } from "@/lib/logger";
 import { checkAdminGeoRestriction } from "@/lib/geo-security";
 
@@ -11,16 +11,11 @@ export async function GET(request: NextRequest) {
   // Geo-restriction check for sensitive database operations
   const geoResult = checkAdminGeoRestriction(request);
   if (!geoResult.allowed) {
-    return NextResponse.json(
-      { error: "Access denied from your location" },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: "Access denied from your location" }, { status: 403 });
   }
 
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const fail = await requireAdminAuth(request);
+  if (fail) return fail;
 
   const errorDb = getCloudflareDb();
   try {
@@ -28,14 +23,18 @@ export async function GET(request: NextRequest) {
     const db = env.DB;
 
     // Get all table names (excluding SQLite internals and D1 migrations)
-    const tablesResult = await db.prepare(`
+    const tablesResult = await db
+      .prepare(
+        `
       SELECT name FROM sqlite_master
       WHERE type='table'
       AND name NOT LIKE 'sqlite_%'
       AND name NOT LIKE '_cf_%'
       AND name != 'd1_migrations'
       ORDER BY name
-    `).all();
+    `
+      )
+      .all();
 
     const tables = tablesResult.results.map((row) => row.name as string);
 
@@ -46,9 +45,10 @@ export async function GET(request: NextRequest) {
     // For each table, get schema and data
     for (const tableName of tables) {
       // Get CREATE TABLE statement
-      const schemaResult = await db.prepare(
-        `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`
-      ).bind(tableName).first();
+      const schemaResult = await db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
+        .bind(tableName)
+        .first();
 
       if (schemaResult?.sql) {
         sqlDump += `-- Table: ${tableName}\n`;
@@ -72,19 +72,23 @@ export async function GET(request: NextRequest) {
             return `'${String(val).replace(/'/g, "''")}'`;
           });
 
-          sqlDump += `INSERT INTO "${tableName}" (${columns.map(c => `"${c}"`).join(", ")}) VALUES (${values.join(", ")});\n`;
+          sqlDump += `INSERT INTO "${tableName}" (${columns.map((c) => `"${c}"`).join(", ")}) VALUES (${values.join(", ")});\n`;
         }
         sqlDump += "\n";
       }
     }
 
     // Get indexes
-    const indexesResult = await db.prepare(`
+    const indexesResult = await db
+      .prepare(
+        `
       SELECT sql FROM sqlite_master
       WHERE type='index'
       AND sql IS NOT NULL
       AND name NOT LIKE 'sqlite_%'
-    `).all();
+    `
+      )
+      .all();
 
     if (indexesResult.results.length > 0) {
       sqlDump += `-- Indexes\n`;
@@ -107,7 +111,12 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    await logError(errorDb, { message: "Backup error", error, source: "api/admin/database/backup", request });
+    await logError(errorDb, {
+      message: "Backup error",
+      error,
+      source: "api/admin/database/backup",
+      request,
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create backup" },
       { status: 500 }
