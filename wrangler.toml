@@ -3,6 +3,13 @@ compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = ".vercel/output/static"
 
+# Smart Placement: lets Cloudflare run the Worker in the region nearest the
+# slow dependencies (D1, in our case) rather than nearest the user. For an
+# app that's mostly DB-bound on every render, this typically improves p50/p95
+# without us needing to think about region. No code change needed.
+[placement]
+mode = "smart"
+
 [ai]
 binding = "AI"
 
