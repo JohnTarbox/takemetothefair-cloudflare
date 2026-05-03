@@ -13,7 +13,12 @@ import { getUnclassifiedOutboundDestinations } from "../url-classification-disco
 
 const queryResults: Array<unknown[]> = [];
 
-const fakeDb = {
+// Cast to `any` so the line-39 `typeof fakeDb.where` reference (deep in the
+// chain-mock thenable below) typechecks. Test mocks that need both sync chain
+// access and async-await behavior don't fit cleanly into a static type — this
+// is the conventional escape hatch.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const fakeDb: any = {
   select: vi.fn(() => fakeDb),
   from: vi.fn(async () => {
     // Query 2 (no .where()) terminates here. If query 1 is in progress,
@@ -21,7 +26,7 @@ const fakeDb = {
     return queryResults.shift() ?? [];
   }),
   where: vi.fn(async () => queryResults.shift() ?? []),
-} as unknown;
+};
 
 // Drizzle's chain semantics need .from() to be sometimes-await-able and
 // sometimes-chainable. The tests below pop result sets in the order:
@@ -33,7 +38,7 @@ const fakeDb = {
 // so .where() chaining still works. We do this by overriding .from()
 // to return a thenable that's also chainable.
 
-(fakeDb as { from: unknown }).from = vi.fn(() => {
+fakeDb.from = vi.fn(() => {
   // Return a thenable so `await db.select(...).from(table)` resolves
   // to the next queue entry, while still letting callers chain .where().
   const chain: PromiseLike<unknown[]> & { where: typeof fakeDb.where } = {
