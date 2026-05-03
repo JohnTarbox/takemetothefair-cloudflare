@@ -17,21 +17,49 @@ import slugify from "slugify";
  * an MCP tool posting "Earth Expo &amp; Convention Center" would not dedup
  * against the existing "Earth Expo & Convention Center" row.
  *
+ * Single source of truth — the previous local copy at
+ * src/lib/url-import/html-parser.ts was deleted in favour of this map. Maps
+ * to proper Unicode characters (e.g. `&copy;` → `©`, not `(c)`) — accurate
+ * for storage and dedup, fine for downstream AI processing.
+ *
  * Skip for URL fields (URL-encoded `&` is meaningful in query strings),
  * email/phone/state codes, enum values, and FK ids.
  */
+const HTML_ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&apos;": "'",
+  "&nbsp;": " ",
+  // Typographic
+  "&ndash;": "–",
+  "&mdash;": "—",
+  "&hellip;": "…",
+  "&bull;": "•",
+  "&middot;": "·",
+  "&ldquo;": "“",
+  "&rdquo;": "”",
+  "&lsquo;": "‘",
+  "&rsquo;": "’",
+  // Symbol
+  "&copy;": "©",
+  "&reg;": "®",
+  "&trade;": "™",
+};
+
 export function decodeHtmlEntities(text: string): string {
   if (!text) return text;
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCharCode(parseInt(code, 16)));
+  let decoded = text;
+  for (const [entity, char] of Object.entries(HTML_ENTITIES)) {
+    decoded = decoded.replace(new RegExp(entity, "g"), char);
+  }
+  // Numeric entities (decimal + hex). Covers everything not in the named map.
+  decoded = decoded.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
+  decoded = decoded.replace(/&#x([0-9a-fA-F]+);/g, (_, code) =>
+    String.fromCharCode(parseInt(code, 16))
+  );
+  return decoded;
 }
 
 /**
