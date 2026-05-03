@@ -89,3 +89,13 @@ queue = "indexnow-pings"
 max_batch_size = 100      # batch many URLs into one Bing submit
 max_batch_timeout = 30    # tolerable; IndexNow doesn't need to be instant
 max_retries = 3
+
+# Cloudflare Workflows — durable multi-step jobs that survive Worker
+# restarts. Currently one workflow registered as proof-of-pattern; future
+# long-running jobs (URL imports, bulk catalogs syncs) can be added here.
+# WorkflowEntrypoint subclasses live in src/workflows/ and must be exported
+# from the Worker entry (src/index.ts) for Cloudflare to register them.
+[[workflows]]
+name = "schema-org-sync"
+binding = "SCHEMA_ORG_SYNC"
+class_name = "SchemaOrgSyncWorkflow"

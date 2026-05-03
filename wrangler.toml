@@ -45,3 +45,13 @@ queue = "email-jobs"
 [[queues.producers]]
 binding = "INDEXNOW_PINGS"
 queue = "indexnow-pings"
+
+# Workflow binding — lets the main app trigger long-running jobs whose
+# implementations live in the MCP Worker. Class definition is in
+# mcp-server/src/workflows/. Pages projects can BIND to a workflow defined
+# elsewhere; only Workers can host the WorkflowEntrypoint class itself.
+[[workflows]]
+name = "schema-org-sync"
+binding = "SCHEMA_ORG_SYNC"
+class_name = "SchemaOrgSyncWorkflow"
+script_name = "meetmeatthefair-mcp"
