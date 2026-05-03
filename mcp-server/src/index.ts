@@ -297,23 +297,25 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
 // and skip the failed task — never throw, otherwise Cloudflare retries the
 // whole cron run on a tighter schedule.
 async function runScheduledRecommendationsScan(env: Env): Promise<void> {
-  if (!env.MAIN_APP) {
-    console.error("[cron] MAIN_APP service binding missing — skipping recommendations scan");
-    return;
-  }
+  // Prefer the MAIN_APP service binding when it's wired up (currently
+  // disabled — see wrangler.toml comment). Falls back to public HTTPS via
+  // MAIN_APP_URL + INTERNAL_API_KEY so the cron still works today.
+  const url = "https://meetmeatthefair.com/api/admin/recommendations/scan";
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      // /api/admin/recommendations/scan accepts mmatf_ tokens OR the
+      // internal key, so this auths without an admin session.
+      "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+    },
+  };
+
   try {
-    const response = await env.MAIN_APP.fetch(
-      new Request("https://meetmeatthefair.com/api/admin/recommendations/scan", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Internal-key auth — same as the MCP→main IndexNow path. The
-          // /api/admin/recommendations/scan endpoint accepts mmatf_ tokens
-          // OR the internal key, so this works without an admin session.
-          "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
-        },
-      })
-    );
+    const response = env.MAIN_APP
+      ? await env.MAIN_APP.fetch(new Request(url, init))
+      : await fetch(url, init);
+
     if (!response.ok) {
       const text = (await response.text()).slice(0, 300);
       console.error(`[cron] recommendations scan ${response.status}: ${text}`);
