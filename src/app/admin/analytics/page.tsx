@@ -728,6 +728,8 @@ function ActivityIcon({ kind }: { kind: ActivityEntry["kind"] }) {
 async function RecommendationsTab() {
   const { getActiveItems } = await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
+  const { RecommendationBulkActions } =
+    await import("@/components/admin/recommendation-bulk-actions");
   const { RecommendationScanButton } =
     await import("@/components/admin/recommendation-scan-button");
 
@@ -927,6 +929,14 @@ async function RecommendationsTab() {
                               {rationaleFor(group)}
                             </p>
                             <p className="text-xs text-gray-400 mt-1 ml-6">rule {group.ruleKey}</p>
+                          </div>
+                          {/* Bulk actions render only for groups with >=3 items
+                              (single/double-item rules don't benefit). */}
+                          <div className="shrink-0">
+                            <RecommendationBulkActions
+                              ruleId={group.ruleId}
+                              itemCount={group.items.length}
+                            />
                           </div>
                         </div>
                       </summary>
