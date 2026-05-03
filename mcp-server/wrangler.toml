@@ -19,6 +19,16 @@ database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 MAIN_APP_URL = "https://meetmeatthefair.com"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 
+# Service Binding to the main app's Pages project. Lets us call internal
+# endpoints (currently /api/internal/indexnow) without the public-internet
+# round-trip OR the X-Internal-Key auth ceremony — service-bound calls are
+# trusted-by-default by virtue of being same-account same-project. The fetch
+# helper still falls back to public HTTPS if MAIN_APP isn't bound (local dev,
+# where Pages services aren't easy to wire up).
+[[services]]
+binding = "MAIN_APP"
+service = "takemetothefair"
+
 [[routes]]
 pattern = "mcp.meetmeatthefair.com"
 custom_domain = true

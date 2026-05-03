@@ -24,6 +24,10 @@ interface Env {
   MCP_OBJECT: DurableObjectNamespace;
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  // Optional Pages service binding — bound in production via wrangler.toml,
+  // typically absent in local dev. When present, internal API calls (IndexNow
+  // ping, future cross-Worker calls) skip the public-internet round-trip.
+  MAIN_APP?: Fetcher;
   // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
   // Empty in local dev; populated in production so `whoami` can answer
   // "which bundle is the server running?" without a client round-trip.
