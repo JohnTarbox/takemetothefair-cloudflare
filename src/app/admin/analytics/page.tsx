@@ -7,6 +7,7 @@ import {
   ArrowUp,
   BarChart3,
   CheckCircle2,
+  ClipboardList,
   DollarSign,
   Search,
   TrendingUp,
@@ -133,7 +134,8 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <RevenueCard snapshot={snapshot} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <RecommendationsSummaryCardView snapshot={snapshot} />
         <SiteHealthCardView snapshot={snapshot} />
         <IndexNowCardView snapshot={snapshot} />
         <RecentErrorsCardView snapshot={snapshot} />
@@ -380,6 +382,62 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
                   hasErrors ? "text-red-600" : c.warnings > 0 ? "text-amber-600" : "text-gray-500"
                 }`}
               />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.recommendations;
+  const sevStyle: Record<"red" | "yellow" | "blue", { border: string; bg: string; icon: string }> =
+    {
+      red: { border: "border-red-300", bg: "bg-red-100", icon: "text-red-600" },
+      yellow: { border: "border-amber-300", bg: "bg-amber-100", icon: "text-amber-600" },
+      blue: { border: "border-blue-300", bg: "bg-blue-100", icon: "text-blue-600" },
+    };
+  const style = c.maxSeverity
+    ? sevStyle[c.maxSeverity]
+    : { border: "", bg: "bg-gray-100", icon: "text-gray-500" };
+  return (
+    <Link href="/admin/analytics?tab=recommendations" className="block hover:opacity-90">
+      <Card className={`h-full ${style.border}`}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+                Recommendations
+              </p>
+              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+                {fmt(c.totalItems)}
+              </p>
+              <div className="mt-2 text-xs">
+                {c.totalItems === 0 ? (
+                  <span className="text-gray-500">All clear</span>
+                ) : (
+                  <>
+                    <span className="text-gray-500">
+                      across {fmt(c.totalRules)} rule{c.totalRules === 1 ? "" : "s"}
+                    </span>
+                    <div className="mt-1 flex gap-2">
+                      {c.redCount > 0 && (
+                        <span className="text-red-700 font-semibold">{fmt(c.redCount)} red</span>
+                      )}
+                      {c.yellowCount > 0 && (
+                        <span className="text-amber-700">{fmt(c.yellowCount)} yellow</span>
+                      )}
+                      {c.blueCount > 0 && (
+                        <span className="text-blue-700">{fmt(c.blueCount)} blue</span>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${style.bg}`}>
+              <ClipboardList className={`w-5 h-5 ${style.icon}`} />
             </div>
           </div>
         </CardContent>
