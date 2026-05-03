@@ -277,9 +277,74 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
 }
 
 // ---------------------------------------------------------------------------
+// Cron Triggers — scheduled handler
+// ---------------------------------------------------------------------------
+//
+// Wraps a few daily/hourly housekeeping tasks that previously required an
+// admin to click a button or rely on an external scheduler. Each invocation
+// fans out to main-app sweep endpoints via the MAIN_APP service binding so
+// the work happens in the main app's request context (D1, KV, Bing/GSC
+// secrets, etc.) — keeping the MCP worker focused on MCP and treating the
+// main app as the system-of-record for sweeps.
+//
+// Conservative rollout: only the recommendations-scan task is wired today.
+// site-health/sweep + vendors/sweep-enhanced use external secrets and have
+// destructive surface area (Bing API quota, vendor flag flips); they'll be
+// added incrementally once we trust the cron pattern.
+//
+// On schedule failure: cron-triggered errors don't surface to a user; they
+// land in `wrangler tail` only. We log them to console.error for visibility
+// and skip the failed task — never throw, otherwise Cloudflare retries the
+// whole cron run on a tighter schedule.
+async function runScheduledRecommendationsScan(env: Env): Promise<void> {
+  // Prefer the MAIN_APP service binding when it's wired up (currently
+  // disabled — see wrangler.toml comment). Falls back to public HTTPS via
+  // MAIN_APP_URL + INTERNAL_API_KEY so the cron still works today.
+  const url = "https://meetmeatthefair.com/api/admin/recommendations/scan";
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      // /api/admin/recommendations/scan accepts mmatf_ tokens OR the
+      // internal key, so this auths without an admin session.
+      "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+    },
+  };
+
+  try {
+    const response = env.MAIN_APP
+      ? await env.MAIN_APP.fetch(new Request(url, init))
+      : await fetch(url, init);
+
+    if (!response.ok) {
+      const text = (await response.text()).slice(0, 300);
+      console.error(`[cron] recommendations scan ${response.status}: ${text}`);
+      return;
+    }
+    const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    console.warn(
+      `[cron] recommendations scan ok — scanned=${result.scannedRules} resolved=${result.resolved}`
+    );
+  } catch (error) {
+    console.error("[cron] recommendations scan threw:", error);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main fetch handler
 // ---------------------------------------------------------------------------
 export default {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Cron pattern from wrangler.toml drives `controller.cron`. We don't
+    // currently dispatch on it (only one cron registered), but logging it
+    // here makes the wrangler-tail trail unambiguous when more crons get
+    // added.
+    console.warn(
+      `[cron] firing for cron='${controller.cron}' at ${new Date(controller.scheduledTime).toISOString()}`
+    );
+    ctx.waitUntil(runScheduledRecommendationsScan(env));
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const authHeader = request.headers.get("Authorization");

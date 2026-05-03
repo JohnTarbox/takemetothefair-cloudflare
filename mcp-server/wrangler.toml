@@ -19,15 +19,17 @@ database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 MAIN_APP_URL = "https://meetmeatthefair.com"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 
-# Service Binding to the main app's Pages project. Lets us call internal
-# endpoints (currently /api/internal/indexnow) without the public-internet
-# round-trip OR the X-Internal-Key auth ceremony — service-bound calls are
-# trusted-by-default by virtue of being same-account same-project. The fetch
-# helper still falls back to public HTTPS if MAIN_APP isn't bound (local dev,
-# where Pages services aren't easy to wire up).
-[[services]]
-binding = "MAIN_APP"
-service = "takemetothefair"
+# Service Binding to the main app — DISABLED 2026-05-03 because the bare
+# `service = "takemetothefair"` form errors with Cloudflare API code 10143
+# ("Worker 'takemetothefair' not found"). The binding API expects a Worker
+# target; our main app is on Pages, which needs a different binding syntax
+# that's still TBD. The MCP code paths are written defensively (env.MAIN_APP
+# is optional; both triggerIndexNow and the cron scheduled handler fall back
+# to public HTTPS via MAIN_APP_URL + INTERNAL_API_KEY). Re-enable once we
+# verify the correct Pages-target syntax against the live API.
+# [[services]]
+# binding = "MAIN_APP"
+# service = "takemetothefair"
 
 [[routes]]
 pattern = "mcp.meetmeatthefair.com"
@@ -45,3 +47,11 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MeetMeAtTheFairMCP"]
+
+# Cron Triggers — scheduled tasks fan out to main-app sweep endpoints via
+# the MAIN_APP service binding. Conservative rollout: only the
+# recommendations-scan is enabled today (it's idempotent + low-cost). Add
+# additional crons here as confidence in the pattern builds; the scheduled
+# handler in src/index.ts dispatches based on which cron expression fires.
+[triggers]
+crons = ["0 6 * * *"] # 06:00 UTC daily — overnight in NA, low-traffic window
