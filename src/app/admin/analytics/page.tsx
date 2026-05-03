@@ -1904,10 +1904,11 @@ async function SiteHealthTab() {
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-900">URL Inspection sweep</p>
           <p className="text-xs text-gray-600 mt-1">
-            Inspects up to 200 URLs per click against GSC&apos;s URL Inspection API and persists
+            Inspects up to 8 URLs per click against GSC&apos;s URL Inspection API and persists
             verdicts to <code>gsc_inspection_state</code>. Drives the Google tab&apos;s &quot;real
-            indexed&quot; count and detects new health issues. Run repeatedly until inspected count
-            stops growing.
+            indexed&quot; count and detects new health issues. Each inspection takes 3-5 seconds;
+            larger batches hit Cloudflare&apos;s 30s request timeout. Run repeatedly until inspected
+            count stops growing (~250+ clicks for the full ~2,000-URL sitemap).
           </p>
           <p className="text-xs text-gray-500 mt-1 tabular-nums">
             Currently inspected: {fmt(inspectionCount)} URLs

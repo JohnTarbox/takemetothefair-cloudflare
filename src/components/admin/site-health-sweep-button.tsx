@@ -22,10 +22,29 @@ export function SiteHealthSweepButton() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/site-health/sweep?batchSize=200", { method: "POST" });
-      const data = (await res.json()) as { success: boolean; data?: RunResult; error?: string };
-      if (!res.ok || !data.success) {
-        setError(data.error ?? res.statusText);
+      // batchSize=8 is empirically inside Cloudflare's 30s request budget
+      // (each URL Inspection call is ~3-5s). Larger batches (the old 200
+      // default) timed out and Cloudflare returned an HTML 504 — which the
+      // old client-side res.json() then failed to parse, masking the real
+      // problem.
+      const res = await fetch("/api/admin/site-health/sweep?batchSize=8", { method: "POST" });
+      // Read as text first so we can surface non-JSON responses (HTML 504s,
+      // empty bodies, edge redirects) instead of a misleading "JSON.parse
+      // unexpected character" error.
+      const raw = await res.text();
+      let data: { success?: boolean; data?: RunResult; error?: string } | null = null;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        // Non-JSON response — show what we got.
+        setError(`HTTP ${res.status}: ${raw.slice(0, 200) || res.statusText || "empty response"}`);
+        // Refresh anyway since some URLs may have been persisted before
+        // the timeout fired.
+        router.refresh();
+        return;
+      }
+      if (!res.ok || !data?.success) {
+        setError(data?.error ?? `HTTP ${res.status}: ${res.statusText}`);
       } else if (data.data) {
         setLast(data.data);
         router.refresh();

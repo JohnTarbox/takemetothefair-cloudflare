@@ -11,7 +11,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 });
   }
   const url = new URL(request.url);
-  const batchSize = Math.min(parseInt(url.searchParams.get("batchSize") || "200", 10), 500);
+  // Default 8 — each URL Inspection call is ~3-5s, and Cloudflare's
+  // request budget is 30s. Larger callers (cron / manual curl) can pass
+  // ?batchSize=N up to 500, but they need to be running outside of a
+  // browser-driven Pages Function to avoid the timeout.
+  const batchSize = Math.min(parseInt(url.searchParams.get("batchSize") || "8", 10), 500);
 
   const env = getCloudflareEnv() as unknown as ScEnv;
   const db = getCloudflareDb();
