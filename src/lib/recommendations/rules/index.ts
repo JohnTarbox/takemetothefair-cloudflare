@@ -12,6 +12,11 @@ import {
 } from "./enhanced-profile-renewals";
 import { eventsMissingApplicationUrlRule } from "./events-missing-application-url";
 import { seoPosition1120Rule } from "./seo-position-11-20";
+import {
+  eventsShortDescriptionRule,
+  vendorsShortDescriptionRule,
+  venuesShortDescriptionRule,
+} from "./short-descriptions";
 import { vendorsNoDescriptionRule } from "./vendors-no-description";
 
 export const ALL_RULES: RuleDefinition[] = [
@@ -19,6 +24,9 @@ export const ALL_RULES: RuleDefinition[] = [
   enhancedProfileCohortRule,
   seoPosition1120Rule,
   eventsMissingApplicationUrlRule,
+  eventsShortDescriptionRule,
+  venuesShortDescriptionRule,
+  vendorsShortDescriptionRule,
   enhancedProfileRenewalCriticalRule,
   enhancedProfileRenewalWarningRule,
   enhancedProfileRenewalNoticeRule,
