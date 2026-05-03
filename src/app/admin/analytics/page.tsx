@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ClipboardList,
   DollarSign,
+  FileText,
   Search,
   TrendingUp,
 } from "lucide-react";
@@ -141,7 +142,16 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <RecentErrorsCardView snapshot={snapshot} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+      <BlogCoverageCardView snapshot={snapshot} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <SparklineCard
+          title="Search visibility (last 30 days)"
+          subtitle="Daily Google search clicks"
+          points={snapshot.searchVisibilitySparkline}
+          colorClass="stroke-violet-600"
+          fillClass="fill-violet-100"
+        />
         <SparklineCard
           title="Conversions (last 30 days)"
           subtitle="Daily outbound ticket + application clicks"
@@ -383,6 +393,61 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
                 }`}
               />
             </div>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.blogCoverage;
+  // Three-row mini-table inside one full-width card. Click anywhere → coverage page.
+  // Background color reflects the worst gap (red if any group is 100% uncovered).
+  const groups = [
+    { label: "Events with 0 posts", uncovered: c.events.uncovered, total: c.events.total },
+    { label: "Vendors with 0 posts", uncovered: c.vendors.uncovered, total: c.vendors.total },
+    { label: "Venues with 0 posts", uncovered: c.venues.uncovered, total: c.venues.total },
+  ];
+  const worstRatio = Math.max(...groups.map((g) => (g.total > 0 ? g.uncovered / g.total : 0)));
+  const border = worstRatio >= 0.9 ? "border-red-300" : worstRatio >= 0.5 ? "border-amber-300" : "";
+  return (
+    <Link href="/admin/coverage" className="block hover:opacity-90 mb-6">
+      <Card className={border}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+                Blog coverage gaps
+              </p>
+              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+                {fmt(c.totalUncovered)}
+                <span className="text-sm font-normal text-gray-500 ml-2">
+                  / {fmt(c.totalEntities)} uncovered
+                </span>
+              </p>
+            </div>
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-violet-100 shrink-0">
+              <FileText className="w-5 h-5 text-violet-600" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {groups.map((g) => {
+              const pct = g.total > 0 ? Math.round((g.uncovered / g.total) * 100) : 0;
+              const tone =
+                pct >= 90 ? "text-red-700" : pct >= 50 ? "text-amber-700" : "text-gray-900";
+              return (
+                <div key={g.label} className="rounded-md border border-gray-100 bg-gray-50 p-3">
+                  <p className="text-xs text-gray-600">{g.label}</p>
+                  <p className={`text-lg font-bold mt-1 tabular-nums ${tone}`}>
+                    {fmt(g.uncovered)}{" "}
+                    <span className="text-xs font-normal text-gray-500">
+                      / {fmt(g.total)} ({pct}%)
+                    </span>
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>
@@ -744,6 +809,13 @@ async function RecommendationsTab() {
     if (item.targetType === "venue" && item.payload && typeof item.payload.slug === "string") {
       return `/venues/${item.payload.slug}`;
     }
+    if (
+      item.targetType === "static_page" &&
+      item.payload &&
+      typeof item.payload.path === "string"
+    ) {
+      return item.payload.path;
+    }
     return null;
   }
 
@@ -756,6 +828,9 @@ async function RecommendationsTab() {
     }
     if (item.payload && typeof item.payload.query === "string") {
       return item.payload.query;
+    }
+    if (item.payload && typeof item.payload.label === "string") {
+      return item.payload.label;
     }
     return item.targetId ?? "(global)";
   }
@@ -775,6 +850,12 @@ async function RecommendationsTab() {
     }
     if (item.targetType === "venue") {
       return descLen;
+    }
+    if (item.targetType === "static_page") {
+      const status = typeof p.status === "string" ? p.status : null;
+      if (status === "missing") return "no meta description";
+      const path = typeof p.path === "string" ? p.path : null;
+      return [path, descLen].filter(Boolean).join(" · ") || null;
     }
     if (item.targetType === "gsc_query") {
       const pos = typeof p.position === "number" ? `pos ${p.position}` : null;

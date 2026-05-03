@@ -17,6 +17,7 @@ import {
   vendorsShortDescriptionRule,
   venuesShortDescriptionRule,
 } from "./short-descriptions";
+import { staticPagesShortDescriptionRule } from "./static-pages-short-description";
 import { vendorsNoDescriptionRule } from "./vendors-no-description";
 
 export const ALL_RULES: RuleDefinition[] = [
@@ -27,6 +28,7 @@ export const ALL_RULES: RuleDefinition[] = [
   eventsShortDescriptionRule,
   venuesShortDescriptionRule,
   vendorsShortDescriptionRule,
+  staticPagesShortDescriptionRule,
   enhancedProfileRenewalCriticalRule,
   enhancedProfileRenewalWarningRule,
   enhancedProfileRenewalNoticeRule,
