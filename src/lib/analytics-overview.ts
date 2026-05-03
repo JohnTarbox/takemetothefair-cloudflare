@@ -275,7 +275,10 @@ async function loadSearchVisibility(env: ScEnv, days: number): Promise<SearchVis
           const start = isoDaysAgo(3 + days);
           return { startDate: start, endDate: end };
         })();
-    const result = await getSiteSearchQueries(env, { dateRange, rowLimit: 1 });
+    // rowLimit drives totals: getSiteSearchQueries computes totals.clicks by
+    // summing the *returned* rows (after slice). Use 500 (API max) so the
+    // headline KPI captures essentially all clicks, not just the top query.
+    const result = await getSiteSearchQueries(env, { dateRange, rowLimit: 500 });
     const current = result.totals.clicks;
 
     // Previous window: roll the same number of days back.
@@ -287,7 +290,7 @@ async function loadSearchVisibility(env: ScEnv, days: number): Promise<SearchVis
     );
     const priorResult = await getSiteSearchQueries(env, {
       dateRange: { startDate: priorStart, endDate: priorEnd },
-      rowLimit: 1,
+      rowLimit: 500,
     });
     const previous = priorResult.totals.clicks;
 
