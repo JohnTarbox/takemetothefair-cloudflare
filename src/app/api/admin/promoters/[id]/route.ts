@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { promoters, events, users } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
 
@@ -49,7 +50,12 @@ export async function GET(request: NextRequest, { params }: Params) {
       events: promoterEvents,
     });
   } catch (error) {
-    await logError(db, { message: "Failed to fetch promoter", error, source: "api/admin/promoters/[id]", request });
+    await logError(db, {
+      message: "Failed to fetch promoter",
+      error,
+      source: "api/admin/promoters/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch promoter" }, { status: 500 });
   }
 }
@@ -72,6 +78,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
+    // Read prior slug so we can ping IndexNow for both old + new on rename.
+    const [prior] = await db
+      .select({ slug: promoters.slug })
+      .from(promoters)
+      .where(eq(promoters.id, id))
+      .limit(1);
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() };
     if (data.companyName) {
       updateData.companyName = data.companyName;
@@ -90,9 +103,25 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       .where(eq(promoters.id, id))
       .limit(1);
 
+    // IndexNow: ping on every update (content changed). Include the prior
+    // slug too if it differs, so search engines can crawl-and-redirect.
+    if (updatedPromoter?.slug) {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      const urls = [indexNowUrlFor("promoters", updatedPromoter.slug)];
+      if (prior?.slug && prior.slug !== updatedPromoter.slug) {
+        urls.push(indexNowUrlFor("promoters", prior.slug));
+      }
+      await pingIndexNow(db, urls, env, "promoter.update");
+    }
+
     return NextResponse.json(updatedPromoter);
   } catch (error) {
-    await logError(db, { message: "Failed to update promoter", error, source: "api/admin/promoters/[id]", request });
+    await logError(db, {
+      message: "Failed to update promoter",
+      error,
+      source: "api/admin/promoters/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to update promoter" }, { status: 500 });
   }
 }
@@ -108,11 +137,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   const db = getCloudflareDb();
   try {
     // Get promoter to find user
-    const promoter = await db
-      .select()
-      .from(promoters)
-      .where(eq(promoters.id, id))
-      .limit(1);
+    const promoter = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
 
     if (promoter.length > 0) {
       // Reset user role to USER
@@ -122,7 +147,12 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     await db.delete(promoters).where(eq(promoters.id, id));
     return NextResponse.json({ success: true });
   } catch (error) {
-    await logError(db, { message: "Failed to delete promoter", error, source: "api/admin/promoters/[id]", request });
+    await logError(db, {
+      message: "Failed to delete promoter",
+      error,
+      source: "api/admin/promoters/[id]",
+      request,
+    });
     return NextResponse.json({ error: "Failed to delete promoter" }, { status: 500 });
   }
 }

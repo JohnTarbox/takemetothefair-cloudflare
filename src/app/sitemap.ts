@@ -1,6 +1,6 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
+import { events, venues, vendors, promoters, blogPosts } from "@/lib/db/schema";
 import { eq, and, or, gte, isNull, count } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
@@ -131,6 +131,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.8,
     },
     {
+      url: `${baseUrl}/promoters`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.7,
+    },
+    {
       url: `${baseUrl}/blog`,
       lastModified: new Date(),
       changeFrequency: "daily",
@@ -231,6 +237,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
+    // Get promoters (no public/private gate — promoters table has no status
+    // column; verified is just a trust badge, not a visibility filter).
+    const promoterResults = await db
+      .select({ slug: promoters.slug, updatedAt: promoters.updatedAt })
+      .from(promoters);
+
+    const promoterPages: MetadataRoute.Sitemap = promoterResults.map((p) => ({
+      url: `${baseUrl}/promoters/${p.slug}`,
+      lastModified: safeLastMod(p.updatedAt),
+      changeFrequency: "monthly" as const,
+      priority: 0.5,
+    }));
+
     // Get published blog posts (need `tags` for the tag-landing-page entries below)
     const blogResults = await db
       .select({
@@ -325,6 +344,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       ...eventPages,
       ...venuePages,
       ...vendorPages,
+      ...promoterPages,
       ...blogPages,
       ...tagPages,
     ];

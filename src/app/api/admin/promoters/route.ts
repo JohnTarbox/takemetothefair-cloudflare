@@ -7,6 +7,8 @@ import { createSlug } from "@/lib/utils";
 import { getPromotersWithCounts } from "@/lib/queries";
 import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 
 export const runtime = "edge";
 
@@ -21,7 +23,12 @@ export async function GET(request: NextRequest) {
     const promotersWithCounts = await getPromotersWithCounts(db);
     return NextResponse.json(promotersWithCounts);
   } catch (error) {
-    await logError(db, { message: "Failed to fetch promoters", error, source: "api/admin/promoters", request });
+    await logError(db, {
+      message: "Failed to fetch promoters",
+      error,
+      source: "api/admin/promoters",
+      request,
+    });
     return NextResponse.json({ error: "Failed to fetch promoters" }, { status: 500 });
   }
 }
@@ -67,9 +74,21 @@ export async function POST(request: NextRequest) {
       .where(eq(promoters.id, promoterId))
       .limit(1);
 
+    // IndexNow: ping the canonical promoter URL on create. Fire-and-forget;
+    // failure is logged inside pingIndexNow and never blocks the response.
+    if (newPromoter?.slug) {
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("promoters", newPromoter.slug), env, "promoter.create");
+    }
+
     return NextResponse.json(newPromoter, { status: 201 });
   } catch (error) {
-    await logError(db, { message: "Failed to create promoter", error, source: "api/admin/promoters", request });
+    await logError(db, {
+      message: "Failed to create promoter",
+      error,
+      source: "api/admin/promoters",
+      request,
+    });
     return NextResponse.json({ error: "Failed to create promoter" }, { status: 500 });
   }
 }
