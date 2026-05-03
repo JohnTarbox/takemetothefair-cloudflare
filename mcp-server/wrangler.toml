@@ -4,6 +4,12 @@ workers_dev = true
 compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Smart Placement: same rationale as the main app — most MCP tools are
+# D1-bound, so Cloudflare placing the Worker near the DB is the right
+# default. No code change.
+[placement]
+mode = "smart"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "takemetothefair-db"
