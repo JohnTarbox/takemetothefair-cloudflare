@@ -407,6 +407,74 @@ export async function getSiteSearchQueries(
   return result;
 }
 
+export type DailyClicksRow = {
+  date: string; // YYYY-MM-DD
+  clicks: number;
+  impressions: number;
+};
+
+/**
+ * Per-day site-wide clicks/impressions aggregation. Uses dimensions: ['date']
+ * with no query/page filter so each row is a daily total — the right shape for
+ * a sparkline. Caches independently from the per-query report.
+ */
+export async function getDailyClicks(
+  env: ScEnv,
+  opts: { days?: number; skipCache?: boolean } = {}
+): Promise<DailyClicksRow[]> {
+  const siteUrl = resolveSiteUrl(env);
+  const kv = env.RATE_LIMIT_KV;
+  const days = Math.max(1, Math.min(opts.days ?? 30, 90));
+  const endDate = isoDaysAgo(3); // GSC reporting lag
+  const startDate = isoDaysAgo(3 + days);
+
+  const body = {
+    startDate,
+    endDate,
+    dimensions: ["date"],
+    rowLimit: days + 5, // a touch more headroom; one row per day
+  };
+
+  const cacheKey = `sc:daily-clicks:${await hashRequest({ siteUrl, body })}`;
+  if (!opts.skipCache && kv) {
+    const cached = await kv.get<DailyClicksRow[]>(cacheKey, "json");
+    if (cached) return cached;
+  }
+
+  const token = await getAccessToken(env, opts.skipCache ?? false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ScApiError(res.status, text.slice(0, 500));
+  }
+
+  const payload = (await res.json()) as { rows?: GscApiRow[] };
+  const rows = (payload.rows ?? []).map((r) => ({
+    date: r.keys?.[0] ?? "",
+    clicks: r.clicks ?? 0,
+    impressions: r.impressions ?? 0,
+  }));
+
+  if (kv) {
+    await kv.put(cacheKey, JSON.stringify(rows), { expirationTtl: REPORT_CACHE_TTL });
+  }
+  return rows;
+}
+
 export type QueryPageRow = {
   path: string;
   clicks: number;

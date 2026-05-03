@@ -20,6 +20,7 @@ import * as schema from "@/lib/db/schema";
 import {
   adminActions,
   analyticsEvents,
+  contentLinks,
   errorLogs,
   events,
   indexnowSubmissions,
@@ -33,7 +34,13 @@ import {
   type BingEnv,
   type BingIndexNowQuota,
 } from "@/lib/bing-webmaster";
-import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
+import {
+  ScApiError,
+  ScConfigError,
+  getDailyClicks,
+  getSiteSearchQueries,
+  type ScEnv,
+} from "@/lib/search-console";
 import { getCurrentIssues } from "@/lib/site-health";
 import { getActiveItems } from "@/lib/recommendations/engine";
 
@@ -113,6 +120,14 @@ export type RecentErrorsCard = {
   topSources: Array<{ source: string; count: number }>;
 };
 
+export type BlogCoverageCard = {
+  events: { uncovered: number; total: number };
+  vendors: { uncovered: number; total: number };
+  venues: { uncovered: number; total: number };
+  totalUncovered: number;
+  totalEntities: number;
+};
+
 export type RecommendationsSummaryCard = {
   totalItems: number;
   totalRules: number;
@@ -146,8 +161,10 @@ export type OverviewSnapshot = {
   indexnow: IndexNowCard;
   recentErrors: RecentErrorsCard;
   recommendations: RecommendationsSummaryCard;
+  blogCoverage: BlogCoverageCard;
   conversionsSparkline: SparklinePoint[];
   publishingSparkline: SparklinePoint[];
+  searchVisibilitySparkline: SparklinePoint[];
   activity: ActivityEntry[];
 };
 
@@ -193,8 +210,10 @@ export async function loadOverviewSnapshot(
     indexnow,
     recentErrors,
     recommendations,
+    blogCoverage,
     conversionsSparkline,
     publishingSparkline,
+    searchVisibilitySparkline,
     activity,
   ] = await Promise.all([
     loadSearchVisibility(env, days),
@@ -205,8 +224,10 @@ export async function loadOverviewSnapshot(
     loadIndexNow(db, env, todayStartUtcSec),
     loadRecentErrors(db, last24hSec),
     loadRecommendationsSummary(db),
+    loadBlogCoverage(db),
     loadConversionsSparkline(db, sparklineSinceSec),
     loadPublishingSparkline(db, sparklineSinceSec),
+    loadSearchVisibilitySparkline(env),
     loadActivity(db, sinceMs, sinceSec),
   ]);
 
@@ -221,9 +242,76 @@ export async function loadOverviewSnapshot(
     indexnow,
     recentErrors,
     recommendations,
+    blogCoverage,
     conversionsSparkline,
     publishingSparkline,
+    searchVisibilitySparkline,
     activity,
+  };
+}
+
+async function loadSearchVisibilitySparkline(env: ScEnv): Promise<SparklinePoint[]> {
+  // GSC daily aggregation. Returns 0-filled empty series on config/api errors so
+  // the UI doesn't break — error visibility lives in the Google tab.
+  try {
+    const rows = await getDailyClicks(env, { days: SPARKLINE_DAYS });
+    const byDate = new Map<string, number>();
+    for (const r of rows) byDate.set(r.date, r.clicks);
+    return fillDailySeries(byDate, SPARKLINE_DAYS);
+  } catch (e) {
+    if (e instanceof ScConfigError || e instanceof ScApiError) {
+      return emptyDailySeries(SPARKLINE_DAYS);
+    }
+    throw e;
+  }
+}
+
+async function loadBlogCoverage(db: Db): Promise<BlogCoverageCard> {
+  // Mirrors the math used by /admin/coverage: an entity is "uncovered" when no
+  // content_links row references it. Counts only APPROVED events to match the
+  // denominator on the coverage page (uncovered + covered = approved set).
+  const [
+    eventTotalRows,
+    vendorTotalRows,
+    venueTotalRows,
+    eventCoveredRows,
+    vendorCoveredRows,
+    venueCoveredRows,
+  ] = await Promise.all([
+    db.select({ c: count() }).from(events).where(eq(events.status, "APPROVED")),
+    db.select({ c: count() }).from(vendors),
+    db.select({ c: count() }).from(venues),
+    db
+      .select({ c: sql<number>`COUNT(DISTINCT ${contentLinks.targetId})` })
+      .from(contentLinks)
+      .where(eq(contentLinks.targetType, "EVENT")),
+    db
+      .select({ c: sql<number>`COUNT(DISTINCT ${contentLinks.targetId})` })
+      .from(contentLinks)
+      .where(eq(contentLinks.targetType, "VENDOR")),
+    db
+      .select({ c: sql<number>`COUNT(DISTINCT ${contentLinks.targetId})` })
+      .from(contentLinks)
+      .where(eq(contentLinks.targetType, "VENUE")),
+  ]);
+
+  const eventTotal = eventTotalRows[0]?.c ?? 0;
+  const vendorTotal = vendorTotalRows[0]?.c ?? 0;
+  const venueTotal = venueTotalRows[0]?.c ?? 0;
+  const eventCovered = eventCoveredRows[0]?.c ?? 0;
+  const vendorCovered = vendorCoveredRows[0]?.c ?? 0;
+  const venueCovered = venueCoveredRows[0]?.c ?? 0;
+
+  const eventsUncovered = Math.max(0, eventTotal - eventCovered);
+  const vendorsUncovered = Math.max(0, vendorTotal - vendorCovered);
+  const venuesUncovered = Math.max(0, venueTotal - venueCovered);
+
+  return {
+    events: { uncovered: eventsUncovered, total: eventTotal },
+    vendors: { uncovered: vendorsUncovered, total: vendorTotal },
+    venues: { uncovered: venuesUncovered, total: venueTotal },
+    totalUncovered: eventsUncovered + vendorsUncovered + venuesUncovered,
+    totalEntities: eventTotal + vendorTotal + venueTotal,
   };
 }
 
