@@ -621,7 +621,9 @@ export const blogPostsRelations = relations(blogPosts, ({ one }) => ({
   author: one(users, { fields: [blogPosts.authorId], references: [users.id] }),
 }));
 
-// Analytics Events table — server-side event tracking
+// Analytics Events table — server-side event tracking.
+// timestamp: ms-epoch (Drizzle mode:"timestamp"). Migrated from raw seconds
+// in 0043 — single timestamp convention across the codebase.
 export const analyticsEvents = sqliteTable(
   "analytics_events",
   {
@@ -630,7 +632,7 @@ export const analyticsEvents = sqliteTable(
       .$defaultFn(() => crypto.randomUUID()),
     eventName: text("event_name").notNull(),
     eventCategory: text("event_category").notNull(),
-    timestamp: integer("timestamp").notNull(),
+    timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
     properties: text("properties").default("{}"),
     userId: text("user_id"),
     source: text("source"),
@@ -642,6 +644,7 @@ export const analyticsEvents = sqliteTable(
 );
 
 // Site Health — see drizzle/0034_add_site_health.sql
+// All *At columns: ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const healthIssues = sqliteTable(
   "health_issues",
   {
@@ -654,9 +657,9 @@ export const healthIssues = sqliteTable(
     severity: text("severity").notNull(),
     url: text("url"),
     message: text("message"),
-    firstDetectedAt: integer("first_detected_at").notNull(),
-    lastDetectedAt: integer("last_detected_at").notNull(),
-    resolvedAt: integer("resolved_at"),
+    firstDetectedAt: integer("first_detected_at", { mode: "timestamp" }).notNull(),
+    lastDetectedAt: integer("last_detected_at", { mode: "timestamp" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
   },
   (table) => [
     index("idx_health_issues_source").on(table.source, table.lastDetectedAt),
@@ -666,9 +669,9 @@ export const healthIssues = sqliteTable(
 
 export const healthIssueSnoozes = sqliteTable("health_issue_snoozes", {
   fingerprint: text("fingerprint").primaryKey(),
-  snoozedUntil: integer("snoozed_until").notNull(),
+  snoozedUntil: integer("snoozed_until", { mode: "timestamp" }).notNull(),
   snoozedBy: text("snoozed_by").notNull(),
-  snoozedAt: integer("snoozed_at").notNull(),
+  snoozedAt: integer("snoozed_at", { mode: "timestamp" }).notNull(),
   note: text("note"),
 });
 
@@ -676,7 +679,7 @@ export const gscInspectionState = sqliteTable(
   "gsc_inspection_state",
   {
     url: text("url").primaryKey(),
-    lastInspectedAt: integer("last_inspected_at").notNull(),
+    lastInspectedAt: integer("last_inspected_at", { mode: "timestamp" }).notNull(),
     lastVerdict: text("last_verdict"),
     lastCoverageState: text("last_coverage_state"),
     source: text("source").notNull().default("sitemap"),
@@ -684,14 +687,15 @@ export const gscInspectionState = sqliteTable(
   (table) => [index("idx_gsc_inspection_state_stale").on(table.lastInspectedAt)]
 );
 
-// IndexNow Submissions table — records every pingIndexNow() attempt for observability
+// IndexNow Submissions table — records every pingIndexNow() attempt for observability.
+// timestamp: ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
   "indexnow_submissions",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    timestamp: integer("timestamp").notNull(),
+    timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
     source: text("source").notNull(),
     urls: text("urls").notNull().default("[]"),
     urlCount: integer("url_count").notNull().default(0),
@@ -731,10 +735,11 @@ export const urlDomainClassifications = sqliteTable(
   (table) => [index("idx_udc_domain_type").on(table.domainType)]
 );
 
-// Error Logs table
+// Error Logs table.
+// timestamp: ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const errorLogs = sqliteTable("error_logs", {
   id: text("id").primaryKey(),
-  timestamp: integer("timestamp").notNull(),
+  timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
   level: text("level").notNull().default("error"),
   message: text("message").notNull(),
   context: text("context").default("{}"),
@@ -758,7 +763,8 @@ export const recommendationRules = sqliteTable("recommendation_rules", {
   severity: text("severity").notNull(),
   category: text("category"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-  createdAt: integer("created_at").notNull(),
+  // ms-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
 export const recommendationItems = sqliteTable(
@@ -773,14 +779,14 @@ export const recommendationItems = sqliteTable(
     targetType: text("target_type").notNull(),
     targetId: text("target_id"),
     payloadJson: text("payload_json"),
-    // All four timestamps stored as raw INTEGER seconds-epoch, matching
-    // health_issue_snoozes / indexnow_submissions / analytics_events.
-    firstSeenAt: integer("first_seen_at").notNull(),
-    lastSeenAt: integer("last_seen_at").notNull(),
-    dismissedAt: integer("dismissed_at"),
-    dismissedUntil: integer("dismissed_until"),
+    // All five timestamps: ms-epoch (mode:"timestamp"). Migrated from raw
+    // seconds in 0043 alongside the other historically-seconds tables.
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp" }).notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    dismissedAt: integer("dismissed_at", { mode: "timestamp" }),
+    dismissedUntil: integer("dismissed_until", { mode: "timestamp" }),
     dismissedReason: text("dismissed_reason"),
-    actedAt: integer("acted_at"),
+    actedAt: integer("acted_at", { mode: "timestamp" }),
   },
   (t) => [
     index("idx_recommendation_items_rule_id").on(t.ruleId),

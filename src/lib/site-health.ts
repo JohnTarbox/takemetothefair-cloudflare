@@ -31,10 +31,10 @@ export interface HealthRow {
   severity: HealthSeverity;
   url: string | null;
   message: string | null;
-  firstDetectedAt: number;
-  lastDetectedAt: number;
-  resolvedAt: number | null;
-  snoozedUntil: number | null;
+  firstDetectedAt: Date;
+  lastDetectedAt: Date;
+  resolvedAt: Date | null;
+  snoozedUntil: Date | null;
 }
 
 /** Stable fingerprint for an issue. Lower-cases the URL so trivial casing
@@ -157,7 +157,7 @@ export async function refreshIssues(
   scEnv: ScEnv
 ): Promise<{ inserted: number; updated: number; resolved: number }> {
   const fresh = await collectFreshIssues(bingEnv, scEnv);
-  const now = Math.floor(Date.now() / 1000);
+  const now = new Date();
 
   // Pre-compute fingerprints for the fresh batch
   const freshWithFp = await Promise.all(
@@ -216,7 +216,7 @@ export async function getCurrentIssues(
   db: Db,
   opts: { hideSnoozed?: boolean; source?: HealthSource; severity?: HealthSeverity } = {}
 ): Promise<HealthRow[]> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = new Date();
 
   // Single LEFT JOIN to fold in snooze state.
   const rawRows = await db
@@ -253,7 +253,8 @@ export async function getCurrentIssues(
   return rows.filter((row) => {
     if (opts.source && row.source !== opts.source) return false;
     if (opts.severity && row.severity !== opts.severity) return false;
-    if (opts.hideSnoozed && row.snoozedUntil && row.snoozedUntil > now) return false;
+    if (opts.hideSnoozed && row.snoozedUntil && row.snoozedUntil.getTime() > now.getTime())
+      return false;
     return true;
   });
 }
@@ -266,8 +267,8 @@ export async function snoozeIssue(
   userId: string,
   note?: string
 ): Promise<void> {
-  const now = Math.floor(Date.now() / 1000);
-  const until = now + days * 86400;
+  const now = new Date();
+  const until = new Date(now.getTime() + days * 86400 * 1000);
   // SQLite UPSERT via insert + ON CONFLICT — keeps the operation atomic.
   await db
     .insert(healthIssueSnoozes)

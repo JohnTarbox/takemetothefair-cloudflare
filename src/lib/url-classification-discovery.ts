@@ -36,7 +36,7 @@ export async function getUnclassifiedOutboundDestinations(
 ): Promise<UnclassifiedDestination[]> {
   const days = opts.days ?? 7;
   const minClicks = opts.minClicks ?? 5;
-  const since = Math.floor(Date.now() / 1000) - days * 86400;
+  const since = new Date(Date.now() - days * 86400 * 1000);
 
   // Pull the raw beacon rows. Indexed on (event_name, timestamp).
   const rows = await db

@@ -1028,7 +1028,7 @@ async function IndexNowTab() {
                 return (
                   <tr key={row.id} className="align-top">
                     <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
-                      {formatTimestampForServer(new Date(row.timestamp * 1000))}
+                      {formatTimestampForServer(row.timestamp)}
                     </td>
                     <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.source}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.urlCount)}</td>
@@ -1090,7 +1090,7 @@ async function IndexNowTab() {
 async function FirstPartyEventsTab() {
   const db = getCloudflareDb();
   const days = 30;
-  const sinceTimestamp = Math.floor(Date.now() / 1000) - days * 86400;
+  const sinceTimestamp = new Date(Date.now() - days * 86400 * 1000);
 
   const [recent, summary] = await Promise.all([
     db
@@ -1170,7 +1170,7 @@ async function FirstPartyEventsTab() {
                 recent.map((row) => (
                   <tr key={row.id} className="align-top">
                     <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
-                      {formatTimestampForServer(new Date(row.timestamp * 1000))}
+                      {formatTimestampForServer(row.timestamp)}
                     </td>
                     <td className="px-6 py-2 text-gray-700">{row.eventCategory}</td>
                     <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
@@ -1791,13 +1791,15 @@ async function SiteHealthTab() {
     db.select({ c: dCount() }).from(gscInspectionState),
   ]);
   const inspectionCount = inspectionRow[0]?.c ?? 0;
-  const now = Math.floor(Date.now() / 1000);
-  const activeSnoozeCount = issues.filter((i) => i.snoozedUntil && i.snoozedUntil > now).length;
+  const now = Date.now();
+  const isActivelySnoozed = (snoozedUntil: Date | null | undefined) =>
+    snoozedUntil != null && snoozedUntil.getTime() > now;
+  const activeSnoozeCount = issues.filter((i) => isActivelySnoozed(i.snoozedUntil)).length;
   const errorCount = issues.filter(
-    (i) => i.severity === "ERROR" && (!i.snoozedUntil || i.snoozedUntil <= now)
+    (i) => i.severity === "ERROR" && !isActivelySnoozed(i.snoozedUntil)
   ).length;
   const warningCount = issues.filter(
-    (i) => i.severity === "WARNING" && (!i.snoozedUntil || i.snoozedUntil <= now)
+    (i) => i.severity === "WARNING" && !isActivelySnoozed(i.snoozedUntil)
   ).length;
 
   return (
@@ -1852,7 +1854,7 @@ async function SiteHealthTab() {
                 </tr>
               ) : (
                 issues.map((row) => {
-                  const snoozed = row.snoozedUntil && row.snoozedUntil > now;
+                  const snoozed = isActivelySnoozed(row.snoozedUntil);
                   const sevColor =
                     row.severity === "ERROR"
                       ? "text-red-700"
@@ -1882,11 +1884,11 @@ async function SiteHealthTab() {
                         )}
                       </td>
                       <td className="px-6 py-2 tabular-nums text-gray-700">
-                        {formatDateOnly(new Date(row.lastDetectedAt * 1000))}
+                        {formatDateOnly(row.lastDetectedAt)}
                       </td>
                       <td className="px-6 py-2 text-gray-700">
                         {snoozed && row.snoozedUntil
-                          ? `until ${formatDateOnly(new Date(row.snoozedUntil * 1000))}`
+                          ? `until ${formatDateOnly(row.snoozedUntil)}`
                           : "—"}
                       </td>
                     </tr>

@@ -164,16 +164,16 @@ describe("snoozeIssue", () => {
     expect(db.insert).toHaveBeenCalledTimes(1);
     const inserted = db.__insertCalls[0].values as {
       fingerprint: string;
-      snoozedUntil: number;
+      snoozedUntil: Date;
       snoozedBy: string;
-      snoozedAt: number;
+      snoozedAt: Date;
       note: string | null;
     };
     expect(inserted.fingerprint).toBe("fp-1");
     expect(inserted.snoozedBy).toBe("user-1");
     expect(inserted.note).toBeNull();
-    // 7 days = 604800s
-    expect(inserted.snoozedUntil - inserted.snoozedAt).toBe(7 * 86400);
+    // 7 days in ms (post-0043 ms-epoch convention)
+    expect(inserted.snoozedUntil.getTime() - inserted.snoozedAt.getTime()).toBe(7 * 86400 * 1000);
   });
 
   it("includes the note when provided", async () => {
@@ -208,7 +208,8 @@ describe("unsnoozeIssue", () => {
 });
 
 describe("getCurrentIssues", () => {
-  const now = Math.floor(Date.now() / 1000);
+  // Post-0043: timestamp columns return Date objects, not seconds.
+  const now = new Date();
 
   function makeRow(
     overrides: Partial<{
@@ -218,7 +219,7 @@ describe("getCurrentIssues", () => {
       severity: string;
       url: string | null;
       message: string | null;
-      snoozedUntil: number | null;
+      snoozedUntil: Date | null;
     }> = {}
   ) {
     return {
@@ -228,8 +229,8 @@ describe("getCurrentIssues", () => {
       severity: "ERROR",
       url: "https://example.com/",
       message: null,
-      firstDetectedAt: now - 86400,
-      lastDetectedAt: now - 3600,
+      firstDetectedAt: new Date(now.getTime() - 86400 * 1000),
+      lastDetectedAt: new Date(now.getTime() - 3600 * 1000),
       resolvedAt: null,
       snoozedUntil: null,
       ...overrides,
@@ -267,8 +268,14 @@ describe("getCurrentIssues", () => {
 
   it("hides actively-snoozed rows when hideSnoozed=true", async () => {
     const db = makeDb([
-      makeRow({ fingerprint: "active-snooze", snoozedUntil: now + 3600 }), // future
-      makeRow({ fingerprint: "expired-snooze", snoozedUntil: now - 3600 }), // past
+      makeRow({
+        fingerprint: "active-snooze",
+        snoozedUntil: new Date(now.getTime() + 3600 * 1000),
+      }), // future
+      makeRow({
+        fingerprint: "expired-snooze",
+        snoozedUntil: new Date(now.getTime() - 3600 * 1000),
+      }), // past
       makeRow({ fingerprint: "no-snooze", snoozedUntil: null }),
     ]);
     const rows = await getCurrentIssues(db as unknown as DbArg, { hideSnoozed: true });
@@ -278,7 +285,12 @@ describe("getCurrentIssues", () => {
   });
 
   it("does NOT hide snoozed rows by default (admin needs to see them)", async () => {
-    const db = makeDb([makeRow({ fingerprint: "active-snooze", snoozedUntil: now + 3600 })]);
+    const db = makeDb([
+      makeRow({
+        fingerprint: "active-snooze",
+        snoozedUntil: new Date(now.getTime() + 3600 * 1000),
+      }),
+    ]);
     const rows = await getCurrentIssues(db as unknown as DbArg);
     expect(rows).toHaveLength(1);
   });

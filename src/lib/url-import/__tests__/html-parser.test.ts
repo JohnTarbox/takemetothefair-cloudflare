@@ -128,33 +128,35 @@ describe("extractTextFromHtml", () => {
       expect(result).toContain("Don't worry");
     });
 
-    it("decodes typographic entities", () => {
+    it("decodes typographic entities to proper Unicode", () => {
+      // Post-PR-#53 the canonical decoder maps to Unicode, not ASCII.
       const html = "<p>2020&ndash;2025 &mdash; A decade&hellip;</p>";
       const result = extractTextFromHtml(html);
-      expect(result).toContain("2020-2025");
-      expect(result).toContain("-");
-      expect(result).toContain("...");
+      expect(result).toContain("2020–2025");
+      expect(result).toContain("—");
+      expect(result).toContain("…");
     });
 
     it("decodes numeric entities (decimal)", () => {
-      const html = "<p>&#65;&#66;&#67;</p>";  // ABC
+      const html = "<p>&#65;&#66;&#67;</p>"; // ABC
       const result = extractTextFromHtml(html);
       expect(result).toContain("ABC");
     });
 
     it("decodes numeric entities (hex)", () => {
-      const html = "<p>&#x41;&#x42;&#x43;</p>";  // ABC
+      const html = "<p>&#x41;&#x42;&#x43;</p>"; // ABC
       const result = extractTextFromHtml(html);
       expect(result).toContain("ABC");
     });
 
-    it("decodes special symbols", () => {
+    it("decodes special symbols to proper Unicode", () => {
+      // Post-PR-#53 the canonical decoder maps to Unicode, not ASCII.
       const html = "<p>&copy; 2025 &reg; Brand&trade; &bull; Item</p>";
       const result = extractTextFromHtml(html);
-      expect(result).toContain("(c) 2025");
-      expect(result).toContain("(R)");
-      expect(result).toContain("(TM)");
-      expect(result).toContain("* Item");
+      expect(result).toContain("© 2025");
+      expect(result).toContain("®");
+      expect(result).toContain("™");
+      expect(result).toContain("• Item");
     });
   });
 

@@ -43,7 +43,7 @@ interface SweepResult {
 /** Build the prioritized list of URLs to inspect this sweep. */
 async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
-  const oneDayAgoTs = Math.floor(oneDayAgo.getTime() / 1000);
+  const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
   // Tier 1: URLs with non-OK last verdict
   const stale = await db
@@ -96,7 +96,7 @@ async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     .limit(batchSize - picked.size);
   for (const o of oldest) {
     // Skip if already inspected within the cache window (6h)
-    if (o.lastInspectedAt > oneDayAgoTs - 86400) continue;
+    if (o.lastInspectedAt && o.lastInspectedAt.getTime() > sixHoursAgo.getTime()) continue;
     picked.add(o.url);
     if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
   }
@@ -146,7 +146,7 @@ export async function runSweep(
   const urls = await pickUrls(db, batchSize);
   if (urls.length === 0) return result;
 
-  const now = Math.floor(Date.now() / 1000);
+  const now = new Date();
 
   for (const url of urls) {
     const path = pathFromUrl(url);

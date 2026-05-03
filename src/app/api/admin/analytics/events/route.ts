@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   const days = Math.min(parseInt(url.searchParams.get("days") || "30", 10), 365);
   const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 500);
 
-  const sinceTimestamp = Math.floor(Date.now() / 1000) - days * 86400;
+  const sinceTimestamp = new Date(Date.now() - days * 86400 * 1000);
 
   const db = getCloudflareDb();
 
