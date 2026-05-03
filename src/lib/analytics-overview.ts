@@ -35,6 +35,7 @@ import {
 } from "@/lib/bing-webmaster";
 import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
 import { getCurrentIssues } from "@/lib/site-health";
+import { getActiveItems } from "@/lib/recommendations/engine";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -112,6 +113,17 @@ export type RecentErrorsCard = {
   topSources: Array<{ source: string; count: number }>;
 };
 
+export type RecommendationsSummaryCard = {
+  totalItems: number;
+  totalRules: number;
+  // Highest severity present in the active set, or null if zero items.
+  // Drives the card's border/icon color.
+  maxSeverity: "red" | "yellow" | "blue" | null;
+  redCount: number;
+  yellowCount: number;
+  blueCount: number;
+};
+
 export type SparklinePoint = { date: string; value: number };
 
 export type ActivityEntry = {
@@ -133,6 +145,7 @@ export type OverviewSnapshot = {
   siteHealth: SiteHealthCard;
   indexnow: IndexNowCard;
   recentErrors: RecentErrorsCard;
+  recommendations: RecommendationsSummaryCard;
   conversionsSparkline: SparklinePoint[];
   publishingSparkline: SparklinePoint[];
   activity: ActivityEntry[];
@@ -179,6 +192,7 @@ export async function loadOverviewSnapshot(
     siteHealth,
     indexnow,
     recentErrors,
+    recommendations,
     conversionsSparkline,
     publishingSparkline,
     activity,
@@ -190,6 +204,7 @@ export async function loadOverviewSnapshot(
     loadSiteHealth(db),
     loadIndexNow(db, env, todayStartUtcSec),
     loadRecentErrors(db, last24hSec),
+    loadRecommendationsSummary(db),
     loadConversionsSparkline(db, sparklineSinceSec),
     loadPublishingSparkline(db, sparklineSinceSec),
     loadActivity(db, sinceMs, sinceSec),
@@ -205,9 +220,36 @@ export async function loadOverviewSnapshot(
     siteHealth,
     indexnow,
     recentErrors,
+    recommendations,
     conversionsSparkline,
     publishingSparkline,
     activity,
+  };
+}
+
+async function loadRecommendationsSummary(db: Db): Promise<RecommendationsSummaryCard> {
+  // Reuses the same active-items query the Recommendations tab uses, so the
+  // counts here always agree with what the admin sees on the tab.
+  const items = await getActiveItems(db);
+  let red = 0;
+  let yellow = 0;
+  let blue = 0;
+  const ruleIds = new Set<string>();
+  for (const it of items) {
+    ruleIds.add(it.ruleId);
+    if (it.severity === "red") red++;
+    else if (it.severity === "yellow") yellow++;
+    else if (it.severity === "blue") blue++;
+  }
+  const maxSeverity: "red" | "yellow" | "blue" | null =
+    red > 0 ? "red" : yellow > 0 ? "yellow" : blue > 0 ? "blue" : null;
+  return {
+    totalItems: items.length,
+    totalRules: ruleIds.size,
+    maxSeverity,
+    redCount: red,
+    yellowCount: yellow,
+    blueCount: blue,
   };
 }
 
