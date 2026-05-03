@@ -1,16 +1,20 @@
 import Link from "next/link";
-import { ExternalLink, RefreshCw, Users, BarChart3 } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  BarChart3,
+  CheckCircle2,
+  DollarSign,
+  Search,
+  TrendingUp,
+} from "lucide-react";
 import { desc, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
-import {
-  Ga4ApiError,
-  Ga4ConfigError,
-  getDashboardMetrics,
-  type DashboardMetrics,
-  type Ga4Env,
-} from "@/lib/ga4";
 import {
   BingApiError,
   BingConfigError,
@@ -36,12 +40,23 @@ import {
   type SitemapStatus,
 } from "@/lib/search-console";
 import { formatDateOnly, formatTimestampForServer } from "@/lib/datetime";
+import {
+  isWindowKey,
+  loadOverviewSnapshot,
+  WINDOW_KEYS,
+  type ActivityEntry,
+  type OverviewSnapshot,
+  type SparklinePoint,
+  type Trend,
+  type WindowKey,
+} from "@/lib/analytics-overview";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 const TABS = [
   { key: "overview", label: "Overview" },
+  { key: "recommendations", label: "Recommendations" },
   { key: "google", label: "Google" },
   { key: "bing", label: "Bing" },
   { key: "site-health", label: "Site Health" },
@@ -56,77 +71,43 @@ function isTabKey(value: string | undefined): value is TabKey {
 }
 
 type PageProps = {
-  searchParams: Promise<{ refresh?: string; tab?: string }>;
+  searchParams: Promise<{ tab?: string; window?: string }>;
 };
-
-type LoadResult =
-  | { ok: true; data: DashboardMetrics }
-  | { ok: false; kind: "config" | "api" | "unknown"; message: string };
-
-async function load(skipCache: boolean): Promise<LoadResult> {
-  try {
-    const env = getCloudflareEnv() as unknown as Ga4Env;
-    const data = await getDashboardMetrics(env, { skipCache });
-    return { ok: true, data };
-  } catch (error) {
-    if (error instanceof Ga4ConfigError) {
-      return { ok: false, kind: "config", message: error.message };
-    }
-    if (error instanceof Ga4ApiError) {
-      return { ok: false, kind: "api", message: error.detail };
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, kind: "unknown", message };
-  }
-}
 
 function fmt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+function fmtUsd(n: number): string {
+  return `$${n.toLocaleString("en-US")}`;
+}
+
 export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const tab: TabKey = isTabKey(params.tab) ? params.tab : "overview";
-  const refresh = params.refresh === "1";
-
-  // Only fetch GA4 data when the Overview tab is active
-  const overviewResult = tab === "overview" ? await load(refresh) : null;
+  const window: WindowKey = isWindowKey(params.window) ? params.window : "7d";
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
         {tab === "overview" && (
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <WindowSelector currentWindow={window} />
             <Link
-              href="/admin/analytics?refresh=1"
-              className="inline-flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900"
+              href="/admin/analytics/ga4"
+              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
             >
-              <RefreshCw className="w-4 h-4" /> Refresh data
+              GA4 dashboard <ArrowRight className="w-3.5 h-3.5" />
             </Link>
-            {overviewResult?.ok && (
-              <a
-                href={`https://analytics.google.com/analytics/web/#/p${overviewResult.data.propertyId}/reports`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
-              >
-                Open in GA4 <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            )}
           </div>
         )}
       </div>
 
       <TabBar currentTab={tab} />
 
-      {tab === "overview" &&
-        overviewResult &&
-        (overviewResult.ok ? (
-          <MetricsView data={overviewResult.data} />
-        ) : (
-          <ErrorPanel kind={overviewResult.kind} message={overviewResult.message} />
-        ))}
+      {tab === "overview" && <OverviewTab window={window} />}
+      {tab === "recommendations" && <RecommendationsTab />}
       {tab === "google" && <GoogleTab />}
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
@@ -135,6 +116,629 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
     </div>
   );
 }
+
+// ─── Overview triage dashboard ──────────────────────────────────────
+
+async function OverviewTab({ window }: { window: WindowKey }) {
+  const db = getCloudflareDb();
+  const env = getCloudflareEnv() as unknown as ScEnv & BingEnv;
+  const snapshot = await loadOverviewSnapshot(db, env, window);
+
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <SearchVisibilityCard snapshot={snapshot} />
+        <ConversionsCard snapshot={snapshot} />
+        <CatalogGrowthCard snapshot={snapshot} />
+        <RevenueCard snapshot={snapshot} />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+        <SiteHealthCardView snapshot={snapshot} />
+        <IndexNowCardView snapshot={snapshot} />
+        <RecentErrorsCardView snapshot={snapshot} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <SparklineCard
+          title="Conversions (last 30 days)"
+          subtitle="Daily outbound ticket + application clicks"
+          points={snapshot.conversionsSparkline}
+          colorClass="stroke-blue-600"
+          fillClass="fill-blue-100"
+        />
+        <SparklineCard
+          title="Publishing activity (last 30 days)"
+          subtitle="Successful IndexNow submissions per day"
+          points={snapshot.publishingSparkline}
+          colorClass="stroke-emerald-600"
+          fillClass="fill-emerald-100"
+        />
+      </div>
+
+      <ActivityFeedCard activity={snapshot.activity} />
+
+      <p className="text-xs text-gray-500 mt-4">
+        Window: {window} · Generated {formatTimestampForServer(snapshot.generatedAt)} · Page-level
+        cache up to 10 min on each underlying source
+      </p>
+    </>
+  );
+}
+
+function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
+  return (
+    <div className="inline-flex items-center bg-gray-100 rounded-lg p-1 text-xs">
+      {WINDOW_KEYS.map((w) => {
+        const active = w === currentWindow;
+        return (
+          <Link
+            key={w}
+            href={`/admin/analytics?window=${w}`}
+            className={`px-2.5 py-1 rounded-md font-medium ${
+              active ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            {w}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function deltaPct(current: number, previous: number): number | null {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return ((current - previous) / previous) * 100;
+}
+
+function TrendBadge({
+  trend,
+  current,
+  previous,
+}: {
+  trend: Trend;
+  current: number;
+  previous: number;
+}) {
+  const pct = deltaPct(current, previous);
+  const colorClass =
+    trend === "up" ? "text-green-700" : trend === "down" ? "text-red-700" : "text-gray-500";
+  const Icon = trend === "up" ? ArrowUp : trend === "down" ? ArrowDown : ArrowRight;
+  const label = pct === null ? "vs prior" : `${pct >= 0 ? "+" : ""}${pct.toFixed(0)}% vs prior`;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium ${colorClass}`}>
+      <Icon className="w-3 h-3" /> {label}
+    </span>
+  );
+}
+
+function KpiCard({
+  title,
+  value,
+  icon,
+  iconColor,
+  href,
+  footer,
+}: {
+  title: string;
+  value: React.ReactNode;
+  icon: React.ReactNode;
+  iconColor: string;
+  href?: string;
+  footer?: React.ReactNode;
+}) {
+  const inner = (
+    <Card className="h-full">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">{title}</p>
+            <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">{value}</p>
+            {footer && <div className="mt-2">{footer}</div>}
+          </div>
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${iconColor} shrink-0`}
+          >
+            {icon}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+  if (href) {
+    return (
+      <Link href={href} className="block hover:opacity-90 transition-opacity">
+        {inner}
+      </Link>
+    );
+  }
+  return inner;
+}
+
+function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const card = snapshot.searchVisibility;
+  if (!card.ok) {
+    return (
+      <KpiCard
+        title="Search visibility"
+        value="—"
+        icon={<Search className="w-5 h-5 text-gray-500" />}
+        iconColor="bg-gray-100"
+        href="/admin/analytics?tab=google"
+        footer={<span className="text-xs text-gray-500">{card.reason}</span>}
+      />
+    );
+  }
+  return (
+    <KpiCard
+      title={`Search clicks (last ${card.windowDays}d)`}
+      value={fmt(card.current)}
+      icon={<Search className="w-5 h-5 text-blue-600" />}
+      iconColor="bg-blue-100"
+      href="/admin/analytics?tab=google"
+      footer={<TrendBadge trend={card.trend} current={card.current} previous={card.previous} />}
+    />
+  );
+}
+
+function ConversionsCard({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const card = snapshot.conversions;
+  return (
+    <KpiCard
+      title={`Conversions (last ${card.windowDays}d)`}
+      value={fmt(card.current)}
+      icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
+      iconColor="bg-emerald-100"
+      href="/admin/analytics?tab=first-party-events"
+      footer={<TrendBadge trend={card.trend} current={card.current} previous={card.previous} />}
+    />
+  );
+}
+
+function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const card = snapshot.catalogGrowth;
+  return (
+    <KpiCard
+      title={`Catalog growth (last ${card.windowDays}d)`}
+      value={`+${fmt(card.newInWindow)}`}
+      icon={<BarChart3 className="w-5 h-5 text-violet-600" />}
+      iconColor="bg-violet-100"
+      footer={
+        <div className="flex flex-col gap-1">
+          <TrendBadge
+            trend={card.trend}
+            current={card.newInWindow}
+            previous={card.newInPriorWindow}
+          />
+          <span className="text-xs text-gray-500">
+            {fmt(card.totals.events)} events · {fmt(card.totals.venues)} venues ·{" "}
+            {fmt(card.totals.vendors)} vendors
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function RevenueCard({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const card = snapshot.enhancedProfileRevenue;
+  return (
+    <KpiCard
+      title="Enhanced Profile (annualized)"
+      value={fmtUsd(card.annualizedUsd)}
+      icon={<DollarSign className="w-5 h-5 text-amber-600" />}
+      iconColor="bg-amber-100"
+      footer={
+        <div className="flex flex-col gap-1">
+          <TrendBadge
+            trend={card.trend}
+            current={card.newInWindow}
+            previous={card.newInPriorWindow}
+          />
+          <span className="text-xs text-gray-500">
+            {fmt(card.payingVendors)} paying · {fmt(card.newInWindow)} new in {card.windowDays}d
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.siteHealth;
+  const hasErrors = c.errors > 0;
+  return (
+    <Link href="/admin/analytics?tab=site-health" className="block hover:opacity-90">
+      <Card
+        className={`h-full ${hasErrors ? "border-red-300" : c.warnings > 0 ? "border-amber-300" : ""}`}
+      >
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+                Site health
+              </p>
+              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">{fmt(c.total)}</p>
+              <div className="mt-2 text-xs flex gap-2">
+                <span className={c.errors > 0 ? "text-red-700 font-semibold" : "text-gray-500"}>
+                  {fmt(c.errors)} err
+                </span>
+                <span className={c.warnings > 0 ? "text-amber-700" : "text-gray-500"}>
+                  {fmt(c.warnings)} warn
+                </span>
+                <span className="text-gray-500">{fmt(c.notices)} notice</span>
+              </div>
+            </div>
+            <div
+              className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                hasErrors ? "bg-red-100" : c.warnings > 0 ? "bg-amber-100" : "bg-gray-100"
+              }`}
+            >
+              <AlertTriangle
+                className={`w-5 h-5 ${
+                  hasErrors ? "text-red-600" : c.warnings > 0 ? "text-amber-600" : "text-gray-500"
+                }`}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.indexnow;
+  const hasFailures = c.todayFailures > 0;
+  const successPct = Math.round(c.todaySuccessRate * 100);
+  return (
+    <Link href="/admin/analytics?tab=indexnow" className="block hover:opacity-90">
+      <Card className={`h-full ${hasFailures ? "border-red-300" : ""}`}>
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+                IndexNow today
+              </p>
+              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+                {fmt(c.todaySubmissions)}
+              </p>
+              <div className="mt-2 text-xs">
+                <span className={hasFailures ? "text-red-700 font-semibold" : "text-gray-500"}>
+                  {successPct}% success
+                </span>
+                {c.quota && (
+                  <span className="text-gray-500 ml-2">
+                    · {fmt(c.quota.dailyRemaining)} BWT quota
+                  </span>
+                )}
+                {c.quotaError && (
+                  <span className="text-gray-400 ml-2 italic">· quota unavailable</span>
+                )}
+              </div>
+            </div>
+            <div
+              className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                hasFailures ? "bg-red-100" : "bg-emerald-100"
+              }`}
+            >
+              <CheckCircle2
+                className={`w-5 h-5 ${hasFailures ? "text-red-600" : "text-emerald-600"}`}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.recentErrors;
+  const high = c.last24hCount > 10;
+  return (
+    <Card className={`h-full ${high ? "border-red-300" : ""}`}>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+              Errors (last 24h)
+            </p>
+            <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+              {fmt(c.last24hCount)}
+            </p>
+            <div className="mt-2 text-xs text-gray-500 truncate">
+              {c.topSources.length === 0
+                ? "No errors logged."
+                : c.topSources.map((s) => `${s.source} (${fmt(s.count)})`).join(" · ")}
+            </div>
+          </div>
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+              high ? "bg-red-100" : "bg-gray-100"
+            }`}
+          >
+            <AlertTriangle className={`w-5 h-5 ${high ? "text-red-600" : "text-gray-500"}`} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SparklineCard({
+  title,
+  subtitle,
+  points,
+  colorClass,
+  fillClass,
+}: {
+  title: string;
+  subtitle: string;
+  points: SparklinePoint[];
+  colorClass: string;
+  fillClass: string;
+}) {
+  const total = points.reduce((acc, p) => acc + p.value, 0);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{title}</CardTitle>
+        <p className="text-xs text-gray-500">{subtitle}</p>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-end justify-between mb-2">
+          <p className="text-2xl font-bold text-gray-900 tabular-nums">{fmt(total)}</p>
+          <p className="text-xs text-gray-500">{points.length}-day total</p>
+        </div>
+        <Sparkline points={points} colorClass={colorClass} fillClass={fillClass} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function Sparkline({
+  points,
+  colorClass,
+  fillClass,
+}: {
+  points: SparklinePoint[];
+  colorClass: string;
+  fillClass: string;
+}) {
+  const width = 600;
+  const height = 80;
+  const padding = 4;
+  const max = Math.max(1, ...points.map((p) => p.value));
+  const stepX = points.length > 1 ? (width - padding * 2) / (points.length - 1) : 0;
+
+  const coords = points.map((p, i) => {
+    const x = padding + i * stepX;
+    const y = padding + (height - padding * 2) * (1 - p.value / max);
+    return { x, y, value: p.value, date: p.date };
+  });
+
+  if (coords.length === 0) {
+    return <div className="text-xs text-gray-400 italic">No data yet.</div>;
+  }
+
+  const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
+  const areaPath = `${linePath} L ${coords[coords.length - 1].x} ${height - padding} L ${coords[0].x} ${
+    height - padding
+  } Z`;
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className="w-full h-20"
+      aria-label="30-day sparkline"
+    >
+      <path d={areaPath} className={fillClass} opacity={0.4} />
+      <path d={linePath} className={`${colorClass} fill-none`} strokeWidth={2} />
+    </svg>
+  );
+}
+
+function ActivityFeedCard({ activity }: { activity: ActivityEntry[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Activity className="w-4 h-4 text-gray-500" /> Recent activity
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {activity.length === 0 ? (
+          <p className="px-6 py-6 text-sm text-gray-500">No recent activity in this window.</p>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {activity.map((entry, i) => (
+              <li key={i} className="px-6 py-3 flex items-start gap-3">
+                <ActivityIcon kind={entry.kind} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-900 break-words">
+                    {entry.href ? (
+                      <a
+                        href={entry.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:underline"
+                      >
+                        {entry.description}
+                      </a>
+                    ) : (
+                      entry.description
+                    )}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {formatTimestampForServer(new Date(entry.ts))}
+                    {entry.actor && <span className="ml-2">· actor {entry.actor}</span>}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivityIcon({ kind }: { kind: ActivityEntry["kind"] }) {
+  const map: Record<ActivityEntry["kind"], { Icon: typeof Activity; color: string; bg: string }> = {
+    admin: { Icon: BarChart3, color: "text-violet-600", bg: "bg-violet-100" },
+    indexnow: { Icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-100" },
+    conversion: { Icon: TrendingUp, color: "text-blue-600", bg: "bg-blue-100" },
+  };
+  const { Icon, color, bg } = map[kind];
+  return (
+    <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${bg}`}>
+      <Icon className={`w-3.5 h-3.5 ${color}`} />
+    </span>
+  );
+}
+
+// ─── Recommendations tab ────────────────────────────────────────────
+
+async function RecommendationsTab() {
+  const { getActiveItems } = await import("@/lib/recommendations/engine");
+  const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
+  const { RecommendationScanButton } =
+    await import("@/components/admin/recommendation-scan-button");
+
+  const db = getCloudflareDb();
+  const items = await getActiveItems(db);
+
+  type Sev = "red" | "yellow" | "blue";
+  const groups: Record<Sev, typeof items> = { red: [], yellow: [], blue: [] };
+  for (const it of items) groups[it.severity as Sev].push(it);
+
+  const severityMeta: Record<
+    Sev,
+    { label: string; cardBorder: string; badge: string; icon: string }
+  > = {
+    red: {
+      label: "Action required",
+      cardBorder: "border-red-300",
+      badge: "bg-red-100 text-red-800 border-red-200",
+      icon: "text-red-600",
+    },
+    yellow: {
+      label: "High-impact opportunities",
+      cardBorder: "border-amber-300",
+      badge: "bg-amber-100 text-amber-800 border-amber-200",
+      icon: "text-amber-600",
+    },
+    blue: {
+      label: "Nice to have",
+      cardBorder: "border-blue-300",
+      badge: "bg-blue-100 text-blue-800 border-blue-200",
+      icon: "text-blue-600",
+    },
+  };
+
+  function rationaleFor(item: (typeof items)[number]): string {
+    // {n} → number of items in the same rule. Other tokens left as-is for now.
+    const n = items.filter((i) => i.ruleId === item.ruleId).length;
+    return item.rationaleTemplate.replace(/\{n\}/g, String(n));
+  }
+
+  function targetLink(item: (typeof items)[number]): string | null {
+    if (item.targetType === "vendor" && item.payload && typeof item.payload.slug === "string") {
+      return `/admin/vendors/${item.payload.slug}`;
+    }
+    if (item.targetType === "event" && item.payload && typeof item.payload.slug === "string") {
+      return `/events/${item.payload.slug}`;
+    }
+    return null;
+  }
+
+  function targetLabel(item: (typeof items)[number]): string {
+    if (item.payload && typeof item.payload.businessName === "string") {
+      return item.payload.businessName;
+    }
+    if (item.payload && typeof item.payload.name === "string") {
+      return item.payload.name;
+    }
+    return item.targetId ?? "(global)";
+  }
+
+  return (
+    <>
+      <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+        <p className="text-sm text-gray-600">
+          {items.length === 0
+            ? "No active recommendations. Run a scan to surface new ones."
+            : `${items.length} active recommendation${items.length === 1 ? "" : "s"} across ${
+                Object.values(groups).filter((g) => g.length > 0).length
+              } severity bucket${
+                Object.values(groups).filter((g) => g.length > 0).length === 1 ? "" : "s"
+              }.`}
+        </p>
+        <RecommendationScanButton />
+      </div>
+
+      {(["red", "yellow", "blue"] as Sev[]).map((sev) => {
+        const bucket = groups[sev];
+        if (bucket.length === 0) return null;
+        const meta = severityMeta[sev];
+        return (
+          <div key={sev} className="mb-8">
+            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <span
+                className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${meta.badge}`}
+              >
+                {meta.label}
+              </span>
+              <span className="text-gray-500 font-normal">{bucket.length}</span>
+            </h2>
+            <div className="space-y-3">
+              {bucket.map((item) => {
+                const link = targetLink(item);
+                return (
+                  <Card key={item.itemId} className={meta.cardBorder}>
+                    <CardContent className="p-5">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                          <p className="text-sm text-gray-700 mt-1">{rationaleFor(item)}</p>
+                          {item.targetId && (
+                            <p className="text-xs text-gray-500 mt-2">
+                              Target:{" "}
+                              {link ? (
+                                <Link href={link} className="text-blue-600 hover:underline">
+                                  {targetLabel(item)}
+                                </Link>
+                              ) : (
+                                <span className="font-mono">{targetLabel(item)}</span>
+                              )}
+                              <span className="ml-2 text-gray-400">· rule {item.ruleKey}</span>
+                            </p>
+                          )}
+                        </div>
+                        <RecommendationActions itemId={item.itemId} />
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <p className="text-xs text-gray-500 mt-6">
+        Active items refresh on scan or when an item&apos;s match expires the 7-day window. Dismiss
+        / Snooze hides an item temporarily; Mark done resolves it permanently. All actions are
+        logged to <code>admin_actions</code>.
+      </p>
+    </>
+  );
+}
+
+// ─── Existing tabs (unchanged below this line) ──────────────────────
 
 async function IndexNowTab() {
   const db = getCloudflareDb();
@@ -384,157 +988,6 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
         );
       })}
     </div>
-  );
-}
-
-function MetricsView({ data }: { data: DashboardMetrics }) {
-  return (
-    <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <StatCard label="Active users (last 7 days)" value={fmt(data.activeUsers.last7d)} />
-        <StatCard label="Active users (last 28 days)" value={fmt(data.activeUsers.last28d)} />
-      </div>
-
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Top pages (last 28 days)</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
-              <tr>
-                <th className="text-left px-6 py-2 font-medium">Path</th>
-                <th className="text-left px-6 py-2 font-medium">Title</th>
-                <th className="text-right px-6 py-2 font-medium">Views</th>
-                <th className="text-right px-6 py-2 font-medium">Users</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {data.topPages.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-6 py-6 text-gray-500">
-                    No data yet.
-                  </td>
-                </tr>
-              ) : (
-                data.topPages.map((row, i) => (
-                  <tr key={`${row.path}-${i}`}>
-                    <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
-                      <Link
-                        href={`/admin/analytics/page?path=${encodeURIComponent(row.path)}`}
-                        className="text-blue-600 hover:text-blue-700 hover:underline"
-                      >
-                        {row.path}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-2 text-gray-700 truncate max-w-xs">{row.title}</td>
-                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.views)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
-                      {fmt(row.activeUsers)}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Top events (last 28 days)</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="text-left px-6 py-2 font-medium">Event</th>
-                  <th className="text-right px-6 py-2 font-medium">Count</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {data.topEvents.length === 0 ? (
-                  <tr>
-                    <td colSpan={2} className="px-6 py-6 text-gray-500">
-                      No events tracked yet.
-                    </td>
-                  </tr>
-                ) : (
-                  data.topEvents.map((row, i) => (
-                    <tr key={`${row.eventName}-${i}`}>
-                      <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
-                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Traffic sources (last 28 days)</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
-                <tr>
-                  <th className="text-left px-6 py-2 font-medium">Source</th>
-                  <th className="text-left px-6 py-2 font-medium">Medium</th>
-                  <th className="text-right px-6 py-2 font-medium">Sessions</th>
-                  <th className="text-right px-6 py-2 font-medium">Users</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {data.trafficSources.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-6 py-6 text-gray-500">
-                      No data yet.
-                    </td>
-                  </tr>
-                ) : (
-                  data.trafficSources.map((row, i) => (
-                    <tr key={`${row.source}-${row.medium}-${i}`}>
-                      <td className="px-6 py-2 text-gray-900">{row.source || "(direct)"}</td>
-                      <td className="px-6 py-2 text-gray-700">{row.medium || "(none)"}</td>
-                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.sessions)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
-                        {fmt(row.activeUsers)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      </div>
-
-      <p className="text-xs text-gray-500 mt-6">
-        Property {data.propertyId} · Generated {formatTimestampForServer(data.generatedAt)} · Cached
-        up to 10 min
-      </p>
-    </>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-600">{label}</p>
-            <p className="text-4xl font-bold text-gray-900 mt-1 tabular-nums">{value}</p>
-          </div>
-          <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-blue-100">
-            <Users className="w-6 h-6 text-blue-600" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -1259,72 +1712,5 @@ async function SiteHealthTab() {
         </CardContent>
       </Card>
     </>
-  );
-}
-
-function ErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; message: string }) {
-  const isConfig = kind === "config";
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-gray-500" />
-          {isConfig ? "GA4 analytics not configured" : "Could not load GA4 data"}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-gray-700 mb-4">{message}</p>
-
-        {isConfig && (
-          <div className="text-sm text-gray-700 space-y-3">
-            <p className="font-medium">One-time setup:</p>
-            <ol className="list-decimal pl-5 space-y-2">
-              <li>
-                In{" "}
-                <a
-                  href="https://console.cloud.google.com/iam-admin/serviceaccounts"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-700"
-                >
-                  Google Cloud Console
-                </a>
-                , create a service account and download its JSON key.
-              </li>
-              <li>
-                Enable the{" "}
-                <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
-                  Google Analytics Data API
-                </span>{" "}
-                on the same GCP project.
-              </li>
-              <li>
-                In GA4 → Admin → Property Access Management, add the service account email with the{" "}
-                <strong>Viewer</strong> role on the property you want to read.
-              </li>
-              <li>
-                In the Cloudflare Pages dashboard, set three environment variables on the production
-                deployment:
-                <ul className="list-disc pl-5 mt-2 space-y-1 font-mono text-xs">
-                  <li>
-                    <span className="bg-gray-100 px-1.5 py-0.5 rounded">GA4_PROPERTY_ID</span> —
-                    numeric property ID
-                  </li>
-                  <li>
-                    <span className="bg-gray-100 px-1.5 py-0.5 rounded">GA4_SA_CLIENT_EMAIL</span> —{" "}
-                    <code>client_email</code> from the JSON key
-                  </li>
-                  <li>
-                    <span className="bg-gray-100 px-1.5 py-0.5 rounded">GA4_SA_PRIVATE_KEY</span> —
-                    the full <code>private_key</code> PEM (encrypt this one)
-                  </li>
-                </ul>
-              </li>
-              <li>Redeploy, then reload this page.</li>
-            </ol>
-          </div>
-        )}
-      </CardContent>
-    </Card>
   );
 }
