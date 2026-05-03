@@ -96,3 +96,57 @@ export function createSlugFromName(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 }
+
+// ---------------------------------------------------------------------------
+// Money — single conversion-site convention
+// ---------------------------------------------------------------------------
+//
+// All monetary columns are stored as INTEGER cents (post-migrations 0044 +
+// 0048). These two helpers are the ONLY allowed conversion sites between
+// dollars and cents; if you find yourself writing `something / 100` or
+// `something * 100` outside them, you've reintroduced the precision-loss
+// drift the migrations eliminated. See project_money_storage_convention
+// in /home/wa1kli/.claude/projects/.../memory/.
+
+/**
+ * Convert dollars (form input or MCP free-text) to integer cents (storage).
+ * Use at the API/MCP boundary when accepting price input from validation
+ * schemas that still parse as dollars.
+ *
+ * Accepts the broader `unknown` shape so the same helper covers both:
+ *   - typed callers that pass `number | null | undefined`, and
+ *   - MCP/JSON callers that may pass numeric strings
+ * Non-finite inputs (NaN, Infinity, non-numeric strings) → null.
+ */
+export function dollarsToCents(dollars: unknown): number | null {
+  if (dollars == null) return null;
+  const n = typeof dollars === "number" ? dollars : Number(dollars);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+
+/**
+ * Format a price range stored as integer cents. Drops trailing `.00` for
+ * whole-dollar amounts (e.g. "$25" not "$25.00"); renders cents when
+ * present ("$10.50").
+ *
+ * UX contract: a `{min:0, max:10}` pair means "free entry possible up to
+ * $10" and renders as "Up to $10", not "$0 - $10". A `{min:0, max:0}` or
+ * both-null pair renders as "Free".
+ *
+ * Separator is " - " (ASCII hyphen-with-spaces) for browser/email/JSON
+ * compatibility — narrower than the typographic en-dash but renders
+ * identically across every consumer of this library.
+ */
+export function formatPrice(minCents?: number | null, maxCents?: number | null): string {
+  const renderOne = (cents: number) => {
+    const dollars = cents / 100;
+    return dollars % 1 === 0 ? `$${dollars}` : `$${dollars.toFixed(2)}`;
+  };
+  const min = !minCents ? null : minCents;
+  const max = !maxCents ? null : maxCents;
+  if (min == null && max == null) return "Free";
+  if (min === max || max == null) return renderOne(min!);
+  if (min == null) return `Up to ${renderOne(max)}`;
+  return `${renderOne(min)} - ${renderOne(max)}`;
+}
