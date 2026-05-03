@@ -11,6 +11,7 @@ import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
 import { eq, desc, inArray, sql } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
+import { PUBLIC_VENDOR_STATUSES } from "@/lib/constants";
 
 export const runtime = "edge";
 
@@ -75,12 +76,19 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
       .groupBy(eventVendors.eventId, eventVendors.status);
 
     const countByEvent = new Map<string, { applied: number; confirmed: number; total: number }>();
+    // PUBLIC_VENDOR_STATUSES is the source of truth for "vendor is publicly
+    // visible on the event page" — using it here means widening that set
+    // (e.g. adding a future TENTATIVE_PUBLIC bucket) automatically rolls into
+    // these counts without a separate code change. The "applied" bucket has
+    // no central helper; if it grows, add one in vendor-status.ts.
     for (const row of counts) {
       const entry = countByEvent.get(row.eventId) ?? { applied: 0, confirmed: 0, total: 0 };
       entry.total += Number(row.n);
       if (row.status === "APPLIED" || row.status === "WAITLISTED") {
         entry.applied += Number(row.n);
-      } else if (row.status === "APPROVED" || row.status === "CONFIRMED") {
+      } else if (
+        PUBLIC_VENDOR_STATUSES.includes(row.status as (typeof PUBLIC_VENDOR_STATUSES)[number])
+      ) {
         entry.confirmed += Number(row.n);
       }
       countByEvent.set(row.eventId, entry);
