@@ -8,8 +8,9 @@ import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
 import { emailVerificationTemplate } from "@/lib/email/templates";
+import { enqueueEmail } from "@/lib/queues/producers";
 
 export const runtime = "edge";
 
@@ -108,11 +109,15 @@ export async function POST(request: NextRequest) {
         verifyUrl: `${getSiteUrl(request)}/verify-email/${token}`,
         name,
       });
-      await sendEmail(db, {
+      // Enqueue rather than sending synchronously — the queue consumer
+      // (MCP worker) handles Resend's HTTP round-trip. User gets the
+      // signup-success response without waiting on email delivery.
+      await enqueueEmail({
         to: email,
         subject: tpl.subject,
         html: tpl.html,
         text: tpl.text,
+        source: "auth.register",
       });
     } catch (mailErr) {
       // Don't block signup on email issues

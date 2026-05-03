@@ -7,8 +7,8 @@ import { createSlug } from "@/lib/utils";
 import { getPromotersWithCounts } from "@/lib/queries";
 import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
-import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { indexNowUrlFor } from "@/lib/indexnow";
+import { enqueueIndexNow } from "@/lib/queues/producers";
 
 export const runtime = "edge";
 
@@ -74,11 +74,12 @@ export async function POST(request: NextRequest) {
       .where(eq(promoters.id, promoterId))
       .limit(1);
 
-    // IndexNow: ping the canonical promoter URL on create. Fire-and-forget;
-    // failure is logged inside pingIndexNow and never blocks the response.
+    // IndexNow: enqueue the canonical promoter URL for async ping. The
+    // queue consumer (MCP worker) batches across messages and submits
+    // to Bing in one API call. Falls back to direct ping when the
+    // INDEXNOW_PINGS binding is unbound (local dev).
     if (newPromoter?.slug) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(db, indexNowUrlFor("promoters", newPromoter.slug), env, "promoter.create");
+      await enqueueIndexNow(indexNowUrlFor("promoters", newPromoter.slug), "promoter.create");
     }
 
     return NextResponse.json(newPromoter, { status: 201 });
