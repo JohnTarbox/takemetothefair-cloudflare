@@ -18,6 +18,8 @@ import {
   venuesShortDescriptionRule,
 } from "./short-descriptions";
 import { slugSuffixDuplicatesRule } from "./slug-suffix-duplicates";
+import { softDeletedVenuesRule } from "./soft-deleted-venues";
+import { staleYearEventsRule } from "./stale-year-events";
 import { staticPagesShortDescriptionRule } from "./static-pages-short-description";
 import { vendorsNoDescriptionRule } from "./vendors-no-description";
 
@@ -30,6 +32,8 @@ export const ALL_RULES: RuleDefinition[] = [
   venuesShortDescriptionRule,
   vendorsShortDescriptionRule,
   slugSuffixDuplicatesRule,
+  staleYearEventsRule,
+  softDeletedVenuesRule,
   staticPagesShortDescriptionRule,
   enhancedProfileRenewalCriticalRule,
   enhancedProfileRenewalWarningRule,
