@@ -45,3 +45,11 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["MeetMeAtTheFairMCP"]
+
+# Cron Triggers — scheduled tasks fan out to main-app sweep endpoints via
+# the MAIN_APP service binding. Conservative rollout: only the
+# recommendations-scan is enabled today (it's idempotent + low-cost). Add
+# additional crons here as confidence in the pattern builds; the scheduled
+# handler in src/index.ts dispatches based on which cron expression fires.
+[triggers]
+crons = ["0 6 * * *"] # 06:00 UTC daily — overnight in NA, low-traffic window
