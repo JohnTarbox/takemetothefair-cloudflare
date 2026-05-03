@@ -1,52 +1,7 @@
 import type { PageMetadata } from "./types";
+import { decodeHtmlEntities } from "@/lib/utils";
 
 const MAX_CONTENT_LENGTH = 50 * 1024; // 50KB limit for AI processing
-
-/**
- * HTML entity decode map — URL-import-specific, intentionally richer than the
- * canonical decoder at `@/lib/utils:decodeHtmlEntities`. URL-imported HTML
- * commonly contains typographic entities (`&ndash;`, `&mdash;`, `&hellip;`)
- * and symbol entities (`&copy;`, `&reg;`, `&trade;`, `&bull;`) that the
- * validation-layer decoder doesn't handle. Don't replace this with the
- * canonical version without first promoting these extra entities upstream.
- */
-const HTML_ENTITIES: Record<string, string> = {
-  "&amp;": "&",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&quot;": '"',
-  "&#39;": "'",
-  "&apos;": "'",
-  "&nbsp;": " ",
-  "&ndash;": "-",
-  "&mdash;": "-",
-  "&copy;": "(c)",
-  "&reg;": "(R)",
-  "&trade;": "(TM)",
-  "&bull;": "*",
-  "&hellip;": "...",
-};
-
-/**
- * Decode HTML entities in text
- */
-function decodeHtmlEntities(text: string): string {
-  // Replace named entities
-  let decoded = text;
-  for (const [entity, char] of Object.entries(HTML_ENTITIES)) {
-    decoded = decoded.replace(new RegExp(entity, "gi"), char);
-  }
-
-  // Replace numeric entities (decimal)
-  decoded = decoded.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(parseInt(code, 10)));
-
-  // Replace numeric entities (hex)
-  decoded = decoded.replace(/&#x([0-9a-f]+);/gi, (_, code) =>
-    String.fromCharCode(parseInt(code, 16))
-  );
-
-  return decoded;
-}
 
 /**
  * Extract plain text content from HTML, stripping tags and scripts
