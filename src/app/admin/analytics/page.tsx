@@ -13,7 +13,7 @@ import {
   Search,
   TrendingUp,
 } from "lucide-react";
-import { desc, gte, sql } from "drizzle-orm";
+import { desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
@@ -73,7 +73,13 @@ function isTabKey(value: string | undefined): value is TabKey {
 }
 
 type PageProps = {
-  searchParams: Promise<{ tab?: string; window?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    window?: string;
+    // IndexNow tab filters — only consumed by IndexNowTab. Other tabs ignore.
+    indexnow_limit?: string;
+    indexnow_source?: string;
+  }>;
 };
 
 function fmt(n: number): string {
@@ -114,7 +120,9 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
       {tab === "bing" && <BingTab />}
       {tab === "site-health" && <SiteHealthTab />}
       {tab === "first-party-events" && <FirstPartyEventsTab />}
-      {tab === "indexnow" && <IndexNowTab />}
+      {tab === "indexnow" && (
+        <IndexNowTab limit={params.indexnow_limit} source={params.indexnow_source} />
+      )}
     </div>
   );
 }
@@ -988,13 +996,38 @@ async function RecommendationsTab() {
 
 // ─── Existing tabs (unchanged below this line) ──────────────────────
 
-async function IndexNowTab() {
+// Allowed display sizes; anything else falls back to the default.
+const INDEXNOW_LIMITS = [25, 100, 250] as const;
+type IndexNowLimit = (typeof INDEXNOW_LIMITS)[number];
+
+function parseIndexNowLimit(raw: string | undefined): IndexNowLimit {
+  const n = Number(raw);
+  return INDEXNOW_LIMITS.includes(n as IndexNowLimit) ? (n as IndexNowLimit) : 25;
+}
+
+async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source?: string }) {
   const db = getCloudflareDb();
-  const recent = await db
+  const limit = parseIndexNowLimit(rawLimit);
+  // Source filter: free-form (event.approve, vendor.create, etc.), but we
+  // restrict to a sane set for the dropdown so admins don't have to guess.
+  const trimmedSource = source?.trim() || null;
+
+  // Build the source set for the dropdown by aggregating distinct values from
+  // recent submissions. Cap to 50 distinct sources to bound the query cost.
+  const distinctSources = await db
+    .selectDistinct({ source: indexnowSubmissions.source })
+    .from(indexnowSubmissions)
+    .orderBy(indexnowSubmissions.source)
+    .limit(50);
+
+  const baseQuery = db
     .select()
     .from(indexnowSubmissions)
-    .orderBy(desc(indexnowSubmissions.timestamp))
-    .limit(25);
+    .orderBy(desc(indexnowSubmissions.timestamp));
+
+  const recent = trimmedSource
+    ? await baseQuery.where(eq(indexnowSubmissions.source, trimmedSource)).limit(limit)
+    : await baseQuery.limit(limit);
 
   const statusBadge = (status: string) => {
     const map: Record<string, string> = {
@@ -1011,10 +1044,70 @@ async function IndexNowTab() {
     );
   };
 
+  // Filter URL builder — keeps `tab=indexnow` and other params, swaps the one
+  // we're toggling. Server-component-driven, so each interaction is a navigation.
+  const filterUrl = (overrides: { limit?: number; source?: string | null }) => {
+    const sp = new URLSearchParams();
+    sp.set("tab", "indexnow");
+    const newLimit = overrides.limit ?? limit;
+    if (newLimit !== 25) sp.set("indexnow_limit", String(newLimit));
+    const newSource = overrides.source !== undefined ? overrides.source : trimmedSource;
+    if (newSource) sp.set("indexnow_source", newSource);
+    const qs = sp.toString();
+    return `/admin/analytics?${qs}`;
+  };
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Recent IndexNow submissions (last 25)</CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <CardTitle>
+            Recent IndexNow submissions
+            {trimmedSource ? ` · source=${trimmedSource}` : ""} (last {limit})
+          </CardTitle>
+          <div className="flex items-center gap-2 text-sm">
+            {/* Source dropdown — server-rendered <select> wrapped as a controlled
+                navigation. We render distinct options from recent submissions. */}
+            <form method="get" action="/admin/analytics" className="flex items-center gap-2">
+              <input type="hidden" name="tab" value="indexnow" />
+              {limit !== 25 && <input type="hidden" name="indexnow_limit" value={String(limit)} />}
+              <select
+                name="indexnow_source"
+                defaultValue={trimmedSource ?? ""}
+                className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+              >
+                <option value="">All sources</option>
+                {distinctSources.map((row) => (
+                  <option key={row.source} value={row.source}>
+                    {row.source}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                className="rounded-md border border-gray-300 px-2 py-1 text-sm hover:bg-gray-50"
+              >
+                Apply
+              </button>
+            </form>
+            <div className="inline-flex items-center bg-gray-100 rounded-lg p-1 text-xs">
+              {INDEXNOW_LIMITS.map((n) => (
+                <Link
+                  key={n}
+                  href={filterUrl({ limit: n })}
+                  className={
+                    "px-2 py-0.5 rounded " +
+                    (n === limit
+                      ? "bg-white shadow text-gray-900"
+                      : "text-gray-600 hover:text-gray-900")
+                  }
+                >
+                  {n}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <table className="w-full text-sm">
