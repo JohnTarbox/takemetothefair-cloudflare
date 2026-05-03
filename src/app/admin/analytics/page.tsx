@@ -273,7 +273,7 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
   if (!card.ok) {
     return (
       <KpiCard
-        title="Search visibility"
+        title="Google clicks"
         value="—"
         icon={<Search className="w-5 h-5 text-gray-500" />}
         iconColor="bg-gray-100"
@@ -282,14 +282,26 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
       />
     );
   }
+  // Two-line footer: trend (windowed, GSC) + Bing total (rolling, no window).
+  // Bing's API doesn't expose day-windowed click counts, so we don't combine
+  // them — surfacing both honestly avoids the "-100%" reading the analyst
+  // flagged when Bing was delivering clicks fine but only Google was shown.
+  const footer = (
+    <div className="flex flex-col gap-0.5">
+      <TrendBadge trend={card.trend} current={card.current} previous={card.previous} />
+      {card.bingTotal !== null && (
+        <span className="text-xs text-gray-500">+ {fmt(card.bingTotal)} from Bing (rolling)</span>
+      )}
+    </div>
+  );
   return (
     <KpiCard
-      title={`Search clicks (last ${card.windowDays}d)`}
+      title={`Google clicks (last ${card.windowDays}d)`}
       value={fmt(card.current)}
       icon={<Search className="w-5 h-5 text-blue-600" />}
       iconColor="bg-blue-100"
       href="/admin/analytics?tab=google"
-      footer={<TrendBadge trend={card.trend} current={card.current} previous={card.previous} />}
+      footer={footer}
     />
   );
 }
