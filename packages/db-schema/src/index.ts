@@ -108,6 +108,11 @@ export const events = sqliteTable(
     categories: text("categories").default("[]"),
     tags: text("tags").default("[]"),
     ticketUrl: text("ticket_url"),
+    // UNIT: dollars (float). NOT cents. Centralized parser/formatter at
+    // src/lib/format.ts:formatPrice. Don't introduce *100 / /100 conversions
+    // anywhere — if penny precision is ever needed (e.g. payment processing),
+    // migrate to integer cents in a dedicated workstream rather than mixing
+    // conventions.
     ticketPriceMin: real("ticket_price_min"),
     ticketPriceMax: real("ticket_price_max"),
     imageUrl: text("image_url"),
@@ -130,6 +135,7 @@ export const events = sqliteTable(
     // Discontinuous dates: when true, eventDays hold arbitrary (non-contiguous) dates
     discontinuousDates: integer("discontinuous_dates", { mode: "boolean" }).default(false),
     // Vendor decision-support fields
+    // UNIT: dollars (float). Same convention as ticketPriceMin/Max above.
     vendorFeeMin: real("vendor_fee_min"),
     vendorFeeMax: real("vendor_fee_max"),
     vendorFeeNotes: text("vendor_fee_notes"),

@@ -18,10 +18,10 @@
  * is ~250ms. Acceptable on a 15-min cached Recommendations scan.
  */
 
+import { SITE_URL } from "@takemetothefair/constants";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
 const SHORT_THRESHOLD = 70;
-const SITE_BASE_URL = "https://meetmeatthefair.com";
 const FETCH_TIMEOUT_MS = 5000;
 
 // Curated list of public static pages worth auditing. Excludes:
@@ -49,7 +49,7 @@ async function fetchMetaDescription(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(`${SITE_BASE_URL}${path}`, {
+    const res = await fetch(`${SITE_URL}${path}`, {
       signal: controller.signal,
       headers: { "User-Agent": "MMATF-MetaCheck/1.0 (admin/analytics scan)" },
     });
