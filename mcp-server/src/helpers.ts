@@ -91,7 +91,10 @@ export function jsonContent(data: unknown): { type: "text"; text: string } {
 
 /** Build the canonical public URL for a content slug. Mirrors
  *  src/lib/indexnow.ts:indexNowUrlFor in the main app. */
-export function publicUrlFor(kind: "events" | "venues" | "vendors" | "blog", slug: string): string {
+export function publicUrlFor(
+  kind: "events" | "venues" | "vendors" | "promoters" | "blog",
+  slug: string
+): string {
   return `https://meetmeatthefair.com/${kind}/${slug}`;
 }
 
