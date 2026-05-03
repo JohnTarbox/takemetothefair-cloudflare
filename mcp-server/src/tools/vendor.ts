@@ -12,7 +12,7 @@ import {
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
-import { gateUrlOnce } from "../url-classification.js";
+import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
@@ -766,8 +766,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         }
       }
 
-      // Gate the agent-supplied ticket URL against the domain classification
-      // table so MCP-driven suggestions can't reintroduce aggregator URLs.
+      // Gate the agent-supplied URLs against the domain classification table
+      // so MCP-driven suggestions can't reintroduce aggregator URLs.
+      // - ticket_url: dropped silently if classified non-ticket
+      // - source_url: REJECTS the whole suggestion if classified non-source
+      //   (a blocked aggregator as source would taint downstream rescraping)
+      const classifications = await loadClassifications(db);
+      if (params.source_url && !shouldIngestFromSource(params.source_url, classifications)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Source URL domain is not allowed for ingestion (classified as non-source). Suggestion not created.`,
+            },
+          ],
+          isError: true,
+        };
+      }
       const gatedTicketUrl = await gateUrlOnce(db, params.ticket_url, "ticket");
 
       const eventId = crypto.randomUUID();

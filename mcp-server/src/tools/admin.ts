@@ -259,6 +259,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .set({ status: params.status, updatedAt: new Date() })
         .where(eq(events.id, event.id));
 
+      // Audit log — material status transitions need to land in admin_actions
+      // so the Analytics activity feed and any downstream auditing can see
+      // them. Pattern mirrors set_enhanced_profile in this file.
+      await db.insert(adminActions).values({
+        action: "event.status_change",
+        actorUserId: auth.userId,
+        targetType: "event",
+        targetId: event.id,
+        payloadJson: JSON.stringify({
+          previous_status: previousStatus,
+          new_status: params.status,
+          slug: event.slug,
+        }),
+        createdAt: new Date(),
+      });
+
       // IndexNow: distinguish first-publish from the TENTATIVE→APPROVED
       // upgrade — both transitions matter to the analytics tab. A bare
       // public-bucket guard misses TENTATIVE→APPROVED because both are public.
@@ -1018,6 +1034,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           paymentStatus: newPaymentStatus,
         });
 
+        // Audit — UPSERT path (new event_vendors link)
+        await db.insert(adminActions).values({
+          action: "event_vendor.create",
+          actorUserId: auth.userId,
+          targetType: "event_vendor",
+          targetId: `${params.event_id}:${params.vendor_id}`,
+          payloadJson: JSON.stringify({
+            event_id: params.event_id,
+            vendor_id: params.vendor_id,
+            status: newStatus,
+            payment_status: newPaymentStatus,
+          }),
+          createdAt: new Date(),
+        });
+
         if (env && PUBLIC_VENDOR_SET.has(newStatus) && eventSlug) {
           await triggerIndexNow(publicUrlFor("events", eventSlug), env);
         }
@@ -1074,6 +1105,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       await db.update(eventVendors).set(updates).where(eq(eventVendors.id, record.id));
+
+      // Audit — UPDATE path (status and/or payment_status change)
+      await db.insert(adminActions).values({
+        action: "event_vendor.status_change",
+        actorUserId: auth.userId,
+        targetType: "event_vendor",
+        targetId: `${params.event_id}:${params.vendor_id}`,
+        payloadJson: JSON.stringify({
+          event_id: params.event_id,
+          vendor_id: params.vendor_id,
+          previous_status: result.previousStatus,
+          new_status: result.newStatus,
+          previous_payment_status: result.previousPaymentStatus,
+          new_payment_status: result.newPaymentStatus,
+        }),
+        createdAt: new Date(),
+      });
 
       if (
         env &&
