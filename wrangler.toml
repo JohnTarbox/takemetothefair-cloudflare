@@ -46,12 +46,18 @@ queue = "email-jobs"
 binding = "INDEXNOW_PINGS"
 queue = "indexnow-pings"
 
-# Workflow binding — lets the main app trigger long-running jobs whose
-# implementations live in the MCP Worker. Class definition is in
-# mcp-server/src/workflows/. Pages projects can BIND to a workflow defined
-# elsewhere; only Workers can host the WorkflowEntrypoint class itself.
-[[workflows]]
-name = "schema-org-sync"
-binding = "SCHEMA_ORG_SYNC"
-class_name = "SchemaOrgSyncWorkflow"
-script_name = "meetmeatthefair-mcp"
+# Workflow binding — DISABLED 2026-05-03. Cloudflare Pages projects don't
+# accept [[workflows]] in wrangler.toml ("Configuration file for Pages
+# projects does not support workflows" error from wrangler). Only Workers
+# can bind to Workflow classes.
+#
+# The Workflow class is registered correctly in the MCP Worker (see
+# mcp-server/wrangler.toml). To trigger from the main app, fetch the MCP
+# server's /api/admin/workflows/* HTTP endpoints (added by the same hotfix
+# that disabled this binding) using the existing INTERNAL_API_KEY auth.
+# Same Pages-vs-Workers limitation we hit with [[services]] in PR #71.
+# [[workflows]]
+# name = "schema-org-sync"
+# binding = "SCHEMA_ORG_SYNC"
+# class_name = "SchemaOrgSyncWorkflow"
+# script_name = "meetmeatthefair-mcp"
