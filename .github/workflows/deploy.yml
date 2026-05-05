@@ -35,8 +35,18 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # NEXT_PUBLIC_* vars must be available at build time — Next.js inlines
+      # them into the static bundle and they're not available at runtime in
+      # serverless contexts. Pre-OpenNext-migration the Cloudflare Pages
+      # dashboard env vars supplied these; the migration (commit c428ce9
+      # 2026-04-27) flipped the build pipeline so we now must pass them
+      # through GitHub Actions secrets. Missing this step caused an 8-day
+      # silent GA4 outage 2026-04-27 → 2026-05-05.
       - name: Build for Cloudflare Pages
         run: npm run pages:build
+        env:
+          NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
+          NEXT_PUBLIC_CF_BEACON_TOKEN: ${{ secrets.NEXT_PUBLIC_CF_BEACON_TOKEN }}
 
       - name: Deploy to Pages
         uses: cloudflare/wrangler-action@v3
