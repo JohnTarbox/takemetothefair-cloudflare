@@ -72,6 +72,23 @@ export function emailVerificationTemplate(args: { verifyUrl: string; name: strin
   return { subject: "Confirm your Meet Me at the Fair email", html, text };
 }
 
+export function vendorClaimVerificationTemplate(args: {
+  businessName: string;
+  verifyUrl: string;
+}): { subject: string; html: string; text: string } {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = baseLayout({
+    heading: "Confirm your vendor claim",
+    body: `<p style="margin:0 0 12px;">You requested to claim the Meet Me at the Fair listing for <strong>${escape(args.businessName)}</strong>.</p>
+<p style="margin:0 0 12px;">Click the button below to confirm. This link expires in 24 hours and can be used once.</p>
+<p style="margin:0 0 12px;">If you didn't request this, no action is needed — the listing stays as it is.</p>`,
+    cta: { url: args.verifyUrl, label: "Confirm claim" },
+  });
+  const text = `You requested to claim the Meet Me at the Fair listing for "${args.businessName}".\n\nConfirm by opening:\n${args.verifyUrl}\n\nThis link expires in 24 hours. If you didn't request this, no action is needed.`;
+  return { subject: `Confirm your claim of ${args.businessName}`, html, text };
+}
+
 export function vendorClaimConfirmationTemplate(args: {
   businessName: string;
   vendorSlug: string;
