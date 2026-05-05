@@ -14,6 +14,8 @@ import { createSlug } from "@/lib/utils";
 import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 
 export const runtime = "edge";
 
@@ -97,9 +99,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         description: vendors.description,
         city: vendors.city,
         state: vendors.state,
+        userId: vendors.userId,
         enhancedProfile: vendors.enhancedProfile,
         enhancedProfileStartedAt: vendors.enhancedProfileStartedAt,
         enhancedProfileExpiresAt: vendors.enhancedProfileExpiresAt,
+        claimed: vendors.claimed,
       })
       .from(vendors)
       .where(eq(vendors.id, id))
@@ -207,6 +211,23 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       updateData.featuredPriority = data.featured_priority;
     }
 
+    // Claimed transition (drizzle/0049). false→true grants Claimed badge,
+    // sends confirmation email, logs admin action. true→false revokes.
+    let claimedTransitioned: "granted" | "revoked" | null = null;
+    if (data.claimed !== undefined && data.claimed !== currentVendor.claimed) {
+      if (data.claimed) {
+        updateData.claimed = true;
+        updateData.claimedAt = now;
+        updateData.claimedBy = session.user.id;
+        claimedTransitioned = "granted";
+      } else {
+        updateData.claimed = false;
+        updateData.claimedAt = null;
+        updateData.claimedBy = null;
+        claimedTransitioned = "revoked";
+      }
+    }
+
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
     // Slug history write — fires whenever the resolved slug actually changed,
@@ -239,6 +260,38 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       });
     }
 
+    // Audit log + email for Claimed transition.
+    if (claimedTransitioned) {
+      await db.insert(adminActions).values({
+        action: claimedTransitioned === "granted" ? "vendor.claim_grant" : "vendor.claim_revoke",
+        actorUserId: session.user.id,
+        targetType: "vendor",
+        targetId: id,
+        payloadJson: JSON.stringify({ previous_claimed: currentVendor.claimed }),
+        createdAt: now,
+      });
+
+      if (claimedTransitioned === "granted") {
+        // Fire confirmation email if vendor's owner-user has an email. The
+        // existing sendEmail() falls back to logging when RESEND_API_KEY is
+        // unset, so this is safe in dev.
+        const [ownerUser] = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, currentVendor.userId))
+          .limit(1);
+        if (ownerUser?.email) {
+          const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
+          const tpl = vendorClaimConfirmationTemplate({
+            businessName: currentVendor.businessName,
+            vendorSlug: finalSlug,
+            siteUrl: getSiteUrl(),
+          });
+          await sendEmail(db, { to: ownerUser.email, ...tpl });
+        }
+      }
+    }
+
     const [updatedVendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
 
     // IndexNow: ping when fields rendered on the public vendor page change.
@@ -253,6 +306,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       (data.state !== undefined && (data.state ?? null) !== currentVendor.state) ||
       data.enhanced_profile !== undefined ||
       data.gallery_images !== undefined ||
+      claimedTransitioned !== null ||
       (updateData.slug !== undefined && updateData.slug !== currentVendor.slug);
     if (vendorMaterialChanged) {
       const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;

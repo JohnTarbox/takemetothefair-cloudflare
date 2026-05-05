@@ -166,6 +166,10 @@ export const vendorUpdateSchema = vendorCreateSchema
       .regex(/^[a-z0-9-]+$/, "Slug must be lowercase alphanumeric with hyphens only")
       .optional(),
     featured_priority: z.number().int().min(0).optional(),
+    // Claimed tier (drizzle/0049). Admin sets true to mark vendor as
+    // self-confirmed-owner; sets false to revoke. claimed_at and
+    // claimed_by are derived server-side from the transition + actor.
+    claimed: z.boolean().optional(),
   });
 
 // Event Day schema (per-day schedule)

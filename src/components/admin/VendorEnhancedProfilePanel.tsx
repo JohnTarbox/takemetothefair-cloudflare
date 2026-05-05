@@ -11,6 +11,8 @@ interface Props {
   galleryImages: string; // JSON-encoded array
   slug: string;
   featuredPriority: number;
+  claimed: boolean;
+  claimedAt: Date | null;
 }
 
 interface GalleryImage {
@@ -41,6 +43,8 @@ export function VendorEnhancedProfilePanel({
   galleryImages,
   slug,
   featuredPriority,
+  claimed,
+  claimedAt,
 }: Props) {
   const initialGallery = parseGallery(galleryImages);
   const [gallery, setGallery] = useState<GalleryImage[]>(initialGallery);
@@ -96,6 +100,26 @@ export function VendorEnhancedProfilePanel({
     )
       return;
     call({ enhanced_profile_expires_at: new Date().toISOString() });
+  }
+
+  function grantClaim() {
+    if (
+      !confirm(
+        "Mark this vendor as Claimed? A 'Claimed' badge will appear on their public page and a confirmation email will be sent to the vendor's account email."
+      )
+    )
+      return;
+    call({ claimed: true });
+  }
+
+  function revokeClaim() {
+    if (
+      !confirm(
+        "Revoke Claimed status? The 'Claimed' badge disappears immediately. No email is sent on revoke."
+      )
+    )
+      return;
+    call({ claimed: false });
   }
 
   function saveFields() {
@@ -155,6 +179,35 @@ export function VendorEnhancedProfilePanel({
         <Button type="button" variant="outline" onClick={startGrace} disabled={saving}>
           Set Expiry Now (start grace)
         </Button>
+      </div>
+
+      <div className="border-t border-gray-200 pt-4 mb-6">
+        <h3 className="text-sm font-semibold mb-2">Claimed status</h3>
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 text-sm">
+          <div>
+            <dt className="text-gray-500">Claimed</dt>
+            <dd className="font-medium">{claimed ? "Yes" : "No"}</dd>
+          </div>
+          <div>
+            <dt className="text-gray-500">Claimed at</dt>
+            <dd>{formatDate(claimedAt)}</dd>
+          </div>
+        </dl>
+        <div className="flex flex-wrap gap-2">
+          {!claimed ? (
+            <Button type="button" onClick={grantClaim} disabled={saving}>
+              Mark as Claimed
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" onClick={revokeClaim} disabled={saving}>
+              Revoke Claim
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Granting fires a confirmation email to the vendor account email. Revoke does not. The
+          badge appears on /vendors/[slug] within the page revalidate window (5 min).
+        </p>
       </div>
 
       <div className="space-y-4">
