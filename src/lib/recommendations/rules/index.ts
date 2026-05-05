@@ -25,6 +25,12 @@ import { vendorsNoDescriptionRule } from "./vendors-no-description";
 import { stubsReadyForEnrichmentRule } from "./stubs-ready-for-enrichment";
 import { standardsEligibleForClaimOutreachRule } from "./standards-eligible-for-claim-outreach";
 import { claimedReadyForEnhancedUpsellRule } from "./claimed-ready-for-enhanced-upsell";
+import { lowCtrPagesRule } from "./low-ctr-pages";
+import { slugQualityDriftRule } from "./slug-quality-drift";
+import { hijackedDomainDetectionRule } from "./hijacked-domain-detection";
+import { cannibalizationDetectionRule } from "./cannibalization-detection";
+import { competitorUrlContaminationRule } from "./competitor-url-contamination";
+import { longSnoozedItemsRule } from "./long-snoozed-items";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -45,4 +51,12 @@ export const ALL_RULES: RuleDefinition[] = [
   stubsReadyForEnrichmentRule,
   standardsEligibleForClaimOutreachRule,
   claimedReadyForEnhancedUpsellRule,
+  // SEO + data-quality rules from doc §10.4 (PR L). Note: page_2_close_calls
+  // is doc-listed but already shipped as seoPosition1120Rule above.
+  lowCtrPagesRule,
+  slugQualityDriftRule,
+  hijackedDomainDetectionRule,
+  cannibalizationDetectionRule,
+  competitorUrlContaminationRule,
+  longSnoozedItemsRule,
 ];
