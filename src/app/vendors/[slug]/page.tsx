@@ -35,6 +35,7 @@ import { buildVendorMetaDescription } from "@/lib/seo-utils";
 import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { VendorTierBadges } from "@/components/vendors/VendorTierBadges";
+import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
@@ -193,6 +194,7 @@ export default async function VendorDetailPage({ params }: Props) {
 
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
+  const isOwner = !!session?.user?.id && session.user.id === vendor.userId;
 
   const linkedBlogPosts = await getDirectlyLinkedBlogPosts(
     getCloudflareDb(),
@@ -258,6 +260,9 @@ export default async function VendorDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
+            {isOwner && !isAdmin && session?.user?.id && (
+              <VendorProfileCompleteness userId={session.user.id} />
+            )}
             {isAdmin && inGrace && expiresAt && (
               <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
                 Enhanced Profile expired {expiresAt.toISOString().slice(0, 10)} — features still

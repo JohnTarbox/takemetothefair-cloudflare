@@ -1,4 +1,5 @@
 import { parseJsonArray } from "@/types";
+import { getVendorTier, type VendorTier, type VendorTierFields } from "./vendor-tier";
 
 /**
  * Five fields that matter for a vendor to successfully apply to events:
@@ -10,8 +11,12 @@ import { parseJsonArray } from "@/types";
  *
  * Returns a percentage (0–100) plus the list of missing-field labels so
  * the UI can tell the vendor which one to add next.
+ *
+ * Also derives the vendor's current §6.6 tier and the gap to the next
+ * tier — used by the vendor-facing checklist to surface SEO-relevant
+ * field gaps separately from event-application readiness.
  */
-export interface VendorCompletenessInput {
+export interface VendorCompletenessInput extends VendorTierFields {
   logoUrl: string | null;
   description: string | null;
   products: string | null;
@@ -21,10 +26,47 @@ export interface VendorCompletenessInput {
   state: string | null;
 }
 
+export type NextTierAction = "fill_fields" | "upgrade_to_enhanced" | null;
+
 export interface VendorCompleteness {
   percent: number;
   missing: string[];
   complete: boolean;
+  currentTier: VendorTier;
+  /** Next tier the vendor can graduate to, or null at ENHANCED. */
+  nextTier: VendorTier | null;
+  /** Specific field labels needed to reach nextTier (empty for ENHANCED upsell path). */
+  tierGap: string[];
+  /** How the vendor closes the gap — by filling fields or by upgrading. */
+  nextTierAction: NextTierAction;
+}
+
+function nonEmpty(value: string | null | undefined): boolean {
+  return !!value && value.trim().length > 0;
+}
+
+function computeTierGap(
+  v: VendorTierFields,
+  currentTier: VendorTier
+): { nextTier: VendorTier | null; tierGap: string[]; nextTierAction: NextTierAction } {
+  if (currentTier === "ENHANCED") {
+    return { nextTier: null, tierGap: [], nextTierAction: null };
+  }
+  if (currentTier === "STANDARD") {
+    return { nextTier: "ENHANCED", tierGap: [], nextTierAction: "upgrade_to_enhanced" };
+  }
+  // STUB or MENTION → STANDARD: spell out the missing STANDARD criteria.
+  const gap: string[] = [];
+  if (!nonEmpty(v.description)) gap.push("description");
+  if (!nonEmpty(v.city) || !nonEmpty(v.state)) gap.push("city and state");
+  const hasWebsite = nonEmpty(v.website);
+  const hasSocial =
+    !!v.socialLinks &&
+    (typeof v.socialLinks === "string"
+      ? v.socialLinks.trim() !== "" && v.socialLinks.trim() !== "{}"
+      : Object.keys(v.socialLinks).length > 0);
+  if (!hasWebsite && !hasSocial) gap.push("website or social link");
+  return { nextTier: "STANDARD", tierGap: gap, nextTierAction: "fill_fields" };
 }
 
 export function computeVendorCompleteness(v: VendorCompletenessInput): VendorCompleteness {
@@ -39,5 +81,16 @@ export function computeVendorCompleteness(v: VendorCompletenessInput): VendorCom
   const filled = 5 - missing.length;
   const percent = Math.round((filled / 5) * 100);
 
-  return { percent, missing, complete: missing.length === 0 };
+  const currentTier = getVendorTier(v);
+  const { nextTier, tierGap, nextTierAction } = computeTierGap(v, currentTier);
+
+  return {
+    percent,
+    missing,
+    complete: missing.length === 0,
+    currentTier,
+    nextTier,
+    tierGap,
+    nextTierAction,
+  };
 }
