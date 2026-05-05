@@ -23,9 +23,12 @@ import {
   errorLogs,
   events,
   indexnowSubmissions,
+  timeToIndexLog,
+  userFavorites,
   vendors,
   venues,
 } from "@/lib/db/schema";
+import { SITEMAP_MIN_COMPLETENESS } from "@takemetothefair/utils";
 import {
   BingApiError,
   BingConfigError,
@@ -151,6 +154,85 @@ export type RecommendationsSummaryCard = {
   blueCount: number;
 };
 
+// §10.3 widgets ────────────────────────────────────────────────
+
+export type SiteCtrCard =
+  | {
+      ok: true;
+      clicks: number;
+      impressions: number;
+      ctr: number;
+      trend: Trend;
+      previousCtr: number;
+    }
+  | { ok: false; reason: string };
+
+/**
+ * Conversion rate is multi-numerator per business decision: vendor claim
+ * completed + event favorited + vendor profile contact-click. Denominator is
+ * GA4-equivalent sessions; we don't have GA4 server-side so we use the
+ * project's first-party `analyticsEvents` count of any event in the window
+ * as a proxy "active visitors" denominator.
+ */
+export type ConversionRateCard = {
+  conversions: number;
+  sessions: number;
+  rate: number;
+  windowDays: number;
+  breakdown: { vendor_claims: number; event_favorites: number; contact_clicks: number };
+};
+
+/**
+ * Brand vs non-brand split. Brand-keyword list is configurable but defaults
+ * to the variants of the site name. % is by clicks (impressions also tracked).
+ */
+export type BrandVsNonBrandCard =
+  | {
+      ok: true;
+      brand_clicks: number;
+      brand_impressions: number;
+      non_brand_clicks: number;
+      non_brand_impressions: number;
+      brand_share: number; // 0..1
+    }
+  | { ok: false; reason: string };
+
+/** Sitemap quality ratio: rows passing the completeness gate / total. */
+export type SitemapQualityCard = {
+  vendors: { pass: number; total: number };
+  events: { pass: number; total: number };
+  overall_pass_rate: number; // 0..1
+  threshold: number;
+};
+
+/** Time-to-index summary computed from time_to_index_log. */
+export type TimeToIndexCard = {
+  resolved: number;
+  unresolved: number;
+  median_seconds: number | null;
+  p90_seconds: number | null;
+  avg_seconds: number | null;
+};
+
+/** This week's actions: last 7 days of admin_actions ordered by recency. */
+export type ThisWeeksActionsCard = {
+  count: number;
+  actions: Array<{
+    action: string;
+    actorUserId: string | null;
+    targetType: string;
+    targetId: string;
+    createdAt: number; // ms-epoch
+  }>;
+};
+
+/** 90-day per-KPI mini sparkline strip. */
+export type KpiSparklineStrip = {
+  searchVisibility: SparklinePoint[];
+  conversions: SparklinePoint[];
+  publishing: SparklinePoint[];
+};
+
 export type SparklinePoint = { date: string; value: number };
 
 export type ActivityEntry = {
@@ -178,7 +260,21 @@ export type OverviewSnapshot = {
   publishingSparkline: SparklinePoint[];
   searchVisibilitySparkline: SparklinePoint[];
   activity: ActivityEntry[];
+  // §10.3 additions
+  siteCtr: SiteCtrCard;
+  conversionRate: ConversionRateCard;
+  brandVsNonBrand: BrandVsNonBrandCard;
+  sitemapQuality: SitemapQualityCard;
+  timeToIndex: TimeToIndexCard;
+  thisWeeksActions: ThisWeeksActionsCard;
+  kpiStrip90d: KpiSparklineStrip;
 };
+
+/**
+ * §10.3 brand-keyword list. Anything containing one of these substrings
+ * (case-insensitive) counts as a brand query in the brand-vs-non-brand split.
+ */
+const BRAND_KEYWORDS = ["meet me at the fair", "meetmeatthefair", "mmatf", "take me to the fair"];
 
 const HIGH_PRIORITY_INDEXNOW_SOURCES = ["venue.create", "vendor.create", "event.approve"] as const;
 const CONVERSION_EVENT_NAMES = ["outbound_ticket_click", "outbound_application_click"] as const;
@@ -203,6 +299,8 @@ export async function loadOverviewSnapshot(
   );
   const last24hDate = new Date(nowMs - 86400 * 1000);
 
+  const lastWeekDate = new Date(nowMs - 7 * 86400 * 1000);
+
   const [
     searchVisibility,
     conversions,
@@ -217,6 +315,13 @@ export async function loadOverviewSnapshot(
     publishingSparkline,
     searchVisibilitySparkline,
     activity,
+    siteCtr,
+    conversionRate,
+    brandVsNonBrand,
+    sitemapQuality,
+    timeToIndex,
+    thisWeeksActions,
+    kpiStrip90d,
   ] = await Promise.all([
     loadSearchVisibility(env, days),
     loadConversions(db, sinceDate, priorStartDate, priorEndDate, days),
@@ -231,6 +336,13 @@ export async function loadOverviewSnapshot(
     loadPublishingSparkline(db, sparklineSinceDate),
     loadSearchVisibilitySparkline(env),
     loadActivity(db, sinceDate),
+    loadSiteCtr(env, days),
+    loadConversionRate(db, sinceDate, days),
+    loadBrandVsNonBrand(env),
+    loadSitemapQuality(db),
+    loadTimeToIndex(db),
+    loadThisWeeksActions(db, lastWeekDate),
+    loadKpiStrip90d(db, env),
   ]);
 
   return {
@@ -249,6 +361,13 @@ export async function loadOverviewSnapshot(
     publishingSparkline,
     searchVisibilitySparkline,
     activity,
+    siteCtr,
+    conversionRate,
+    brandVsNonBrand,
+    sitemapQuality,
+    timeToIndex,
+    thisWeeksActions,
+    kpiStrip90d,
   };
 }
 
@@ -815,4 +934,306 @@ async function loadActivity(db: Db, sinceDate: Date): Promise<ActivityEntry[]> {
 
   merged.sort((a, b) => b.ts - a.ts);
   return merged.slice(0, 10);
+}
+
+// §10.3 loaders ─────────────────────────────────────────────────
+
+async function loadSiteCtr(env: ScEnv, days: number): Promise<SiteCtrCard> {
+  // Prior period of equal length, immediately preceding.
+  const today = new Date();
+  const startCurr = new Date(today.getTime() - days * 86400 * 1000);
+  const startPrev = new Date(today.getTime() - 2 * days * 86400 * 1000);
+  const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
+  try {
+    const [curr, prev] = await Promise.all([
+      getSiteSearchQueries(env, {
+        rowLimit: 500,
+        dateRange: { startDate: fmtDate(startCurr), endDate: fmtDate(today) },
+      }),
+      getSiteSearchQueries(env, {
+        rowLimit: 500,
+        dateRange: { startDate: fmtDate(startPrev), endDate: fmtDate(startCurr) },
+      }),
+    ]);
+    const ctr = curr.totals.impressions > 0 ? curr.totals.clicks / curr.totals.impressions : 0;
+    const prevCtr = prev.totals.impressions > 0 ? prev.totals.clicks / prev.totals.impressions : 0;
+    return {
+      ok: true,
+      clicks: curr.totals.clicks,
+      impressions: curr.totals.impressions,
+      ctr,
+      previousCtr: prevCtr,
+      trend: trendOf(ctr, prevCtr),
+    };
+  } catch (e) {
+    if (e instanceof ScConfigError || e instanceof ScApiError) {
+      return { ok: false, reason: e.message };
+    }
+    throw e;
+  }
+}
+
+async function loadConversionRate(
+  db: Db,
+  sinceDate: Date,
+  days: number
+): Promise<ConversionRateCard> {
+  // Three numerators per business decision.
+  // 1. Vendor claims completed in window — adminActions where action='vendor.claim_self_serve'
+  // 2. Event favorites added in window — userFavorites where favoritableType='EVENT'
+  // 3. Vendor profile contact-clicks — analyticsEvents where eventName='outbound_contact_click'
+  // Denominator: total analyticsEvents rows in the window (proxy for sessions/active visitors).
+  const [claimsRow, favRow, contactRow, sessionRow] = await Promise.all([
+    db
+      .select({ n: count() })
+      .from(adminActions)
+      .where(
+        and(
+          eq(adminActions.action, "vendor.claim_self_serve"),
+          gte(adminActions.createdAt, sinceDate)
+        )
+      ),
+    db
+      .select({ n: count() })
+      .from(userFavorites)
+      .where(
+        and(eq(userFavorites.favoritableType, "EVENT"), gte(userFavorites.createdAt, sinceDate))
+      ),
+    db
+      .select({ n: count() })
+      .from(analyticsEvents)
+      .where(
+        and(
+          eq(analyticsEvents.eventName, "outbound_contact_click"),
+          gte(analyticsEvents.timestamp, sinceDate)
+        )
+      ),
+    db
+      .select({ n: count() })
+      .from(analyticsEvents)
+      .where(gte(analyticsEvents.timestamp, sinceDate)),
+  ]);
+  const vendor_claims = claimsRow[0]?.n ?? 0;
+  const event_favorites = favRow[0]?.n ?? 0;
+  const contact_clicks = contactRow[0]?.n ?? 0;
+  const conversions = vendor_claims + event_favorites + contact_clicks;
+  const sessions = sessionRow[0]?.n ?? 0;
+  const rate = sessions > 0 ? conversions / sessions : 0;
+  return {
+    conversions,
+    sessions,
+    rate,
+    windowDays: days,
+    breakdown: { vendor_claims, event_favorites, contact_clicks },
+  };
+}
+
+async function loadBrandVsNonBrand(env: ScEnv): Promise<BrandVsNonBrandCard> {
+  try {
+    const result = await getSiteSearchQueries(env, { rowLimit: 500 });
+    let brand_clicks = 0;
+    let brand_impressions = 0;
+    let non_brand_clicks = 0;
+    let non_brand_impressions = 0;
+    for (const row of result.queries) {
+      const q = row.query.toLowerCase();
+      const isBrand = BRAND_KEYWORDS.some((k) => q.includes(k));
+      if (isBrand) {
+        brand_clicks += row.clicks;
+        brand_impressions += row.impressions;
+      } else {
+        non_brand_clicks += row.clicks;
+        non_brand_impressions += row.impressions;
+      }
+    }
+    const total_clicks = brand_clicks + non_brand_clicks;
+    return {
+      ok: true,
+      brand_clicks,
+      brand_impressions,
+      non_brand_clicks,
+      non_brand_impressions,
+      brand_share: total_clicks > 0 ? brand_clicks / total_clicks : 0,
+    };
+  } catch (e) {
+    if (e instanceof ScConfigError || e instanceof ScApiError) {
+      return { ok: false, reason: e.message };
+    }
+    throw e;
+  }
+}
+
+async function loadSitemapQuality(db: Db): Promise<SitemapQualityCard> {
+  // Pass = passes the §10.2 sitemap completeness gate (>= SITEMAP_MIN_COMPLETENESS).
+  // Filters: vendors must not be soft-deleted; events any status (the sitemap
+  // narrows further on isPublicEventStatus, but for the quality ratio we
+  // measure the full population).
+  const [vTotal, vPass, eTotal, ePass] = await Promise.all([
+    db
+      .select({ n: count() })
+      .from(vendors)
+      .where(sql`${vendors.deletedAt} IS NULL`),
+    db
+      .select({ n: count() })
+      .from(vendors)
+      .where(
+        and(
+          sql`${vendors.deletedAt} IS NULL`,
+          gte(vendors.completenessScore, SITEMAP_MIN_COMPLETENESS)
+        )
+      ),
+    db.select({ n: count() }).from(events),
+    db
+      .select({ n: count() })
+      .from(events)
+      .where(gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)),
+  ]);
+  const vTotalN = vTotal[0]?.n ?? 0;
+  const vPassN = vPass[0]?.n ?? 0;
+  const eTotalN = eTotal[0]?.n ?? 0;
+  const ePassN = ePass[0]?.n ?? 0;
+  const overallTotal = vTotalN + eTotalN;
+  return {
+    vendors: { pass: vPassN, total: vTotalN },
+    events: { pass: ePassN, total: eTotalN },
+    overall_pass_rate: overallTotal > 0 ? (vPassN + ePassN) / overallTotal : 0,
+    threshold: SITEMAP_MIN_COMPLETENESS,
+  };
+}
+
+async function loadTimeToIndex(db: Db): Promise<TimeToIndexCard> {
+  // Median computed in JS — SQLite has no MEDIAN aggregate. Pull resolved
+  // lag values up to 1000 most recent (cheap to sort in-memory).
+  const [resolvedRows, unresolvedRow] = await Promise.all([
+    db
+      .select({ lagSeconds: timeToIndexLog.lagSeconds })
+      .from(timeToIndexLog)
+      .where(sql`${timeToIndexLog.lagSeconds} IS NOT NULL`)
+      .orderBy(desc(timeToIndexLog.firstCrawlAt))
+      .limit(1000),
+    db
+      .select({ n: count() })
+      .from(timeToIndexLog)
+      .where(sql`${timeToIndexLog.firstCrawlAt} IS NULL`),
+  ]);
+  const lags = resolvedRows
+    .map((r) => r.lagSeconds)
+    .filter((n): n is number => typeof n === "number")
+    .sort((a, b) => a - b);
+  const n = lags.length;
+  if (n === 0) {
+    return {
+      resolved: 0,
+      unresolved: unresolvedRow[0]?.n ?? 0,
+      median_seconds: null,
+      p90_seconds: null,
+      avg_seconds: null,
+    };
+  }
+  const median = lags[Math.floor(n / 2)];
+  const p90 = lags[Math.floor(n * 0.9)];
+  const avg = Math.round(lags.reduce((s, v) => s + v, 0) / n);
+  return {
+    resolved: n,
+    unresolved: unresolvedRow[0]?.n ?? 0,
+    median_seconds: median,
+    p90_seconds: p90,
+    avg_seconds: avg,
+  };
+}
+
+async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<ThisWeeksActionsCard> {
+  const rows = await db
+    .select({
+      action: adminActions.action,
+      actorUserId: adminActions.actorUserId,
+      targetType: adminActions.targetType,
+      targetId: adminActions.targetId,
+      createdAt: adminActions.createdAt,
+    })
+    .from(adminActions)
+    .where(gte(adminActions.createdAt, sinceDate))
+    .orderBy(desc(adminActions.createdAt))
+    .limit(20);
+  const [countRow] = await db
+    .select({ n: count() })
+    .from(adminActions)
+    .where(gte(adminActions.createdAt, sinceDate));
+  return {
+    count: countRow?.n ?? 0,
+    actions: rows.map((r) => ({
+      action: r.action,
+      actorUserId: r.actorUserId,
+      targetType: r.targetType,
+      targetId: r.targetId,
+      createdAt: r.createdAt.getTime(),
+    })),
+  };
+}
+
+async function loadKpiStrip90d(db: Db, env: ScEnv): Promise<KpiSparklineStrip> {
+  // 90-day sparklines for the three top KPIs. Reuses the 30-day loaders
+  // by passing a deeper sinceDate; GSC daily clicks call uses days=90.
+  const since90 = new Date(Date.now() - 90 * 86400 * 1000);
+  const [searchVisibility, conversions, publishing] = await Promise.all([
+    (async () => {
+      try {
+        const rows = await getDailyClicks(env, { days: 90 });
+        const byDate = new Map<string, number>();
+        for (const r of rows) byDate.set(r.date, r.clicks);
+        return fillDailySeries(byDate, 90);
+      } catch (e) {
+        if (e instanceof ScConfigError || e instanceof ScApiError) return emptyDailySeries(90);
+        throw e;
+      }
+    })(),
+    loadConversionsSparklineDays(db, since90, 90),
+    loadPublishingSparklineDays(db, since90, 90),
+  ]);
+  return { searchVisibility, conversions, publishing };
+}
+
+// 90-day variants of the existing 30-day sparkline loaders. Same SQL shape
+// but parameterized on the bucket count so we don't duplicate the gather.
+async function loadConversionsSparklineDays(
+  db: Db,
+  sinceDate: Date,
+  days: number
+): Promise<SparklinePoint[]> {
+  const rows = await db
+    .select({
+      date: sql<string>`strftime('%Y-%m-%d', ${analyticsEvents.timestamp}, 'unixepoch')`,
+      n: count(),
+    })
+    .from(analyticsEvents)
+    .where(
+      and(
+        inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
+        gte(analyticsEvents.timestamp, sinceDate)
+      )
+    )
+    .groupBy(sql`strftime('%Y-%m-%d', ${analyticsEvents.timestamp}, 'unixepoch')`);
+  const byDate = new Map<string, number>();
+  for (const r of rows) byDate.set(r.date, r.n);
+  return fillDailySeries(byDate, days);
+}
+
+async function loadPublishingSparklineDays(
+  db: Db,
+  sinceDate: Date,
+  days: number
+): Promise<SparklinePoint[]> {
+  const rows = await db
+    .select({
+      date: sql<string>`strftime('%Y-%m-%d', ${indexnowSubmissions.timestamp}, 'unixepoch')`,
+      n: count(),
+    })
+    .from(indexnowSubmissions)
+    .where(
+      and(eq(indexnowSubmissions.status, "success"), gte(indexnowSubmissions.timestamp, sinceDate))
+    )
+    .groupBy(sql`strftime('%Y-%m-%d', ${indexnowSubmissions.timestamp}, 'unixepoch')`);
+  const byDate = new Map<string, number>();
+  for (const r of rows) byDate.set(r.date, r.n);
+  return fillDailySeries(byDate, days);
 }

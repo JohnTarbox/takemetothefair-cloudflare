@@ -150,6 +150,19 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <RecentErrorsCardView snapshot={snapshot} />
       </div>
 
+      {/* §10.3 KPI quartet — sitemap quality, time-to-index, brand split, conversion rate */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <SiteCtrCardView snapshot={snapshot} />
+        <ConversionRateCardView snapshot={snapshot} />
+        <BrandVsNonBrandCardView snapshot={snapshot} />
+        <SitemapQualityCardView snapshot={snapshot} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        <TimeToIndexCardView snapshot={snapshot} />
+        <ThisWeeksActionsCardView snapshot={snapshot} />
+      </div>
+
       <BlogCoverageCardView snapshot={snapshot} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
@@ -171,6 +184,31 @@ async function OverviewTab({ window }: { window: WindowKey }) {
           title="Publishing activity (last 30 days)"
           subtitle="Successful IndexNow submissions per day"
           points={snapshot.publishingSparkline}
+          colorClass="stroke-emerald-600"
+          fillClass="fill-emerald-100"
+        />
+      </div>
+
+      {/* §10.3 90-day KPI strip */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        <SparklineCard
+          title="Search visibility (90 days)"
+          subtitle="Daily Google search clicks · longer trend"
+          points={snapshot.kpiStrip90d.searchVisibility}
+          colorClass="stroke-violet-600"
+          fillClass="fill-violet-100"
+        />
+        <SparklineCard
+          title="Conversions (90 days)"
+          subtitle="Daily outbound ticket + application clicks · longer trend"
+          points={snapshot.kpiStrip90d.conversions}
+          colorClass="stroke-blue-600"
+          fillClass="fill-blue-100"
+        />
+        <SparklineCard
+          title="Publishing activity (90 days)"
+          subtitle="Successful IndexNow submissions per day · longer trend"
+          points={snapshot.kpiStrip90d.publishing}
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
         />
@@ -417,6 +455,205 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         </CardContent>
       </Card>
     </Link>
+  );
+}
+
+// §10.3 cards ─────────────────────────────────────────────────
+
+function fmtPct(x: number, digits = 1): string {
+  return `${(x * 100).toFixed(digits)}%`;
+}
+
+function fmtSeconds(s: number | null): string {
+  if (s === null || !isFinite(s)) return "—";
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h`;
+  return `${(s / 86400).toFixed(1)}d`;
+}
+
+function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.siteCtr;
+  if (!c.ok) {
+    return (
+      <KpiCard
+        title="Site CTR"
+        value="—"
+        icon={<Search className="w-5 h-5 text-gray-500" />}
+        iconColor="bg-gray-100"
+        href="/admin/analytics?tab=google"
+        footer={<span className="text-xs text-gray-500">{c.reason}</span>}
+      />
+    );
+  }
+  const trend = c.trend;
+  const TrendIcon = trend === "up" ? ArrowUp : trend === "down" ? ArrowDown : ArrowRight;
+  const trendColor =
+    trend === "up" ? "text-emerald-600" : trend === "down" ? "text-red-600" : "text-gray-500";
+  return (
+    <KpiCard
+      title="Site CTR (Google, last window)"
+      value={fmtPct(c.ctr, 2)}
+      icon={<Search className="w-5 h-5 text-violet-600" />}
+      iconColor="bg-violet-100"
+      href="/admin/analytics?tab=google"
+      footer={
+        <div className="flex flex-col gap-0.5">
+          <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
+            <TrendIcon className="w-3 h-3" /> prev {fmtPct(c.previousCtr, 2)}
+          </span>
+          <span className="text-xs text-gray-500">
+            {fmt(c.clicks)} clicks / {fmt(c.impressions)} impr
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.conversionRate;
+  return (
+    <KpiCard
+      title={`Conversion rate (${c.windowDays}d)`}
+      value={fmtPct(c.rate, 2)}
+      icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
+      iconColor="bg-emerald-100"
+      footer={
+        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+          <span>
+            {fmt(c.conversions)} conv / {fmt(c.sessions)} sessions
+          </span>
+          <span>
+            claims {fmt(c.breakdown.vendor_claims)} · favs {fmt(c.breakdown.event_favorites)} ·
+            contacts {fmt(c.breakdown.contact_clicks)}
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.brandVsNonBrand;
+  if (!c.ok) {
+    return (
+      <KpiCard
+        title="Brand share"
+        value="—"
+        icon={<Search className="w-5 h-5 text-gray-500" />}
+        iconColor="bg-gray-100"
+        href="/admin/analytics?tab=google"
+        footer={<span className="text-xs text-gray-500">{c.reason}</span>}
+      />
+    );
+  }
+  return (
+    <KpiCard
+      title="Brand vs non-brand (Google)"
+      value={fmtPct(c.brand_share, 0)}
+      icon={<TrendingUp className="w-5 h-5 text-blue-600" />}
+      iconColor="bg-blue-100"
+      href="/admin/analytics?tab=google"
+      footer={
+        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+          <span>
+            brand {fmt(c.brand_clicks)} clicks · non-brand {fmt(c.non_brand_clicks)} clicks
+          </span>
+          <span>
+            impr {fmt(c.brand_impressions)} / {fmt(c.non_brand_impressions)}
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.sitemapQuality;
+  return (
+    <KpiCard
+      title={`Sitemap quality (≥ ${c.threshold})`}
+      value={fmtPct(c.overall_pass_rate, 0)}
+      icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
+      iconColor="bg-emerald-100"
+      footer={
+        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+          <span>
+            vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
+          </span>
+          <span>
+            events {fmt(c.events.pass)}/{fmt(c.events.total)}
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.timeToIndex;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Time-to-index (median lag)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">Median</p>
+            <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmtSeconds(c.median_seconds)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">P90</p>
+            <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmtSeconds(c.p90_seconds)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">Avg</p>
+            <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums">
+              {fmtSeconds(c.avg_seconds)}
+            </p>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mt-4">
+          {fmt(c.resolved)} resolved · {fmt(c.unresolved)} unresolved · run{" "}
+          <code className="px-1 bg-gray-100 rounded">/api/admin/sweep-time-to-index</code> to
+          reconcile.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ThisWeeksActionsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.thisWeeksActions;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>This week&apos;s actions ({fmt(c.count)})</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {c.actions.length === 0 ? (
+          <p className="text-sm text-gray-500">No admin actions in the last 7 days.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {c.actions.slice(0, 8).map((a, i) => (
+              <li key={i} className="flex justify-between gap-4">
+                <span className="font-mono text-xs text-gray-700 truncate">{a.action}</span>
+                <span className="text-xs text-gray-500 shrink-0">
+                  {a.targetType}/{a.targetId.slice(0, 8)} ·{" "}
+                  {formatTimestampForServer(new Date(a.createdAt))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
