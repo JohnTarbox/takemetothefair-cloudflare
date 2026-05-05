@@ -54,7 +54,10 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # additional crons here as confidence in the pattern builds; the scheduled
 # handler in src/index.ts dispatches based on which cron expression fires.
 [triggers]
-crons = ["0 6 * * *"] # 06:00 UTC daily — overnight in NA, low-traffic window
+# "0 6 * * *"     → daily heavy: recommendations scan + GSC URL Inspection sweep
+#                   + time-to-index reconcile (06:00 UTC, overnight NA)
+# "*/10 * * * *"  → §6.3 KPI state-machine recompute (light, ~5 INSERTs per fire)
+crons = ["0 6 * * *", "*/10 * * * *"]
 
 # Queue producers — also wired here so MCP tools can enqueue (e.g., MCP's
 # create_event triggers an IndexNow ping; same code path as the main app).

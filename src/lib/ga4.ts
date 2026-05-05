@@ -842,3 +842,49 @@ export async function getGa4EventDetail(
     generatedAt: new Date().toISOString(),
   };
 }
+
+/**
+ * §6.3 conversion-rate denominator: GA4 organic search sessions.
+ *
+ * Used by `loadConversionRate` and `recomputeKpiStates` for the §6.3 KPI
+ * (outbound_ticket_click count / organic sessions). `sessionMedium='organic'`
+ * is the canonical GA4 dimension that aligns with what GSC reports as a
+ * search visit; slight definitional drift from GSC clicks is expected.
+ *
+ * Window: caller passes explicit start/end dates. Callers using the KPI
+ * state classifier should pass a 48h-stable window (`endDate = today - 2`)
+ * to avoid spurious state flips during GA4's finalization lag.
+ *
+ * Returns 0 if GA4 returns zero rows (no organic traffic in window) and
+ * `null` if the GA4 call fails — callers should treat null as
+ * INDETERMINATE for state classification.
+ */
+export async function getOrganicSessions(
+  env: Ga4Env,
+  startDate: string,
+  endDate: string,
+  opts: { skipCache?: boolean } = {}
+): Promise<number | null> {
+  try {
+    const res = await runReport(
+      env,
+      {
+        dateRanges: [{ startDate, endDate }],
+        metrics: [{ name: "sessions" }],
+        dimensionFilter: {
+          filter: {
+            fieldName: "sessionMedium",
+            stringFilter: { matchType: "EXACT", value: "organic", caseSensitive: false },
+          },
+        },
+      },
+      opts
+    );
+    return toNumber(res.rows?.[0]?.metricValues?.[0]?.value);
+  } catch (e) {
+    if (e instanceof Ga4ConfigError || e instanceof Ga4ApiError) {
+      return null;
+    }
+    throw e;
+  }
+}

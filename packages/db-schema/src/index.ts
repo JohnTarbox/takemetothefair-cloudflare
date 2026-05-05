@@ -940,6 +940,33 @@ export const competitorDomains = sqliteTable(
   (t) => [index("idx_competitor_domains_domain").on(t.domain)]
 );
 
+// §6.3 KPI state-machine history (drizzle/0059). One row per (kpi_name,
+// computed_at) — the */10 cron in MCP Worker writes 5 rows per fire (one per
+// KPI). The Overview reads the latest row per KPI for state-coloring; the
+// action queue derives P0/P1 entries from the same source. Pruned to 90d.
+export const kpiStateHistory = sqliteTable(
+  "kpi_state_history",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kpiName: text("kpi_name").notNull(),
+    computedAt: integer("computed_at", { mode: "timestamp" }).notNull(),
+    // Nullable when the underlying data isn't flowing yet (e.g. time_to_index
+    // before 10+ resolved samples). Pairs with state="INDETERMINATE".
+    value: real("value"),
+    state: text("state", { enum: ["GREEN", "YELLOW", "RED", "INDETERMINATE"] }).notNull(),
+    // 1 when this row's state differs from the previous row's state for the
+    // same kpi_name. Drives the action-queue auto-resolve audit log entry.
+    stateChangedFromPrevious: integer("state_changed_from_previous").notNull().default(0),
+    // When the CURRENT continuous run of this state started. Carried forward
+    // across rows of the same state; reset to computedAt when state changes.
+    // Surfaces "first detected" date in the action queue for staleness.
+    firstDetectedAt: integer("first_detected_at", { mode: "timestamp" }),
+    // JSON blob: { numerator, denominator, window } for trace/debugging.
+    meta: text("meta"),
+  },
+  (t) => [index("idx_kpi_state_history_name_at").on(t.kpiName, t.computedAt)]
+);
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type Venue = typeof venues.$inferSelect;

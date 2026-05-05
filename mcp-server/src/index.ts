@@ -306,38 +306,93 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
 // land in `wrangler tail` only. We log them to console.error for visibility
 // and skip the failed task — never throw, otherwise Cloudflare retries the
 // whole cron run on a tighter schedule.
-async function runScheduledRecommendationsScan(env: Env): Promise<void> {
-  // Prefer the MAIN_APP service binding when it's wired up (currently
-  // disabled — see wrangler.toml comment). Falls back to public HTTPS via
-  // MAIN_APP_URL + INTERNAL_API_KEY so the cron still works today.
-  const url = "https://meetmeatthefair.com/api/admin/recommendations/scan";
+/**
+ * Shared executor for cron-driven main-app sweeps. Each task is a POST to a
+ * `/api/admin/...` route with `X-Internal-Key`. Errors are logged and
+ * swallowed — never thrown — so a single task failure doesn't trigger
+ * Cloudflare's tighter-schedule cron retry.
+ */
+async function runMainAppSweep(
+  env: Env,
+  label: string,
+  path: string,
+  format: (result: Record<string, unknown>) => string = (r) => JSON.stringify(r)
+): Promise<void> {
+  const url = `https://meetmeatthefair.com${path}`;
   const init: RequestInit = {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // /api/admin/recommendations/scan accepts mmatf_ tokens OR the
-      // internal key, so this auths without an admin session.
       "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
     },
   };
-
   try {
     const response = env.MAIN_APP
       ? await env.MAIN_APP.fetch(new Request(url, init))
       : await fetch(url, init);
-
     if (!response.ok) {
       const text = (await response.text()).slice(0, 300);
-      console.error(`[cron] recommendations scan ${response.status}: ${text}`);
+      console.error(`[cron] ${label} ${response.status}: ${text}`);
       return;
     }
     const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    console.warn(
-      `[cron] recommendations scan ok — scanned=${result.scannedRules} resolved=${result.resolved}`
-    );
+    console.warn(`[cron] ${label} ok — ${format(result)}`);
   } catch (error) {
-    console.error("[cron] recommendations scan threw:", error);
+    console.error(`[cron] ${label} threw:`, error);
   }
+}
+
+async function runScheduledRecommendationsScan(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "recommendations scan",
+    "/api/admin/recommendations/scan",
+    (r) => `scanned=${r.scannedRules} resolved=${r.resolved}`
+  );
+}
+
+/**
+ * §6.3 KPI state-machine recompute — fires every 10 min via the
+ * star-slash-10 cron. Reads the 5 executive KPIs against the 48h-stable
+ * window, classifies, and appends rows to kpi_state_history. Drives the
+ * Overview tab's GREEN/YELLOW/RED card coloring + the action queue.
+ */
+async function runScheduledKpiRecompute(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "kpi recompute",
+    "/api/admin/kpi-recompute",
+    (r) =>
+      `written=${r.written} transitions=${r.transitions} resolved=${r.resolved} pruned=${r.pruned}`
+  );
+}
+
+/**
+ * GSC URL Inspection sweep — populates gsc_inspection_state which the
+ * time-to-index reconcile then joins against. Daily cadence is enough for
+ * MMATF's URL volume (~few hundred URLs/day in time_to_index_log).
+ */
+async function runScheduledGscSweep(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "gsc sweep",
+    "/api/admin/site-health/sweep",
+    (r) => `inspected=${r.inspected ?? "?"}`
+  );
+}
+
+/**
+ * Time-to-index reconciliation — joins time_to_index_log unresolved rows
+ * against gsc_inspection_state. Runs after the gsc sweep so freshly-fetched
+ * inspection state can be picked up immediately.
+ */
+async function runScheduledTimeToIndexSweep(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "time-to-index sweep",
+    "/api/admin/sweep-time-to-index",
+    (r) => `reconciled=${r.reconciled ?? "?"} avg_lag=${r.avg_lag_seconds ?? "?"}s`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -383,14 +438,25 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    // Cron pattern from wrangler.toml drives `controller.cron`. We don't
-    // currently dispatch on it (only one cron registered), but logging it
-    // here makes the wrangler-tail trail unambiguous when more crons get
-    // added.
+    // Dispatch by cron expression. wrangler.toml lists each cron; the
+    // ScheduledController carries which one fired in `controller.cron`.
+    //   - "0 6 * * *"     → daily heavy work (recs, gsc, time-to-index)
+    //   - "*/10 * * * *"  → §6.3 KPI state-machine recompute (light)
     console.warn(
       `[cron] firing for cron='${controller.cron}' at ${new Date(controller.scheduledTime).toISOString()}`
     );
-    ctx.waitUntil(runScheduledRecommendationsScan(env));
+    if (controller.cron === "*/10 * * * *") {
+      ctx.waitUntil(runScheduledKpiRecompute(env));
+      return;
+    }
+    // Default daily branch (covers "0 6 * * *" and any future daily crons).
+    ctx.waitUntil(
+      Promise.all([
+        runScheduledRecommendationsScan(env),
+        runScheduledGscSweep(env),
+        runScheduledTimeToIndexSweep(env),
+      ]).then(() => undefined)
+    );
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
