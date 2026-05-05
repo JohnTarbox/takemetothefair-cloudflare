@@ -39,6 +39,7 @@ interface VendorWithEvents {
   commercial: boolean | null;
   claimed?: boolean | null;
   enhancedProfile?: boolean | null;
+  verifiedPro?: boolean | null;
   city?: string | null;
   state?: string | null;
   events: VendorEvent[];

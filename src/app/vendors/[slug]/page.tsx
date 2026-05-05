@@ -332,6 +332,7 @@ export default async function VendorDetailPage({ params }: Props) {
                   <VendorTierBadges
                     claimed={vendor.claimed}
                     enhancedProfile={vendor.enhancedProfile}
+                    verifiedPro={vendor.verifiedPro}
                     className="inline-flex items-center gap-1.5"
                   />
                 </div>

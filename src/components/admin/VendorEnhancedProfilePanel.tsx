@@ -13,6 +13,8 @@ interface Props {
   featuredPriority: number;
   claimed: boolean;
   claimedAt: Date | null;
+  verifiedPro: boolean;
+  verifiedProAt: Date | null;
 }
 
 interface GalleryImage {
@@ -45,6 +47,8 @@ export function VendorEnhancedProfilePanel({
   featuredPriority,
   claimed,
   claimedAt,
+  verifiedPro,
+  verifiedProAt,
 }: Props) {
   const initialGallery = parseGallery(galleryImages);
   const [gallery, setGallery] = useState<GalleryImage[]>(initialGallery);
@@ -120,6 +124,26 @@ export function VendorEnhancedProfilePanel({
     )
       return;
     call({ claimed: false });
+  }
+
+  function grantVerifiedPro() {
+    if (
+      !confirm(
+        "Mark this vendor as Verified Pro? This signals that we have credentialed their identity (LLC verified, address confirmed, etc.). The 'Verified Pro' badge will appear on their public page. No vendor notification email is sent."
+      )
+    )
+      return;
+    call({ verified_pro: true });
+  }
+
+  function revokeVerifiedPro() {
+    if (
+      !confirm(
+        "Revoke Verified Pro status? The 'Verified Pro' badge disappears immediately. No email is sent on revoke."
+      )
+    )
+      return;
+    call({ verified_pro: false });
   }
 
   function saveFields() {
@@ -207,6 +231,35 @@ export function VendorEnhancedProfilePanel({
         <p className="text-xs text-gray-500 mt-2">
           Granting fires a confirmation email to the vendor account email. Revoke does not. The
           badge appears on /vendors/[slug] within the page revalidate window (5 min).
+        </p>
+      </div>
+
+      <div className="border-t border-gray-200 pt-4 mb-6">
+        <h3 className="text-sm font-semibold mb-2">Verified Pro status</h3>
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 text-sm">
+          <div>
+            <dt className="text-gray-500">Verified Pro</dt>
+            <dd className="font-medium">{verifiedPro ? "Yes" : "No"}</dd>
+          </div>
+          <div>
+            <dt className="text-gray-500">Verified at</dt>
+            <dd>{formatDate(verifiedProAt)}</dd>
+          </div>
+        </dl>
+        <div className="flex flex-wrap gap-2">
+          {!verifiedPro ? (
+            <Button type="button" onClick={grantVerifiedPro} disabled={saving}>
+              Mark as Verified Pro
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" onClick={revokeVerifiedPro} disabled={saving}>
+              Revoke Verified Pro
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Credentialed identity-verification signal — admin-only set. No vendor email on grant or
+          revoke. Orthogonal to Claimed; admin grants each independently.
         </p>
       </div>
 

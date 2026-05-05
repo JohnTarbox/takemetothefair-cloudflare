@@ -38,6 +38,7 @@ interface VendorCardProps {
     commercial: boolean | null;
     claimed?: boolean | null;
     enhancedProfile?: boolean | null;
+    verifiedPro?: boolean | null;
     city?: string | null;
     state?: string | null;
     events: VendorEvent[];
@@ -77,6 +78,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
               <VendorTierBadges
                 claimed={vendor.claimed}
                 enhancedProfile={vendor.enhancedProfile}
+                verifiedPro={vendor.verifiedPro}
                 className="inline-flex items-center gap-1"
                 size="sm"
               />
