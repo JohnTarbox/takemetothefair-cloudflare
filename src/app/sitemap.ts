@@ -1,8 +1,9 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts } from "@/lib/db/schema";
-import { eq, and, or, gte, isNull, isNotNull, ne, count, sql } from "drizzle-orm";
+import { eq, and, or, gte, isNull, count } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { isVendorIndexable } from "@/lib/vendor-quality";
 
 export const runtime = "edge";
 
@@ -225,26 +226,32 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    // Get vendors. Quality gate: a vendor must have a non-empty description OR
-    // a non-empty website to be sitemap-eligible. Mirrored in
-    // src/app/vendors/[slug]/page.tsx generateMetadata via robots: noindex,
-    // and codified by isVendorIndexable() in src/lib/vendor-quality.ts.
+    // Get vendors. Tier-based gate: only STANDARD and ENHANCED tiers are
+    // sitemap-eligible (per §6.6 four-tier model). Tier derivation lives in
+    // src/lib/vendor-tier.ts; isVendorIndexable() in vendor-quality.ts is
+    // the binary delegation. Same predicate gates noindex on the vendor
+    // detail page so the two surfaces stay in lockstep.
     const vendorResults = await db
-      .select({ slug: vendors.slug, updatedAt: vendors.updatedAt })
-      .from(vendors)
-      .where(
-        or(
-          and(isNotNull(vendors.description), ne(sql`TRIM(${vendors.description})`, "")),
-          and(isNotNull(vendors.website), ne(sql`TRIM(${vendors.website})`, ""))
-        )
-      );
+      .select({
+        slug: vendors.slug,
+        updatedAt: vendors.updatedAt,
+        description: vendors.description,
+        website: vendors.website,
+        socialLinks: vendors.socialLinks,
+        city: vendors.city,
+        state: vendors.state,
+        enhancedProfile: vendors.enhancedProfile,
+      })
+      .from(vendors);
 
-    const vendorPages: MetadataRoute.Sitemap = vendorResults.map((vendor) => ({
-      url: `${baseUrl}/vendors/${vendor.slug}`,
-      lastModified: safeLastMod(vendor.updatedAt),
-      changeFrequency: "monthly" as const,
-      priority: 0.6,
-    }));
+    const vendorPages: MetadataRoute.Sitemap = vendorResults
+      .filter(isVendorIndexable)
+      .map((vendor) => ({
+        url: `${baseUrl}/vendors/${vendor.slug}`,
+        lastModified: safeLastMod(vendor.updatedAt),
+        changeFrequency: "monthly" as const,
+        priority: 0.6,
+      }));
 
     // Get promoters (no public/private gate — promoters table has no status
     // column; verified is just a trust badge, not a visibility filter).

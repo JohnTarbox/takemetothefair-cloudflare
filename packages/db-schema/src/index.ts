@@ -206,6 +206,11 @@ export const vendors = sqliteTable("vendors", {
   enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
   galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
   featuredPriority: integer("featured_priority").notNull().default(0),
+  // Claimed tier (drizzle/0049) — vendor-confirmed ownership, distinct from userId
+  // which every vendor has. Drives the Claimed badge and tier-transition rules.
+  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+  claimedAt: integer("claimed_at", { mode: "timestamp" }),
+  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
