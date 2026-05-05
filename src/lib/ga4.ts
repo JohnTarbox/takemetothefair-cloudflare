@@ -844,6 +844,52 @@ export async function getGa4EventDetail(
 }
 
 /**
+ * §6.3 STALE-state freshness signal: most recent GA4 date with users > 0.
+ *
+ * Used by `recomputeKpiStates` (and the daily liveness check) to detect
+ * "GA4 has stopped reporting" — drives the STALE classification on the
+ * conversion-rate KPI. Returns the date as a YYYY-MM-DD string, or null
+ * if no data in the last 7 days (catastrophic feed outage). On API error,
+ * also returns null — callers should treat null as STALE since we can't
+ * prove freshness.
+ */
+export async function getMaxGa4DateWithUsers(
+  env: Ga4Env,
+  opts: { skipCache?: boolean } = {}
+): Promise<string | null> {
+  try {
+    const res = await runReport(
+      env,
+      {
+        dateRanges: [{ startDate: "7daysAgo", endDate: "today" }],
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "totalUsers" }],
+        orderBys: [{ dimension: { dimensionName: "date" }, desc: true }],
+        limit: 7,
+      },
+      opts
+    );
+    for (const row of res.rows ?? []) {
+      const users = toNumber(row.metricValues?.[0]?.value);
+      const date = row.dimensionValues?.[0]?.value;
+      if (users > 0 && date) {
+        // GA4 returns dates as YYYYMMDD; normalize to YYYY-MM-DD.
+        if (date.length === 8) {
+          return `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+        }
+        return date;
+      }
+    }
+    return null;
+  } catch (e) {
+    if (e instanceof Ga4ConfigError || e instanceof Ga4ApiError) {
+      return null;
+    }
+    throw e;
+  }
+}
+
+/**
  * §6.3 conversion-rate denominator: GA4 organic search sessions.
  *
  * Used by `loadConversionRate` and `recomputeKpiStates` for the §6.3 KPI

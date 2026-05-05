@@ -22,8 +22,8 @@ import {
   vendors,
 } from "@/lib/db/schema";
 import { SITEMAP_MIN_COMPLETENESS } from "@takemetothefair/utils";
-import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
-import { getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
+import { getMaxGa4DateWithUsers, getOrganicSessions, type Ga4Env } from "@/lib/ga4";
+import { getMaxGscDataDate, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
 import { classifyKpi, KPI_NAMES, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -43,9 +43,31 @@ const CONVERSION_EVENT_NAMES = ["outbound_ticket_click", "outbound_application_c
 export type KpiValueResult = {
   /** The classifier value, or null when data isn't flowing yet. */
   value: number | null;
+  /**
+   * Age of the underlying data source in seconds. Drives STALE classification:
+   * if `dataAgeSeconds > thresholds.staleSlaSeconds`, the KPI is STALE
+   * regardless of value. `null` means "we couldn't determine freshness"
+   * (e.g. API error reading the data source) — treated as STALE since
+   * we can't prove the feed is alive.
+   */
+  dataAgeSeconds: number | null;
   /** Trace metadata persisted to kpi_state_history.meta as JSON. */
   meta: Record<string, unknown>;
 };
+
+/** Convert a YYYY-MM-DD date (or null) to seconds-since-now. */
+function ageSecondsFromIsoDate(isoDate: string | null): number | null {
+  if (!isoDate) return null;
+  const t = Date.parse(`${isoDate}T00:00:00Z`);
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 1000));
+}
+
+/** Convert a Date instant (or null) to seconds-since-now. */
+function ageSecondsFromDate(d: Date | null | undefined): number | null {
+  if (!d) return null;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+}
 
 export type KpiStateRow = {
   id: number;
@@ -74,17 +96,27 @@ export async function readKpiValues(
   const stableEndDate = new Date(stableEndMs);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
+  // Probe each external data source's freshest date once. Both site_ctr and
+  // brand_share share the GSC signal — single API call, two consumers.
+  // Conversion-rate's freshness comes from GA4 (the staleness-sensitive
+  // denominator); first-party numerator is in D1 and assumed fresh.
+  const [gscMaxDate, ga4MaxDate] = await Promise.all([
+    getMaxGscDataDate(env),
+    getMaxGa4DateWithUsers(env),
+  ]);
+
   const [siteCtr, conversionRate, brandShare, sitemapQuality, timeToIndex] = await Promise.all([
-    readSiteCtr(env, fmt(stableStartDate), fmt(stableEndDate)),
+    readSiteCtr(env, fmt(stableStartDate), fmt(stableEndDate), gscMaxDate),
     readConversionRate(
       db,
       env,
       stableStartDate,
       stableEndDate,
       fmt(stableStartDate),
-      fmt(stableEndDate)
+      fmt(stableEndDate),
+      ga4MaxDate
     ),
-    readBrandShare(env),
+    readBrandShare(env, gscMaxDate),
     readSitemapQuality(db),
     readTimeToIndex(db),
   ]);
@@ -101,7 +133,8 @@ export async function readKpiValues(
 async function readSiteCtr(
   env: ScEnv,
   startDate: string,
-  endDate: string
+  endDate: string,
+  gscMaxDate: string | null
 ): Promise<KpiValueResult> {
   try {
     const res = await getSiteSearchQueries(env, {
@@ -111,14 +144,20 @@ async function readSiteCtr(
     const ctr = res.totals.impressions > 0 ? res.totals.clicks / res.totals.impressions : 0;
     return {
       value: ctr,
+      dataAgeSeconds: ageSecondsFromIsoDate(gscMaxDate),
       meta: {
         clicks: res.totals.clicks,
         impressions: res.totals.impressions,
         window: { startDate, endDate },
+        gscMaxDate,
       },
     };
   } catch (e) {
-    return { value: null, meta: { error: String(e), window: { startDate, endDate } } };
+    return {
+      value: null,
+      dataAgeSeconds: ageSecondsFromIsoDate(gscMaxDate),
+      meta: { error: String(e), window: { startDate, endDate }, gscMaxDate },
+    };
   }
 }
 
@@ -128,7 +167,8 @@ async function readConversionRate(
   sinceDate: Date,
   untilDate: Date,
   startDate: string,
-  endDate: string
+  endDate: string,
+  ga4MaxDate: string | null
 ): Promise<KpiValueResult> {
   // Numerator: outbound_ticket_click + outbound_application_click in the
   // 7d stable window. Both bounds are required so the classifier sees the
@@ -136,6 +176,11 @@ async function readConversionRate(
   // in analytics-overview.ts) — without `lt(timestamp, untilDate)` the
   // classifier would silently include 2 extra days of events vs. the
   // displayed numerator, and the rates would disagree.
+  //
+  // Staleness signal: GA4 freshness. The first-party analyticsEvents feed
+  // keeps flowing during a GA4 outage (it's our own beacon), so the meaningful
+  // "is this metric trustworthy" axis is GA4. ga4MaxDate is the most recent
+  // date GA4 reported users > 0; null means GA4 returned no data in 7d.
   const [numRow, sessions] = await Promise.all([
     db
       .select({ n: count() })
@@ -150,21 +195,32 @@ async function readConversionRate(
     getOrganicSessions(env, startDate, endDate),
   ]);
   const numerator = numRow[0]?.n ?? 0;
+  const dataAgeSeconds = ageSecondsFromIsoDate(ga4MaxDate);
   if (sessions == null || sessions === 0) {
     return {
       value: null,
-      meta: { numerator, sessions, window: { startDate, endDate }, reason: "no_organic_sessions" },
+      dataAgeSeconds,
+      meta: {
+        numerator,
+        sessions,
+        window: { startDate, endDate },
+        ga4MaxDate,
+        reason: "no_organic_sessions",
+      },
     };
   }
   return {
     value: numerator / sessions,
-    meta: { numerator, sessions, window: { startDate, endDate } },
+    dataAgeSeconds,
+    meta: { numerator, sessions, window: { startDate, endDate }, ga4MaxDate },
   };
 }
 
-async function readBrandShare(env: ScEnv): Promise<KpiValueResult> {
+async function readBrandShare(env: ScEnv, gscMaxDate: string | null): Promise<KpiValueResult> {
   // GSC default window (last 28d) — brand share is a slow-moving signal so
   // 48h shift isn't material. Mirrors loadBrandVsNonBrand in analytics-overview.ts.
+  // Staleness signal shared with site_ctr (same GSC source).
+  const dataAgeSeconds = ageSecondsFromIsoDate(gscMaxDate);
   try {
     const res = await getSiteSearchQueries(env, { rowLimit: 500 });
     let brand = 0;
@@ -176,18 +232,26 @@ async function readBrandShare(env: ScEnv): Promise<KpiValueResult> {
       total += row.clicks;
     }
     if (total === 0) {
-      return { value: null, meta: { brand, total, reason: "no_clicks" } };
+      return {
+        value: null,
+        dataAgeSeconds,
+        meta: { brand, total, gscMaxDate, reason: "no_clicks" },
+      };
     }
-    return { value: brand / total, meta: { brand, total } };
+    return { value: brand / total, dataAgeSeconds, meta: { brand, total, gscMaxDate } };
   } catch (e) {
-    return { value: null, meta: { error: String(e) } };
+    return { value: null, dataAgeSeconds, meta: { error: String(e), gscMaxDate } };
   }
 }
 
 async function readSitemapQuality(db: Db): Promise<KpiValueResult> {
   // Mirrors loadSitemapQuality in analytics-overview.ts — vendors not
   // soft-deleted + all events, % passing the completeness gate.
-  const [vTotal, vPass, eTotal, ePass] = await Promise.all([
+  //
+  // Staleness signal: D1 is real-time; we use max(updated_at) across both
+  // tables to detect "the catalog hasn't moved" (true outage). 1h SLA
+  // means a tightly-managed catalog should never show STALE in practice.
+  const [vTotal, vPass, eTotal, ePass, vMax, eMax] = await Promise.all([
     db
       .select({ n: count() })
       .from(vendors)
@@ -206,21 +270,35 @@ async function readSitemapQuality(db: Db): Promise<KpiValueResult> {
       .select({ n: count() })
       .from(events)
       .where(gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)),
+    db
+      .select({ ts: sql<number | null>`max(${vendors.updatedAt})` })
+      .from(vendors)
+      .where(sql`${vendors.deletedAt} IS NULL`),
+    db.select({ ts: sql<number | null>`max(${events.updatedAt})` }).from(events),
   ]);
   const vT = vTotal[0]?.n ?? 0;
   const vP = vPass[0]?.n ?? 0;
   const eT = eTotal[0]?.n ?? 0;
   const eP = ePass[0]?.n ?? 0;
+  // updatedAt is stored seconds-epoch (Drizzle mode:"timestamp"). Compare
+  // raw seconds, then convert to a Date for the helper.
+  const vMaxSec = vMax[0]?.ts ?? null;
+  const eMaxSec = eMax[0]?.ts ?? null;
+  const maxSec =
+    vMaxSec != null && eMaxSec != null ? Math.max(vMaxSec, eMaxSec) : (vMaxSec ?? eMaxSec);
+  const dataAgeSeconds = ageSecondsFromDate(maxSec != null ? new Date(maxSec * 1000) : null);
   const total = vT + eT;
-  if (total === 0) return { value: null, meta: { reason: "empty_catalog" } };
+  if (total === 0) return { value: null, dataAgeSeconds, meta: { reason: "empty_catalog" } };
   return {
     value: (vP + eP) / total,
+    dataAgeSeconds,
     meta: {
       pass: vP + eP,
       total,
       vendors: { pass: vP, total: vT },
       events: { pass: eP, total: eT },
       threshold: SITEMAP_MIN_COMPLETENESS,
+      catalogMaxUpdatedAt: maxSec,
     },
   };
 }
@@ -229,18 +307,27 @@ async function readTimeToIndex(db: Db): Promise<KpiValueResult> {
   // Median computed in JS — SQLite has no MEDIAN aggregate. Require at least
   // MIN_TTI_SAMPLES_30D resolved samples in the last 30d before classifying;
   // below that, the median is too noisy and we return INDETERMINATE.
+  //
+  // Staleness signal: max(first_crawl_at) on time_to_index_log. If the URL
+  // Inspection sweep has stopped reconciling rows for >7d, the median is
+  // stale and the KPI is STALE rather than reflecting a real lag.
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400 * 1000);
-  const rows = await db
-    .select({ lagSeconds: timeToIndexLog.lagSeconds })
-    .from(timeToIndexLog)
-    .where(
-      and(
-        sql`${timeToIndexLog.lagSeconds} IS NOT NULL`,
-        gte(timeToIndexLog.firstCrawlAt, thirtyDaysAgo)
+  const [rows, maxRow] = await Promise.all([
+    db
+      .select({ lagSeconds: timeToIndexLog.lagSeconds })
+      .from(timeToIndexLog)
+      .where(
+        and(
+          sql`${timeToIndexLog.lagSeconds} IS NOT NULL`,
+          gte(timeToIndexLog.firstCrawlAt, thirtyDaysAgo)
+        )
       )
-    )
-    .orderBy(desc(timeToIndexLog.firstCrawlAt))
-    .limit(1000);
+      .orderBy(desc(timeToIndexLog.firstCrawlAt))
+      .limit(1000),
+    db.select({ ts: sql<number | null>`max(${timeToIndexLog.firstCrawlAt})` }).from(timeToIndexLog),
+  ]);
+  const maxSec = maxRow[0]?.ts ?? null;
+  const dataAgeSeconds = ageSecondsFromDate(maxSec != null ? new Date(maxSec * 1000) : null);
   const lags = rows
     .map((r) => r.lagSeconds)
     .filter((n): n is number => typeof n === "number")
@@ -248,9 +335,11 @@ async function readTimeToIndex(db: Db): Promise<KpiValueResult> {
   if (lags.length < MIN_TTI_SAMPLES_30D) {
     return {
       value: null,
+      dataAgeSeconds,
       meta: {
         samples: lags.length,
         threshold: MIN_TTI_SAMPLES_30D,
+        maxFirstCrawlAt: maxSec,
         reason: "insufficient_samples",
       },
     };
@@ -258,7 +347,8 @@ async function readTimeToIndex(db: Db): Promise<KpiValueResult> {
   const medianSec = lags[Math.floor(lags.length / 2)];
   return {
     value: medianSec / 3600,
-    meta: { samples: lags.length, median_seconds: medianSec },
+    dataAgeSeconds,
+    meta: { samples: lags.length, median_seconds: medianSec, maxFirstCrawlAt: maxSec },
   };
 }
 
@@ -271,6 +361,7 @@ async function readTimeToIndex(db: Db): Promise<KpiValueResult> {
 export function decideStateRow(
   kpi: KpiName,
   value: number | null,
+  dataAgeSeconds: number | null,
   prev: { state: KpiState; firstDetectedAt: Date | null } | undefined,
   now: Date
 ): {
@@ -279,17 +370,17 @@ export function decideStateRow(
   firstDetectedAt: Date;
   isResolution: boolean;
 } {
-  const state = classifyKpi(kpi, value);
+  const state = classifyKpi(kpi, value, dataAgeSeconds);
   const changed = !prev || prev.state !== state;
   const firstDetectedAt = changed ? now : (prev?.firstDetectedAt ?? now);
-  // A "resolution" is a transition from RED/YELLOW back to GREEN — that's
-  // what the admin_actions audit log captures so the trend isn't lost when
-  // the action-queue row drops.
+  // A "resolution" is a transition out of any unhealthy state (RED, YELLOW,
+  // STALE) back to GREEN — that's what the admin_actions audit log captures
+  // so the trend isn't lost when the action-queue row drops.
   const isResolution =
     changed &&
     state === "GREEN" &&
     prev != null &&
-    (prev.state === "RED" || prev.state === "YELLOW");
+    (prev.state === "RED" || prev.state === "YELLOW" || prev.state === "STALE");
   return { state, stateChangedFromPrevious: changed, firstDetectedAt, isResolution };
 }
 
@@ -330,6 +421,7 @@ export async function recomputeKpiStates(
     const decision = decideStateRow(
       kpi,
       v.value,
+      v.dataAgeSeconds,
       prev ? { state: prev.state as KpiState, firstDetectedAt: prev.firstDetectedAt } : undefined,
       now
     );
@@ -341,7 +433,9 @@ export async function recomputeKpiStates(
       state: decision.state,
       stateChangedFromPrevious: decision.stateChangedFromPrevious ? 1 : 0,
       firstDetectedAt: decision.firstDetectedAt,
-      meta: JSON.stringify(v.meta),
+      // Persist dataAgeSeconds in meta so the UI can render "Data feed
+      // stale 73h" without re-querying the source.
+      meta: JSON.stringify({ ...v.meta, dataAgeSeconds: v.dataAgeSeconds }),
     });
 
     if (decision.stateChangedFromPrevious) transitions += 1;

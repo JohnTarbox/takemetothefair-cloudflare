@@ -53,7 +53,7 @@ import {
   type Trend,
   type WindowKey,
 } from "@/lib/analytics-overview";
-import { KPI_THRESHOLDS, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
+import { KPI_THRESHOLDS, formatStaleAge, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -300,6 +300,11 @@ const KPI_STATE_STYLES: Record<
   GREEN: { border: "border-l-4 border-l-emerald-500", badge: "◯", ariaLabel: "On target" },
   YELLOW: { border: "border-l-4 border-l-amber-400", badge: "⚠", ariaLabel: "Below target" },
   RED: { border: "border-l-4 border-l-red-500", badge: "⛔", ariaLabel: "Action required" },
+  // STALE = data feed is broken (older than the per-KPI SLA). Distinct from
+  // RED (a real value below threshold) — STALE means the value can't be
+  // trusted at all. Orange chosen so it reads as urgent without colliding
+  // with RED's "value-too-low" semantics.
+  STALE: { border: "border-l-4 border-l-orange-500", badge: "🕒", ariaLabel: "Data feed stale" },
   INDETERMINATE: { border: "", badge: null, ariaLabel: "No data yet" },
 };
 
@@ -332,8 +337,12 @@ function KpiCard({
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">{title}</p>
             <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">{value}</p>
-            {state === "RED" && actionPrompt && (
-              <p className="text-xs text-red-600 mt-1 font-medium">{actionPrompt}</p>
+            {(state === "RED" || state === "STALE") && actionPrompt && (
+              <p
+                className={`text-xs mt-1 font-medium ${state === "STALE" ? "text-orange-600" : "text-red-600"}`}
+              >
+                {actionPrompt}
+              </p>
             )}
             {footer && <div className="mt-2">{footer}</div>}
           </div>
@@ -523,7 +532,8 @@ function fmtSeconds(s: number | null): string {
   return `${(s / 86400).toFixed(1)}d`;
 }
 
-// §6.3 helper: read the latest state + RED-mode action prompt for a KPI.
+// §6.3 helper: read the latest state + action prompt for a KPI.
+// RED → "fix the value" prompt. STALE → "fix the data feed" prompt.
 // Returns INDETERMINATE when the recompute hasn't fired yet (cold-start).
 function kpiCardState(
   snapshot: OverviewSnapshot,
@@ -531,9 +541,17 @@ function kpiCardState(
 ): { state: KpiState; actionPrompt?: string } {
   const row = snapshot.kpiStates.get(name);
   const state: KpiState = row?.state ?? "INDETERMINATE";
-  if (state !== "RED") return { state };
-  const cfg = KPI_THRESHOLDS[name];
-  return { state, actionPrompt: `${cfg.actionDescription} — ${cfg.effort}` };
+  if (state === "RED") {
+    const cfg = KPI_THRESHOLDS[name];
+    return { state, actionPrompt: `${cfg.actionDescription} — ${cfg.effort}` };
+  }
+  if (state === "STALE") {
+    const meta = row?.meta as { dataAgeSeconds?: number } | null;
+    const ageSec = meta?.dataAgeSeconds;
+    const ageLabel = typeof ageSec === "number" ? formatStaleAge(ageSec) : "unknown duration";
+    return { state, actionPrompt: `Data feed stale ${ageLabel} — investigate source` };
+  }
+  return { state };
 }
 
 function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
@@ -702,17 +720,8 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <CardTitle className="flex items-center justify-between">
           <span>Time-to-index (median lag)</span>
           {state !== "INDETERMINATE" && (
-            <span
-              aria-label={
-                state === "RED"
-                  ? "Action required"
-                  : state === "YELLOW"
-                    ? "Below target"
-                    : "On target"
-              }
-              className="text-base"
-            >
-              {state === "RED" ? "⛔" : state === "YELLOW" ? "⚠" : "◯"}
+            <span aria-label={KPI_STATE_STYLES[state].ariaLabel} className="text-base">
+              {KPI_STATE_STYLES[state].badge}
             </span>
           )}
         </CardTitle>
@@ -738,8 +747,12 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             </p>
           </div>
         </div>
-        {state === "RED" && actionPrompt && (
-          <p className="text-xs text-red-600 mt-3 font-medium">{actionPrompt}</p>
+        {(state === "RED" || state === "STALE") && actionPrompt && (
+          <p
+            className={`text-xs mt-3 font-medium ${state === "STALE" ? "text-orange-600" : "text-red-600"}`}
+          >
+            {actionPrompt}
+          </p>
         )}
         <p className="text-xs text-gray-500 mt-4">
           {state === "INDETERMINATE"
