@@ -3,7 +3,12 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts } from "@/lib/db/schema";
 import { eq, and, or, gte, isNull, count } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { isVendorIndexable } from "@/lib/vendor-quality";
+import {
+  getVendorTier,
+  isIndexableTier,
+  sitemapChangeFreqFor,
+  sitemapPriorityFor,
+} from "@/lib/vendor-tier";
 
 export const runtime = "edge";
 
@@ -226,11 +231,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    // Get vendors. Tier-based gate: only STANDARD and ENHANCED tiers are
-    // sitemap-eligible (per §6.6 four-tier model). Tier derivation lives in
-    // src/lib/vendor-tier.ts; isVendorIndexable() in vendor-quality.ts is
-    // the binary delegation. Same predicate gates noindex on the vendor
-    // detail page so the two surfaces stay in lockstep.
+    // Get vendors. Tier-based gate: only STANDARD and ENHANCED reach the
+    // sitemap, and each gets its own priority + changefreq per §6.6.
+    // ENHANCED → 0.8 / weekly; STANDARD → 0.5 / monthly. Google largely
+    // ignores these signals; Bing still uses them and currently delivers
+    // >4× MMATF's organic traffic of Google, so the gradient is meaningful.
     const vendorResults = await db
       .select({
         slug: vendors.slug,
@@ -245,12 +250,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .from(vendors);
 
     const vendorPages: MetadataRoute.Sitemap = vendorResults
-      .filter(isVendorIndexable)
-      .map((vendor) => ({
+      .map((vendor) => ({ vendor, tier: getVendorTier(vendor) }))
+      .filter(({ tier }) => isIndexableTier(tier))
+      .map(({ vendor, tier }) => ({
         url: `${baseUrl}/vendors/${vendor.slug}`,
         lastModified: safeLastMod(vendor.updatedAt),
-        changeFrequency: "monthly" as const,
-        priority: 0.6,
+        changeFrequency: sitemapChangeFreqFor(tier) as "weekly" | "monthly",
+        priority: sitemapPriorityFor(tier),
       }));
 
     // Get promoters (no public/private gate — promoters table has no status
