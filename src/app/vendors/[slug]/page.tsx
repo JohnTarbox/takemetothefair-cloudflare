@@ -19,7 +19,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, vendorSlugHistory } from "@/lib/db/schema";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, sql } from "drizzle-orm";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
@@ -112,6 +112,14 @@ async function getVendor(slug: string) {
         const bTime = b.event.startDate ? new Date(b.event.startDate).getTime() : 0;
         return aTime - bTime;
       });
+
+    // Increment view count (drizzle/0051). Mirrors events/[slug]/page.tsx pattern.
+    // ISR cache provides implicit ~5-min dedup; absolute count undercounts but
+    // relative ordering (used by claimed_ready_for_enhanced_upsell rule) is preserved.
+    await db
+      .update(vendors)
+      .set({ viewCount: sql`${vendors.viewCount} + 1` })
+      .where(eq(vendors.id, vendor.vendors.id));
 
     return {
       ...vendor.vendors,
