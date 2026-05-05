@@ -138,6 +138,89 @@ export function dollarsToCents(dollars: unknown): number | null {
  * compatibility — narrower than the typographic en-dash but renders
  * identically across every consumer of this library.
  */
+// ---------------------------------------------------------------------------
+// Completeness scoring (§10.2). Pure scorers shared between main app and MCP.
+// Stateful recompute helpers (post-write DB UPDATEs) live in
+// src/lib/completeness.ts because they take a Drizzle DB handle.
+// ---------------------------------------------------------------------------
+
+/**
+ * §10.2 sitemap quality gate threshold. Entries with completeness < 40 are
+ * excluded from /sitemap.xml.
+ */
+export const SITEMAP_MIN_COMPLETENESS = 40;
+
+export type VendorScoreInput = {
+  description: string | null;
+  logoUrl: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  website: string | null;
+  vendorType: string | null;
+  products: string | null;
+  claimed: boolean | null;
+};
+
+export type EventScoreInput = {
+  description: string | null;
+  startDate: Date | null;
+  endDate: Date | null;
+  venueId: string | null;
+  isStatewide: boolean | null;
+  categories: string | null;
+  imageUrl: string | null;
+  ticketPriceMinCents: number | null;
+  ticketPriceMaxCents: number | null;
+};
+
+function scoreNonEmpty(s: string | null | undefined): boolean {
+  return typeof s === "string" && s.trim().length > 0;
+}
+
+function scoreNonEmptyJsonArray(s: string | null | undefined): boolean {
+  if (!scoreNonEmpty(s)) return false;
+  if (s === "[]") return false;
+  try {
+    const parsed = JSON.parse(s as string);
+    return Array.isArray(parsed) && parsed.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Vendor completeness rubric (sums to 100):
+ *   description 30 | logo 15 | phone-or-email 10 | website 10
+ *   vendor_type 15 | products 10 | claimed 10
+ */
+export function computeVendorCompletenessScore(v: VendorScoreInput): number {
+  let score = 0;
+  if (scoreNonEmpty(v.description)) score += 30;
+  if (scoreNonEmpty(v.logoUrl)) score += 15;
+  if (scoreNonEmpty(v.contactPhone) || scoreNonEmpty(v.contactEmail)) score += 10;
+  if (scoreNonEmpty(v.website)) score += 10;
+  if (scoreNonEmpty(v.vendorType)) score += 15;
+  if (scoreNonEmptyJsonArray(v.products)) score += 10;
+  if (v.claimed === true) score += 10;
+  return score;
+}
+
+/**
+ * Event completeness rubric (sums to 100):
+ *   description 30 | start+end 20 | venue-or-statewide 15
+ *   categories 15 | image 10 | price min-or-max 10
+ */
+export function computeEventCompletenessScore(e: EventScoreInput): number {
+  let score = 0;
+  if (scoreNonEmpty(e.description)) score += 30;
+  if (e.startDate && e.endDate) score += 20;
+  if (e.venueId !== null || e.isStatewide === true) score += 15;
+  if (scoreNonEmptyJsonArray(e.categories)) score += 15;
+  if (scoreNonEmpty(e.imageUrl)) score += 10;
+  if (e.ticketPriceMinCents !== null || e.ticketPriceMaxCents !== null) score += 10;
+  return score;
+}
+
 export function formatPrice(minCents?: number | null, maxCents?: number | null): string {
   const renderOne = (cents: number) => {
     const dollars = cents / 100;

@@ -10,7 +10,114 @@ export {
   createSlug,
   dollarsToCents,
   formatPrice,
+  computeVendorCompletenessScore,
+  computeEventCompletenessScore,
+  SITEMAP_MIN_COMPLETENESS,
 } from "@takemetothefair/utils";
+
+import { eq } from "drizzle-orm";
+import { vendors, events, enrichmentLog } from "./schema.js";
+import {
+  computeVendorCompletenessScore as _scoreVendor,
+  computeEventCompletenessScore as _scoreEvent,
+} from "@takemetothefair/utils";
+import type { Db } from "./db.js";
+
+/**
+ * §10.2 post-write completeness recompute. Mirrors src/lib/completeness.ts;
+ * MCP needs its own copy because the lib alias isn't in scope.
+ */
+export async function recomputeVendorCompleteness(
+  db: Db,
+  vendorId: string
+): Promise<number | null> {
+  const [row] = await db
+    .select({
+      description: vendors.description,
+      logoUrl: vendors.logoUrl,
+      contactPhone: vendors.contactPhone,
+      contactEmail: vendors.contactEmail,
+      website: vendors.website,
+      vendorType: vendors.vendorType,
+      products: vendors.products,
+      claimed: vendors.claimed,
+    })
+    .from(vendors)
+    .where(eq(vendors.id, vendorId))
+    .limit(1);
+  if (!row) return null;
+  const score = _scoreVendor(row);
+  await db.update(vendors).set({ completenessScore: score }).where(eq(vendors.id, vendorId));
+  return score;
+}
+
+/**
+ * §10.2 enrichment logger (MCP mirror of src/lib/enrichment-log.ts). Both
+ * codebases need to write to enrichment_log; keeping the shared part minimal
+ * (one INSERT + optional UPDATE) is cheaper than promoting to a workspace pkg.
+ */
+export type EnrichmentSource =
+  | "ai_workers"
+  | "scraper"
+  | "manual_admin"
+  | "vendor_self"
+  | "mcp_create";
+export type EnrichmentStatus = "success" | "failure" | "skipped";
+
+export async function logEnrichment(
+  db: Db,
+  p: {
+    targetType: "vendor" | "event";
+    targetId: string;
+    source: EnrichmentSource;
+    status: EnrichmentStatus;
+    fieldsChanged?: string[];
+    notes?: string;
+    actorUserId?: string | null;
+  }
+): Promise<void> {
+  const now = new Date();
+  await db.insert(enrichmentLog).values({
+    targetType: p.targetType,
+    targetId: p.targetId,
+    source: p.source,
+    status: p.status,
+    attemptedAt: now,
+    finishedAt: p.status === "skipped" ? null : now,
+    fieldsChanged: p.fieldsChanged ? JSON.stringify(p.fieldsChanged) : null,
+    notes: p.notes ?? null,
+    actorUserId: p.actorUserId ?? null,
+  });
+
+  if (p.status === "success" && p.targetType === "vendor") {
+    await db
+      .update(vendors)
+      .set({ enrichmentSource: p.source, enrichmentAttemptedAt: now })
+      .where(eq(vendors.id, p.targetId));
+  }
+}
+
+export async function recomputeEventCompleteness(db: Db, eventId: string): Promise<number | null> {
+  const [row] = await db
+    .select({
+      description: events.description,
+      startDate: events.startDate,
+      endDate: events.endDate,
+      venueId: events.venueId,
+      isStatewide: events.isStatewide,
+      categories: events.categories,
+      imageUrl: events.imageUrl,
+      ticketPriceMinCents: events.ticketPriceMinCents,
+      ticketPriceMaxCents: events.ticketPriceMaxCents,
+    })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  if (!row) return null;
+  const score = _scoreEvent(row);
+  await db.update(events).set({ completenessScore: score }).where(eq(events.id, eventId));
+  return score;
+}
 
 /** Parse "City, ST" into { city, state }. Returns nulls if unparseable. */
 export function parseLocation(location: string): { city: string | null; state: string | null } {

@@ -20,6 +20,8 @@ import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { sendEmail, getSiteUrl } from "@/lib/email/send";
 import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 import { markActedAllForTarget } from "@/lib/recommendations/engine";
+import { recomputeVendorCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 
 export const runtime = "edge";
 
@@ -252,6 +254,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
+
+    await recomputeVendorCompleteness(db, id);
+
+    await logEnrichment(db, {
+      targetType: "vendor",
+      targetId: id,
+      source: "manual_admin",
+      status: "success",
+      actorUserId: session.user.id,
+      fieldsChanged: Object.keys(updateData).filter((k) => k !== "updatedAt"),
+    });
 
     // Slug history write — fires whenever the resolved slug actually changed,
     // regardless of whether it came from `slug` param or `businessName` rename.

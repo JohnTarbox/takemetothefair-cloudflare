@@ -13,6 +13,7 @@ import {
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
+import { recomputeEventCompleteness } from "@/lib/completeness";
 
 export const runtime = "edge";
 
@@ -226,6 +227,8 @@ export async function POST(request: NextRequest) {
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,
     });
+
+    await recomputeEventCompleteness(db, newId);
 
     if (eventDaysInput.length > 0) {
       await db.insert(eventDays).values(

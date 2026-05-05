@@ -8,6 +8,8 @@ import { decodeHtmlEntities } from "@/lib/scrapers/utils";
 import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
 import { createSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { recomputeEventCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import {
@@ -440,6 +442,7 @@ export async function POST(request: Request) {
               updateData.commercialVendorsAllowed = eventData.commercialVendorsAllowed;
             }
             await db.update(events).set(updateData).where(eq(events.id, existing[0].id));
+            await recomputeEventCompleteness(db, existing[0].id);
             results.updated++;
             results.updatedEvents.push({
               id: existing[0].id,
@@ -506,6 +509,16 @@ export async function POST(request: Request) {
           syncEnabled: true,
           lastSyncedAt: new Date(),
           commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
+        });
+
+        await recomputeEventCompleteness(db, newEventId);
+
+        await logEnrichment(db, {
+          targetType: "event",
+          targetId: newEventId,
+          source: "scraper",
+          status: "success",
+          notes: `bulk import from ${eventData.sourceName ?? "unknown"}`,
         });
 
         results.imported++;
@@ -629,6 +642,7 @@ export async function PATCH(request: Request) {
           if (Object.keys(updates).length > 2) {
             // More than just timestamps
             await db.update(events).set(updates).where(eq(events.id, event.id));
+            await recomputeEventCompleteness(db, event.id);
             results.synced++;
           } else {
             // Just update the sync timestamp

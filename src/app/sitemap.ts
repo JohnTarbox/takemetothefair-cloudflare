@@ -9,6 +9,7 @@ import {
   sitemapChangeFreqFor,
   sitemapPriorityFor,
 } from "@/lib/vendor-tier";
+import { SITEMAP_MIN_COMPLETENESS } from "@/lib/completeness";
 
 export const runtime = "edge";
 
@@ -201,11 +202,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   try {
     const db = getCloudflareDb();
 
-    // Get approved events
+    // Get approved events. §10.2 quality gate: drop entries below
+    // SITEMAP_MIN_COMPLETENESS so near-empty stubs don't dilute the sitemap.
     const eventResults = await db
       .select({ slug: events.slug, updatedAt: events.updatedAt, endDate: events.endDate })
       .from(events)
-      .where(isPublicEventStatus());
+      .where(and(isPublicEventStatus(), gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)));
 
     const now = new Date();
     const eventPages: MetadataRoute.Sitemap = eventResults.map((event) => {
@@ -248,7 +250,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         enhancedProfile: vendors.enhancedProfile,
       })
       .from(vendors)
-      .where(isNull(vendors.deletedAt));
+      .where(
+        and(isNull(vendors.deletedAt), gte(vendors.completenessScore, SITEMAP_MIN_COMPLETENESS))
+      );
 
     const vendorPages: MetadataRoute.Sitemap = vendorResults
       .map((vendor) => ({ vendor, tier: getVendorTier(vendor) }))

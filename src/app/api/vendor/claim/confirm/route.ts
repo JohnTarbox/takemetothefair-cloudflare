@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, users, vendors } from "@/lib/db/schema";
+import { recomputeVendorCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 import { consumeClaimToken } from "@/lib/vendor-claim-token";
 import { sendEmail, getSiteUrl } from "@/lib/email/send";
 import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
@@ -44,6 +46,18 @@ export async function GET(request: NextRequest) {
       .update(vendors)
       .set({ claimed: true, claimedAt: now, claimedBy: result.userId })
       .where(eq(vendors.id, result.vendorId));
+
+    await recomputeVendorCompleteness(db, result.vendorId);
+
+    await logEnrichment(db, {
+      targetType: "vendor",
+      targetId: result.vendorId,
+      source: "vendor_self",
+      status: "success",
+      actorUserId: result.userId,
+      fieldsChanged: ["claimed", "claimedAt", "claimedBy"],
+      notes: "claim confirmation via email link",
+    });
 
     await db.insert(adminActions).values({
       action: "vendor.claim_self_serve",

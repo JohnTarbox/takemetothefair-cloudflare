@@ -16,7 +16,7 @@
  * table for the /admin/analytics → IndexNow tab.
  */
 
-import { indexnowSubmissions } from "@/lib/db/schema";
+import { indexnowSubmissions, timeToIndexLog } from "@/lib/db/schema";
 import { lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
@@ -68,6 +68,48 @@ async function recordSubmission(
   }
 }
 
+/**
+ * §10.2 time-to-index seed: write one row per submitted URL into
+ * time_to_index_log so the reconciler sweep can pair the submission against
+ * the next gscInspectionState.lastCrawlTime > submission_at.
+ *
+ * Fire-and-forget; surfaced via the §10.3 "Time-to-index median" widget.
+ */
+async function recordTimeToIndexSeed(db: Db, urls: string[], submittedAt: Date): Promise<void> {
+  if (!db || urls.length === 0) return;
+  try {
+    const targetFromUrl = (u: string): { type: string | null; id: string | null } => {
+      // URL shape: https://meetmeatthefair.com/{kind}/{slug}
+      const m = u.match(/\/(events|venues|vendors|promoters|blog)\/([^/?#]+)/);
+      if (!m) return { type: null, id: null };
+      return { type: m[1].replace(/s$/, ""), id: m[2] };
+    };
+    const rows = urls.map((url) => {
+      const t = targetFromUrl(url);
+      return {
+        url,
+        targetType: t.type,
+        targetId: t.id,
+        indexnowSubmittedAt: submittedAt,
+        firstCrawlAt: null,
+        lagSeconds: null,
+        computedAt: submittedAt,
+      };
+    });
+    // INSERT OR IGNORE semantics via try/catch on the unique (url, submittedAt)
+    // index — duplicate seeds (same url + same instant) are no-ops.
+    for (const row of rows) {
+      try {
+        await db.insert(timeToIndexLog).values(row);
+      } catch {
+        /* duplicate seed — ignore */
+      }
+    }
+  } catch (err) {
+    console.error("[IndexNow] Failed to seed time_to_index_log:", err);
+  }
+}
+
 export async function pingIndexNow(
   db: Db,
   urls: string | string[],
@@ -91,6 +133,7 @@ export async function pingIndexNow(
     return;
   }
 
+  const submittedAt = new Date();
   try {
     if (filtered.length === 1) {
       const qs = new URLSearchParams({
@@ -111,6 +154,7 @@ export async function pingIndexNow(
         response.status,
         response.ok ? null : body || `HTTP ${response.status}`
       );
+      if (response.ok) await recordTimeToIndexSeed(db, filtered, submittedAt);
       return;
     }
 
@@ -139,6 +183,7 @@ export async function pingIndexNow(
         response.status,
         response.ok ? null : body || `HTTP ${response.status}`
       );
+      if (response.ok) await recordTimeToIndexSeed(db, chunk, submittedAt);
     }
   } catch (error) {
     console.error("[IndexNow] Network error:", error);

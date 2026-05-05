@@ -8,6 +8,8 @@ import { getVendorsWithCounts } from "@/lib/queries";
 import { vendorCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { recomputeVendorCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 
 export const runtime = "edge";
 
@@ -82,6 +84,17 @@ export async function POST(request: NextRequest) {
 
     // Update user role to VENDOR
     await db.update(users).set({ role: "VENDOR" }).where(eq(users.id, data.userId));
+
+    await recomputeVendorCompleteness(db, vendorId);
+
+    await logEnrichment(db, {
+      targetType: "vendor",
+      targetId: vendorId,
+      source: "manual_admin",
+      status: "success",
+      actorUserId: session.user.id,
+      notes: "admin create_vendor",
+    });
 
     const [newVendor] = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
 

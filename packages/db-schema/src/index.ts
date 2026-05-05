@@ -159,6 +159,9 @@ export const events = sqliteTable(
     submittedByUserId: text("submitted_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
+    // entries with completenessScore < 40 are excluded from /sitemap.xml.
+    completenessScore: integer("completeness_score").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -167,6 +170,7 @@ export const events = sqliteTable(
     index("idx_events_venueid").on(table.venueId),
     index("idx_events_promoterid").on(table.promoterId),
     index("idx_events_state_code").on(table.stateCode),
+    index("idx_events_completeness_score").on(table.completenessScore),
   ]
 );
 
@@ -236,6 +240,16 @@ export const vendors = sqliteTable("vendors", {
   redirectToVendorId: text("redirect_to_vendor_id").references((): AnySQLiteColumn => vendors.id, {
     onDelete: "set null",
   }),
+  // §10.2 enrichment + quality tracking (drizzle/0054). enrichmentSource is one
+  // of: ai_workers | scraper | manual_admin | vendor_self | mcp_create. The
+  // enum lives in src/lib/enrichment-log.ts (TS-only, not DB-enforced because
+  // adding a new source shouldn't require a migration). completenessScore is
+  // a cached 0-100 value; recomputed via computeVendorCompleteness on every
+  // insert/update and gates inclusion in /sitemap.xml at >= 40.
+  enrichmentSource: text("enrichment_source"),
+  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+  domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
+  completenessScore: integer("completeness_score").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
@@ -858,6 +872,74 @@ export const recommendationItems = sqliteTable(
   ]
 );
 
+// §10.2 enrichment audit trail (drizzle/0056). Append-only; one row per
+// attempt (success or failure). source values: ai_workers | scraper |
+// manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of
+// field names. See src/lib/enrichment-log.ts for the writer.
+export const enrichmentLog = sqliteTable(
+  "enrichment_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    source: text("source").notNull(),
+    status: text("status").notNull(),
+    attemptedAt: integer("attempted_at", { mode: "timestamp" }).notNull(),
+    finishedAt: integer("finished_at", { mode: "timestamp" }),
+    fieldsChanged: text("fields_changed"),
+    notes: text("notes"),
+    actorUserId: text("actor_user_id"),
+  },
+  (t) => [
+    index("idx_enrichment_log_target").on(t.targetType, t.targetId),
+    index("idx_enrichment_log_attempted_at").on(t.attemptedAt),
+    index("idx_enrichment_log_source_status").on(t.source, t.status),
+  ]
+);
+
+// §10.2 per-URL time-to-index cycle tracking (drizzle/0057). One row per
+// IndexNow submission; firstCrawlAt + lagSeconds are populated by the sweep
+// that joins against gscInspectionState.lastCrawlTime. Powers §10.3 median.
+export const timeToIndexLog = sqliteTable(
+  "time_to_index_log",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    url: text("url").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    indexnowSubmittedAt: integer("indexnow_submitted_at", { mode: "timestamp" }).notNull(),
+    firstCrawlAt: integer("first_crawl_at", { mode: "timestamp" }),
+    lagSeconds: integer("lag_seconds"),
+    computedAt: integer("computed_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_time_to_index_log_url").on(t.url),
+    index("idx_time_to_index_log_first_crawl_at").on(t.firstCrawlAt),
+    index("idx_time_to_index_log_target").on(t.targetType, t.targetId),
+  ]
+);
+
+// §10.2 curated competitor / aggregator domains (drizzle/0058). Replaces the
+// hardcoded list previously inline in competitor-url-contamination rule.
+// Loaded once per scan via loadCompetitorDomains in src/lib/competitor-domains.ts.
+export const competitorDomains = sqliteTable(
+  "competitor_domains",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    domain: text("domain").notNull().unique(),
+    notes: text("notes"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    createdBy: text("created_by"),
+  },
+  (t) => [index("idx_competitor_domains_domain").on(t.domain)]
+);
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type Venue = typeof venues.$inferSelect;
@@ -880,3 +962,6 @@ export type IndexnowSubmission = typeof indexnowSubmissions.$inferSelect;
 export type UrlDomainClassification = typeof urlDomainClassifications.$inferSelect;
 export type RecommendationRule = typeof recommendationRules.$inferSelect;
 export type RecommendationItem = typeof recommendationItems.$inferSelect;
+export type EnrichmentLog = typeof enrichmentLog.$inferSelect;
+export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
+export type CompetitorDomain = typeof competitorDomains.$inferSelect;
