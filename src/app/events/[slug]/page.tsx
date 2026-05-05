@@ -36,7 +36,7 @@ import {
   blogPosts,
   contentLinks,
 } from "@/lib/db/schema";
-import { eq, and, sql, ne, gte, lt, like, desc, or } from "drizzle-orm";
+import { eq, and, sql, ne, gte, lt, like, desc, or, isNull } from "drizzle-orm";
 import { isPublicVendorStatus, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -184,12 +184,20 @@ async function getEvent(slug: string) {
           .limit(1)
       : [];
 
-    // Get event vendors
+    // Get event vendors. Soft-deleted vendors (drizzle/0053) are filtered
+    // out — the entry hides entirely from the event's vendor lineup per the
+    // delete_vendor UX contract.
     const eventVendorResults = await db
       .select()
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(and(eq(eventVendors.eventId, eventData.events.id), isPublicVendorStatus()));
+      .where(
+        and(
+          eq(eventVendors.eventId, eventData.events.id),
+          isPublicVendorStatus(),
+          isNull(vendors.deletedAt)
+        )
+      );
 
     // Get event days (per-day schedule)
     const eventDayResults = await db

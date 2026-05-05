@@ -10,7 +10,7 @@
  * (ms-epoch). Compare with `new Date(now + Nd*86400000)` not `unixepoch()`.
  */
 
-import { and, eq, gt, lte } from "drizzle-orm";
+import { and, eq, gt, isNull, lte } from "drizzle-orm";
 import { vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
@@ -48,7 +48,8 @@ function buildRule(
           and(
             eq(vendors.enhancedProfile, true),
             gt(vendors.enhancedProfileExpiresAt, minExpiry),
-            lte(vendors.enhancedProfileExpiresAt, maxExpiry)
+            lte(vendors.enhancedProfileExpiresAt, maxExpiry),
+            isNull(vendors.deletedAt)
           )
         );
 

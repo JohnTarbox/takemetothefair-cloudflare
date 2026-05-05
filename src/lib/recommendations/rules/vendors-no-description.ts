@@ -5,7 +5,7 @@
  * past-events-as-APPROVED model — see plan file for context).
  */
 
-import { eq, or, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
@@ -25,7 +25,12 @@ export const vendorsNoDescriptionRule: RuleDefinition = {
         slug: vendors.slug,
       })
       .from(vendors)
-      .where(or(sql`${vendors.description} IS NULL`, eq(vendors.description, "")));
+      .where(
+        and(
+          or(sql`${vendors.description} IS NULL`, eq(vendors.description, "")),
+          isNull(vendors.deletedAt)
+        )
+      );
 
     return rows.map((r) => ({
       targetType: "vendor",

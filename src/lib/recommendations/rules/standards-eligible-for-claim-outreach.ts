@@ -28,6 +28,7 @@ export const standardsEligibleForClaimOutreachRule: RuleDefinition = {
       .where(
         sql`${vendors.claimed} = 0
           AND ${vendors.enhancedProfile} = 0
+          AND ${vendors.deletedAt} IS NULL
           AND TRIM(IFNULL(${users.email}, '')) != ''
           AND TRIM(IFNULL(${vendors.description}, '')) != ''
           AND TRIM(IFNULL(${vendors.city}, '')) != ''

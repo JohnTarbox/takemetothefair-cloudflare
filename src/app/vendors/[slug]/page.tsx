@@ -200,6 +200,27 @@ export default async function VendorDetailPage({ params }: Props) {
     notFound();
   }
 
+  // Soft-deleted vendor (drizzle/0053): if a redirect target is set and
+  // still live, 301-redirect there. Otherwise the page should not render —
+  // we cooperate with notFound() (returns 404) since Next.js App Router
+  // doesn't have a built-in 410 response shape; the slug is "intentionally
+  // gone" but Bing/Google will figure that out from the IndexNow ping that
+  // fired at delete time. Bing in particular is fast at dropping these.
+  if (vendor.deletedAt) {
+    if (vendor.redirectToVendorId) {
+      const db = getCloudflareDb();
+      const [target] = await db
+        .select({ slug: vendors.slug, deletedAt: vendors.deletedAt })
+        .from(vendors)
+        .where(eq(vendors.id, vendor.redirectToVendorId))
+        .limit(1);
+      if (target && !target.deletedAt) {
+        permanentRedirect(`/vendors/${target.slug}`);
+      }
+    }
+    notFound();
+  }
+
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
   const isOwner = !!session?.user?.id && session.user.id === vendor.userId;

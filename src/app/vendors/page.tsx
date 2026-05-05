@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, userFavorites } from "@/lib/db/schema";
-import { eq, and, gte, asc, isNotNull, inArray, sql } from "drizzle-orm";
+import { eq, and, gte, asc, isNotNull, isNull, inArray, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -75,8 +75,11 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
   const db = getCloudflareDb();
 
   try {
-    // Build conditions
-    const conditions: ReturnType<typeof eq>[] = [];
+    // Build conditions. Soft-deleted vendors (drizzle/0053) are always
+    // excluded from the public listing.
+    const conditions: (ReturnType<typeof eq> | ReturnType<typeof isNull>)[] = [
+      isNull(vendors.deletedAt),
+    ];
     if (searchParams.type) {
       conditions.push(eq(vendors.vendorType, searchParams.type));
     }
@@ -89,22 +92,13 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
       return [];
     }
 
-    // Query 1: Get all vendors (optionally filtered by type and/or favorites)
-    let vendorQuery;
-    if (conditions.length > 0) {
-      vendorQuery = db
-        .select()
-        .from(vendors)
-        .leftJoin(users, eq(vendors.userId, users.id))
-        .where(and(...conditions))
-        .orderBy(vendors.businessName);
-    } else {
-      vendorQuery = db
-        .select()
-        .from(vendors)
-        .leftJoin(users, eq(vendors.userId, users.id))
-        .orderBy(vendors.businessName);
-    }
+    // Query 1: Get all vendors (filtered by deleted_at + optional type/favorites)
+    const vendorQuery = db
+      .select()
+      .from(vendors)
+      .leftJoin(users, eq(vendors.userId, users.id))
+      .where(and(...conditions))
+      .orderBy(vendors.businessName);
 
     let vendorResults = await vendorQuery;
 
@@ -260,7 +254,10 @@ async function getVendorTypes() {
  */
 async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]> {
   const db = getCloudflareDb();
-  const conditions: ReturnType<typeof eq>[] = [eq(vendors.enhancedProfile, true)];
+  const conditions: (ReturnType<typeof eq> | ReturnType<typeof isNull>)[] = [
+    eq(vendors.enhancedProfile, true),
+    isNull(vendors.deletedAt),
+  ];
   if (typeFilter) conditions.push(eq(vendors.vendorType, typeFilter));
 
   try {

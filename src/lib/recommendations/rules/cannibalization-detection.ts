@@ -9,7 +9,7 @@
 // name in our DB. If yes, the entity has its own page that should be
 // outranking the hub.
 
-import { isNotNull } from "drizzle-orm";
+import { and, isNotNull, isNull } from "drizzle-orm";
 import { events, vendors, venues } from "@/lib/db/schema";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
@@ -69,7 +69,7 @@ export const cannibalizationDetectionRule: RuleDefinition = {
       db
         .select({ id: vendors.id, name: vendors.businessName, slug: vendors.slug })
         .from(vendors)
-        .where(isNotNull(vendors.businessName)),
+        .where(and(isNotNull(vendors.businessName), isNull(vendors.deletedAt))),
       db.select({ id: venues.id, name: venues.name, slug: venues.slug }).from(venues),
     ]);
 

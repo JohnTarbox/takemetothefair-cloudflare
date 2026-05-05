@@ -1560,6 +1560,152 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  // ── delete_vendor ─────────────────────────────────────────────
+  // Soft-delete primitive with optional 301 redirect to a canonical
+  // replacement. Most cleanups are duplicate-vendor consolidations where
+  // we want to redirect (not destroy) inbound links — that's the default
+  // mode="soft" path. mode="hard" purges immediately and is reserved for
+  // the post-grace-window or force=true cases. Delegates to main app
+  // (DELETE /api/admin/vendors/[id]) via INTERNAL_API_KEY (mirrors
+  // delete_blog_post pattern).
+  server.tool(
+    "delete_vendor",
+    "Soft-delete a vendor (default) with optional 301 redirect to a canonical replacement. Refuses if vendor has active event commitments, active Enhanced Profile, or active user claim — force=true overrides with required reason. mode='hard' purges immediately and requires either an existing soft-delete >30 days old OR force=true. Admin only.",
+    {
+      vendor_id: z.string().uuid().describe("Vendor ID to delete"),
+      mode: z
+        .enum(["soft", "hard"])
+        .optional()
+        .describe(
+          "'soft' (default) flips deleted_at and 301-redirects (if redirect target set). 'hard' purges immediately."
+        ),
+      redirect_to_vendor_id: z
+        .string()
+        .uuid()
+        .optional()
+        .describe(
+          "Optional canonical-vendor ID to 301-redirect to. Most duplicate cleanups use this."
+        ),
+      rewrite_blog_links: z
+        .boolean()
+        .optional()
+        .describe(
+          "Default false. When true and redirect_to_vendor_id is set, content_links rows pointing at the deleted vendor get re-pointed at the redirect target. Destructive (irreversible)."
+        ),
+      force: z
+        .boolean()
+        .optional()
+        .describe(
+          "Default false. When true, overrides the three refuse conditions (active events / Enhanced Profile / claim). Requires reason."
+        ),
+      reason: z
+        .string()
+        .min(10)
+        .max(500)
+        .optional()
+        .describe(
+          "Required when force=true. Free-text rationale logged to admin_actions for audit review."
+        ),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "delete_vendor requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const { vendor_id, ...body } = params;
+        const response = await fetch(
+          `${env.MAIN_APP_URL}/api/admin/vendors/${encodeURIComponent(vendor_id)}`,
+          {
+            method: "DELETE",
+            headers: {
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+          }
+        );
+        const responseBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!response.ok) {
+          return {
+            content: [jsonContent({ ...responseBody, http_status: response.status })],
+            isError: true,
+          };
+        }
+        return { content: [jsonContent(responseBody)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `delete_vendor failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ── undelete_vendor ───────────────────────────────────────────
+  server.tool(
+    "undelete_vendor",
+    "Undo a soft-delete. Clears deleted_at; vendor reappears in sitemap, listings, event vendor lists. Does NOT clear redirect_to_vendor_id (admin can clear separately by passing redirect_to_vendor_id: null via update_vendor, or leave it for the case where you intentionally want both the original and the redirect-target to coexist). IndexNow ping fires so search engines re-discover. Admin only.",
+    {
+      vendor_id: z.string().uuid().describe("Vendor ID to undelete"),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "undelete_vendor requires MAIN_APP_URL and INTERNAL_API_KEY to be configured.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      try {
+        const response = await fetch(
+          `${env.MAIN_APP_URL}/api/admin/vendors/${encodeURIComponent(params.vendor_id)}/undelete`,
+          {
+            method: "POST",
+            headers: {
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+        const responseBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!response.ok) {
+          return {
+            content: [jsonContent({ ...responseBody, http_status: response.status })],
+            isError: true,
+          };
+        }
+        return { content: [jsonContent(responseBody)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `undelete_vendor failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── update_vendor ─────────────────────────────────────────────
   server.tool(
     "update_vendor",

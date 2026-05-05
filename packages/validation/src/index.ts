@@ -175,6 +175,20 @@ export const vendorUpdateSchema = vendorCreateSchema
     verified_pro: z.boolean().optional(),
   });
 
+// delete_vendor (MCP tool / DELETE /api/admin/vendors/[id]) — soft-delete
+// with optional 301 redirect to a canonical replacement. Hard delete (mode
+// = "hard") is reserved for the purge sweep + force=true cases. See doc
+// memo for refuse-conditions and side-effects.
+export const vendorDeleteSchema = z.object({
+  mode: z.enum(["soft", "hard"]).optional().default("soft"),
+  redirect_to_vendor_id: z.string().uuid().optional().nullable(),
+  rewrite_blog_links: z.boolean().optional().default(false),
+  force: z.boolean().optional().default(false),
+  // Required when force=true. Min 10 chars to discourage one-word excuses
+  // ("spam") that lose context for future audit review.
+  reason: z.string().min(10).max(500).optional(),
+});
+
 // Event Day schema (per-day schedule)
 export const eventDaySchema = z.object({
   date: z

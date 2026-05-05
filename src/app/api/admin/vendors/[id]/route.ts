@@ -8,14 +8,18 @@ import {
   users,
   vendorSlugHistory,
   adminActions,
+  contentLinks,
+  blogPosts,
+  recommendationItems,
 } from "@/lib/db/schema";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, inArray, gte, sql } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
-import { vendorUpdateSchema, validateRequestBody } from "@/lib/validations";
+import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { sendEmail, getSiteUrl } from "@/lib/email/send";
 import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
+import { markActedAllForTarget } from "@/lib/recommendations/engine";
 
 export const runtime = "edge";
 
@@ -363,31 +367,429 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: Params) {
+// Auth helper: accepts either an admin session OR a valid X-Internal-Key
+// (so the MCP server can call this same route via the existing
+// INTERNAL_API_KEY pattern, mirroring delete_blog_post).
+async function authorizeAdminOrInternal(
+  request: NextRequest
+): Promise<
+  { ok: true; actorUserId: string | null } | { ok: false; status: number; error: string }
+> {
+  const internalKey = request.headers.get("x-internal-key");
+  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+    return { ok: true, actorUserId: null }; // system-driven; null actor in audit log
+  }
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return { ok: false, status: 401, error: "Unauthorized" };
   }
+  return { ok: true, actorUserId: session.user.id };
+}
+
+const PURGE_GRACE_DAYS = 30;
+const ACTIVE_VENDOR_STATUSES = [
+  "INVITED",
+  "INTERESTED",
+  "APPLIED",
+  "WAITLISTED",
+  "APPROVED",
+  "CONFIRMED",
+] as const;
+
+export async function DELETE(request: NextRequest, { params }: Params) {
+  const authResult = await authorizeAdminOrInternal(request);
+  if (!authResult.ok) {
+    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
+  }
+  const actorUserId = authResult.actorUserId;
 
   const { id } = await params;
 
+  // Body is optional (e.g., MCP wrapper or curl with no body); default to soft-delete.
+  let bodyParsed: ReturnType<typeof vendorDeleteSchema.parse>;
+  try {
+    const raw = await request.text();
+    const json = raw ? JSON.parse(raw) : {};
+    bodyParsed = vendorDeleteSchema.parse(json);
+  } catch (e) {
+    return NextResponse.json(
+      { error: `Invalid request body: ${e instanceof Error ? e.message : String(e)}` },
+      { status: 400 }
+    );
+  }
+  const { mode, redirect_to_vendor_id, rewrite_blog_links, force, reason } = bodyParsed;
+
+  if (force && (!reason || reason.trim().length < 10)) {
+    return NextResponse.json(
+      { error: "force=true requires a reason of at least 10 characters" },
+      { status: 400 }
+    );
+  }
+
   const db = getCloudflareDb();
   try {
-    // Get vendor to find user
-    const vendor = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
-
-    if (vendor.length > 0) {
-      // Reset user role to USER
-      await db.update(users).set({ role: "USER" }).where(eq(users.id, vendor[0].userId));
+    const [vendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
+    if (!vendor) {
+      return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
     }
 
+    const now = new Date();
+
+    // ─── REFUSE CHECKS ──────────────────────────────────────────────
+
+    // 1) Active event participation: vendor has non-terminal event_vendors
+    //    rows on events that have not yet ended.
+    const activeEvents = await db
+      .select({
+        eventId: events.id,
+        eventName: events.name,
+        eventSlug: events.slug,
+        eventStartDate: events.startDate,
+        status: eventVendors.status,
+      })
+      .from(eventVendors)
+      .innerJoin(events, eq(eventVendors.eventId, events.id))
+      .where(
+        and(
+          eq(eventVendors.vendorId, id),
+          inArray(eventVendors.status, [...ACTIVE_VENDOR_STATUSES]),
+          gte(events.startDate, now)
+        )
+      );
+
+    // 2) Active Enhanced Profile.
+    const enhancedActive =
+      vendor.enhancedProfile &&
+      vendor.enhancedProfileExpiresAt !== null &&
+      vendor.enhancedProfileExpiresAt.getTime() > now.getTime();
+
+    // 3) Active user claim.
+    const claimedActive = vendor.claimed === true;
+
+    const refuseReasons: { code: string; message: string; details?: unknown }[] = [];
+    if (activeEvents.length > 0) {
+      refuseReasons.push({
+        code: "active_event_participation",
+        message: `Vendor has ${activeEvents.length} active event commitments on upcoming events. Set those to WITHDRAWN or wait for events to pass before deleting.`,
+        details: activeEvents.slice(0, 10).map((e) => ({
+          event_id: e.eventId,
+          event_name: e.eventName,
+          event_slug: e.eventSlug,
+          status: e.status,
+          start_date: e.eventStartDate?.toISOString() ?? null,
+        })),
+      });
+    }
+    if (enhancedActive) {
+      refuseReasons.push({
+        code: "active_enhanced_profile",
+        message: `Vendor has active Enhanced Profile through ${vendor.enhancedProfileExpiresAt?.toISOString().slice(0, 10)}. Cancel the subscription first.`,
+      });
+    }
+    if (claimedActive) {
+      // Resolve email if possible (best-effort; falls back to "unknown")
+      let email: string | null = null;
+      if (vendor.userId) {
+        const [u] = await db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, vendor.userId))
+          .limit(1);
+        email = u?.email ?? null;
+      }
+      refuseReasons.push({
+        code: "active_claim",
+        message: `Vendor is claimed${email ? ` by ${email}` : ""}. Unlink the claim first or contact the user.`,
+      });
+    }
+
+    if (refuseReasons.length > 0 && !force) {
+      return NextResponse.json(
+        {
+          deleted: false,
+          vendor_id: id,
+          business_name: vendor.businessName,
+          refuse_reasons: refuseReasons,
+        },
+        { status: 409 }
+      );
+    }
+
+    // ─── HARD-DELETE GUARDS ─────────────────────────────────────────
+
+    if (mode === "hard") {
+      // Allowed paths: (a) vendor is already soft-deleted ≥ grace window, or
+      // (b) force=true with reason.
+      const graceCutoff = new Date(now.getTime() - PURGE_GRACE_DAYS * 86400_000);
+      const isPastGrace =
+        vendor.deletedAt !== null && vendor.deletedAt.getTime() <= graceCutoff.getTime();
+      if (!isPastGrace && !force) {
+        return NextResponse.json(
+          {
+            error: `Hard delete requires the vendor to have been soft-deleted for at least ${PURGE_GRACE_DAYS} days, or force=true with a reason. Use mode=soft for the standard delete path.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
+    // ─── REDIRECT-TARGET VALIDATION ─────────────────────────────────
+
+    let redirectTarget: { id: string; slug: string; businessName: string } | null = null;
+    if (redirect_to_vendor_id) {
+      if (redirect_to_vendor_id === id) {
+        return NextResponse.json(
+          { error: "redirect_to_vendor_id cannot be the vendor being deleted (self-redirect)" },
+          { status: 400 }
+        );
+      }
+      const [target] = await db
+        .select({
+          id: vendors.id,
+          slug: vendors.slug,
+          businessName: vendors.businessName,
+          deletedAt: vendors.deletedAt,
+          redirectToVendorId: vendors.redirectToVendorId,
+        })
+        .from(vendors)
+        .where(eq(vendors.id, redirect_to_vendor_id))
+        .limit(1);
+      if (!target) {
+        return NextResponse.json({ error: "redirect_to_vendor_id not found" }, { status: 400 });
+      }
+      if (target.deletedAt !== null) {
+        return NextResponse.json(
+          {
+            error:
+              "redirect_to_vendor_id points at a soft-deleted vendor. Pick a live target. (force does not override this; it's referential integrity, not a refuse-condition.)",
+          },
+          { status: 400 }
+        );
+      }
+      // Cycle prevention: target must not redirect back to this vendor.
+      if (target.redirectToVendorId === id) {
+        return NextResponse.json(
+          { error: "Cycle detected: redirect target already redirects to this vendor" },
+          { status: 400 }
+        );
+      }
+      redirectTarget = {
+        id: target.id,
+        slug: target.slug,
+        businessName: target.businessName,
+      };
+    }
+
+    // ─── SOFT-WARNING COUNTS ────────────────────────────────────────
+
+    const blogLinkRows = await db
+      .select({
+        sourceId: contentLinks.sourceId,
+        sourceSlug: blogPosts.slug,
+      })
+      .from(contentLinks)
+      .leftJoin(blogPosts, eq(contentLinks.sourceId, blogPosts.id))
+      .where(and(eq(contentLinks.targetType, "VENDOR"), eq(contentLinks.targetId, id)));
+    const blogPostsWithDeadLinks = Array.from(
+      new Set(blogLinkRows.map((r) => r.sourceSlug).filter((s): s is string => !!s))
+    );
+
+    const [{ historicalCount }] = await db
+      .select({ historicalCount: sql<number>`COUNT(*)` })
+      .from(eventVendors)
+      .where(eq(eventVendors.vendorId, id));
+    const historicalEventLinksPreserved = Number(historicalCount) - activeEvents.length;
+
+    const [{ slugHistoryCount }] = await db
+      .select({ slugHistoryCount: sql<number>`COUNT(*)` })
+      .from(vendorSlugHistory)
+      .where(eq(vendorSlugHistory.vendorId, id));
+
+    // ─── EXECUTE: SOFT vs HARD ──────────────────────────────────────
+
+    const cacheInvalidatedPaths = [
+      `/vendors/${vendor.slug}`,
+      "/vendors",
+      ...blogPostsWithDeadLinks.map((s) => `/blog/${s}`),
+    ];
+
+    if (mode === "soft") {
+      // Soft delete: flip deleted_at, set redirect, migrate slug history,
+      // optionally rewrite blog links, auto-resolve open recommendations,
+      // audit log, IndexNow.
+      await db
+        .update(vendors)
+        .set({
+          deletedAt: now,
+          redirectToVendorId: redirectTarget?.id ?? null,
+          updatedAt: now,
+        })
+        .where(eq(vendors.id, id));
+
+      if (redirectTarget) {
+        // Insert a slug-history row mapping the deleted slug → target slug.
+        await db.insert(vendorSlugHistory).values({
+          vendorId: redirectTarget.id, // history rows are keyed to the LIVE vendor
+          oldSlug: vendor.slug,
+          newSlug: redirectTarget.slug,
+          changedAt: now,
+          changedBy: actorUserId,
+        });
+        // Re-point any pre-existing slug-history rows for the deleted vendor.
+        // Walk them to the redirect target so transitive 301s still work.
+        const existing = await db
+          .select({ id: vendorSlugHistory.id, oldSlug: vendorSlugHistory.oldSlug })
+          .from(vendorSlugHistory)
+          .where(eq(vendorSlugHistory.vendorId, id));
+        for (const row of existing) {
+          await db
+            .update(vendorSlugHistory)
+            .set({
+              vendorId: redirectTarget.id,
+              newSlug: redirectTarget.slug,
+              changedAt: now,
+              changedBy: actorUserId,
+            })
+            .where(eq(vendorSlugHistory.id, row.id));
+        }
+      }
+
+      let blogLinksRewritten = 0;
+      if (rewrite_blog_links && redirectTarget && blogLinkRows.length > 0) {
+        const result = await db
+          .update(contentLinks)
+          .set({ targetId: redirectTarget.id, targetSlug: redirectTarget.slug })
+          .where(and(eq(contentLinks.targetType, "VENDOR"), eq(contentLinks.targetId, id)))
+          .returning({ id: contentLinks.id });
+        blogLinksRewritten = result.length;
+      }
+
+      const recommendationsResolved = await markActedAllForTarget(db, "vendor", id);
+
+      const auditPayload = {
+        mode: "soft" as const,
+        business_name: vendor.businessName,
+        slug: vendor.slug,
+        redirect_to: redirectTarget
+          ? { vendor_id: redirectTarget.id, slug: redirectTarget.slug }
+          : null,
+        rewrite_blog_links,
+        force,
+        force_reason: force ? reason : null,
+        side_effect_counts: {
+          blog_links_affected: blogLinkRows.length,
+          blog_links_rewritten: blogLinksRewritten,
+          historical_event_links_preserved: historicalEventLinksPreserved,
+          slug_history_rows_redirected: Number(slugHistoryCount),
+          recommendations_resolved: recommendationsResolved,
+        },
+        refuse_reasons_overridden: force ? refuseReasons.map((r) => r.code) : [],
+      };
+
+      const [auditRow] = await db
+        .insert(adminActions)
+        .values({
+          action: "vendor.soft_delete",
+          actorUserId,
+          targetType: "vendor",
+          targetId: id,
+          payloadJson: JSON.stringify(auditPayload),
+          createdAt: now,
+        })
+        .returning({ id: adminActions.id });
+
+      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+      await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-delete");
+
+      return NextResponse.json({
+        deleted: true,
+        mode: "soft",
+        vendor_id: id,
+        business_name: vendor.businessName,
+        redirect_to: redirectTarget,
+        side_effects: {
+          indexnow_pinged: true,
+          sitemap_regenerated: true, // sitemap is dynamic; next request rebuilds
+          cache_invalidated_paths: cacheInvalidatedPaths,
+          blog_links_affected: blogLinkRows.length,
+          blog_posts_with_dead_links: blogPostsWithDeadLinks,
+          blog_links_rewritten: blogLinksRewritten,
+          historical_event_links_preserved: historicalEventLinksPreserved,
+          recommendations_resolved: recommendationsResolved,
+          slug_history_rows_redirected: Number(slugHistoryCount),
+        },
+        audit_log_id: auditRow.id,
+      });
+    }
+
+    // ─── HARD DELETE (purge) ────────────────────────────────────────
+
+    // Capture vendor snapshot before deletion for audit log.
+    const vendorSnapshot = {
+      id: vendor.id,
+      slug: vendor.slug,
+      business_name: vendor.businessName,
+      deleted_at: vendor.deletedAt?.toISOString() ?? null,
+      enhanced_profile: vendor.enhancedProfile,
+      claimed: vendor.claimed,
+      verified_pro: vendor.verifiedPro,
+    };
+
+    // Manually delete polymorphic refs (no FK constraint to cascade).
+    await db
+      .delete(contentLinks)
+      .where(and(eq(contentLinks.targetType, "VENDOR"), eq(contentLinks.targetId, id)));
+    await db
+      .delete(recommendationItems)
+      .where(
+        and(eq(recommendationItems.targetType, "vendor"), eq(recommendationItems.targetId, id))
+      );
+
+    // FK-cascade-deleted on the vendors row: event_vendors, vendor_claim_tokens,
+    // vendor_slug_history. Other vendors with redirect_to_vendor_id pointing
+    // here get SET NULL on their redirect (per migration 0053 ON DELETE policy).
     await db.delete(vendors).where(eq(vendors.id, id));
-    return NextResponse.json({ success: true });
+
+    const [auditRow] = await db
+      .insert(adminActions)
+      .values({
+        action: "vendor.purge",
+        actorUserId,
+        targetType: "vendor",
+        targetId: id,
+        payloadJson: JSON.stringify({
+          mode: "hard",
+          force,
+          force_reason: force ? reason : null,
+          vendor_snapshot: vendorSnapshot,
+          blog_links_destroyed: blogLinkRows.length,
+        }),
+        createdAt: now,
+      })
+      .returning({ id: adminActions.id });
+
+    const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+    await pingIndexNow(db, indexNowUrlFor("vendors", vendor.slug), env, "vendor-purge");
+
+    return NextResponse.json({
+      deleted: true,
+      mode: "hard",
+      vendor_id: id,
+      business_name: vendor.businessName,
+      side_effects: {
+        indexnow_pinged: true,
+        sitemap_regenerated: true,
+        cache_invalidated_paths: cacheInvalidatedPaths,
+        blog_links_destroyed: blogLinkRows.length,
+      },
+      audit_log_id: auditRow.id,
+    });
   } catch (error) {
     await logError(db, {
       message: "Failed to delete vendor",
       error,
-      source: "api/admin/vendors/[id]",
+      source: "api/admin/vendors/[id]:DELETE",
       request,
     });
     return NextResponse.json({ error: "Failed to delete vendor" }, { status: 500 });
