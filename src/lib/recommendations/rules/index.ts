@@ -22,6 +22,9 @@ import { softDeletedVenuesRule } from "./soft-deleted-venues";
 import { staleYearEventsRule } from "./stale-year-events";
 import { staticPagesShortDescriptionRule } from "./static-pages-short-description";
 import { vendorsNoDescriptionRule } from "./vendors-no-description";
+import { stubsReadyForEnrichmentRule } from "./stubs-ready-for-enrichment";
+import { standardsEligibleForClaimOutreachRule } from "./standards-eligible-for-claim-outreach";
+import { claimedReadyForEnhancedUpsellRule } from "./claimed-ready-for-enhanced-upsell";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -38,4 +41,8 @@ export const ALL_RULES: RuleDefinition[] = [
   enhancedProfileRenewalCriticalRule,
   enhancedProfileRenewalWarningRule,
   enhancedProfileRenewalNoticeRule,
+  // Tier-transition rules (PR D): surface tier-graduation opportunities.
+  stubsReadyForEnrichmentRule,
+  standardsEligibleForClaimOutreachRule,
+  claimedReadyForEnhancedUpsellRule,
 ];
