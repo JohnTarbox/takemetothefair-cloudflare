@@ -103,6 +103,12 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
           <div className="flex items-center gap-3">
             <WindowSelector currentWindow={window} />
             <Link
+              href="/admin/diagnostics"
+              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+            >
+              Diagnostics <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+            <Link
               href="/admin/analytics/ga4"
               className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
             >
@@ -752,6 +758,9 @@ async function RecommendationsTab() {
     await import("@/components/admin/recommendation-bulk-actions");
   const { RecommendationScanButton } =
     await import("@/components/admin/recommendation-scan-button");
+  const tiersMod = await import("@/lib/recommendations/tiers");
+  const { tierFor, TIER_META, opportunityScore } = tiersMod;
+  type Tier = import("@/lib/recommendations/tiers").Tier;
 
   const db = getCloudflareDb();
   const items = await getActiveItems(db);
@@ -759,17 +768,15 @@ async function RecommendationsTab() {
   type Sev = "red" | "yellow" | "blue";
   type Item = (typeof items)[number];
 
-  // Group by rule first (one card per rule); keep the rule's own severity for
-  // bucketing into red / yellow / blue sections.
+  // Group by rule first (one card per rule). Keep the rule's own severity for
+  // sort within tier; tier (from rule key) drives the top-level bucket.
   type RuleGroup = {
     ruleId: string;
     ruleKey: string;
     title: string;
     rationaleTemplate: string;
     severity: Sev;
-    // Total matches the last scan saw (unbounded). Used to show "12 of 42"
-    // when some items are dismissed/snoozed and the active list is smaller
-    // than reality.
+    tier: Tier;
     totalMatchCount: number;
     items: Item[];
   };
@@ -783,6 +790,7 @@ async function RecommendationsTab() {
         title: it.title,
         rationaleTemplate: it.rationaleTemplate,
         severity: it.severity as Sev,
+        tier: tierFor(it.ruleKey),
         totalMatchCount: it.ruleTotalMatchCount,
         items: [],
       };
@@ -791,12 +799,24 @@ async function RecommendationsTab() {
     g.items.push(it);
   }
 
-  const bySeverity: Record<Sev, RuleGroup[]> = { red: [], yellow: [], blue: [] };
-  for (const g of ruleGroups.values()) bySeverity[g.severity].push(g);
-  // Within each severity bucket, larger rules surface first.
-  for (const sev of ["red", "yellow", "blue"] as Sev[]) {
-    bySeverity[sev].sort((a, b) => b.items.length - a.items.length);
+  // §10.3: bucket by TIER first; severity drives sort order within each tier.
+  const byTier: Record<Tier, RuleGroup[]> = { T1: [], T2: [], T3: [] };
+  for (const g of ruleGroups.values()) byTier[g.tier].push(g);
+  const sevRank = (s: Sev) => (s === "red" ? 0 : s === "yellow" ? 1 : 2);
+  for (const t of ["T1", "T2", "T3"] as Tier[]) {
+    byTier[t].sort((a, b) => {
+      if (a.severity !== b.severity) return sevRank(a.severity) - sevRank(b.severity);
+      return b.items.length - a.items.length;
+    });
   }
+
+  // §10.3 opportunities feed: top 10 highest-scoring items across all tiers.
+  // Score combines severity weight + match count so high-severity-low-count
+  // beats low-severity-high-count, but match count breaks ties.
+  const opportunities = Array.from(ruleGroups.values())
+    .map((g) => ({ group: g, score: opportunityScore(g.severity, g.items.length) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
 
   const severityMeta: Record<
     Sev,
@@ -907,24 +927,54 @@ async function RecommendationsTab() {
         <RecommendationScanButton />
       </div>
 
-      {(["red", "yellow", "blue"] as Sev[]).map((sev) => {
-        const groups = bySeverity[sev];
+      {/* §10.3 opportunities feed — top 10 across all tiers ordered by score. */}
+      {opportunities.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Opportunities feed (top {opportunities.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1.5 text-sm">
+              {opportunities.map(({ group: g }) => {
+                const sevMeta = severityMeta[g.severity];
+                return (
+                  <li key={g.ruleId} className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border ${sevMeta.chip}`}
+                      >
+                        {g.tier}
+                      </span>
+                      <span className="text-sm text-gray-900 truncate">{g.title}</span>
+                    </div>
+                    <span className="text-xs text-gray-500 tabular-nums shrink-0">
+                      {g.items.length} affected
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {(["T1", "T2", "T3"] as Tier[]).map((tier) => {
+        const groups = byTier[tier];
         if (groups.length === 0) return null;
-        const meta = severityMeta[sev];
+        const tMeta = TIER_META[tier];
         return (
-          <div key={sev} className="mb-8">
-            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <span
-                className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${meta.badge}`}
-              >
-                {meta.label}
+          <div key={tier} className="mb-8">
+            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-1 flex items-center gap-2">
+              <span className="inline-block px-2 py-0.5 rounded text-xs font-medium border bg-gray-100 text-gray-800 border-gray-300">
+                {tMeta.label}
               </span>
               <span className="text-gray-500 font-normal">{groups.length}</span>
             </h2>
+            <p className="text-xs text-gray-500 mb-3">{tMeta.description}</p>
             <div className="space-y-3">
               {groups.map((group) => {
+                const meta = severityMeta[group.severity];
                 const count = group.items.length;
-                // Auto-expand single-item rules; keep multi-item rules collapsed by default.
                 const defaultOpen = count === 1;
                 return (
                   <Card key={group.ruleId} className={meta.cardBorder}>
@@ -950,8 +1000,6 @@ async function RecommendationsTab() {
                             </p>
                             <p className="text-xs text-gray-400 mt-1 ml-6">rule {group.ruleKey}</p>
                           </div>
-                          {/* Bulk actions render only for groups with >=3 items
-                              (single/double-item rules don't benefit). */}
                           <div className="shrink-0">
                             <RecommendationBulkActions
                               ruleId={group.ruleId}
