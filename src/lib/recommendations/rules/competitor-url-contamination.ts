@@ -3,39 +3,35 @@
 // "Competitor URL contamination — Two events linking to fairsandfestivals.net
 // (a competitor's URL); not flagged."
 //
-// Currently the competitor list is hardcoded; a future improvement is to
-// extract it into a `competitor_domains` D1 table per §10.2 of the doc.
+// Domain list is loaded from the competitor_domains D1 table per §10.2; the
+// previous hardcoded array was migrated by drizzle/0058 and can be edited
+// via /api/admin/competitor-domains without a code deploy.
 
 import { sql } from "drizzle-orm";
 import { events, vendors } from "@/lib/db/schema";
+import { loadCompetitorDomains } from "@/lib/competitor-domains";
 import type { ItemMatch, RuleDefinition } from "../engine";
-
-const COMPETITOR_DOMAINS = [
-  "fairsandfestivals.net",
-  "festivalnet.com",
-  "fairsandfestivals.com",
-  "craftshowyellowpages.com",
-];
 
 export const competitorUrlContaminationRule: RuleDefinition = {
   ruleKey: "competitor_url_contamination",
   title: "Events/vendors linking to competitor or aggregator domains",
   rationaleTemplate:
-    "{n} ticket_url or vendor.website fields point at competitor/aggregator domains (fairsandfestivals.net, etc.). Replace with the operator's direct URL or remove. Each contaminated link sends our visitor to a competitor.",
+    "{n} ticket_url or vendor.website fields point at competitor/aggregator domains. Replace with the operator's direct URL or remove. Each contaminated link sends our visitor to a competitor.",
   severity: "yellow",
   category: "data_quality",
   autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
-    if (COMPETITOR_DOMAINS.length === 0) return [];
+    const competitorList = await loadCompetitorDomains(db);
+    if (competitorList.length === 0) return [];
 
     // Single OR predicate across all competitor domains, applied to both
     // events.ticket_url and vendors.website.
-    const eventClauses = COMPETITOR_DOMAINS.map(
-      (d) => sql`LOWER(${events.ticketUrl}) LIKE ${"%" + d.toLowerCase() + "%"}`
-    ).reduce((acc, c) => sql`${acc} OR ${c}`);
-    const vendorClauses = COMPETITOR_DOMAINS.map(
-      (d) => sql`LOWER(${vendors.website}) LIKE ${"%" + d.toLowerCase() + "%"}`
-    ).reduce((acc, c) => sql`${acc} OR ${c}`);
+    const eventClauses = competitorList
+      .map((d) => sql`LOWER(${events.ticketUrl}) LIKE ${"%" + d + "%"}`)
+      .reduce((acc, c) => sql`${acc} OR ${c}`);
+    const vendorClauses = competitorList
+      .map((d) => sql`LOWER(${vendors.website}) LIKE ${"%" + d + "%"}`)
+      .reduce((acc, c) => sql`${acc} OR ${c}`);
 
     const [eventRows, vendorRows] = await Promise.all([
       db

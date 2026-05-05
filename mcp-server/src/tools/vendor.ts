@@ -9,6 +9,8 @@ import {
   decodeHtmlEntities,
   publicUrlFor,
   triggerIndexNow,
+  recomputeVendorCompleteness,
+  logEnrichment,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -119,6 +121,18 @@ export function registerVendorTools(
       updates.updatedAt = new Date();
 
       await db.update(vendors).set(updates).where(eq(vendors.id, vendorId));
+
+      await recomputeVendorCompleteness(db, vendorId);
+
+      await logEnrichment(db, {
+        targetType: "vendor",
+        targetId: vendorId,
+        source: "vendor_self",
+        status: "success",
+        fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
+        actorUserId: auth.userId,
+        notes: "MCP update_my_vendor",
+      });
 
       return {
         content: [

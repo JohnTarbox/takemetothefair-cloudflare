@@ -8,6 +8,7 @@ import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { recomputeEventCompleteness } from "@/lib/completeness";
 import { parseTimestamp, parseDateOnly } from "@/lib/datetime";
 
 export const runtime = "edge";
@@ -231,6 +232,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
       throw err;
     }
+
+    await recomputeEventCompleteness(db, id);
 
     // Handle eventDays update if provided
     if (data.eventDays !== undefined) {

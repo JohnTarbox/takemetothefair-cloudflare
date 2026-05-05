@@ -21,6 +21,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { recomputeVendorCompleteness } from "@/lib/completeness";
 
 export const runtime = "edge";
 
@@ -146,6 +147,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   // atomic from the admin's perspective: one click → R2 + DB consistent.
   try {
     await db.update(vendors).set({ logoUrl: url }).where(eq(vendors.id, id));
+    await recomputeVendorCompleteness(db, id);
   } catch (e) {
     await logError(db, {
       message: "vendor-logo-upload: DB update failed (R2 has the file)",

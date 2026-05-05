@@ -16,6 +16,7 @@ import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { parseDateOnly } from "@/lib/datetime";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { recomputeEventCompleteness } from "@/lib/completeness";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -181,6 +182,8 @@ export async function POST(request: NextRequest) {
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,
     });
+
+    await recomputeEventCompleteness(db, eventId);
 
     // Insert event days if provided (batch to avoid SQLite variable limit)
     if (data.eventDays && data.eventDays.length > 0) {

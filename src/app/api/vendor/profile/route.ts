@@ -6,6 +6,8 @@ import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
+import { recomputeVendorCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 
 export const runtime = "edge";
 
@@ -108,6 +110,18 @@ export async function PATCH(request: NextRequest) {
       .from(vendors)
       .where(eq(vendors.userId, session.user.id))
       .limit(1);
+
+    if (updatedVendor[0]) {
+      await recomputeVendorCompleteness(db, updatedVendor[0].id);
+      await logEnrichment(db, {
+        targetType: "vendor",
+        targetId: updatedVendor[0].id,
+        source: "vendor_self",
+        status: "success",
+        actorUserId: session.user.id,
+        fieldsChanged: Object.keys(updateData),
+      });
+    }
 
     return NextResponse.json(updatedVendor[0]);
   } catch (error) {

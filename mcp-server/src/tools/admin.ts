@@ -29,6 +29,9 @@ import {
   triggerIndexNow,
   PUBLIC_EVENT_STATUSES,
   PUBLIC_VENDOR_STATUSES,
+  recomputeVendorCompleteness,
+  recomputeEventCompleteness,
+  logEnrichment,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -613,6 +616,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
         await db.update(events).set(updates).where(eq(events.id, event.id));
+        await recomputeEventCompleteness(db, event.id);
+        await logEnrichment(db, {
+          targetType: "event",
+          targetId: event.id,
+          source: "manual_admin",
+          status: "success",
+          actorUserId: auth.userId,
+          fieldsChanged: requestedFields,
+          notes: "MCP update_event",
+        });
       }
 
       // IndexNow: ping if a material field changed on an already-public event.
@@ -938,6 +951,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         logoUrl: params.logo_url ?? null,
         city: loc.city,
         state: loc.state,
+      });
+
+      await recomputeVendorCompleteness(db, vendorId);
+
+      await logEnrichment(db, {
+        targetType: "vendor",
+        targetId: vendorId,
+        source: "mcp_create",
+        status: "success",
+        actorUserId: auth.userId,
+        notes: "MCP create_vendor",
       });
 
       // IndexNow: vendors have no status field — they're public on creation.
@@ -1916,6 +1940,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
 
+      await recomputeVendorCompleteness(db, vendor.id);
+
+      await logEnrichment(db, {
+        targetType: "vendor",
+        targetId: vendor.id,
+        source: "manual_admin",
+        status: "success",
+        actorUserId: auth.userId,
+        fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
+        notes: "MCP update_vendor",
+      });
+
       // Slug change: record the old→new mapping for 301 redirects on /vendors/[slug].
       if (updates.slug && updates.slug !== vendor.slug) {
         await db.insert(vendorSlugHistory).values({
@@ -2060,6 +2096,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       await db.update(vendors).set(updates).where(eq(vendors.id, vendor.id));
+
+      await recomputeVendorCompleteness(db, vendor.id);
+
+      await logEnrichment(db, {
+        targetType: "vendor",
+        targetId: vendor.id,
+        source: "manual_admin",
+        status: "success",
+        actorUserId: auth.userId,
+        fieldsChanged: Object.keys(updates).filter((k) => k !== "updatedAt"),
+        notes: "MCP update_vendor_status",
+      });
 
       if (slugChanged) {
         await db.insert(vendorSlugHistory).values({

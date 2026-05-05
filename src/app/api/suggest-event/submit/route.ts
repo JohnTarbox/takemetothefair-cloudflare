@@ -6,6 +6,7 @@ import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug, computePublicDates, decodeHtmlEntities, dollarsToCents } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
@@ -241,6 +242,8 @@ export async function POST(request: NextRequest) {
       applicationUrl: gatedApplicationUrl,
       walkInsAllowed: data.walkInsAllowed ?? null,
     });
+
+    await recomputeEventCompleteness(db, newEventId);
 
     // Insert event days if provided
     if (data.eventDays && data.eventDays.length > 0) {

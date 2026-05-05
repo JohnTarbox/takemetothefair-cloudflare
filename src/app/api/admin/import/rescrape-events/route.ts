@@ -6,6 +6,8 @@ import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { inArray, eq } from "drizzle-orm";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
+import { recomputeEventCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 
 export const runtime = "edge";
 
@@ -133,6 +135,15 @@ export async function POST(request: Request) {
           updates.lastSyncedAt = new Date();
           updates.updatedAt = new Date();
           await db.update(events).set(updates).where(eq(events.id, event.id));
+          await recomputeEventCompleteness(db, event.id);
+          await logEnrichment(db, {
+            targetType: "event",
+            targetId: event.id,
+            source: "scraper",
+            status: "success",
+            fieldsChanged: fieldsUpdated,
+            notes: "rescrape-events sweep",
+          });
           results.updated++;
           results.details.push({
             id: event.id,

@@ -8,6 +8,8 @@ import { createSlug, dollarsToCents } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
+import { recomputeEventCompleteness } from "@/lib/completeness";
+import { logEnrichment } from "@/lib/enrichment-log";
 import { parseDateOnly } from "@/lib/datetime";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
@@ -228,6 +230,16 @@ export async function POST(request: NextRequest) {
       sourceId: sourceUrl ? createSlug(sourceUrl) : newEventId,
       syncEnabled: false,
       lastSyncedAt: new Date(),
+    });
+
+    await recomputeEventCompleteness(db, newEventId);
+
+    await logEnrichment(db, {
+      targetType: "event",
+      targetId: newEventId,
+      source: "ai_workers",
+      status: "success",
+      notes: sourceUrl ? `URL import: ${sourceUrl}` : "URL import",
     });
 
     // Insert eventDays rows
