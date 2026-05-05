@@ -414,6 +414,31 @@ export type DailyClicksRow = {
 };
 
 /**
+ * §6.3 STALE-state freshness signal: most recent GSC date with non-zero
+ * clicks or impressions. GSC has a ~3-day reporting lag baked in so the
+ * "freshest" date is typically today-3. Returns YYYY-MM-DD, or null on
+ * API error or empty 7-day window. Callers treat null as STALE since we
+ * can't prove freshness.
+ */
+export async function getMaxGscDataDate(env: ScEnv): Promise<string | null> {
+  try {
+    const rows = await getDailyClicks(env, { days: 7 });
+    let max: string | null = null;
+    for (const r of rows) {
+      if ((r.clicks > 0 || r.impressions > 0) && (max === null || r.date > max)) {
+        max = r.date;
+      }
+    }
+    return max;
+  } catch (e) {
+    if (e instanceof ScConfigError || e instanceof ScApiError) {
+      return null;
+    }
+    throw e;
+  }
+}
+
+/**
  * Per-day site-wide clicks/impressions aggregation. Uses dimensions: ['date']
  * with no query/page filter so each row is a daily total — the right shape for
  * a sparkline. Caches independently from the per-query report.

@@ -395,6 +395,23 @@ async function runScheduledTimeToIndexSweep(env: Env): Promise<void> {
   );
 }
 
+/**
+ * §6.3 Phase 2 GA4 liveness check — daily belt-and-suspenders detection
+ * for the failure mode that caused the 2026-04-27 → 2026-05-05 silent
+ * outage. Pings GA4 once a day; on 2 consecutive critical/degraded fires,
+ * writes admin_actions.ga4.liveness_alert which surfaces as a P0 in the
+ * action queue.
+ */
+async function runScheduledGa4LivenessCheck(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "ga4 liveness check",
+    "/api/admin/ga4-liveness",
+    (r) =>
+      `status=${r.status} maxDate=${r.maxDataDate ?? "null"} consecutive=${r.consecutiveFailures} alertFired=${r.alertFired}`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Workflow exports
 // ---------------------------------------------------------------------------
@@ -455,6 +472,7 @@ export default {
         runScheduledRecommendationsScan(env),
         runScheduledGscSweep(env),
         runScheduledTimeToIndexSweep(env),
+        runScheduledGa4LivenessCheck(env),
       ]).then(() => undefined)
     );
   },

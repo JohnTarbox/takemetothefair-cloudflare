@@ -33,7 +33,12 @@ import {
 import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
 import { getLatestKpiStates, type KpiStateRow } from "@/lib/kpi-states";
 import { tierFor } from "@/lib/recommendations/tiers";
-import { KPI_THRESHOLDS, actionTitleForKpi, type KpiName } from "@/lib/kpi-thresholds";
+import {
+  KPI_THRESHOLDS,
+  actionTitleForKpi,
+  formatStaleAge,
+  type KpiName,
+} from "@/lib/kpi-thresholds";
 import { SITEMAP_MIN_COMPLETENESS } from "@takemetothefair/utils";
 import {
   BingApiError,
@@ -1313,7 +1318,22 @@ async function loadActionQueue(
   // visually as states flip between fires.
   for (const [kpi, row] of kpiStates) {
     const t = KPI_THRESHOLDS[kpi];
-    if (row.state === "RED") {
+    if (row.state === "STALE") {
+      // STALE = data feed is broken. Surface as P0 with a "fix the source"
+      // prompt — broken data invalidates GREEN/YELLOW/RED entirely.
+      const meta = row.meta as { dataAgeSeconds?: number } | null;
+      const ageSec = meta?.dataAgeSeconds;
+      const ageLabel = typeof ageSec === "number" ? formatStaleAge(ageSec) : "unknown";
+      entries.push({
+        priority: "P0",
+        source: "kpi",
+        title: `${t.displayName} data feed stale (${ageLabel})`,
+        effort: "Investigate data source",
+        href: t.href,
+        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        refKey: kpi,
+      });
+    } else if (row.state === "RED") {
       entries.push({
         priority: "P0",
         source: "kpi",

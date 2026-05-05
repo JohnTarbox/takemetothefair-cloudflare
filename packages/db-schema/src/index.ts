@@ -953,7 +953,9 @@ export const kpiStateHistory = sqliteTable(
     // Nullable when the underlying data isn't flowing yet (e.g. time_to_index
     // before 10+ resolved samples). Pairs with state="INDETERMINATE".
     value: real("value"),
-    state: text("state", { enum: ["GREEN", "YELLOW", "RED", "INDETERMINATE"] }).notNull(),
+    state: text("state", {
+      enum: ["GREEN", "YELLOW", "RED", "INDETERMINATE", "STALE"],
+    }).notNull(),
     // 1 when this row's state differs from the previous row's state for the
     // same kpi_name. Drives the action-queue auto-resolve audit log entry.
     stateChangedFromPrevious: integer("state_changed_from_previous").notNull().default(0),
@@ -965,6 +967,27 @@ export const kpiStateHistory = sqliteTable(
     meta: text("meta"),
   },
   (t) => [index("idx_kpi_state_history_name_at").on(t.kpiName, t.computedAt)]
+);
+
+// §6.3 Phase 2 GA4 liveness check log (drizzle/0060). One row per daily check
+// from the MCP-Worker cron. Consecutive-failure count carries forward; alert
+// fires after 2 consecutive critical/degraded results (anti-flap). Wired in
+// src/app/api/admin/ga4-liveness/route.ts and mcp-server's scheduled() handler.
+export const ga4LivenessLog = sqliteTable(
+  "ga4_liveness_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+    // 'green' = data ≤24h old; 'degraded' = 24-48h; 'critical' = >48h or null.
+    status: text("status", { enum: ["green", "degraded", "critical"] }).notNull(),
+    // YYYY-MM-DD of the most recent GA4 day with users>0; null = no data in 7d.
+    maxDataDate: text("max_data_date"),
+    dataAgeSeconds: integer("data_age_seconds"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    // 1 when this row's check triggered an admin_actions ga4.liveness_alert.
+    alertFired: integer("alert_fired").notNull().default(0),
+  },
+  (t) => [index("idx_ga4_liveness_log_checked_at").on(t.checkedAt)]
 );
 
 // Type exports
