@@ -65,7 +65,11 @@ export const KPI_THRESHOLDS: Record<KpiName, KpiThreshold> = {
     actionDescription: "Review event title/description template",
     href: "/admin/recommendations",
     displayName: "Site CTR",
-    staleSlaSeconds: 48 * HOURS, // GSC daily refresh + finalization lag
+    // GSC has a 2-3 day reporting lag baked into its API (the freshest
+    // available date is always today-3 or so). 48h was too tight — fired
+    // STALE every */10 even when GSC was perfectly healthy. 120h (5d)
+    // = 3d natural lag + 2d grace before we treat as a real outage.
+    staleSlaSeconds: 120 * HOURS,
   },
   conversion_rate: {
     green: 0.08,
@@ -76,7 +80,12 @@ export const KPI_THRESHOLDS: Record<KpiName, KpiThreshold> = {
     actionDescription: "Audit content quality; check destination engagement",
     href: "/admin/analytics",
     displayName: "Conversion rate",
-    staleSlaSeconds: 48 * HOURS, // GA4 finalization
+    // GA4 daily-aggregate report (`runReport` on dimensions:[date]) has
+    // 24-48h finalization lag — today's data isn't visible in the date
+    // dimension for ~1 day. 96h (4d) = 48h finalization + 2d grace before
+    // we treat as a real outage. Would have caught the 8-day GA4 outage
+    // by 2026-05-01 instead of 2026-05-05.
+    staleSlaSeconds: 96 * HOURS,
   },
   brand_share: {
     green: 0.4,
@@ -87,7 +96,7 @@ export const KPI_THRESHOLDS: Record<KpiName, KpiThreshold> = {
     actionDescription: "Expand pillar/cluster pages; non-brand content investment",
     href: "/admin/analytics",
     displayName: "Brand share",
-    staleSlaSeconds: 48 * HOURS, // GSC daily refresh
+    staleSlaSeconds: 120 * HOURS, // shares GSC source with site_ctr
   },
   sitemap_quality: {
     green: 0.75,

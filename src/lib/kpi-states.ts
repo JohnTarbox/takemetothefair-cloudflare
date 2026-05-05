@@ -282,12 +282,20 @@ async function readSitemapQuality(db: Db): Promise<KpiValueResult> {
   const eP = ePass[0]?.n ?? 0;
   // updatedAt is stored seconds-epoch (Drizzle mode:"timestamp"). Compare
   // raw seconds, then convert to a Date for the helper.
+  //
+  // Fallback: many old vendors/events rows have NULL updated_at (inserted
+  // via raw SQL or pre-Drizzle migrations that didn't run the $defaultFn).
+  // If max() returns null but the catalog DOES have rows, treat the data
+  // as fresh (ageSeconds=0) — absence of updated_at metadata isn't evidence
+  // the feed is broken. Only when total === 0 (genuinely empty catalog) do
+  // we let dataAgeSeconds bubble up as null → INDETERMINATE.
   const vMaxSec = vMax[0]?.ts ?? null;
   const eMaxSec = eMax[0]?.ts ?? null;
   const maxSec =
     vMaxSec != null && eMaxSec != null ? Math.max(vMaxSec, eMaxSec) : (vMaxSec ?? eMaxSec);
-  const dataAgeSeconds = ageSecondsFromDate(maxSec != null ? new Date(maxSec * 1000) : null);
   const total = vT + eT;
+  const dataAgeSeconds =
+    maxSec != null ? ageSecondsFromDate(new Date(maxSec * 1000)) : total > 0 ? 0 : null;
   if (total === 0) return { value: null, dataAgeSeconds, meta: { reason: "empty_catalog" } };
   return {
     value: (vP + eP) / total,

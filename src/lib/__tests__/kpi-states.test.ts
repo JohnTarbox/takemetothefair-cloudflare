@@ -10,7 +10,9 @@ import { decideStateRow } from "../kpi-states";
 const NOW = new Date("2026-05-05T12:00:00Z");
 const EARLIER = new Date("2026-05-01T12:00:00Z");
 const FRESH = 60; // 1 min — never STALE
-const STALE_3D = 3 * 86400;
+// Past site_ctr's 120h SLA (Phase 2.1 tuning); used to force STALE in tests
+// where we want to assert STALE-state transition logic, not threshold values.
+const STALE_6D = 6 * 86400;
 
 describe("decideStateRow", () => {
   it("first run (no previous) marks state_changed and sets firstDetected to now", () => {
@@ -122,7 +124,7 @@ describe("decideStateRow", () => {
       const r = decideStateRow(
         "site_ctr",
         0.05, // would be GREEN if data were fresh
-        STALE_3D,
+        STALE_6D,
         { state: "GREEN", firstDetectedAt: EARLIER },
         NOW
       );
@@ -136,7 +138,7 @@ describe("decideStateRow", () => {
       const r = decideStateRow(
         "site_ctr",
         0.05,
-        STALE_3D,
+        STALE_6D,
         { state: "STALE", firstDetectedAt: EARLIER },
         NOW
       );
@@ -166,7 +168,7 @@ describe("decideStateRow", () => {
       const r = decideStateRow(
         "site_ctr",
         0.001, // would be RED if data were fresh
-        STALE_3D,
+        STALE_6D,
         undefined,
         NOW
       );
