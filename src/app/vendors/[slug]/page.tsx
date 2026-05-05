@@ -24,6 +24,7 @@ import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGal
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { parseVendorSocialLinks } from "@/lib/vendor-social";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -238,7 +239,7 @@ export default async function VendorDetailPage({ params }: Props) {
         website={vendor.website}
         yearEstablished={vendor.yearEstablished}
         paymentMethods={paymentMethods}
-        socialLinks={vendor.socialLinks as Record<string, string> | null}
+        socialLinks={vendor.socialLinks}
         products={products}
         galleryImageUrls={isEnhanced ? galleryImages.map((g) => g.url) : undefined}
       />
@@ -524,21 +525,19 @@ export default async function VendorDetailPage({ params }: Props) {
                     Visit Website
                   </a>
                 )}
-                {vendor.socialLinks &&
-                  typeof vendor.socialLinks === "object" &&
-                  Object.entries(vendor.socialLinks as Record<string, string>).map(
-                    ([platform, url]) => (
-                      <a
-                        key={platform}
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-3 text-gray-700 hover:text-navy capitalize"
-                      >
-                        {platform}
-                      </a>
-                    )
-                  )}
+                {Object.entries(parseVendorSocialLinks(vendor.socialLinks)).map(
+                  ([platform, url]) => (
+                    <a
+                      key={platform}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 text-gray-700 hover:text-navy capitalize"
+                    >
+                      {platform}
+                    </a>
+                  )
+                )}
               </CardContent>
             </Card>
 

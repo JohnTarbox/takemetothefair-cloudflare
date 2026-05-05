@@ -1,3 +1,5 @@
+import { parseVendorSocialLinks } from "@/lib/vendor-social";
+
 // Map common vendor types to schema.org LocalBusiness subtypes
 function getSchemaType(vendorType?: string | null): string {
   if (!vendorType) return "LocalBusiness";
@@ -59,7 +61,8 @@ interface VendorSchemaProps {
   website?: string | null;
   yearEstablished?: number | null;
   paymentMethods?: string[];
-  socialLinks?: Record<string, string> | null;
+  // D1 stores this as TEXT (JSON string); always parse via parseVendorSocialLinks.
+  socialLinks?: string | Record<string, string> | null;
   products?: string[];
   vendorType?: string | null;
   // Round-3 additions: Enhanced Profile vendors emit an array of images
@@ -88,10 +91,8 @@ export function VendorSchema({
 }: VendorSchemaProps) {
   const sameAs: string[] = [];
   if (website) sameAs.push(website);
-  if (socialLinks) {
-    Object.values(socialLinks).forEach((link) => {
-      if (link) sameAs.push(link);
-    });
+  for (const link of Object.values(parseVendorSocialLinks(socialLinks))) {
+    sameAs.push(link);
   }
 
   // image: scalar for free vendors, array for Enhanced (logo + gallery).
