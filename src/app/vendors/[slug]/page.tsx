@@ -25,6 +25,7 @@ import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseVendorSocialLinks } from "@/lib/vendor-social";
+import { isVendorIndexable } from "@/lib/vendor-quality";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -140,10 +141,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
+  const indexable = isVendorIndexable(vendor);
 
   return {
     title,
     description,
+    robots: indexable ? undefined : { index: false, follow: true },
     alternates: {
       canonical: url,
     },
