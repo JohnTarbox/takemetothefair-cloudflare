@@ -55,16 +55,21 @@ describe("classifyKpi", () => {
   });
 
   describe("STALE precedence", () => {
-    it("returns STALE for site_ctr when GSC data > 48h old, regardless of value", () => {
-      // value would normally be GREEN, but data is stale → STALE wins
-      expect(classifyKpi("site_ctr", 0.05, STALE_HOURS(49))).toBe("STALE");
-      // value would normally be RED — still STALE (broken feed invalidates value)
-      expect(classifyKpi("site_ctr", 0.001, STALE_HOURS(73))).toBe("STALE");
+    // GSC has 2-3d natural reporting lag → SLA bumped to 120h (5d) in
+    // Phase 2.1; below those values is healthy, above is STALE.
+    it("returns STALE for site_ctr when GSC data > 120h old, regardless of value", () => {
+      expect(classifyKpi("site_ctr", 0.05, STALE_HOURS(121))).toBe("STALE");
+      expect(classifyKpi("site_ctr", 0.001, STALE_HOURS(200))).toBe("STALE");
     });
 
-    it("48h boundary: 48h exact = healthy, 48h+1s = STALE", () => {
-      expect(classifyKpi("site_ctr", 0.05, 48 * 3600)).toBe("GREEN");
-      expect(classifyKpi("site_ctr", 0.05, 48 * 3600 + 1)).toBe("STALE");
+    it("site_ctr 120h boundary: 120h exact = healthy, 120h+1s = STALE", () => {
+      expect(classifyKpi("site_ctr", 0.05, 120 * 3600)).toBe("GREEN");
+      expect(classifyKpi("site_ctr", 0.05, 120 * 3600 + 1)).toBe("STALE");
+    });
+
+    it("conversion_rate has 96h SLA (GA4 finalization lag + grace)", () => {
+      expect(classifyKpi("conversion_rate", 0.09, STALE_HOURS(95))).toBe("GREEN");
+      expect(classifyKpi("conversion_rate", 0.09, STALE_HOURS(97))).toBe("STALE");
     });
 
     it("sitemap_quality has 1h SLA — fast catalog turnover required", () => {
