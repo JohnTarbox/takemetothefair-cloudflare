@@ -6,6 +6,7 @@ import {
   buildVenueMetaDescription,
   isCleanDbDescription,
   stripRedundantLeadSentence,
+  trimTrailingFunctionWord,
 } from "../seo-utils";
 
 // ─── HTML entity decoding (regression: PR #80 behavior preserved) ────
@@ -69,6 +70,52 @@ describe("buildVenueMetaDescription — HTML entity decoding", () => {
     });
     expect(out).toContain("Smith & Sons Pavilion");
     expect(out).not.toContain("&amp;");
+  });
+});
+
+// ─── trimTrailingFunctionWord helper ─────────────────────────────────
+
+describe("trimTrailingFunctionWord", () => {
+  it("strips trailing 'and' with preceding comma", () => {
+    expect(trimTrailingFunctionWord("locally grown produce, handmade crafts, and")).toBe(
+      "locally grown produce, handmade crafts"
+    );
+  });
+
+  it("strips trailing 'for'", () => {
+    expect(trimTrailingFunctionWord("open their doors for")).toBe("open their doors");
+  });
+
+  it("strips trailing 'the'", () => {
+    expect(trimTrailingFunctionWord("transforms historic Dock Square and the")).toBe(
+      "transforms historic Dock Square"
+    );
+  });
+
+  it("strips trailing 'of'", () => {
+    expect(trimTrailingFunctionWord("celebration of")).toBe("celebration");
+  });
+
+  it("does not strip when text ends with content word", () => {
+    expect(trimTrailingFunctionWord("locally grown produce")).toBe("locally grown produce");
+  });
+
+  it("does not strip middle-of-string function words", () => {
+    expect(trimTrailingFunctionWord("the quick brown fox")).toBe("the quick brown fox");
+  });
+
+  it("strips multiple trailing function words", () => {
+    expect(trimTrailingFunctionWord("artisan and small business and the")).toBe(
+      "artisan and small business"
+    );
+  });
+
+  it("strips trailing em-dash and function word", () => {
+    expect(trimTrailingFunctionWord("food vendors — and")).toBe("food vendors");
+  });
+
+  it("preserves trailing periods (sentence completions)", () => {
+    expect(trimTrailingFunctionWord("Locally grown produce.")).toBe("Locally grown produce.");
   });
 });
 
