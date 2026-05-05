@@ -76,7 +76,14 @@ export async function readKpiValues(
 
   const [siteCtr, conversionRate, brandShare, sitemapQuality, timeToIndex] = await Promise.all([
     readSiteCtr(env, fmt(stableStartDate), fmt(stableEndDate)),
-    readConversionRate(db, env, stableStartDate, fmt(stableStartDate), fmt(stableEndDate)),
+    readConversionRate(
+      db,
+      env,
+      stableStartDate,
+      stableEndDate,
+      fmt(stableStartDate),
+      fmt(stableEndDate)
+    ),
     readBrandShare(env),
     readSitemapQuality(db),
     readTimeToIndex(db),
@@ -119,12 +126,16 @@ async function readConversionRate(
   db: Db,
   env: Ga4Env,
   sinceDate: Date,
+  untilDate: Date,
   startDate: string,
   endDate: string
 ): Promise<KpiValueResult> {
   // Numerator: outbound_ticket_click + outbound_application_click in the
-  // stable window (matches the existing "Conversions (last 7d)" card source
-  // at analytics-overview.ts:280).
+  // 7d stable window. Both bounds are required so the classifier sees the
+  // SAME window as the displayed Conversion-rate card (loadConversionRate
+  // in analytics-overview.ts) — without `lt(timestamp, untilDate)` the
+  // classifier would silently include 2 extra days of events vs. the
+  // displayed numerator, and the rates would disagree.
   const [numRow, sessions] = await Promise.all([
     db
       .select({ n: count() })
@@ -132,7 +143,8 @@ async function readConversionRate(
       .where(
         and(
           inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
-          gte(analyticsEvents.timestamp, sinceDate)
+          gte(analyticsEvents.timestamp, sinceDate),
+          lt(analyticsEvents.timestamp, untilDate)
         )
       ),
     getOrganicSessions(env, startDate, endDate),
