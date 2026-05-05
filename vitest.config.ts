@@ -37,6 +37,11 @@ export default defineConfig({
         // Engine is exercised via the admin scan endpoint (E2E surface); rules
         // are simple SQL queries that don't benefit from unit fixturing.
         "src/lib/recommendations/**",
+        // §6.3 KPI state-machine integration code — D1 queries + GA4/GSC API
+        // calls. The pure logic (`decideStateRow`, `classifyKpi`) is tested
+        // via kpi-thresholds.test.ts + kpi-states.test.ts; the IO portion is
+        // exercised through the */10 cron + /admin/analytics smoke.
+        "src/lib/kpi-states.ts",
       ],
       thresholds: {
         // Floor set ~2 points below current measured coverage so day-to-day
