@@ -34,6 +34,7 @@ import { logError } from "@/lib/logger";
 import { buildVendorMetaDescription } from "@/lib/seo-utils";
 import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
+import { VendorTierBadges } from "@/components/vendors/VendorTierBadges";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
@@ -315,6 +316,11 @@ export default async function VendorDetailPage({ params }: Props) {
                       Verified
                     </span>
                   )}
+                  <VendorTierBadges
+                    claimed={vendor.claimed}
+                    enhancedProfile={vendor.enhancedProfile}
+                    className="inline-flex items-center gap-1.5"
+                  />
                 </div>
                 {vendor.vendorType && (
                   <p className="mt-1 text-lg text-gray-600">{vendor.vendorType}</p>

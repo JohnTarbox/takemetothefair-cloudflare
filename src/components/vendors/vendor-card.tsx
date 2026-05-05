@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseJsonArray } from "@/types";
 import { formatDateRange } from "@/lib/utils";
 import { FavoriteButton } from "@/components/FavoriteButton";
+import { VendorTierBadges } from "./VendorTierBadges";
 
 interface VendorEvent {
   id: string;
@@ -35,6 +36,8 @@ interface VendorCardProps {
     logoUrl: string | null;
     verified: boolean | null;
     commercial: boolean | null;
+    claimed?: boolean | null;
+    enhancedProfile?: boolean | null;
     city?: string | null;
     state?: string | null;
     events: VendorEvent[];
@@ -71,6 +74,12 @@ export function VendorCard({ vendor }: VendorCardProps) {
                 <h3 className="font-semibold text-gray-900 truncate">{vendor.businessName}</h3>
               </Link>
               {vendor.verified && <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />}
+              <VendorTierBadges
+                claimed={vendor.claimed}
+                enhancedProfile={vendor.enhancedProfile}
+                className="inline-flex items-center gap-1"
+                size="sm"
+              />
               {vendor.commercial && <Badge variant="default">Commercial</Badge>}
               <FavoriteButton type="VENDOR" id={vendor.id} className="ml-auto" size="sm" />
             </div>
