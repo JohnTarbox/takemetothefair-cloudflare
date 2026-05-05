@@ -1,7 +1,7 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts } from "@/lib/db/schema";
-import { eq, and, or, gte, isNull, count } from "drizzle-orm";
+import { eq, and, or, gte, isNull, isNotNull, ne, count, sql } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 
 export const runtime = "edge";
@@ -225,10 +225,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    // Get vendors
+    // Get vendors. Quality gate: a vendor must have a non-empty description OR
+    // a non-empty website to be sitemap-eligible. Mirrored in
+    // src/app/vendors/[slug]/page.tsx generateMetadata via robots: noindex,
+    // and codified by isVendorIndexable() in src/lib/vendor-quality.ts.
     const vendorResults = await db
       .select({ slug: vendors.slug, updatedAt: vendors.updatedAt })
-      .from(vendors);
+      .from(vendors)
+      .where(
+        or(
+          and(isNotNull(vendors.description), ne(sql`TRIM(${vendors.description})`, "")),
+          and(isNotNull(vendors.website), ne(sql`TRIM(${vendors.website})`, ""))
+        )
+      );
 
     const vendorPages: MetadataRoute.Sitemap = vendorResults.map((vendor) => ({
       url: `${baseUrl}/vendors/${vendor.slug}`,
