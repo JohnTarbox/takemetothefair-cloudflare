@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { formatDateRange } from "@/lib/utils";
+import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, vendorSlugHistory } from "@/lib/db/schema";
 import { eq, and, asc, desc } from "drizzle-orm";
@@ -136,7 +136,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Vendor Not Found" };
   }
 
-  const title = `${vendor.businessName} | Meet Me at the Fair`;
+  const businessName = decodeHtmlEntities(vendor.businessName);
+  const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
 
@@ -147,25 +148,25 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: url,
     },
     openGraph: {
-      title: vendor.businessName,
+      title: businessName,
       description,
       url,
       siteName: "Meet Me at the Fair",
       type: "website",
       images: [
         vendor.logoUrl
-          ? { url: vendor.logoUrl, width: 400, height: 400, alt: vendor.businessName }
+          ? { url: vendor.logoUrl, width: 400, height: 400, alt: businessName }
           : {
               url: "https://meetmeatthefair.com/og-default.png",
               width: 1200,
               height: 630,
-              alt: vendor.businessName,
+              alt: businessName,
             },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: vendor.businessName,
+      title: businessName,
       description,
       images: [vendor.logoUrl || "https://meetmeatthefair.com/og-default.png"],
     },
