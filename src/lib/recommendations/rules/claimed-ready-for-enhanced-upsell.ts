@@ -1,56 +1,90 @@
-// Claimed vendors who are NOT yet on Enhanced Profile but show high
-// engagement (event association count is the proxy — vendors at multiple
-// events are higher-value upsell targets). The doc proposed "top decile
-// by view count" but vendors don't have view_count today; event_count is
-// the closest proxy and is meaningful (an active vendor at 5+ events
-// values visibility more than a one-event vendor).
+// Claimed vendors who are NOT yet on Enhanced Profile and rank in the
+// top decile by view count. Per §6.6 strategy doc — these are the
+// highest-yield Enhanced Profile upsell targets.
+//
+// Decile semantics:
+// - Candidate set = vendors where claimed=1 AND enhancedProfile=0 AND view_count > 0
+// - Threshold = view_count of the row at index ceil(N * 0.1) - 1 in DESC order
+// - Returned set = all candidates with view_count >= threshold (handles ties)
+// - When N < 10, returns the whole candidate set (no decile to compute)
+// - When all view_counts are 0 (e.g., immediately post-deploy), returns empty
 
-import { sql, eq } from "drizzle-orm";
+import { sql, and, eq, gt, isNotNull } from "drizzle-orm";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
-const HIGH_ENGAGEMENT_THRESHOLD = 3;
+const MIN_CANDIDATE_COUNT_FOR_DECILE = 10;
+
+/**
+ * Compute the inclusive view-count threshold for the top decile.
+ * Caller passes view counts in DESC order. Returns the threshold;
+ * caller filters candidates with view_count >= threshold (handles ties).
+ *
+ * - Empty input → 0 (caller's filter on view_count > 0 already excludes all)
+ * - N < 10 → smallest view_count (return all candidates)
+ * - N >= 10 → view_count at index ceil(N * 0.1) - 1
+ */
+export function computeTopDecileThreshold(viewCountsDesc: readonly number[]): number {
+  if (viewCountsDesc.length === 0) return 0;
+  if (viewCountsDesc.length < MIN_CANDIDATE_COUNT_FOR_DECILE) {
+    return viewCountsDesc[viewCountsDesc.length - 1];
+  }
+  const decileIndex = Math.ceil(viewCountsDesc.length * 0.1) - 1;
+  return viewCountsDesc[decileIndex];
+}
 
 export const claimedReadyForEnhancedUpsellRule: RuleDefinition = {
   ruleKey: "claimed_ready_for_enhanced_upsell",
   title: "Claimed vendors ready for Enhanced Profile upsell",
-  rationaleTemplate: `{n} vendors have claimed their listing but haven't upgraded to Enhanced Profile, and are at ${HIGH_ENGAGEMENT_THRESHOLD}+ events (high engagement). Best-yield upsell cohort.`,
+  rationaleTemplate:
+    "{n} claimed vendors rank in the top 10% by page views and have not yet upgraded to Enhanced Profile. Highest-yield upsell cohort.",
   severity: "yellow",
   category: "revenue",
   autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
-    const eventCounts = db
-      .select({
-        vendorId: eventVendors.vendorId,
-        n: sql<number>`COUNT(*)`.as("n"),
-      })
-      .from(eventVendors)
-      .groupBy(eventVendors.vendorId)
-      .as("ec");
-
-    const rows = await db
+    // Fetch all candidates ordered by view_count desc; we'll compute the
+    // decile threshold in TS rather than via SQL OFFSET (cleaner for the
+    // tied-at-threshold case and the small-N fallback).
+    const candidates = await db
       .select({
         id: vendors.id,
         businessName: vendors.businessName,
         slug: vendors.slug,
-        eventCount: eventCounts.n,
+        viewCount: vendors.viewCount,
       })
       .from(vendors)
-      .innerJoin(eventCounts, eq(eventCounts.vendorId, vendors.id))
       .where(
-        sql`${vendors.claimed} = 1
-          AND ${vendors.enhancedProfile} = 0
-          AND ${eventCounts.n} >= ${HIGH_ENGAGEMENT_THRESHOLD}`
-      );
+        and(eq(vendors.claimed, true), eq(vendors.enhancedProfile, false), gt(vendors.viewCount, 0))
+      )
+      .orderBy(sql`${vendors.viewCount} DESC`);
 
-    return rows.map((r) => ({
-      targetType: "vendor",
-      targetId: r.id,
-      payload: {
-        businessName: r.businessName,
-        slug: r.slug,
-        eventCount: r.eventCount,
-      },
-    }));
+    if (candidates.length === 0) return [];
+
+    const threshold = computeTopDecileThreshold(candidates.map((c) => c.viewCount));
+
+    // Pull per-vendor event counts for the payload (operator may want to see
+    // both signals when triaging). Single GROUP BY query, joined in memory.
+    const eventCounts = await db
+      .select({
+        vendorId: eventVendors.vendorId,
+        n: sql<number>`COUNT(*)`,
+      })
+      .from(eventVendors)
+      .where(isNotNull(eventVendors.vendorId))
+      .groupBy(eventVendors.vendorId);
+    const eventCountByVendor = new Map(eventCounts.map((r) => [r.vendorId, Number(r.n)]));
+
+    return candidates
+      .filter((c) => c.viewCount >= threshold)
+      .map((c) => ({
+        targetType: "vendor",
+        targetId: c.id,
+        payload: {
+          businessName: c.businessName,
+          slug: c.slug,
+          viewCount: c.viewCount,
+          eventCount: eventCountByVendor.get(c.id) ?? 0,
+        },
+      }));
   },
 };

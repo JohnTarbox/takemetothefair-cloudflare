@@ -211,6 +211,10 @@ export const vendors = sqliteTable("vendors", {
   claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
   claimedAt: integer("claimed_at", { mode: "timestamp" }),
   claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
+  // Per-vendor view count (drizzle/0051). Server-incremented on each cached
+  // page render; ISR cache provides implicit ~5-min dedup. Used by the
+  // claimed_ready_for_enhanced_upsell rule for top-decile-by-views ranking.
+  viewCount: integer("view_count").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
