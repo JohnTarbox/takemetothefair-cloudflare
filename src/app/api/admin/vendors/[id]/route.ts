@@ -104,6 +104,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         enhancedProfileStartedAt: vendors.enhancedProfileStartedAt,
         enhancedProfileExpiresAt: vendors.enhancedProfileExpiresAt,
         claimed: vendors.claimed,
+        verifiedPro: vendors.verifiedPro,
       })
       .from(vendors)
       .where(eq(vendors.id, id))
@@ -228,6 +229,24 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
 
+    // Verified Pro transition (drizzle/0052). Same shape as Claimed but
+    // admin-only — no vendor email per business decision. Orthogonal to
+    // Claimed: each is granted/revoked independently.
+    let verifiedProTransitioned: "granted" | "revoked" | null = null;
+    if (data.verified_pro !== undefined && data.verified_pro !== currentVendor.verifiedPro) {
+      if (data.verified_pro) {
+        updateData.verifiedPro = true;
+        updateData.verifiedProAt = now;
+        updateData.verifiedProBy = session.user.id;
+        verifiedProTransitioned = "granted";
+      } else {
+        updateData.verifiedPro = false;
+        updateData.verifiedProAt = null;
+        updateData.verifiedProBy = null;
+        verifiedProTransitioned = "revoked";
+      }
+    }
+
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
     // Slug history write — fires whenever the resolved slug actually changed,
@@ -292,6 +311,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
 
+    // Audit log for Verified Pro transition. NO email per business decision —
+    // admin-only credentialing; vendor sees the badge appear next page visit.
+    if (verifiedProTransitioned) {
+      await db.insert(adminActions).values({
+        action:
+          verifiedProTransitioned === "granted"
+            ? "vendor.verified_pro_grant"
+            : "vendor.verified_pro_revoke",
+        actorUserId: session.user.id,
+        targetType: "vendor",
+        targetId: id,
+        payloadJson: JSON.stringify({ previous_verified_pro: currentVendor.verifiedPro }),
+        createdAt: now,
+      });
+    }
+
     const [updatedVendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
 
     // IndexNow: ping when fields rendered on the public vendor page change.
@@ -307,6 +342,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       data.enhanced_profile !== undefined ||
       data.gallery_images !== undefined ||
       claimedTransitioned !== null ||
+      verifiedProTransitioned !== null ||
       (updateData.slug !== undefined && updateData.slug !== currentVendor.slug);
     if (vendorMaterialChanged) {
       const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;

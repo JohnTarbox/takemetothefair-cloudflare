@@ -50,6 +50,9 @@ interface Vendor {
   // Claimed tier (drizzle/0049) — same panel grants/revokes via PATCH.
   claimed: boolean;
   claimedAt: string | null;
+  // Verified Pro tier (drizzle/0052) — same pattern.
+  verifiedPro: boolean;
+  verifiedProAt: string | null;
 }
 
 export default function EditVendorPage() {
@@ -204,6 +207,8 @@ export default function EditVendorPage() {
             featuredPriority={vendor.featuredPriority ?? 0}
             claimed={vendor.claimed ?? false}
             claimedAt={vendor.claimedAt ? new Date(vendor.claimedAt) : null}
+            verifiedPro={vendor.verifiedPro ?? false}
+            verifiedProAt={vendor.verifiedProAt ? new Date(vendor.verifiedProAt) : null}
           />
         </div>
       )}

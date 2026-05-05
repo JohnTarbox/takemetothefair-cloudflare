@@ -215,6 +215,13 @@ export const vendors = sqliteTable("vendors", {
   // page render; ISR cache provides implicit ~5-min dedup. Used by the
   // claimed_ready_for_enhanced_upsell rule for top-decile-by-views ranking.
   viewCount: integer("view_count").notNull().default(0),
+  // Verified Pro tier scaffold (drizzle/0052). Credentialed identity-verification
+  // signal, orthogonal to the four-tier model. Admin-only set today; the actual
+  // identity-verification UX (LLC lookup, address validation, etc.) is a separate
+  // Q1-2027 product feature that just flips this flag when ready.
+  verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
+  verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
+  verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });

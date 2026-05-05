@@ -170,6 +170,9 @@ export const vendorUpdateSchema = vendorCreateSchema
     // self-confirmed-owner; sets false to revoke. claimed_at and
     // claimed_by are derived server-side from the transition + actor.
     claimed: z.boolean().optional(),
+    // Verified Pro tier scaffold (drizzle/0052). Admin-only set; no vendor
+    // email per business decision. Orthogonal to claimed.
+    verified_pro: z.boolean().optional(),
   });
 
 // Event Day schema (per-day schedule)

@@ -192,6 +192,7 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
       commercial: v.vendors.commercial,
       claimed: v.vendors.claimed,
       enhancedProfile: v.vendors.enhancedProfile,
+      verifiedPro: v.vendors.verifiedPro,
       city: v.vendors.city,
       state: v.vendors.state,
       events: (eventsByVendor.get(v.vendors.id) || []).map((e) => ({
@@ -275,6 +276,7 @@ async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]
         featuredPriority: vendors.featuredPriority,
         claimed: vendors.claimed,
         enhancedProfile: vendors.enhancedProfile,
+        verifiedPro: vendors.verifiedPro,
       })
       .from(vendors)
       .where(and(...conditions));

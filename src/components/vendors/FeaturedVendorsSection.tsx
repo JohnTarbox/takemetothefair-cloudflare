@@ -16,6 +16,7 @@ export interface FeaturedVendor {
   featuredPriority: number | null;
   claimed?: boolean | null;
   enhancedProfile?: boolean | null;
+  verifiedPro?: boolean | null;
 }
 
 interface Props {
@@ -75,6 +76,7 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
                     <VendorTierBadges
                       claimed={v.claimed}
                       enhancedProfile={v.enhancedProfile}
+                      verifiedPro={v.verifiedPro}
                       className="inline-flex items-center gap-1"
                       size="sm"
                     />

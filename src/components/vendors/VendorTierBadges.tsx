@@ -1,15 +1,15 @@
-// Positive-only badges per §6.6 framework. Claimed signals "the business
-// itself maintains this listing"; Enhanced Profile signals an active paid
-// subscription. Render order is Claimed first then Enhanced — earned-trust
-// gradient. No badge appears on STUB or MENTION (absence is the signal).
+// Positive-only badges per §6.6 framework. Render order is Claimed → Enhanced
+// → Verified Pro (earned-trust gradient). No badge appears on a vendor that
+// has none of the three signals (absence is the default).
 
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, Star } from "lucide-react";
+import { CheckCircle, Star, Shield } from "lucide-react";
 
 interface VendorTierBadgesProps {
   claimed?: boolean | null;
   enhancedProfile?: boolean | null;
-  /** Optional className applied to the container wrapping both badges. */
+  verifiedPro?: boolean | null;
+  /** Optional className applied to the container wrapping the badges. */
   className?: string;
   /** Smaller variant for use inside listing cards. */
   size?: "sm" | "md";
@@ -18,10 +18,11 @@ interface VendorTierBadgesProps {
 export function VendorTierBadges({
   claimed,
   enhancedProfile,
+  verifiedPro,
   className,
   size = "md",
 }: VendorTierBadgesProps) {
-  if (!claimed && !enhancedProfile) return null;
+  if (!claimed && !enhancedProfile && !verifiedPro) return null;
   const iconSize = size === "sm" ? "w-3 h-3" : "w-3.5 h-3.5";
   return (
     <span className={className} role="group" aria-label="Vendor trust badges">
@@ -45,6 +46,17 @@ export function VendorTierBadges({
         >
           <Star className={iconSize} />
           Enhanced
+        </Badge>
+      )}
+      {verifiedPro && (
+        <Badge
+          variant="info"
+          className="gap-1 bg-amber/20 text-navy ring-1 ring-amber/40"
+          title="Identity verified by Meet Me at the Fair."
+          aria-label="Verified Pro vendor"
+        >
+          <Shield className={iconSize} />
+          Verified Pro
         </Badge>
       )}
     </span>
