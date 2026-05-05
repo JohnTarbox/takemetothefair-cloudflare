@@ -39,6 +39,7 @@ export const stubsReadyForEnrichmentRule: RuleDefinition = {
       .innerJoin(eventCounts, eq(eventCounts.vendorId, vendors.id))
       .where(
         sql`${vendors.enhancedProfile} = 0
+          AND ${vendors.deletedAt} IS NULL
           AND ${eventCounts.n} > 0
           AND NOT (
             TRIM(IFNULL(${vendors.description}, '')) != ''

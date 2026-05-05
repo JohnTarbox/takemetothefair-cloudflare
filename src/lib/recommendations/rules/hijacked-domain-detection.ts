@@ -53,7 +53,9 @@ export const hijackedDomainDetectionRule: RuleDefinition = {
         website: vendors.website,
       })
       .from(vendors)
-      .where(sql`${isNotNull(vendors.description)} AND (${termClauses})`);
+      .where(
+        sql`${isNotNull(vendors.description)} AND ${vendors.deletedAt} IS NULL AND (${termClauses})`
+      );
 
     return rows.map((r) => ({
       targetType: "vendor",

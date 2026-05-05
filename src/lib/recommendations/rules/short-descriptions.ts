@@ -119,7 +119,9 @@ export const vendorsShortDescriptionRule: RuleDefinition = {
         and(
           isNotNull(vendors.description),
           ne(vendors.description, ""),
-          sql`LENGTH(${vendors.description}) < ${SHORT_THRESHOLD}`
+          sql`LENGTH(${vendors.description}) < ${SHORT_THRESHOLD}`,
+          // soft-delete filter (drizzle/0053)
+          sql`${vendors.deletedAt} IS NULL`
         )
       );
 

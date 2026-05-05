@@ -9,7 +9,7 @@
 // - When N < 10, returns the whole candidate set (no decile to compute)
 // - When all view_counts are 0 (e.g., immediately post-deploy), returns empty
 
-import { sql, and, eq, gt, isNotNull } from "drizzle-orm";
+import { sql, and, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
@@ -54,7 +54,12 @@ export const claimedReadyForEnhancedUpsellRule: RuleDefinition = {
       })
       .from(vendors)
       .where(
-        and(eq(vendors.claimed, true), eq(vendors.enhancedProfile, false), gt(vendors.viewCount, 0))
+        and(
+          eq(vendors.claimed, true),
+          eq(vendors.enhancedProfile, false),
+          gt(vendors.viewCount, 0),
+          isNull(vendors.deletedAt)
+        )
       )
       .orderBy(sql`${vendors.viewCount} DESC`);
 

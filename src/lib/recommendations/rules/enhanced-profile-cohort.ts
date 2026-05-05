@@ -43,7 +43,8 @@ export const enhancedProfileCohortRule: RuleDefinition = {
         and(
           inArray(vendors.id, ids),
           eq(vendors.enhancedProfile, false),
-          or(isNull(vendors.logoUrl), eq(vendors.logoUrl, ""))
+          or(isNull(vendors.logoUrl), eq(vendors.logoUrl, "")),
+          isNull(vendors.deletedAt)
         )
       );
 

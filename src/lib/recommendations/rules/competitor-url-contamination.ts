@@ -55,7 +55,9 @@ export const competitorUrlContaminationRule: RuleDefinition = {
           website: vendors.website,
         })
         .from(vendors)
-        .where(sql`${vendors.website} IS NOT NULL AND (${vendorClauses})`),
+        .where(
+          sql`${vendors.website} IS NOT NULL AND ${vendors.deletedAt} IS NULL AND (${vendorClauses})`
+        ),
     ]);
 
     const matches: ItemMatch[] = [

@@ -247,7 +247,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         state: vendors.state,
         enhancedProfile: vendors.enhancedProfile,
       })
-      .from(vendors);
+      .from(vendors)
+      .where(isNull(vendors.deletedAt));
 
     const vendorPages: MetadataRoute.Sitemap = vendorResults
       .map((vendor) => ({ vendor, tier: getVendorTier(vendor) }))

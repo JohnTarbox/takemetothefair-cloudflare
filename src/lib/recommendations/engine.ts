@@ -348,3 +348,35 @@ export async function markActed(db: Db, itemId: string): Promise<void> {
     .set({ actedAt: new Date() })
     .where(eq(recommendationItems.id, itemId));
 }
+
+/**
+ * Mark every open (not-yet-acted) recommendation item for a target as
+ * acted. Used by destructive operations (delete_vendor) to clean up open
+ * recommendations on the now-deleted entity. Returns the number of items
+ * resolved.
+ */
+export async function markActedAllForTarget(
+  db: Db,
+  targetType: string,
+  targetId: string
+): Promise<number> {
+  const open = await db
+    .select({ id: recommendationItems.id })
+    .from(recommendationItems)
+    .where(
+      and(
+        eq(recommendationItems.targetType, targetType),
+        eq(recommendationItems.targetId, targetId),
+        isNull(recommendationItems.actedAt)
+      )
+    );
+  if (open.length === 0) return 0;
+  const now = new Date();
+  for (const row of open) {
+    await db
+      .update(recommendationItems)
+      .set({ actedAt: now })
+      .where(eq(recommendationItems.id, row.id));
+  }
+  return open.length;
+}

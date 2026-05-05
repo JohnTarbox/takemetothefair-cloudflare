@@ -1,4 +1,11 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  index,
+  type AnySQLiteColumn,
+} from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
 
 // Users table
@@ -222,6 +229,13 @@ export const vendors = sqliteTable("vendors", {
   verifiedPro: integer("verified_pro", { mode: "boolean" }).notNull().default(false),
   verifiedProAt: integer("verified_pro_at", { mode: "timestamp" }),
   verifiedProBy: text("verified_pro_by").references(() => users.id, { onDelete: "set null" }),
+  // Soft delete (drizzle/0053). Non-null = vendor invisible everywhere; URL
+  // returns 410 Gone or 301 to redirectToVendorId if set. Hard purge happens
+  // after a 30-day grace window via the sweep-purge-deleted endpoint.
+  deletedAt: integer("deleted_at", { mode: "timestamp" }),
+  redirectToVendorId: text("redirect_to_vendor_id").references((): AnySQLiteColumn => vendors.id, {
+    onDelete: "set null",
+  }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
