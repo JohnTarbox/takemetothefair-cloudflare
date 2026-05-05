@@ -39,6 +39,28 @@ function truncateAtWord(text: string, maxLength: number, preferSentence = false)
 }
 
 /**
+ * Trim trailing function words (conjunctions, articles, prepositions) from
+ * a word-truncated string. The truncator stops at word boundaries, which
+ * sometimes leaves a hanging "and" / "for" / "the" / "of" before the suffix
+ * appends — reading awkwardly. Strip them along with any trailing comma.
+ *
+ * Exported for testing.
+ */
+export function trimTrailingFunctionWord(text: string): string {
+  // Match (1+ trim cycles): optional comma, whitespace, function word, end.
+  // Repeated to handle e.g. "...crafts, and " → "...crafts" (strip "and" then ",").
+  const FUNCTION_WORDS =
+    /[\s,;:—-]+(?:and|or|but|nor|for|the|a|an|of|to|in|on|at|by|with|from|into|onto|upon)$/i;
+  let prev = text.trimEnd();
+  let next = prev.replace(FUNCTION_WORDS, "");
+  while (next !== prev) {
+    prev = next.trimEnd().replace(/[,;:]+$/, "");
+    next = prev.replace(FUNCTION_WORDS, "");
+  }
+  return next.trimEnd().replace(/[,;:]+$/, "");
+}
+
+/**
  * Short date format for meta descriptions where every char counts.
  * Single day: "Mar 7, 2026"
  * Multi-day same year/month: "Mar 7-8, 2026"
@@ -236,7 +258,8 @@ export function buildEventMetaDescription(event: {
     // first to estimate length, then re-compute against actual lead.
     const placeholderSuffix = buildSuffix("");
     const leadBudget = META_DESCRIPTION_MAX - placeholderSuffix.length;
-    const lead = truncateAtWord(cleaned, leadBudget, /* preferSentence */ true);
+    const truncatedLead = truncateAtWord(cleaned, leadBudget, /* preferSentence */ true);
+    const lead = trimTrailingFunctionWord(truncatedLead);
     const suffix = buildSuffix(lead);
     return (lead + suffix).slice(0, META_DESCRIPTION_MAX);
   }
