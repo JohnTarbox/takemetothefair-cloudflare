@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   buildEventMetaDescription,
+  buildEventTitle,
   buildVendorMetaDescription,
   buildVenueMetaDescription,
+  isCleanDbDescription,
+  stripRedundantLeadSentence,
 } from "../seo-utils";
+
+// ─── HTML entity decoding (regression: PR #80 behavior preserved) ────
 
 describe("buildEventMetaDescription — HTML entity decoding", () => {
   it("decodes &amp; in event name", () => {
@@ -64,5 +69,309 @@ describe("buildVenueMetaDescription — HTML entity decoding", () => {
     });
     expect(out).toContain("Smith & Sons Pavilion");
     expect(out).not.toContain("&amp;");
+  });
+});
+
+// ─── isCleanDbDescription quality gate ────────────────────────────────
+
+describe("isCleanDbDescription", () => {
+  it("accepts a normal description", () => {
+    expect(
+      isCleanDbDescription(
+        "Locally grown produce, handmade crafts, prepared food, live entertainment."
+      )
+    ).toBe(true);
+  });
+
+  it("rejects null and empty", () => {
+    expect(isCleanDbDescription(null)).toBe(false);
+    expect(isCleanDbDescription(undefined)).toBe(false);
+    expect(isCleanDbDescription("")).toBe(false);
+    expect(isCleanDbDescription("   ")).toBe(false);
+  });
+
+  it("rejects too short (<30 chars)", () => {
+    expect(isCleanDbDescription("Too short")).toBe(false);
+  });
+
+  it("rejects too long (>5000 chars)", () => {
+    expect(isCleanDbDescription("a".repeat(5001))).toBe(false);
+  });
+
+  it("rejects 'Contact:' prefix (import garbage)", () => {
+    expect(isCleanDbDescription("Contact: Jane Doe at jane@example.com for details")).toBe(false);
+  });
+
+  it("rejects 'Imported from' prefix", () => {
+    expect(isCleanDbDescription("Imported from oldsite.example.com - last updated 2019")).toBe(
+      false
+    );
+  });
+
+  it("rejects '[Name]' template placeholder", () => {
+    expect(isCleanDbDescription("[Name] will be hosting an event this weekend")).toBe(false);
+  });
+
+  it("rejects SHOUTY ALL CAPS (>40% upper)", () => {
+    expect(
+      isCleanDbDescription("VENDORS WANTED FOR HUGE EVENT - APPLY NOW BY CALLING THE NUMBER ABOVE")
+    ).toBe(false);
+  });
+
+  it("accepts mixed case description with proper nouns", () => {
+    expect(
+      isCleanDbDescription(
+        "The Vermont Maple Sugar Makers' Association hosts this annual event each March."
+      )
+    ).toBe(true);
+  });
+});
+
+// ─── stripRedundantLeadSentence heuristic ────────────────────────────
+
+describe("stripRedundantLeadSentence", () => {
+  it("strips a leading 'X will be held on DATE' sentence", () => {
+    const out = stripRedundantLeadSentence(
+      "Portland World Oddities Expo will be held on March 21-22, 2026. This is a celebration of all things weird.",
+      "Portland World Oddities Expo"
+    );
+    expect(out).toBe("This is a celebration of all things weird.");
+  });
+
+  it("strips when event name has '20XX' prefix and DB content drops it", () => {
+    const out = stripRedundantLeadSentence(
+      "Brattleboro Area Indoor Farmers Market will be held on March 7th, 2026. Locally grown produce.",
+      "2026 Brattleboro Area Indoor Farmers Market"
+    );
+    expect(out).toBe("Locally grown produce.");
+  });
+
+  it("leaves alone when first sentence has no event name", () => {
+    const out = stripRedundantLeadSentence(
+      "Locally grown produce and handmade crafts. Saturday hours 10am-2pm.",
+      "Brattleboro Farmers Market"
+    );
+    expect(out).toBe("Locally grown produce and handmade crafts. Saturday hours 10am-2pm.");
+  });
+
+  it("leaves alone when first sentence has name but no date", () => {
+    const out = stripRedundantLeadSentence(
+      "Portland Golf Expo brings together the best clubs and gear. Open all weekend.",
+      "Portland Golf Expo"
+    );
+    expect(out).toContain("Portland Golf Expo brings together");
+  });
+
+  it("leaves alone when first sentence is too long (>200 chars)", () => {
+    const longFirst =
+      "Portland Golf Expo will be held on March 21, 2026, and we expect record attendance based on early ticket sales, with vendors traveling from across New England plus a number of celebrity endorsers we're excited to announce shortly. The event runs all weekend.";
+    const out = stripRedundantLeadSentence(longFirst, "Portland Golf Expo");
+    expect(out).toContain("Portland Golf Expo will be held");
+  });
+});
+
+// ─── buildEventTitle ─────────────────────────────────────────────────
+
+describe("buildEventTitle", () => {
+  it("appends '· City, ST' when neither appears in name", () => {
+    expect(
+      buildEventTitle({
+        name: "Spring Craft Fair",
+        venue: { city: "Boston", state: "MA" },
+      })
+    ).toBe("Spring Craft Fair · Boston, MA");
+  });
+
+  it("skips city suffix when name already contains the city", () => {
+    // Kennebunkport is in the name → drop city, keep state code
+    expect(
+      buildEventTitle({
+        name: "45th Annual Kennebunkport Christmas Prelude",
+        venue: { city: "Kennebunkport", state: "ME" },
+      })
+    ).toBe("45th Annual Kennebunkport Christmas Prelude · ME");
+  });
+
+  it("skips state suffix when name contains the full state name", () => {
+    // "Vermont" in the name → no suffix at all
+    expect(
+      buildEventTitle({
+        name: "Vermont Maple Open House Weekend 2027",
+        venue: null,
+        stateCode: "VT",
+      })
+    ).toBe("Vermont Maple Open House Weekend 2027");
+  });
+
+  it("uses 'Statewide ${StateName}' for is_statewide events", () => {
+    expect(
+      buildEventTitle({
+        name: "207 Beer Week",
+        isStatewide: true,
+        stateCode: "ME",
+      })
+    ).toBe("207 Beer Week · Statewide Maine");
+  });
+
+  it("returns just the name when no venue and no stateCode", () => {
+    expect(
+      buildEventTitle({
+        name: "Mystery Pop-Up",
+      })
+    ).toBe("Mystery Pop-Up");
+  });
+
+  it("decodes HTML entities in the name", () => {
+    expect(
+      buildEventTitle({
+        name: "Earth Expo &amp; Convention",
+        venue: { city: "Boston", state: "MA" },
+      })
+    ).toBe("Earth Expo & Convention · Boston, MA");
+  });
+
+  it("does NOT include the brand suffix", () => {
+    const out = buildEventTitle({
+      name: "Spring Fair",
+      venue: { city: "Boston", state: "MA" },
+    });
+    expect(out).not.toContain("Meet Me at the Fair");
+  });
+});
+
+// ─── buildEventMetaDescription — Option 3 with quality gate hybrid ───
+
+describe("buildEventMetaDescription — clean DB description leads", () => {
+  it("Brattleboro Indoor Farmers Market: leads with DB content + date+venue suffix", () => {
+    const out = buildEventMetaDescription({
+      name: "2026 Brattleboro Area Indoor Farmers Market",
+      description:
+        "Brattleboro Area Indoor Farmers Market will be held on March 7th, 2026. This market will feature locally grown produce, handmade crafts, prepared food, live entertainment, and more. Hours: 10am-2pm",
+      categories: '["Farmers Market"]',
+      venue: { name: "Winston Prouty Center", city: "Brattleboro", state: "VT" },
+      startDate: new Date("2026-03-07T00:00:00Z"),
+      endDate: new Date("2026-03-07T00:00:00Z"),
+    });
+    // Lead-redundant first sentence stripped
+    expect(out).not.toContain("will be held on March 7th");
+    expect(out).toContain("locally grown produce");
+    // Suffix has date and (one of) venue/location info — algorithm includes
+    // either the venue name or the city/state, deduped against the lead.
+    expect(out).toContain("Mar 7, 2026");
+    expect(out.length).toBeLessThanOrEqual(160);
+  });
+
+  it("Vermont Maple: drops year from suffix when DB lead has dates", () => {
+    const out = buildEventMetaDescription({
+      name: "Vermont Maple Open House Weekend 2027",
+      description:
+        "Free statewide weekend event hosted by the Vermont Maple Sugar Makers' Association. Over 80 sugarhouses across Vermont open their doors for tours, tastings, live music, and maple treats during peak sugaring season.",
+      categories: '["Festival","Community Event"]',
+      venue: null,
+      startDate: new Date("2027-03-26T00:00:00Z"),
+      endDate: new Date("2027-03-27T00:00:00Z"),
+    });
+    expect(out).toContain("Vermont Maple Sugar Makers");
+    // Date suffix appended (no venue available)
+    expect(out).toContain("2027");
+    expect(out.length).toBeLessThanOrEqual(160);
+  });
+
+  it("Kennebunkport Christmas Prelude: long DB description truncates at sentence boundary", () => {
+    const out = buildEventMetaDescription({
+      name: "45th Annual Kennebunkport Christmas Prelude",
+      description:
+        "The 45th Annual Kennebunkport Christmas Prelude transforms historic Dock Square and the Lower Village of Kennebunkport into an 11-day celebration of holiday traditions. Highlights include the official Tree Lighting Ceremony, Santa's arrival up the Kennebunk River on Sunday, Dec 6, strolling carolers, live music, food vendors, ice carving, fireworks",
+      categories: '["Festival","Holiday Market","Community Event"]',
+      venue: {
+        name: "Dock Square / Downtown Kennebunkport",
+        city: "Kennebunkport",
+        state: "ME",
+      },
+      startDate: new Date("2026-12-04T00:00:00Z"),
+      endDate: new Date("2026-12-13T00:00:00Z"),
+    });
+    expect(out).toContain("Kennebunkport Christmas Prelude");
+    expect(out).toContain("Dec 4-13, 2026");
+    expect(out.length).toBeLessThanOrEqual(160);
+  });
+});
+
+describe("buildEventMetaDescription — fallback when DB description fails gate", () => {
+  it("Portland Golf Expo: empty description triggers structured fallback", () => {
+    const out = buildEventMetaDescription({
+      name: "Portland Golf Expo",
+      description: null,
+      categories: '["Trade Show"]',
+      venue: {
+        name: "Holiday Inn Portland-By The Bay",
+        city: "Portland",
+        state: "ME",
+      },
+      startDate: new Date("2026-01-28T13:00:00Z"),
+      endDate: new Date("2026-01-29T13:00:00Z"),
+    });
+    expect(out).toContain("Holiday Inn Portland-By The Bay");
+    expect(out).toContain("Trade Show");
+    expect(out).toContain("Browse vendors");
+    expect(out.length).toBeLessThanOrEqual(160);
+  });
+
+  it("177th Franklin County Fair: empty description, multi-day", () => {
+    const out = buildEventMetaDescription({
+      name: "177th Franklin County Fair",
+      description: "",
+      categories: '["Fair"]',
+      venue: { name: "Franklin County Fairgrounds", city: "Greenfield", state: "MA" },
+      startDate: new Date("2026-09-09T00:00:00Z"),
+      endDate: new Date("2026-09-12T00:00:00Z"),
+    });
+    expect(out).toContain("Franklin County Fairgrounds");
+    expect(out).toContain("Fair");
+    expect(out.length).toBeLessThanOrEqual(160);
+  });
+
+  it("Garbage 'Contact:' description triggers fallback even though length is OK", () => {
+    const out = buildEventMetaDescription({
+      name: "Test Event",
+      description: "Contact: Jane Doe at jane@example.com for application details and pricing.",
+      categories: '["Festival"]',
+      venue: { name: "Test Venue", city: "Boston", state: "MA" },
+      startDate: new Date("2026-06-15T00:00:00Z"),
+      endDate: new Date("2026-06-15T00:00:00Z"),
+    });
+    expect(out).not.toContain("Contact: Jane");
+    expect(out).toContain("Festival");
+  });
+});
+
+describe("buildEventMetaDescription — null/missing dates and venues", () => {
+  it("207 Beer Week: statewide, no venue, no dates, has DB description", () => {
+    const out = buildEventMetaDescription({
+      name: "207 Beer Week",
+      description:
+        "Annual week-long celebration of Maine's craft brewing industry, organized by the Maine Brewers' Guild. Distributed event with sub-events at participating breweries, beer bars, and beer-loving restaurants across Maine, from Kittery to Fort Kent.",
+      categories: '["Festival"]',
+      venue: null,
+      startDate: null,
+      endDate: null,
+    });
+    expect(out).toContain("Maine's craft brewing industry");
+    // No date suffix when dates are NULL
+    expect(out).not.toMatch(/\b202\d\b/);
+    expect(out.length).toBeLessThanOrEqual(160);
+  });
+
+  it("event with no venue and no dates and no description: minimal fallback", () => {
+    const out = buildEventMetaDescription({
+      name: "Mystery Pop-Up",
+      description: null,
+      categories: null,
+      venue: null,
+      startDate: null,
+      endDate: null,
+    });
+    expect(out).toContain("Mystery Pop-Up");
+    expect(out.length).toBeLessThanOrEqual(160);
   });
 });

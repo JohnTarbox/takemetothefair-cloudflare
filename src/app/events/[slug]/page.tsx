@@ -23,12 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-  decodeHtmlEntities,
-  formatDateRange,
-  formatDiscontinuousDates,
-  formatPrice,
-} from "@/lib/utils";
+import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   events,
@@ -56,7 +51,7 @@ import { EventSchema } from "@/components/seo/EventSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
-import { buildEventMetaDescription } from "@/lib/seo-utils";
+import { buildEventMetaDescription, buildEventTitle } from "@/lib/seo-utils";
 import { haversineDistance, formatDistance } from "@/lib/geo";
 import { TrackedLink } from "@/components/TrackedLink";
 import { OutboundEventLink } from "@/components/OutboundEventLink";
@@ -410,8 +405,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Event Not Found" };
   }
 
-  const name = decodeHtmlEntities(event.name);
-  const title = `${name} | Meet Me at the Fair`;
+  const title = buildEventTitle(event);
   const description = buildEventMetaDescription(event);
   const url = `https://meetmeatthefair.com/events/${event.slug}`;
 
@@ -422,7 +416,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: url,
     },
     openGraph: {
-      title: name,
+      title,
       description,
       url,
       siteName: "Meet Me at the Fair",
@@ -432,13 +426,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
           url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
           width: 1200,
           height: 630,
-          alt: name,
+          alt: title,
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: name,
+      title,
       description,
       images: [event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`],
     },
