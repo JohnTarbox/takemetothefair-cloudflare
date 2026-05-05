@@ -206,9 +206,39 @@ export const vendors = sqliteTable("vendors", {
   enhancedProfileExpiresAt: integer("enhanced_profile_expires_at", { mode: "timestamp" }),
   galleryImages: text("gallery_images").notNull().default("[]"), // JSON array of {url, alt, caption?}
   featuredPriority: integer("featured_priority").notNull().default(0),
+  // Claimed tier (drizzle/0049) — vendor-confirmed ownership, distinct from userId
+  // which every vendor has. Drives the Claimed badge and tier-transition rules.
+  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+  claimedAt: integer("claimed_at", { mode: "timestamp" }),
+  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
+
+// Vendor self-serve claim verification tokens (drizzle/0050).
+// SHA-256 hash of the raw token is stored; raw token only exists in
+// the verification email URL parameter.
+export const vendorClaimTokens = sqliteTable(
+  "vendor_claim_tokens",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => ({
+    vendorIdx: index("idx_vendor_claim_tokens_vendor").on(t.vendorId),
+    expiresIdx: index("idx_vendor_claim_tokens_expires").on(t.expiresAt),
+  })
+);
 
 // Vendor slug history — for 301-redirecting old URLs after a slug change.
 // drizzle/0038

@@ -3,6 +3,7 @@ import Image from "next/image";
 import { Store, CheckCircle, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { rotateFeaturedVendors } from "@/lib/featured-rotation";
+import { VendorTierBadges } from "./VendorTierBadges";
 
 export interface FeaturedVendor {
   id: string;
@@ -13,6 +14,8 @@ export interface FeaturedVendor {
   state: string | null;
   logoUrl: string | null;
   featuredPriority: number | null;
+  claimed?: boolean | null;
+  enhancedProfile?: boolean | null;
 }
 
 interface Props {
@@ -63,11 +66,17 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <h3 className="font-semibold text-gray-900 truncate">{v.businessName}</h3>
                     <CheckCircle
                       className="w-4 h-4 text-royal flex-shrink-0"
                       aria-label="Verified"
+                    />
+                    <VendorTierBadges
+                      claimed={v.claimed}
+                      enhancedProfile={v.enhancedProfile}
+                      className="inline-flex items-center gap-1"
+                      size="sm"
                     />
                   </div>
                   {v.vendorType && <p className="text-xs text-gray-600 mt-0.5">{v.vendorType}</p>}

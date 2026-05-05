@@ -72,6 +72,43 @@ export function emailVerificationTemplate(args: { verifyUrl: string; name: strin
   return { subject: "Confirm your Meet Me at the Fair email", html, text };
 }
 
+export function vendorClaimVerificationTemplate(args: {
+  businessName: string;
+  verifyUrl: string;
+}): { subject: string; html: string; text: string } {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = baseLayout({
+    heading: "Confirm your vendor claim",
+    body: `<p style="margin:0 0 12px;">You requested to claim the Meet Me at the Fair listing for <strong>${escape(args.businessName)}</strong>.</p>
+<p style="margin:0 0 12px;">Click the button below to confirm. This link expires in 24 hours and can be used once.</p>
+<p style="margin:0 0 12px;">If you didn't request this, no action is needed — the listing stays as it is.</p>`,
+    cta: { url: args.verifyUrl, label: "Confirm claim" },
+  });
+  const text = `You requested to claim the Meet Me at the Fair listing for "${args.businessName}".\n\nConfirm by opening:\n${args.verifyUrl}\n\nThis link expires in 24 hours. If you didn't request this, no action is needed.`;
+  return { subject: `Confirm your claim of ${args.businessName}`, html, text };
+}
+
+export function vendorClaimConfirmationTemplate(args: {
+  businessName: string;
+  vendorSlug: string;
+  siteUrl: string;
+}): { subject: string; html: string; text: string } {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const profileUrl = `${args.siteUrl}/vendor/profile`;
+  const publicUrl = `${args.siteUrl}/vendors/${args.vendorSlug}`;
+  const html = baseLayout({
+    heading: "Your listing is now claimed",
+    body: `<p style="margin:0 0 12px;">Your Meet Me at the Fair listing for <strong>${escape(args.businessName)}</strong> is now marked as Claimed.</p>
+<p style="margin:0 0 12px;">A "Claimed" badge appears on your public page, signalling to event-goers that the business itself maintains this listing. Update your profile any time at <a href="${profileUrl}" style="color:#1E2761;">${profileUrl}</a>.</p>
+<p style="margin:0 0 12px;">View your public page: <a href="${publicUrl}" style="color:#1E2761;">${publicUrl}</a></p>`,
+    cta: { url: profileUrl, label: "Open vendor profile" },
+  });
+  const text = `Your Meet Me at the Fair listing for "${args.businessName}" is now marked as Claimed.\n\nA "Claimed" badge appears on your public page. Update your profile any time:\n${profileUrl}\n\nPublic page: ${publicUrl}`;
+  return { subject: `Your ${args.businessName} listing is now claimed`, html, text };
+}
+
 export function promoterBlogMentionTemplate(args: {
   promoterName: string | null;
   postTitle: string;

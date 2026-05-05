@@ -47,6 +47,9 @@ interface Vendor {
   enhancedProfileExpiresAt: string | null;
   galleryImages: string;
   featuredPriority: number;
+  // Claimed tier (drizzle/0049) — same panel grants/revokes via PATCH.
+  claimed: boolean;
+  claimedAt: string | null;
 }
 
 export default function EditVendorPage() {
@@ -199,6 +202,8 @@ export default function EditVendorPage() {
             galleryImages={vendor.galleryImages || "[]"}
             slug={vendor.slug}
             featuredPriority={vendor.featuredPriority ?? 0}
+            claimed={vendor.claimed ?? false}
+            claimedAt={vendor.claimedAt ? new Date(vendor.claimedAt) : null}
           />
         </div>
       )}

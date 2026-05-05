@@ -25,6 +25,7 @@ import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseVendorSocialLinks } from "@/lib/vendor-social";
+import { isVendorIndexable } from "@/lib/vendor-quality";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import type { Metadata } from "next";
@@ -33,6 +34,8 @@ import { logError } from "@/lib/logger";
 import { buildVendorMetaDescription } from "@/lib/seo-utils";
 import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
+import { VendorTierBadges } from "@/components/vendors/VendorTierBadges";
+import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
@@ -140,10 +143,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
+  const indexable = isVendorIndexable(vendor);
 
   return {
     title,
     description,
+    robots: indexable ? undefined : { index: false, follow: true },
     alternates: {
       canonical: url,
     },
@@ -189,6 +194,7 @@ export default async function VendorDetailPage({ params }: Props) {
 
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
+  const isOwner = !!session?.user?.id && session.user.id === vendor.userId;
 
   const linkedBlogPosts = await getDirectlyLinkedBlogPosts(
     getCloudflareDb(),
@@ -254,6 +260,9 @@ export default async function VendorDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
+            {isOwner && !isAdmin && session?.user?.id && (
+              <VendorProfileCompleteness userId={session.user.id} />
+            )}
             {isAdmin && inGrace && expiresAt && (
               <div className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900">
                 Enhanced Profile expired {expiresAt.toISOString().slice(0, 10)} — features still
@@ -312,6 +321,11 @@ export default async function VendorDetailPage({ params }: Props) {
                       Verified
                     </span>
                   )}
+                  <VendorTierBadges
+                    claimed={vendor.claimed}
+                    enhancedProfile={vendor.enhancedProfile}
+                    className="inline-flex items-center gap-1.5"
+                  />
                 </div>
                 {vendor.vendorType && (
                   <p className="mt-1 text-lg text-gray-600">{vendor.vendorType}</p>

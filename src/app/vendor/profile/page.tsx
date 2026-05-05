@@ -9,6 +9,7 @@ import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
+import { VendorClaimWidget } from "@/components/vendor/claim-widget";
 
 export const runtime = "edge";
 
@@ -22,6 +23,7 @@ interface VendorProfile {
   website: string | null;
   logoUrl: string | null;
   verified: boolean;
+  claimed: boolean;
   // Contact Information
   contactName: string | null;
   contactEmail: string | null;
@@ -233,6 +235,10 @@ export default function VendorProfilePage() {
         storageKey="mmatf.welcome.vendor"
         title="Welcome to Meet Me at the Fair!"
         body="Complete your vendor profile below so promoters have what they need to approve your event applications."
+      />
+      <VendorClaimWidget
+        claimed={profile.claimed}
+        onClaimed={() => setProfile((p) => (p ? { ...p, claimed: true } : p))}
       />
       <div className="flex items-center justify-between mb-8 gap-4">
         <div>
