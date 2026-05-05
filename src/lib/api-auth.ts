@@ -3,7 +3,48 @@ import { auth } from "@/lib/auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 
 /**
- * Authenticate via admin session OR X-Internal-Key header.
+ * Sentinel actor id for the Claude read-only Bearer token. Use as
+ * `actorUserId` in admin_actions writes when the request authorized via
+ * the read-only Bearer (today this can never happen because Bearer requests
+ * can't mutate, but the sentinel is reserved for any future read-audit hook).
+ */
+export const CLAUDE_READONLY_IDENTITY = "claude-readonly";
+
+/**
+ * HTTP methods the read-only Bearer token is allowed to make. HEAD is the
+ * read-only twin of GET; OPTIONS is the CORS preflight courtesy. Everything
+ * else (POST/PUT/PATCH/DELETE) is rejected at the middleware layer.
+ *
+ * INVARIANT: GET handlers under /admin/* and /api/admin/* must remain
+ * side-effect-free (no db.insert/update/delete). The Bearer-token read-only
+ * guarantee depends on this — the method gate is the safety boundary, not a
+ * per-path allowlist.
+ */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function isSafeMethod(method: string): boolean {
+  return SAFE_METHODS.has(method.toUpperCase());
+}
+
+/**
+ * Returns true if the request's Authorization header is `Bearer <token>` AND
+ * `<token>` matches the CLAUDE_READONLY_TOKEN env var. Returns false on any
+ * mismatch (including missing env, malformed header, wrong scheme).
+ */
+export function bearerTokenMatches(request: Request): boolean {
+  const header = request.headers.get("authorization");
+  if (!header || !header.startsWith("Bearer ")) return false;
+  const presented = header.slice("Bearer ".length).trim();
+  if (!presented) return false;
+  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  const expected = env.CLAUDE_READONLY_TOKEN;
+  if (!expected) return false;
+  return presented === expected;
+}
+
+/**
+ * Authenticate via admin session OR X-Internal-Key header OR Claude
+ * read-only Bearer (limited to safe HTTP methods).
  * Returns true if authorized, false otherwise.
  */
 export async function isAuthorized(request: Request): Promise<boolean> {
@@ -11,13 +52,19 @@ export async function isAuthorized(request: Request): Promise<boolean> {
   const session = await auth();
   if (session?.user?.role === "ADMIN") return true;
 
-  // Fall back to internal API key (for MCP server calls)
+  // X-Internal-Key (for MCP server calls + cron sweeps)
   const internalKey = request.headers.get("X-Internal-Key");
   if (internalKey) {
     const env = getCloudflareEnv() as unknown as Record<string, string>;
     const expectedKey = env.INTERNAL_API_KEY;
     if (expectedKey && internalKey === expectedKey) return true;
   }
+
+  // Claude read-only Bearer (safe methods only). Mutations with this token
+  // are blocked at the edge by src/middleware.ts before reaching the route,
+  // but we double-check here so a route can't be tricked into authorizing a
+  // POST if the middleware matcher ever drifts out of sync.
+  if (isSafeMethod(request.method) && bearerTokenMatches(request)) return true;
 
   return false;
 }
@@ -42,7 +89,30 @@ export async function getAuthorizedSession(request: Request): Promise<{
     if (expectedKey && internalKey === expectedKey) return { authorized: true };
   }
 
+  if (isSafeMethod(request.method) && bearerTokenMatches(request)) {
+    return { authorized: true };
+  }
+
   return { authorized: false };
+}
+
+/**
+ * Return the actor identity for an authorized request, suitable for use as
+ * `actorUserId` in admin_actions writes. Returns:
+ *   - the user id string for an ADMIN session
+ *   - the CLAUDE_READONLY_IDENTITY sentinel for a read-only Bearer match
+ *   - null for X-Internal-Key (system-driven) or no auth
+ *
+ * Callers should resolve auth FIRST (via isAuthorized) and only use this for
+ * the audit-log identity field.
+ */
+export async function getRequestIdentity(request: Request): Promise<string | null> {
+  const session = await auth();
+  if (session?.user?.role === "ADMIN") return session.user.id;
+  if (isSafeMethod(request.method) && bearerTokenMatches(request)) {
+    return CLAUDE_READONLY_IDENTITY;
+  }
+  return null;
 }
 
 /**

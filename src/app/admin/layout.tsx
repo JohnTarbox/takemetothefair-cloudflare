@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import Link from "next/link";
 import {
   LayoutDashboard,
@@ -17,6 +18,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { auth } from "@/lib/auth";
+import { bearerTokenMatches } from "@/lib/api-auth";
 
 const adminNav = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard },
@@ -36,12 +38,33 @@ const adminNav = [
 ];
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // Read-only Bearer pre-check for the Claude service-account identity.
+  // Layouts only render on GET (page renders), so no method gate is needed
+  // here — the edge middleware (src/middleware.ts) blocks any non-safe-method
+  // request to /admin/* with the same Bearer header before this layout runs.
+  // We pass a synthetic Request with just the Authorization header so
+  // bearerTokenMatches has the shape it expects.
+  const hdrs = await headers();
+  const authHeader = hdrs.get("authorization");
+  if (authHeader) {
+    const synthetic = new Request("https://internal/", {
+      headers: { authorization: authHeader },
+    });
+    if (bearerTokenMatches(synthetic)) {
+      return renderShell(children);
+    }
+  }
+
   const session = await auth();
 
   if (!session || session.user.role !== "ADMIN") {
     redirect("/login?callbackUrl=/admin");
   }
 
+  return renderShell(children);
+}
+
+function renderShell(children: React.ReactNode) {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="flex">

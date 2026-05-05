@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { vendors } from "@/lib/db/schema";
 
 /**
- * Middleware handles two pre-route concerns that must NOT be cached:
+ * Middleware handles three pre-route concerns that must NOT be cached:
  *
  *   1. IndexNow keyfile  — `/<key>.txt` served from site root for the
  *      IndexNow path-scope rule (see comment block below).
@@ -16,6 +16,13 @@ import { vendors } from "@/lib/db/schema";
  *      cached HTML response can't masquerade as a live vendor page after the
  *      soft-delete write. Adds ~5ms (one indexed lookup) per vendor page
  *      view; cheaper than the joins the page itself does.
+ *   3. Claude read-only Bearer method gate — for any request to /admin/* or
+ *      /api/admin/* with `Authorization: Bearer <CLAUDE_READONLY_TOKEN>`,
+ *      enforce that the method is one of GET/HEAD/OPTIONS. Anything else
+ *      gets a 403 at the edge before any route handler runs. The actual
+ *      authorize-by-Bearer happens in src/lib/api-auth.ts (for /api/admin
+ *      routes) and src/app/admin/layout.tsx (for /admin pages); this gate is
+ *      a defense-in-depth for the read-only invariant.
  *
  * IndexNow key file path scope: the IndexNow spec ties the file's path to
  * the URL scope it authorizes. A file in a subdirectory (e.g.
@@ -37,8 +44,32 @@ export const config = {
     "/:keyfile([^/]+\\.txt)",
     // Vendor detail pages (single slug only; not /vendors itself or sub-routes).
     "/vendors/:slug",
+    // Admin pages + admin API routes — for the Claude read-only Bearer
+    // method gate. Matcher does NOT cover /admin or /api/admin themselves
+    // (only `/<seg>/*` shapes), so the gate doesn't fire for the listing
+    // pages — no big deal because the gate is method-based, not path-based,
+    // and the layout/route auth still runs.
+    "/admin/:path*",
+    "/api/admin/:path*",
   ],
 };
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function bearerHeaderPresent(request: NextRequest): boolean {
+  const h = request.headers.get("authorization");
+  return !!h && h.startsWith("Bearer ");
+}
+
+function bearerMatchesEnv(request: NextRequest, env: Record<string, unknown>): boolean {
+  const h = request.headers.get("authorization");
+  if (!h || !h.startsWith("Bearer ")) return false;
+  const presented = h.slice("Bearer ".length).trim();
+  if (!presented) return false;
+  const expected = (env as { CLAUDE_READONLY_TOKEN?: string }).CLAUDE_READONLY_TOKEN;
+  if (!expected) return false;
+  return presented === expected;
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -48,6 +79,29 @@ export async function middleware(request: NextRequest) {
     env = getRequestContext().env as unknown as Record<string, unknown>;
   } catch {
     // Outside the Cloudflare runtime (local `next build`) — fall through.
+    return NextResponse.next();
+  }
+
+  // ── /admin/* + /api/admin/* — read-only Bearer method gate ─────
+  // For requests carrying a valid CLAUDE_READONLY_TOKEN Bearer header,
+  // reject any non-safe method at the edge with 403. Bypass for cookie /
+  // X-Internal-Key auth flows (those don't carry an Authorization: Bearer
+  // header). Cheap: header check + one env read; no DB.
+  if (pathname.startsWith("/admin/") || pathname.startsWith("/api/admin/")) {
+    if (bearerHeaderPresent(request) && bearerMatchesEnv(request, env)) {
+      if (!SAFE_METHODS.has(request.method)) {
+        return NextResponse.json(
+          {
+            error: "Read-only token cannot perform mutations",
+            method: request.method,
+          },
+          { status: 403 }
+        );
+      }
+    }
+    // Either no Bearer, wrong Bearer, or Bearer + safe method — let the
+    // layout / route handler authorize. Don't fall through to the keyfile
+    // / vendor branches below; they don't apply.
     return NextResponse.next();
   }
 
