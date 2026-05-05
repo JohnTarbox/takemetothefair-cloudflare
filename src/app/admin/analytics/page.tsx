@@ -46,12 +46,14 @@ import {
   isWindowKey,
   loadOverviewSnapshot,
   WINDOW_KEYS,
+  type ActionQueueEntry,
   type ActivityEntry,
   type OverviewSnapshot,
   type SparklinePoint,
   type Trend,
   type WindowKey,
 } from "@/lib/analytics-overview";
+import { KPI_THRESHOLDS, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -156,7 +158,8 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <RecentErrorsCardView snapshot={snapshot} />
       </div>
 
-      {/* §10.3 KPI quartet — sitemap quality, time-to-index, brand split, conversion rate */}
+      {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality.
+          State coloring (GREEN/YELLOW/RED) added in §6.3 — see kpiCardState helper. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <SiteCtrCardView snapshot={snapshot} />
         <ConversionRateCardView snapshot={snapshot} />
@@ -164,9 +167,19 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <SitemapQualityCardView snapshot={snapshot} />
       </div>
 
+      {/* §6.3: account engagement (renamed from old multi-numerator
+          "conversion rate") — preserved as Enhanced-Profile funnel signal. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <AccountEngagementCardView snapshot={snapshot} />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <TimeToIndexCardView snapshot={snapshot} />
-        <ThisWeeksActionsCardView snapshot={snapshot} />
+        <ActionQueueCardView snapshot={snapshot} />
+      </div>
+
+      <div className="mb-6">
+        <RecentActivityCardView snapshot={snapshot} />
       </div>
 
       <BlogCoverageCardView snapshot={snapshot} />
@@ -277,6 +290,19 @@ function TrendBadge({
   );
 }
 
+// §6.3 KPI state → border / badge / aria-label mapping. INDETERMINATE
+// produces no border or badge so the card looks visually identical to the
+// pre-§6.3 version (graceful degradation when data isn't flowing).
+const KPI_STATE_STYLES: Record<
+  KpiState,
+  { border: string; badge: string | null; ariaLabel: string }
+> = {
+  GREEN: { border: "border-l-4 border-l-emerald-500", badge: "◯", ariaLabel: "On target" },
+  YELLOW: { border: "border-l-4 border-l-amber-400", badge: "⚠", ariaLabel: "Below target" },
+  RED: { border: "border-l-4 border-l-red-500", badge: "⛔", ariaLabel: "Action required" },
+  INDETERMINATE: { border: "", badge: null, ariaLabel: "No data yet" },
+};
+
 function KpiCard({
   title,
   value,
@@ -284,6 +310,8 @@ function KpiCard({
   iconColor,
   href,
   footer,
+  state,
+  actionPrompt,
 }: {
   title: string;
   value: React.ReactNode;
@@ -291,20 +319,37 @@ function KpiCard({
   iconColor: string;
   href?: string;
   footer?: React.ReactNode;
+  state?: KpiState;
+  /** Surfaced under the value when state === RED. Effort string from kpi-thresholds. */
+  actionPrompt?: string;
 }) {
+  const stateStyle = state ? KPI_STATE_STYLES[state] : null;
+  const cardClass = `h-full ${stateStyle?.border ?? ""}`.trim();
   const inner = (
-    <Card className="h-full">
+    <Card className={cardClass}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">{title}</p>
             <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">{value}</p>
+            {state === "RED" && actionPrompt && (
+              <p className="text-xs text-red-600 mt-1 font-medium">{actionPrompt}</p>
+            )}
             {footer && <div className="mt-2">{footer}</div>}
           </div>
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center ${iconColor} shrink-0`}
-          >
-            {icon}
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            {stateStyle?.badge && (
+              <span
+                aria-label={stateStyle.ariaLabel}
+                className="text-base leading-none"
+                title={stateStyle.ariaLabel}
+              >
+                {stateStyle.badge}
+              </span>
+            )}
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${iconColor}`}>
+              {icon}
+            </div>
           </div>
         </div>
       </CardContent>
@@ -478,8 +523,22 @@ function fmtSeconds(s: number | null): string {
   return `${(s / 86400).toFixed(1)}d`;
 }
 
+// §6.3 helper: read the latest state + RED-mode action prompt for a KPI.
+// Returns INDETERMINATE when the recompute hasn't fired yet (cold-start).
+function kpiCardState(
+  snapshot: OverviewSnapshot,
+  name: KpiName
+): { state: KpiState; actionPrompt?: string } {
+  const row = snapshot.kpiStates.get(name);
+  const state: KpiState = row?.state ?? "INDETERMINATE";
+  if (state !== "RED") return { state };
+  const cfg = KPI_THRESHOLDS[name];
+  return { state, actionPrompt: `${cfg.actionDescription} — ${cfg.effort}` };
+}
+
 function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.siteCtr;
+  const { state, actionPrompt } = kpiCardState(snapshot, "site_ctr");
   if (!c.ok) {
     return (
       <KpiCard
@@ -503,6 +562,8 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       icon={<Search className="w-5 h-5 text-violet-600" />}
       iconColor="bg-violet-100"
       href="/admin/analytics?tab=google"
+      state={state}
+      actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5">
           <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
@@ -519,16 +580,42 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 
 function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.conversionRate;
+  const { state, actionPrompt } = kpiCardState(snapshot, "conversion_rate");
   return (
     <KpiCard
       title={`Conversion rate (${c.windowDays}d)`}
-      value={fmtPct(c.rate, 2)}
+      value={c.rate != null ? fmtPct(c.rate, 2) : "—"}
       icon={<TrendingUp className="w-5 h-5 text-emerald-600" />}
+      iconColor="bg-emerald-100"
+      state={state}
+      actionPrompt={actionPrompt}
+      footer={
+        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+          <span>
+            {fmt(c.conversions)} ticket clicks / {c.sessions != null ? fmt(c.sessions) : "—"}{" "}
+            organic sessions
+          </span>
+          <span title={`Window ends ${c.windowEndDate} (48h GA4 finalization lag)`}>
+            window ends {c.windowEndDate}
+          </span>
+        </div>
+      }
+    />
+  );
+}
+
+function AccountEngagementCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.accountEngagement;
+  return (
+    <KpiCard
+      title={`Account engagement (${c.windowDays}d)`}
+      value={fmtPct(c.rate, 2)}
+      icon={<Activity className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-gray-500">
           <span>
-            {fmt(c.conversions)} conv / {fmt(c.sessions)} sessions
+            {fmt(c.signals)} signals / {fmt(c.sessions)} events
           </span>
           <span>
             claims {fmt(c.breakdown.vendor_claims)} · favs {fmt(c.breakdown.event_favorites)} ·
@@ -542,6 +629,7 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 
 function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.brandVsNonBrand;
+  const { state, actionPrompt } = kpiCardState(snapshot, "brand_share");
   if (!c.ok) {
     return (
       <KpiCard
@@ -561,6 +649,8 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       icon={<TrendingUp className="w-5 h-5 text-blue-600" />}
       iconColor="bg-blue-100"
       href="/admin/analytics?tab=google"
+      state={state}
+      actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-gray-500">
           <span>
@@ -577,12 +667,15 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 
 function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.sitemapQuality;
+  const { state, actionPrompt } = kpiCardState(snapshot, "sitemap_quality");
   return (
     <KpiCard
       title={`Sitemap quality (≥ ${c.threshold})`}
       value={fmtPct(c.overall_pass_rate, 0)}
       icon={<CheckCircle2 className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
+      state={state}
+      actionPrompt={actionPrompt}
       footer={
         <div className="flex flex-col gap-0.5 text-xs text-gray-500">
           <span>
@@ -599,10 +692,30 @@ function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
 
 function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.timeToIndex;
+  const { state, actionPrompt } = kpiCardState(snapshot, "time_to_index_h");
+  // Until the gsc-sweep + sweep-time-to-index cron has been running for ~7
+  // days, samples are sparse — the kpi state machine returns INDETERMINATE
+  // and we render "—" with a "data collection in progress" hint.
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Time-to-index (median lag)</CardTitle>
+        <CardTitle className="flex items-center justify-between">
+          <span>Time-to-index (median lag)</span>
+          {state !== "INDETERMINATE" && (
+            <span
+              aria-label={
+                state === "RED"
+                  ? "Action required"
+                  : state === "YELLOW"
+                    ? "Below target"
+                    : "On target"
+              }
+              className="text-base"
+            >
+              {state === "RED" ? "⛔" : state === "YELLOW" ? "⚠" : "◯"}
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-3 gap-4">
@@ -625,22 +738,98 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             </p>
           </div>
         </div>
+        {state === "RED" && actionPrompt && (
+          <p className="text-xs text-red-600 mt-3 font-medium">{actionPrompt}</p>
+        )}
         <p className="text-xs text-gray-500 mt-4">
-          {fmt(c.resolved)} resolved · {fmt(c.unresolved)} unresolved · run{" "}
-          <code className="px-1 bg-gray-100 rounded">/api/admin/sweep-time-to-index</code> to
-          reconcile.
+          {state === "INDETERMINATE"
+            ? "Data collection in progress — first results expected ~7 days post-deploy."
+            : `${fmt(c.resolved)} resolved · ${fmt(c.unresolved)} unresolved`}
         </p>
       </CardContent>
     </Card>
   );
 }
 
-function ThisWeeksActionsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+/**
+ * §6.3 prioritized action queue. Shows P0 entries (RED KPI breaches) first,
+ * then P1 entries (YELLOW KPIs that haven't been RED in the last 7d, plus
+ * Tier-1 recommendation rules with affected_count >= 50). Each entry has a
+ * one-line "what to do" + effort label, plus a "first detected" stamp for
+ * KPI entries so long-running RED states surface their staleness.
+ *
+ * When the queue is empty (everything GREEN), renders an "All clear" message
+ * — that's the green-light read the analyst memo wants execs to walk in to.
+ */
+function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const entries = snapshot.actionQueue;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>
+          Action queue
+          {entries.length > 0 && (
+            <span className="ml-2 text-sm font-normal text-gray-500">
+              ({entries.filter((e) => e.priority === "P0").length} P0,{" "}
+              {entries.filter((e) => e.priority === "P1").length} P1)
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {entries.length === 0 ? (
+          <p className="text-sm text-emerald-700">
+            All clear — no KPIs in RED/YELLOW state, no T1 rules above threshold.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {entries.map((e) => (
+              <ActionQueueRow key={`${e.source}:${e.refKey}`} entry={e} />
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActionQueueRow({ entry }: { entry: ActionQueueEntry }) {
+  const badgeClass =
+    entry.priority === "P0" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800";
+  const detectedDate = entry.firstDetectedAt ? new Date(entry.firstDetectedAt) : null;
+  return (
+    <li className="flex items-start justify-between gap-3 text-sm">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${badgeClass}`}>
+            {entry.priority}
+          </span>
+          <Link href={entry.href} className="font-medium text-gray-900 hover:underline truncate">
+            {entry.title}
+          </Link>
+        </div>
+        {detectedDate && (
+          <p className="text-xs text-gray-500 mt-0.5">
+            First detected {formatTimestampForServer(detectedDate)}
+          </p>
+        )}
+      </div>
+      <span className="text-xs text-gray-500 shrink-0 mt-0.5">{entry.effort}</span>
+    </li>
+  );
+}
+
+/**
+ * Recent admin activity (the chronological log that used to live in the
+ * "This week's actions" panel). Demoted to a small panel below the action
+ * queue; still useful as an audit trail but no longer the primary surface.
+ */
+function RecentActivityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   const c = snapshot.thisWeeksActions;
   return (
     <Card>
       <CardHeader>
-        <CardTitle>This week&apos;s actions ({fmt(c.count)})</CardTitle>
+        <CardTitle className="text-sm">Recent activity ({fmt(c.count)} this week)</CardTitle>
       </CardHeader>
       <CardContent>
         {c.actions.length === 0 ? (

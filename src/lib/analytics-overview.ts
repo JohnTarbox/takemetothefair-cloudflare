@@ -23,11 +23,17 @@ import {
   errorLogs,
   events,
   indexnowSubmissions,
+  kpiStateHistory,
+  recommendationRules,
   timeToIndexLog,
   userFavorites,
   vendors,
   venues,
 } from "@/lib/db/schema";
+import { getOrganicSessions, type Ga4Env } from "@/lib/ga4";
+import { getLatestKpiStates, type KpiStateRow } from "@/lib/kpi-states";
+import { tierFor } from "@/lib/recommendations/tiers";
+import { KPI_THRESHOLDS, actionTitleForKpi, type KpiName } from "@/lib/kpi-thresholds";
 import { SITEMAP_MIN_COMPLETENESS } from "@takemetothefair/utils";
 import {
   BingApiError,
@@ -168,14 +174,32 @@ export type SiteCtrCard =
   | { ok: false; reason: string };
 
 /**
- * Conversion rate is multi-numerator per business decision: vendor claim
- * completed + event favorited + vendor profile contact-click. Denominator is
- * GA4-equivalent sessions; we don't have GA4 server-side so we use the
- * project's first-party `analyticsEvents` count of any event in the window
- * as a proxy "active visitors" denominator.
+ * §6.3 conversion rate: outbound ticket/application clicks per organic
+ * search session. Numerator is the same `analyticsEvents` count the
+ * row-1 "Conversions" card shows (CONVERSION_EVENT_NAMES); denominator is
+ * GA4 sessions filtered to `sessionMedium='organic'`. Window ends 48h ago
+ * to avoid GA4-finalization-lag flips.
+ *
+ * `sessions` is null when GA4 returns an error or no organic traffic — in
+ * that case `rate` is also null and the card renders "—".
  */
 export type ConversionRateCard = {
   conversions: number;
+  sessions: number | null;
+  rate: number | null;
+  windowDays: number;
+  /** ISO date string for the window end so the tooltip can show the lag. */
+  windowEndDate: string;
+};
+
+/**
+ * Account engagement rate (renamed from the old multi-numerator "conversion
+ * rate"). Tracks the Enhanced-Profile funnel signal: vendor-claim completions
+ * + event favorites + contact-form clicks, divided by total first-party
+ * analytics events in the window.
+ */
+export type AccountEngagementCard = {
+  signals: number;
   sessions: number;
   rate: number;
   windowDays: number;
@@ -268,6 +292,23 @@ export type OverviewSnapshot = {
   timeToIndex: TimeToIndexCard;
   thisWeeksActions: ThisWeeksActionsCard;
   kpiStrip90d: KpiSparklineStrip;
+  // §6.3 additions
+  accountEngagement: AccountEngagementCard;
+  kpiStates: Map<KpiName, KpiStateRow>;
+  actionQueue: ActionQueueEntry[];
+};
+
+/** §6.3 action-queue entry — one row in the prioritized action panel. */
+export type ActionQueueEntry = {
+  priority: "P0" | "P1";
+  source: "kpi" | "recommendation";
+  title: string;
+  effort: string;
+  href: string;
+  /** ISO date string for the "first detected" stamp (KPI entries only). */
+  firstDetectedAt: string | null;
+  /** KPI name when source='kpi'; rule key when source='recommendation'. */
+  refKey: string;
 };
 
 /**
@@ -282,7 +323,7 @@ const SPARKLINE_DAYS = 30;
 
 export async function loadOverviewSnapshot(
   db: Db,
-  env: ScEnv & BingEnv,
+  env: ScEnv & BingEnv & Ga4Env,
   window: WindowKey
 ): Promise<OverviewSnapshot> {
   // All windows expressed as Date objects now that every operational table
@@ -322,6 +363,8 @@ export async function loadOverviewSnapshot(
     timeToIndex,
     thisWeeksActions,
     kpiStrip90d,
+    accountEngagement,
+    kpiStates,
   ] = await Promise.all([
     loadSearchVisibility(env, days),
     loadConversions(db, sinceDate, priorStartDate, priorEndDate, days),
@@ -337,13 +380,20 @@ export async function loadOverviewSnapshot(
     loadSearchVisibilitySparkline(env),
     loadActivity(db, sinceDate),
     loadSiteCtr(env, days),
-    loadConversionRate(db, sinceDate, days),
+    loadConversionRate(db, env, 7),
     loadBrandVsNonBrand(env),
     loadSitemapQuality(db),
     loadTimeToIndex(db),
     loadThisWeeksActions(db, lastWeekDate),
     loadKpiStrip90d(db, env),
+    loadAccountEngagement(db, sinceDate, days),
+    getLatestKpiStates(db),
   ]);
+
+  // Action queue is derived after the latest KPI states + tier-1 rec counts
+  // are known. Cheap (1-2 SELECTs); not parallelized to keep the dependency
+  // order obvious.
+  const actionQueue = await loadActionQueue(db, kpiStates);
 
   return {
     window,
@@ -368,6 +418,9 @@ export async function loadOverviewSnapshot(
     timeToIndex,
     thisWeeksActions,
     kpiStrip90d,
+    accountEngagement,
+    kpiStates,
+    actionQueue,
   };
 }
 
@@ -973,16 +1026,51 @@ async function loadSiteCtr(env: ScEnv, days: number): Promise<SiteCtrCard> {
   }
 }
 
-async function loadConversionRate(
+async function loadConversionRate(db: Db, env: Ga4Env, days: number): Promise<ConversionRateCard> {
+  // §6.3 definition: outbound_ticket_click count / GA4 organic sessions, in
+  // the 7d window ending 48h ago (matches the state classifier so the card
+  // and the badge agree). Numerator reuses CONVERSION_EVENT_NAMES — same
+  // source as the row-1 "Conversions" card.
+  const STABLE_LAG_DAYS = 2;
+  const nowMs = Date.now();
+  const stableEndMs = nowMs - STABLE_LAG_DAYS * 86400 * 1000;
+  const stableStartMs = stableEndMs - days * 86400 * 1000;
+  const stableStartDate = new Date(stableStartMs);
+  const stableEndDate = new Date(stableEndMs);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  const [numRow, sessions] = await Promise.all([
+    db
+      .select({ n: count() })
+      .from(analyticsEvents)
+      .where(
+        and(
+          inArray(analyticsEvents.eventName, [...CONVERSION_EVENT_NAMES]),
+          gte(analyticsEvents.timestamp, stableStartDate),
+          lt(analyticsEvents.timestamp, stableEndDate)
+        )
+      ),
+    getOrganicSessions(env, fmt(stableStartDate), fmt(stableEndDate)),
+  ]);
+  const conversions = numRow[0]?.n ?? 0;
+  const rate = sessions != null && sessions > 0 ? conversions / sessions : null;
+  return {
+    conversions,
+    sessions,
+    rate,
+    windowDays: days,
+    windowEndDate: fmt(stableEndDate),
+  };
+}
+
+async function loadAccountEngagement(
   db: Db,
   sinceDate: Date,
   days: number
-): Promise<ConversionRateCard> {
-  // Three numerators per business decision.
-  // 1. Vendor claims completed in window — adminActions where action='vendor.claim_self_serve'
-  // 2. Event favorites added in window — userFavorites where favoritableType='EVENT'
-  // 3. Vendor profile contact-clicks — analyticsEvents where eventName='outbound_contact_click'
-  // Denominator: total analyticsEvents rows in the window (proxy for sessions/active visitors).
+): Promise<AccountEngagementCard> {
+  // Renamed from the old multi-numerator "conversion rate". Tracks Enhanced
+  // Profile / engagement funnel: claims + event favorites + contact clicks
+  // per first-party analytics event in the window.
   const [claimsRow, favRow, contactRow, sessionRow] = await Promise.all([
     db
       .select({ n: count() })
@@ -1016,11 +1104,11 @@ async function loadConversionRate(
   const vendor_claims = claimsRow[0]?.n ?? 0;
   const event_favorites = favRow[0]?.n ?? 0;
   const contact_clicks = contactRow[0]?.n ?? 0;
-  const conversions = vendor_claims + event_favorites + contact_clicks;
+  const signals = vendor_claims + event_favorites + contact_clicks;
   const sessions = sessionRow[0]?.n ?? 0;
-  const rate = sessions > 0 ? conversions / sessions : 0;
+  const rate = sessions > 0 ? signals / sessions : 0;
   return {
-    conversions,
+    signals,
     sessions,
     rate,
     windowDays: days,
@@ -1169,6 +1257,105 @@ async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<ThisWeeksA
       createdAt: r.createdAt.getTime(),
     })),
   };
+}
+
+/**
+ * §6.3 action queue. Derives a prioritized list of P0/P1 entries from the
+ * latest KPI states + Tier-1 recommendation rules with affected_count >= 50.
+ *
+ * P0: each KPI in RED → one entry per KPI (KPIs that have been RED for many
+ *     days still surface, but `firstDetectedAt` makes the staleness visible).
+ * P1: each KPI in YELLOW that wasn't RED any time in the last 7 days. Once
+ *     a RED→YELLOW transition stabilizes for a week, it re-enters the queue
+ *     so the team is reminded to keep pushing it back to GREEN.
+ * P1: each Tier-1 recommendation rule with totalMatchCount >= 50.
+ *
+ * Auto-resolution: when a KPI returns to GREEN, the recompute job writes a
+ * `kpi.state_resolved` row to admin_actions; this loader simply omits the
+ * GREEN/INDETERMINATE KPI from the queue. The Recent Activity panel surfaces
+ * the resolution from admin_actions.
+ */
+const TIER_1_REC_AFFECTED_THRESHOLD = 50;
+
+async function loadActionQueue(
+  db: Db,
+  kpiStates: Map<KpiName, KpiStateRow>
+): Promise<ActionQueueEntry[]> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000);
+  const [redInLast7d, hotRecs] = await Promise.all([
+    // One query that lists which KPIs were RED at any point in the last 7d.
+    // Used to suppress YELLOW→P1 entries for KPIs that just stabilized.
+    db
+      .selectDistinct({ kpiName: kpiStateHistory.kpiName })
+      .from(kpiStateHistory)
+      .where(and(eq(kpiStateHistory.state, "RED"), gte(kpiStateHistory.computedAt, sevenDaysAgo))),
+    // Tier-1 recommendation rules with >= 50 affected items.
+    db
+      .select({
+        ruleKey: recommendationRules.ruleKey,
+        title: recommendationRules.title,
+        totalMatchCount: recommendationRules.totalMatchCount,
+        enabled: recommendationRules.enabled,
+      })
+      .from(recommendationRules)
+      .where(
+        and(
+          eq(recommendationRules.enabled, true),
+          gte(recommendationRules.totalMatchCount, TIER_1_REC_AFFECTED_THRESHOLD)
+        )
+      ),
+  ]);
+  const redRecently = new Set(redInLast7d.map((r) => r.kpiName));
+
+  const entries: ActionQueueEntry[] = [];
+
+  // Stable KPI ordering — matches KPI_NAMES so the queue doesn't reshuffle
+  // visually as states flip between fires.
+  for (const [kpi, row] of kpiStates) {
+    const t = KPI_THRESHOLDS[kpi];
+    if (row.state === "RED") {
+      entries.push({
+        priority: "P0",
+        source: "kpi",
+        title: actionTitleForKpi(kpi, row.value),
+        effort: t.effort,
+        href: t.href,
+        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        refKey: kpi,
+      });
+    } else if (row.state === "YELLOW" && !redRecently.has(kpi)) {
+      entries.push({
+        priority: "P1",
+        source: "kpi",
+        title: actionTitleForKpi(kpi, row.value),
+        effort: t.effort,
+        href: t.href,
+        firstDetectedAt: row.firstDetectedAt?.toISOString() ?? null,
+        refKey: kpi,
+      });
+    }
+  }
+
+  for (const rule of hotRecs) {
+    if (tierFor(rule.ruleKey) !== "T1") continue;
+    entries.push({
+      priority: "P1",
+      source: "recommendation",
+      title: `Activate ${rule.title}: ${rule.totalMatchCount ?? 0} affected`,
+      effort: "Marketing / Ops",
+      href: `/admin/recommendations`,
+      firstDetectedAt: null,
+      refKey: rule.ruleKey,
+    });
+  }
+
+  // P0 first, then P1; within priority KPI entries before recommendation entries.
+  entries.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority === "P0" ? -1 : 1;
+    if (a.source !== b.source) return a.source === "kpi" ? -1 : 1;
+    return a.refKey.localeCompare(b.refKey);
+  });
+  return entries;
 }
 
 async function loadKpiStrip90d(db: Db, env: ScEnv): Promise<KpiSparklineStrip> {
