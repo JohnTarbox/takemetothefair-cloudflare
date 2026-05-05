@@ -23,7 +23,12 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
+import {
+  decodeHtmlEntities,
+  formatDateRange,
+  formatDiscontinuousDates,
+  formatPrice,
+} from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   events,
@@ -405,7 +410,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Event Not Found" };
   }
 
-  const title = `${event.name} | Meet Me at the Fair`;
+  const name = decodeHtmlEntities(event.name);
+  const title = `${name} | Meet Me at the Fair`;
   const description = buildEventMetaDescription(event);
   const url = `https://meetmeatthefair.com/events/${event.slug}`;
 
@@ -416,7 +422,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: url,
     },
     openGraph: {
-      title: event.name,
+      title: name,
       description,
       url,
       siteName: "Meet Me at the Fair",
@@ -426,13 +432,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
           url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
           width: 1200,
           height: 630,
-          alt: event.name,
+          alt: name,
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: event.name,
+      title: name,
       description,
       images: [event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`],
     },

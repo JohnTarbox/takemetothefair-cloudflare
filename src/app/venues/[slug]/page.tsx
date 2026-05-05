@@ -27,6 +27,7 @@ import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import type { Metadata } from "next";
 import { logError } from "@/lib/logger";
 import { buildVenueMetaDescription } from "@/lib/seo-utils";
+import { decodeHtmlEntities } from "@/lib/utils";
 import { VenueSchema } from "@/components/seo/VenueSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
@@ -95,7 +96,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Venue Not Found" };
   }
 
-  const title = `${venue.name} | Meet Me at the Fair`;
+  const name = decodeHtmlEntities(venue.name);
+  const title = `${name} | Meet Me at the Fair`;
   const description = buildVenueMetaDescription(venue);
   const url = `https://meetmeatthefair.com/venues/${venue.slug}`;
 
@@ -106,7 +108,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       canonical: url,
     },
     openGraph: {
-      title: venue.name,
+      title: name,
       description,
       url,
       siteName: "Meet Me at the Fair",
@@ -116,13 +118,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
           url: venue.imageUrl || "https://meetmeatthefair.com/og-default.png",
           width: 1200,
           height: 630,
-          alt: venue.name,
+          alt: name,
         },
       ],
     },
     twitter: {
       card: "summary_large_image",
-      title: venue.name,
+      title: name,
       description,
       images: [venue.imageUrl || "https://meetmeatthefair.com/og-default.png"],
     },

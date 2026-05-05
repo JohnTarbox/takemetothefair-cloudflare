@@ -1,4 +1,4 @@
-import { formatDateRange } from "@/lib/utils";
+import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
 import { parseJsonArray } from "@/types";
 
 const META_DESCRIPTION_MAX = 160;
@@ -23,10 +23,11 @@ export function buildEventMetaDescription(event: {
   startDate?: Date | string | null;
   endDate?: Date | string | null;
 }): string {
-  const parts: string[] = [event.name];
+  const name = decodeHtmlEntities(event.name);
+  const parts: string[] = [name];
 
   if (event.venue) {
-    parts.push(`at ${event.venue.name}`);
+    parts.push(`at ${decodeHtmlEntities(event.venue.name)}`);
     if (event.venue.city && event.venue.state) {
       parts.push(`in ${event.venue.city}, ${event.venue.state}`);
     }
@@ -39,7 +40,7 @@ export function buildEventMetaDescription(event: {
 
   let base = parts.join(" ");
 
-  const desc = event.description?.trim() || "";
+  const desc = decodeHtmlEntities(event.description?.trim() || "");
   if (desc.length >= META_DESCRIPTION_MIN_USEFUL && base.length < 120) {
     const remaining = 155 - base.length - 2;
     if (remaining > 20) {
@@ -50,7 +51,7 @@ export function buildEventMetaDescription(event: {
   // Structured fallback when the venue/date base is sparse and the DB
   // description didn't fill it out — pull a category hint so each event still
   // gets a unique meta description rather than identical boilerplate.
-  if (base.length < META_DESCRIPTION_MIN_USEFUL + event.name.length) {
+  if (base.length < META_DESCRIPTION_MIN_USEFUL + name.length) {
     const categories = parseJsonArray(event.categories);
     const primaryCategory = categories[0];
     if (primaryCategory) {
@@ -74,10 +75,11 @@ export function buildVenueMetaDescription(venue: {
   amenities?: string | null;
   capacity?: number | null;
 }): string {
+  const name = decodeHtmlEntities(venue.name);
   const location = venue.city && venue.state ? ` in ${venue.city}, ${venue.state}` : "";
-  const base = `${venue.name}${location}`;
+  const base = `${name}${location}`;
 
-  const desc = venue.description?.trim() || "";
+  const desc = decodeHtmlEntities(venue.description?.trim() || "");
   if (desc.length >= META_DESCRIPTION_MIN_USEFUL) {
     const remaining = 155 - base.length - 2;
     if (remaining > 20) {
@@ -109,11 +111,10 @@ export function buildVendorMetaDescription(vendor: {
   city?: string | null;
   state?: string | null;
 }): string {
-  const base = vendor.vendorType
-    ? `${vendor.businessName} — ${vendor.vendorType}`
-    : vendor.businessName;
+  const businessName = decodeHtmlEntities(vendor.businessName);
+  const base = vendor.vendorType ? `${businessName} — ${vendor.vendorType}` : businessName;
 
-  const desc = vendor.description?.trim() || "";
+  const desc = decodeHtmlEntities(vendor.description?.trim() || "");
   if (desc.length >= META_DESCRIPTION_MIN_USEFUL) {
     const remaining = 155 - base.length - 2;
     if (remaining > 20) {
