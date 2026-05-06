@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Fraunces, Inter } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 import { Providers } from "@/components/layout/providers";
 import { Header } from "@/components/layout/header";
@@ -79,28 +78,37 @@ export default function RootLayout({
         </Providers>
       </body>
       {/*
-        GA4 install. Direct <Script> tags from next/script are required —
-        @next/third-parties/google's <GoogleAnalytics> emits only a
-        <link rel="preload"> in SSR HTML and waits for client-side hydration
-        to inject the real script. That works for typical CSR but breaks for
-        any SSR-traffic measurement and silently degrades for users who
-        load the page with JS disabled / interrupted.
-        Two scripts: loader (gtag.js) + inline init (window.dataLayer +
-        gtag('config')). Both strategy="afterInteractive" so they don't
-        block hydration.
+        GA4 install — plain <script> elements, NOT next/script's <Script>.
+        Next.js App Router puts <Script strategy="afterInteractive"> content
+        into the RSC payload (escaped string) and injects it client-side,
+        which means: (a) the loader src never appears as a literal <script>
+        tag in SSR HTML, (b) the inline init renders only as escaped JSON,
+        not executable JavaScript. Same problem as @next/third-parties's
+        <GoogleAnalytics> — see PR #107 / #108 for the iteration.
+        Plain <script> in JSX renders directly to SSR HTML (same pattern
+        the CF Insights beacon below has used since day one). `async` lets
+        the browser parse the rest of the document while gtag.js loads.
+
+        XSS-safety: the inline init's content is built from
+        process.env.NEXT_PUBLIC_GA_ID, a build-time env var sourced from a
+        GitHub Actions secret. It is NOT user-controllable runtime input —
+        no sanitizer needed. The G- value is also a public, low-entropy
+        identifier (it ships to every browser anyway).
       */}
       {process.env.NEXT_PUBLIC_GA_ID && (
         <>
-          <Script
+          <script
+            async
             src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
-            strategy="afterInteractive"
           />
-          <Script id="ga-init" strategy="afterInteractive">
-            {`window.dataLayer = window.dataLayer || [];
+          <script
+            dangerouslySetInnerHTML={{
+              __html: `window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
 gtag('js', new Date());
-gtag('config', '${process.env.NEXT_PUBLIC_GA_ID}');`}
-          </Script>
+gtag('config', '${process.env.NEXT_PUBLIC_GA_ID}');`,
+            }}
+          />
         </>
       )}
       {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
