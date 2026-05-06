@@ -745,6 +745,200 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  // ── upload_event_image ─────────────────────────────────────────
+  // Bulk image enrichment: fetch a publicly-accessible image URL, forward
+  // to the main app's R2-backed upload endpoint, and persist the resulting
+  // CDN URL on the event. Mirrors the (admin-only) vendor logo upload route
+  // but goes through the X-Internal-Key auth path because MCP doesn't have
+  // an admin session cookie.
+  //
+  // Workflow target: the recommendations panel currently flags ~89% of
+  // events as missing imagery. Until this tool existed, every image had to
+  // be hosted externally first (Imgur, organizer site, Facebook, etc.) —
+  // the analyst's 2026-05-06 memo flagged that as the bottleneck. Now an
+  // organizer's image URL goes straight to cdn.meetmeatthefair.com.
+  server.tool(
+    "upload_event_image",
+    "Fetch an image from a public URL and store it on cdn.meetmeatthefair.com, then set the event's image_url. Returns the new CDN URL. Max 5MB; allowed types: jpg, png, webp, svg. Use this instead of update_event(image_url=...) when the source image isn't on a stable host (e.g. Facebook, organizer sites that change paths). Admin only.",
+    {
+      event_id: z.string().describe("Event ID (UUID) to attach the image to."),
+      image_url: z
+        .string()
+        .url()
+        .describe(
+          "Publicly fetchable URL of the source image. The MCP server fetches this URL, validates the content type and size, then uploads the bytes to R2."
+        ),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "upload_event_image requires MAIN_APP_URL and INTERNAL_API_KEY to be configured on the MCP Worker.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Verify the event exists upfront — saves a round trip + an R2 put if
+      // the caller mistyped the ID.
+      const [eventRow] = await db
+        .select({ id: events.id })
+        .from(events)
+        .where(eq(events.id, params.event_id))
+        .limit(1);
+      if (!eventRow) {
+        return {
+          content: [{ type: "text", text: `Event not found: ${params.event_id}` }],
+          isError: true,
+        };
+      }
+
+      // Fetch the source image. Cap timeout at 15s — Workers have a 30s
+      // budget total; 15s for the fetch + headroom for the multipart POST
+      // to the main app + the main app's R2 put fits comfortably.
+      let imageResponse: Response;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15_000);
+        imageResponse = await fetch(params.image_url, {
+          // Some CDN hosts (Facebook, image-proxy services) reject the
+          // default User-Agent; setting a plausible one materially improves
+          // hit rate without any additional auth.
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; MMATFBot/1.0)" },
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to fetch source image: ${err instanceof Error ? err.message : "unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (!imageResponse.ok) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Source image fetch returned HTTP ${imageResponse.status} — verify the URL is publicly accessible.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const contentType = imageResponse.headers.get("Content-Type") ?? "application/octet-stream";
+      const bytes = await imageResponse.arrayBuffer();
+      // Mirror the main-app endpoint's 5MB cap so we surface a clearer error
+      // here rather than letting the multipart POST fail with HTTP 400.
+      if (bytes.byteLength > 5 * 1024 * 1024) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Source image is ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB — max 5 MB. Resize or pick a smaller variant.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Forward as multipart to the main app endpoint. The main app's
+      // /api/admin/events/[id]/upload-image handler validates content type,
+      // puts to R2, updates events.image_url, and returns the CDN URL.
+      const filename = (() => {
+        // Pick a sensible filename for the CDN customMetadata.originalName
+        // field. Helps when debugging "where did this image come from".
+        try {
+          const u = new URL(params.image_url);
+          const last = u.pathname.split("/").filter(Boolean).pop() ?? "image";
+          return last.length > 100 ? "source-image" : last;
+        } catch {
+          return "source-image";
+        }
+      })();
+      const blob = new Blob([bytes], { type: contentType });
+      const formData = new FormData();
+      formData.append("file", blob, filename);
+
+      let uploadResponse: Response;
+      try {
+        uploadResponse = await fetch(
+          `${env.MAIN_APP_URL}/api/admin/events/${params.event_id}/upload-image`,
+          {
+            method: "POST",
+            headers: {
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+              // No Content-Type header — fetch sets it (with boundary) when
+              // body is FormData.
+            },
+            body: formData,
+          }
+        );
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Upload to main app failed: ${err instanceof Error ? err.message : "unknown error"}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const uploadResult = (await uploadResponse.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      if (!uploadResponse.ok) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Upload failed (${uploadResponse.status}): ${
+                typeof uploadResult.error === "string" ? uploadResult.error : "unknown"
+              }`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Recompute completeness on the MCP side too — the main app already
+      // did this, but the MCP enrichment log is the source of truth for the
+      // /admin/analytics enrichment page.
+      await logEnrichment(db, {
+        targetType: "event",
+        targetId: params.event_id,
+        source: "manual_admin",
+        status: "success",
+        fieldsChanged: ["image_url"],
+        actorUserId: auth.userId,
+        notes: `MCP upload_event_image from ${params.image_url}`,
+      });
+
+      return {
+        content: [
+          jsonContent({
+            event_id: params.event_id,
+            url: uploadResult.url,
+            key: uploadResult.key,
+            source_url: params.image_url,
+            bytes: bytes.byteLength,
+          }),
+        ],
+      };
+    }
+  );
+
   // ── list_event_vendors_admin ───────────────────────────────────
   server.tool(
     "list_event_vendors_admin",
