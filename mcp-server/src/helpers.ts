@@ -7,6 +7,8 @@ import { formatDateOnly as canonicalFormatDateOnly } from "@takemetothefair/date
 // `import { ... } from "../helpers.js"` call sites in MCP tools keep working.
 export {
   decodeHtmlEntities,
+  stripToolCallMarkup,
+  sanitizeProse,
   createSlug,
   dollarsToCents,
   formatPrice,

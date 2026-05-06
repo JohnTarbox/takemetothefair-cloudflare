@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
-import { parseJsonArray, formatDate, jsonContent, decodeHtmlEntities } from "../helpers.js";
+import { parseJsonArray, formatDate, jsonContent, sanitizeProse } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -21,16 +21,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     "create_blog_post",
     "Create a new blog post. Body should be Markdown. Posts default to DRAFT status unless explicitly published.",
     {
-      title: z.string().min(1).max(200).transform(decodeHtmlEntities).describe("Post title"),
-      body: z
-        .string()
-        .min(1)
-        .transform(decodeHtmlEntities)
-        .describe("Post body in Markdown format"),
+      title: z.string().min(1).max(200).transform(sanitizeProse).describe("Post title"),
+      body: z.string().min(1).transform(sanitizeProse).describe("Post body in Markdown format"),
       excerpt: z
         .string()
         .max(500)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Short excerpt/summary"),
       tags: z.array(z.string()).optional().describe("Array of tag strings"),
@@ -249,23 +245,17 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
     "Update an existing blog post by slug. Only provided fields are changed. Body should be Markdown.",
     {
       slug: z.string().min(1).describe("Current slug of the post to update"),
-      title: z
-        .string()
-        .min(1)
-        .max(200)
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("New title"),
+      title: z.string().min(1).max(200).transform(sanitizeProse).optional().describe("New title"),
       body: z
         .string()
         .min(1)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("New body in Markdown format"),
       excerpt: z
         .string()
         .max(500)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("New excerpt/summary"),
       tags: z.array(z.string()).optional().describe("New tags array (replaces existing)"),

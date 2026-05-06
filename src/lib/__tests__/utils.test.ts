@@ -114,10 +114,11 @@ describe("formatDateRange", () => {
 
 describe("formatPrice", () => {
   // Inputs are integer CENTS (post-0044). $10 = 1000 cents, $10.50 = 1050.
-  it('returns "Free" when no prices provided', () => {
-    expect(formatPrice()).toBe("Free");
-    expect(formatPrice(null, null)).toBe("Free");
-    expect(formatPrice(undefined, undefined)).toBe("Free");
+  it('returns "Price TBD" when no prices are set (distinct from explicitly $0)', () => {
+    expect(formatPrice()).toBe("Price TBD");
+    expect(formatPrice(null, null)).toBe("Price TBD");
+    expect(formatPrice(undefined, undefined)).toBe("Price TBD");
+    expect(formatPrice(null, undefined)).toBe("Price TBD");
   });
 
   it("returns single price when min equals max", () => {

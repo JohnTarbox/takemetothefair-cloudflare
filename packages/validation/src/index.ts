@@ -14,7 +14,7 @@ import {
   INDOOR_OUTDOOR,
   EVENT_SCALE,
 } from "@takemetothefair/constants";
-import { decodeHtmlEntities } from "@takemetothefair/utils";
+import { sanitizeProse } from "@takemetothefair/utils";
 import { parseDateOnly } from "@takemetothefair/datetime";
 
 /** Length and format limits used across input validators. App-only
@@ -39,11 +39,11 @@ const nameSchema = z
   .string()
   .min(VALIDATION.NAME_MIN_LENGTH)
   .max(VALIDATION.NAME_MAX_LENGTH)
-  .transform(decodeHtmlEntities);
+  .transform(sanitizeProse);
 const descriptionSchema = z
   .string()
   .max(VALIDATION.DESCRIPTION_MAX_LENGTH)
-  .transform(decodeHtmlEntities)
+  .transform(sanitizeProse)
   .optional()
   .nullable();
 const urlSchema = z
