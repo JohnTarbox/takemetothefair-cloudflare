@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, venues, promoters, eventVendors, vendors, eventDays } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  promoters,
+  eventVendors,
+  vendors,
+  eventDays,
+  eventSlugHistory,
+} from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
 import { createSlug, computePublicDates } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
@@ -231,6 +239,31 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         );
       }
       throw err;
+    }
+
+    // Record slug rename in event_slug_history so the middleware 301-redirects
+    // the old URL to the new one (mirrors the vendor_slug_history pattern from
+    // drizzle/0038). Only fires when the slug actually changed; a same-name
+    // edit that produces the same slug is a no-op above and skipped here.
+    if (typeof updateData.slug === "string" && updateData.slug !== currentEvent.slug) {
+      try {
+        await db.insert(eventSlugHistory).values({
+          eventId: id,
+          oldSlug: currentEvent.slug,
+          newSlug: updateData.slug,
+          changedAt: new Date(),
+          changedBy: session.user.id,
+        });
+      } catch (err) {
+        // Non-fatal — the rename succeeded, the redirect is just missing.
+        // Log so the gap is visible in wrangler tail.
+        await logError(db, {
+          message: "event-slug-rename: failed to write history row",
+          error: err,
+          source: "admin/events/[id]:PATCH",
+          context: { eventId: id, oldSlug: currentEvent.slug, newSlug: updateData.slug },
+        });
+      }
     }
 
     await recomputeEventCompleteness(db, id);

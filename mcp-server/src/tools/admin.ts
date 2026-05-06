@@ -10,6 +10,7 @@ import {
   users,
   eventDays,
   vendorSlugHistory,
+  eventSlugHistory,
   adminActions,
 } from "../schema.js";
 import {
@@ -626,6 +627,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           fieldsChanged: requestedFields,
           notes: "MCP update_event",
         });
+
+        // Record slug rename in event_slug_history so the main app's
+        // middleware 301-redirects the old URL. Mirrors the admin route at
+        // src/app/api/admin/events/[id]/route.ts (drizzle/0061). Non-fatal
+        // on insert error — the rename has already succeeded above.
+        if (typeof updates.slug === "string" && updates.slug !== event.slug) {
+          try {
+            await db.insert(eventSlugHistory).values({
+              eventId: event.id,
+              oldSlug: event.slug,
+              newSlug: updates.slug,
+              changedAt: new Date(),
+              changedBy: auth.userId,
+            });
+          } catch (err) {
+            console.error(
+              `[MCP/update_event] failed to write event_slug_history row for ${event.id} (${event.slug} → ${updates.slug}):`,
+              err
+            );
+          }
+        }
       }
 
       // IndexNow: ping if a material field changed on an already-public event.

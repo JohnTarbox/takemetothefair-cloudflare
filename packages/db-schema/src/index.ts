@@ -301,6 +301,28 @@ export const vendorSlugHistory = sqliteTable(
   })
 );
 
+// Event slug history — mirrors vendorSlugHistory for /events/[slug].
+// drizzle/0061
+export const eventSlugHistory = sqliteTable(
+  "event_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").notNull(),
+    newSlug: text("new_slug").notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => ({
+    oldSlugIdx: index("idx_event_slug_history_old_slug").on(t.oldSlug),
+    eventIdIdx: index("idx_event_slug_history_event_id").on(t.eventId),
+  })
+);
+
 // Admin actions audit log — drizzle/0039.
 // Generic enough for non-vendor actions later; first user is the Enhanced
 // Profile lifecycle (activate / expire_set / auto_expire).
