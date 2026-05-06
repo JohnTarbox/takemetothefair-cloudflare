@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Inter } from "next/font/google";
-import { GoogleAnalytics } from "@next/third-parties/google";
+import Script from "next/script";
 import "./globals.css";
 import { Providers } from "@/components/layout/providers";
 import { Header } from "@/components/layout/header";
@@ -78,7 +78,31 @@ export default function RootLayout({
           <Footer />
         </Providers>
       </body>
-      {process.env.NEXT_PUBLIC_GA_ID && <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID} />}
+      {/*
+        GA4 install. Direct <Script> tags from next/script are required —
+        @next/third-parties/google's <GoogleAnalytics> emits only a
+        <link rel="preload"> in SSR HTML and waits for client-side hydration
+        to inject the real script. That works for typical CSR but breaks for
+        any SSR-traffic measurement and silently degrades for users who
+        load the page with JS disabled / interrupted.
+        Two scripts: loader (gtag.js) + inline init (window.dataLayer +
+        gtag('config')). Both strategy="afterInteractive" so they don't
+        block hydration.
+      */}
+      {process.env.NEXT_PUBLIC_GA_ID && (
+        <>
+          <Script
+            src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
+            strategy="afterInteractive"
+          />
+          <Script id="ga-init" strategy="afterInteractive">
+            {`window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', '${process.env.NEXT_PUBLIC_GA_ID}');`}
+          </Script>
+        </>
+      )}
       {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
         <script
           defer
