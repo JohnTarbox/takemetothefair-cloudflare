@@ -105,8 +105,11 @@ export default function RootLayout({
             dangerouslySetInnerHTML={{
               __html: `window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
-gtag('js', new Date());
-gtag('config', '${process.env.NEXT_PUBLIC_GA_ID}');`,
+if (!window.__ga4Inited) {
+  window.__ga4Inited = true;
+  gtag('js', new Date());
+  gtag('config', '${process.env.NEXT_PUBLIC_GA_ID}');
+}`,
             }}
           />
         </>
