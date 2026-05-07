@@ -310,7 +310,7 @@ const STOP_WORDS = new Set(["the", "a", "an", "of", "at", "in", "and", "for", "t
 const YEAR_RE = /^(19|20)\d{2}$/;
 const ORDINAL_RE = /^\d+(st|nd|rd|th)$/i;
 
-function tokenize(text: string): string[] {
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")

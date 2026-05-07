@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, gte, lte, like, inArray, sql } from "drizzle-orm";
+import { eq, and, or, gte, lte, like, inArray, sql } from "drizzle-orm";
 import { events, venues, vendors, eventVendors, eventDays, promoters } from "../schema.js";
 import {
   parseJsonArray,
@@ -8,6 +8,7 @@ import {
   formatPrice,
   escapeLike,
   fuzzyTokenScore,
+  tokenize,
   PUBLIC_EVENT_STATUSES,
   PUBLIC_VENDOR_STATUSES,
   jsonContent,
@@ -59,6 +60,30 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       if (params.query && !params.fuzzy) {
         conditions.push(like(events.name, `%${escapeLike(params.query)}%`));
+      } else if (params.query && params.fuzzy) {
+        // Fuzzy mode: pre-filter the SQL candidate set to rows whose name
+        // contains AT LEAST ONE non-stopword query token. Without this gate,
+        // the JS-side scorer only sees the first 200 (sqlLimit) rows of the
+        // PUBLIC_EVENT_STATUSES set in arbitrary scan order — a matching event
+        // past row 200 is silently invisible. The 2026-05-06 memo documented 7
+        // false negatives caused by this exact gap (e.g.
+        // search({query:"Yankee Homecoming",fuzzy:true}) returning 0 results
+        // even though "Yankee Homecoming 2026" exists).
+        //
+        // Tokens are extracted with the same rules as fuzzyTokenScore (stop
+        // words, year suffixes, ordinals stripped) so the SQL filter and JS
+        // scorer agree on what a "token" is. If every word in the query is a
+        // stop word / year / ordinal, no SQL filter is applied — the JS
+        // scorer would return 0 matches anyway, so the over-fetch slice
+        // doesn't hurt.
+        const tokens = tokenize(params.query);
+        if (tokens.length > 0) {
+          const tokenLikes = tokens.map((t) => like(events.name, `%${escapeLike(t)}%`));
+          // OR — match any token. The JS scorer then ranks by fraction of
+          // tokens that match.
+          const fuzzyOr = tokenLikes.length === 1 ? tokenLikes[0] : or(...tokenLikes);
+          if (fuzzyOr) conditions.push(fuzzyOr);
+        }
       }
 
       if (params.start_after) {
