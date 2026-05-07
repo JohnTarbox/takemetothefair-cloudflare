@@ -6,7 +6,7 @@ import {
   parseJsonArray,
   formatDateRange,
   jsonContent,
-  decodeHtmlEntities,
+  sanitizeProse,
   publicUrlFor,
   triggerIndexNow,
   recomputeVendorCompleteness,
@@ -77,18 +77,14 @@ export function registerVendorTools(
     "update_vendor_profile",
     "Update your vendor profile fields. Only provided fields are updated.",
     {
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Business description"),
+      description: z.string().transform(sanitizeProse).optional().describe("Business description"),
       vendor_type: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Type of vendor (e.g., Food, Crafts)"),
       products: z
-        .array(z.string().transform(decodeHtmlEntities))
+        .array(z.string().transform(sanitizeProse))
         .optional()
         .describe("List of products/services"),
       website: z.string().optional().describe("Website URL"),
@@ -235,7 +231,7 @@ export function registerVendorTools(
       event_slug: z.string().describe("Slug of the event to apply to"),
       booth_info: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Booth/space requirements or notes"),
     },
@@ -553,15 +549,11 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
     "suggest_event",
     "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status.",
     {
-      name: z.string().transform(decodeHtmlEntities).describe("Event name"),
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Event description"),
+      name: z.string().transform(sanitizeProse).describe("Event name"),
+      description: z.string().transform(sanitizeProse).optional().describe("Event description"),
       start_date: z.string().optional().describe("Start date (YYYY-MM-DD)"),
       end_date: z.string().optional().describe("End date (YYYY-MM-DD)"),
-      venue_name: z.string().transform(decodeHtmlEntities).optional().describe("Venue name"),
+      venue_name: z.string().transform(sanitizeProse).optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
       venue_state: z.string().optional().describe("Venue state (2-letter code)"),
       ticket_url: z.string().optional().describe("URL to purchase tickets"),

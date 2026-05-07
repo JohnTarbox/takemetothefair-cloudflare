@@ -19,7 +19,7 @@ import {
   jsonContent,
   createSlug,
   parseLocation,
-  decodeHtmlEntities,
+  sanitizeProse,
   VALID_TRANSITIONS,
   EVENT_STATUS_ENUM,
   VENDOR_STATUS_ENUM,
@@ -315,14 +315,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       event_id: z.string().describe("Event ID"),
       name: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Event name (also regenerates slug)"),
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Event description"),
+      description: z.string().transform(sanitizeProse).optional().describe("Event description"),
       start_date: z.string().optional().describe("Start date as ISO 8601 string"),
       end_date: z.string().optional().describe("End date as ISO 8601 string"),
       dates_confirmed: z.boolean().optional().describe("Whether dates are confirmed"),
@@ -375,7 +371,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       sync_enabled: z.boolean().optional().describe("Whether automated sync is enabled"),
       venue_name: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Update linked venue's name (convenience shortcut)"),
       venue_address: z.string().optional().describe("Update linked venue's street address"),
@@ -842,22 +838,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .string()
         .min(1)
         .max(200)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .describe("Business/organization name"),
       type: z
         .string()
         .max(100)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Vendor category (e.g. 'Home Improvement', 'Food', 'Crafts')"),
       description: z
         .string()
         .max(500)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Business description"),
       products: z
-        .array(z.string().transform(decodeHtmlEntities))
+        .array(z.string().transform(sanitizeProse))
         .optional()
         .describe("List of products/services offered"),
       location: z.string().optional().describe("City and state, e.g. 'Portland, ME'"),
@@ -1234,7 +1230,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       venue_id: z.string().describe("Venue ID (UUID)"),
       name: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Venue name (also regenerates slug)"),
       address: z.string().optional().describe("Street address"),
@@ -1243,11 +1239,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       zip: z.string().optional().describe("ZIP code"),
       latitude: z.number().optional().describe("Latitude coordinate"),
       longitude: z.number().optional().describe("Longitude coordinate"),
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Venue description"),
+      description: z.string().transform(sanitizeProse).optional().describe("Venue description"),
       capacity: z.number().int().optional().describe("Venue capacity"),
       website: z.string().optional().describe("Website URL"),
       contact_email: z.string().optional().describe("Contact email"),
@@ -1412,7 +1404,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     "create_venue",
     "Create a new venue record. Returns the venue ID for use with update_event. Admin only.",
     {
-      name: z.string().min(1).max(200).transform(decodeHtmlEntities).describe("Venue name"),
+      name: z.string().min(1).max(200).transform(sanitizeProse).describe("Venue name"),
       address: z.string().min(1).describe("Street address"),
       city: z.string().min(1).describe("City"),
       state: z.string().min(1).max(2).describe("State (2-letter code)"),
@@ -1421,11 +1413,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       longitude: z.number().optional().describe("Longitude coordinate"),
       capacity: z.number().int().optional().describe("Venue capacity"),
       website: z.string().optional().describe("Website URL"),
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Venue description"),
+      description: z.string().transform(sanitizeProse).optional().describe("Venue description"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       image_url: z.string().optional().describe("Venue image URL"),
@@ -1738,17 +1726,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       vendor_id: z.string().describe("Vendor ID (UUID)"),
       business_name: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Business name (also regenerates slug)"),
-      vendor_type: z.string().transform(decodeHtmlEntities).optional().describe("Vendor category"),
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Business description"),
+      vendor_type: z.string().transform(sanitizeProse).optional().describe("Vendor category"),
+      description: z.string().transform(sanitizeProse).optional().describe("Business description"),
       products: z
-        .array(z.string().transform(decodeHtmlEntities))
+        .array(z.string().transform(sanitizeProse))
         .optional()
         .describe("Products/services list"),
       website: z.string().optional().describe("Website URL"),
@@ -1781,8 +1765,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .array(
           z.object({
             url: z.string(),
-            alt: z.string().transform(decodeHtmlEntities),
-            caption: z.string().transform(decodeHtmlEntities).optional(),
+            alt: z.string().transform(sanitizeProse),
+            caption: z.string().transform(sanitizeProse).optional(),
           })
         )
         .max(2)
@@ -2164,13 +2148,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .string()
         .min(1)
         .max(200)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .describe("Company/organization name"),
       website: z.string().optional().describe("Promoter website URL"),
       description: z
         .string()
         .max(500)
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Promoter description"),
       city: z.string().optional().describe("City"),
@@ -2285,14 +2269,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       promoter_id: z.string().describe("Promoter ID (UUID)"),
       name: z
         .string()
-        .transform(decodeHtmlEntities)
+        .transform(sanitizeProse)
         .optional()
         .describe("Company name (also regenerates slug)"),
-      description: z
-        .string()
-        .transform(decodeHtmlEntities)
-        .optional()
-        .describe("Promoter description"),
+      description: z.string().transform(sanitizeProse).optional().describe("Promoter description"),
       website: z.string().optional().describe("Website URL"),
       city: z.string().optional().describe("City"),
       state: z.string().optional().describe("State (2-letter code)"),

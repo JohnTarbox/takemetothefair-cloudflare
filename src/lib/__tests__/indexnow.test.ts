@@ -256,4 +256,81 @@ describe("pingIndexNow", () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
   });
+
+  // Bing 429 burst protection — covers the duplicate-vendor cleanup case
+  // documented 2026-05-05 (4 parallel delete_vendor → 3 of 4 hit 429).
+  describe("429 backoff + retry", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("retries on 429 and records success when retry succeeds (single-URL GET)", async () => {
+      const db = makeDb();
+      fetchSpy.mockResolvedValueOnce(new Response("Too Many Requests", { status: 429 }));
+      fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
+
+      await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const row = db.values.mock.calls[0][0];
+      expect(row.status).toBe("success");
+      expect(row.httpStatus).toBe(200);
+    });
+
+    it("retries on 429 for multi-URL POST batch", async () => {
+      const db = makeDb();
+      fetchSpy.mockResolvedValueOnce(new Response("", { status: 429 }));
+      fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
+      const urls = [`https://${SITE_HOSTNAME}/events/a`, `https://${SITE_HOSTNAME}/events/b`];
+
+      await pingIndexNow(db as never, urls, { INDEXNOW_KEY: "k" }, "test");
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const row = db.values.mock.calls[0][0];
+      expect(row.status).toBe("success");
+    });
+
+    it("gives up after 3 retries and records the final 429 as failure", async () => {
+      const db = makeDb();
+      // Initial + 3 retries = 4 total fetches, all 429.
+      fetchSpy.mockResolvedValue(new Response("rate limited", { status: 429 }));
+
+      await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      const row = db.values.mock.calls[0][0];
+      expect(row.status).toBe("failure");
+      expect(row.httpStatus).toBe(429);
+    });
+
+    it("does not retry on non-429 failures (4xx/5xx pass through)", async () => {
+      const db = makeDb();
+      fetchSpy.mockResolvedValueOnce(new Response("Bad request body", { status: 422 }));
+
+      await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const row = db.values.mock.calls[0][0];
+      expect(row.status).toBe("failure");
+      expect(row.httpStatus).toBe(422);
+    });
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   decodeHtmlEntities,
+  stripToolCallMarkup,
   createSlug,
   createSlugFromName,
   dollarsToCents,
@@ -40,6 +41,43 @@ describe("decodeHtmlEntities", () => {
 
   it("returns plain text unchanged", () => {
     expect(decodeHtmlEntities("plain text no entities")).toBe("plain text no entities");
+  });
+});
+
+describe("stripToolCallMarkup", () => {
+  const open = "<";
+  const close = ">";
+  const slash = "/";
+
+  it("strips the Laconia regression (closing description + invoke envelope)", () => {
+    const polluted = `Pumpkin festival in Laconia.\n${open}${slash}description${close}\n${open}${slash}invoke${close}`;
+    expect(stripToolCallMarkup(polluted)).toBe("Pumpkin festival in Laconia.");
+  });
+
+  it("strips function_calls and parameter wrappers", () => {
+    const polluted = `Body${open}${slash}function_calls${close}${open}parameter name="x"${close}`;
+    expect(stripToolCallMarkup(polluted)).toBe("Body");
+  });
+
+  it("strips antml: namespaced tags (Anthropic harness)", () => {
+    const polluted = `Body${open}antml:invoke name="x"${close}${open}${slash}antml:parameter${close}`;
+    expect(stripToolCallMarkup(polluted)).toBe("Body");
+  });
+
+  it("preserves legitimate angle-bracket prose", () => {
+    expect(stripToolCallMarkup("Math: 1 < 2 and 3 > 2")).toBe("Math: 1 < 2 and 3 > 2");
+    expect(stripToolCallMarkup("HTML: <em>fancy</em> <b>bold</b>")).toBe(
+      "HTML: <em>fancy</em> <b>bold</b>"
+    );
+  });
+
+  it("returns empty string unchanged", () => {
+    expect(stripToolCallMarkup("")).toBe("");
+  });
+
+  it("collapses excess blank lines left by stripped tags", () => {
+    const polluted = `Line one.\n\n\n${open}${slash}invoke${close}\n\nLine two.`;
+    expect(stripToolCallMarkup(polluted)).toBe("Line one.\n\nLine two.");
   });
 });
 
@@ -110,10 +148,13 @@ describe("dollarsToCents", () => {
 });
 
 describe("formatPrice", () => {
-  it("renders 'Free' when both bounds are null/zero", () => {
-    expect(formatPrice(null, null)).toBe("Free");
+  it("distinguishes 'Price TBD' (no data) from 'Free' (explicitly $0)", () => {
+    expect(formatPrice(null, null)).toBe("Price TBD");
+    expect(formatPrice(undefined, undefined)).toBe("Price TBD");
+    expect(formatPrice()).toBe("Price TBD");
     expect(formatPrice(0, 0)).toBe("Free");
-    expect(formatPrice(undefined, undefined)).toBe("Free");
+    expect(formatPrice(0, null)).toBe("Free");
+    expect(formatPrice(null, 0)).toBe("Free");
   });
   it("drops .00 for whole-dollar amounts", () => {
     expect(formatPrice(2500, 2500)).toBe("$25");

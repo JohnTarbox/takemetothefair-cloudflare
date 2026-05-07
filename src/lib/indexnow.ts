@@ -25,6 +25,28 @@ const HOST = SITE_HOSTNAME;
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 const MAX_BATCH_SIZE = 10_000;
 
+// Bing's IndexNow endpoint enforces a per-host burst limit (~1 req/sec). When
+// several deletes/updates fire in parallel (e.g. duplicate-vendor cleanup),
+// the slower requests come back 429. Total backoff budget here is ≤ 3.5s
+// per chunk (500 + 1000 + 2000 ms), so we stay well under the Worker 30s cap
+// even when several chunks hit the limit in sequence.
+const RETRY_DELAYS_MS = [500, 1000, 2000];
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchWithRetryOn429(
+  url: string,
+  init: RequestInit & { method?: string }
+): Promise<Response> {
+  let response = await fetch(url, init);
+  for (const delay of RETRY_DELAYS_MS) {
+    if (response.status !== 429) return response;
+    await sleep(delay);
+    response = await fetch(url, init);
+  }
+  return response;
+}
+
 function keyLocation(key: string): string {
   return `https://${HOST}/${key}.txt`;
 }
@@ -141,7 +163,7 @@ export async function pingIndexNow(
         key,
         keyLocation: keyLocation(key),
       });
-      const response = await fetch(`${INDEXNOW_ENDPOINT}?${qs.toString()}`, {
+      const response = await fetchWithRetryOn429(`${INDEXNOW_ENDPOINT}?${qs.toString()}`, {
         method: "GET",
       });
       const body = response.ok ? "" : (await response.text()).slice(0, 200);
@@ -161,7 +183,7 @@ export async function pingIndexNow(
     // Batch up to MAX_BATCH_SIZE per request
     for (let i = 0; i < filtered.length; i += MAX_BATCH_SIZE) {
       const chunk = filtered.slice(i, i + MAX_BATCH_SIZE);
-      const response = await fetch(INDEXNOW_ENDPOINT, {
+      const response = await fetchWithRetryOn429(INDEXNOW_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

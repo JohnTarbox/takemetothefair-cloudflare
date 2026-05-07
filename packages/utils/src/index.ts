@@ -63,6 +63,55 @@ export function decodeHtmlEntities(text: string): string {
 }
 
 /**
+ * Strip stray tool-call envelope markup from free-text user fields.
+ *
+ * When an LLM constructs a tool-call payload, it occasionally hallucinates a
+ * closing envelope tag inside an argument string. The first observed case
+ * (Laconia Pumpkin Festival, 2026-05-05) had a description containing literal
+ * `</description>\n</invoke>` text. We sanitize at the schema boundary so the
+ * tag artifacts never reach storage, regardless of which agent harness is
+ * used.
+ *
+ * Conservative whitelist: strips only the specific tag families known to leak
+ * from agent harnesses (Anthropic `antml:*`, OpenAI/MCP `invoke`/`function_calls`/
+ * `parameter`, plus stray `</description>` and `</function>`). A user writing
+ * "she said <em>amazing</em>" or "1 < 2" passes through unchanged.
+ *
+ * Apply via `.transform(stripToolCallMarkup)` in Zod schemas, AFTER
+ * `decodeHtmlEntities` so encoded variants (`&lt;/invoke&gt;`) decode first.
+ */
+const TOOL_CALL_TAG_PATTERNS: RegExp[] = [
+  /<\/?antml:[a-z_]+(?:\s[^>]*)?>/gi,
+  /<\/?function_calls\s*>/gi,
+  /<\/?invoke(?:\s[^>]*)?>/gi,
+  /<\/?parameter(?:\s[^>]*)?>/gi,
+  /<\/?function(?:\s[^>]*)?>/gi,
+  /<\/description\s*>/gi,
+];
+
+export function stripToolCallMarkup(text: string): string {
+  if (!text) return text;
+  let cleaned = text;
+  for (const pattern of TOOL_CALL_TAG_PATTERNS) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+  // Collapse the whitespace that often surrounds stripped tags (e.g. the
+  // trailing `\n` after `</description>`) so we don't leave weird gaps.
+  cleaned = cleaned.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+  return cleaned.trim();
+}
+
+/**
+ * Composed sanitizer for free-text user input. Use at every Zod schema
+ * boundary that accepts prose (names, descriptions, titles). Decodes HTML
+ * entities first, then strips tool-call envelope artifacts. Both are
+ * idempotent on clean input, so applying this everywhere is safe.
+ */
+export function sanitizeProse(text: string): string {
+  return stripToolCallMarkup(decodeHtmlEntities(text));
+}
+
+/**
  * Canonical slug generator, backed by the `slugify` library. Use for new
  * slugs everywhere — venue, vendor, promoter, blog post slugs.
  *
@@ -130,9 +179,13 @@ export function dollarsToCents(dollars: unknown): number | null {
  * whole-dollar amounts (e.g. "$25" not "$25.00"); renders cents when
  * present ("$10.50").
  *
- * UX contract: a `{min:0, max:10}` pair means "free entry possible up to
- * $10" and renders as "Up to $10", not "$0 - $10". A `{min:0, max:0}` or
- * both-null pair renders as "Free".
+ * UX contract:
+ *   - Both null/undefined → "Price TBD" (caller has no data — distinct from
+ *     "free", since silently displaying a paid event as "Free" is a worse
+ *     failure mode than admitting we don't know).
+ *   - {min:0, max:0} or {min:0, max:null} → "Free" (explicitly free).
+ *   - {min:0, max:10} → "Up to $10" (free entry possible up to $10),
+ *     not "$0 - $10".
  *
  * Separator is " - " (ASCII hyphen-with-spaces) for browser/email/JSON
  * compatibility — narrower than the typographic en-dash but renders
@@ -226,6 +279,9 @@ export function formatPrice(minCents?: number | null, maxCents?: number | null):
     const dollars = cents / 100;
     return dollars % 1 === 0 ? `$${dollars}` : `$${dollars.toFixed(2)}`;
   };
+  // Distinguish "no data" from "explicitly free" — `!0` is truthy, so the
+  // existing falsy-collapse below would otherwise render unset prices as "Free".
+  if (minCents == null && maxCents == null) return "Price TBD";
   const min = !minCents ? null : minCents;
   const max = !maxCents ? null : maxCents;
   if (min == null && max == null) return "Free";
