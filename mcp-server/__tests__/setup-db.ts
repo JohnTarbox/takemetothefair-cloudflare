@@ -116,6 +116,7 @@ const SCHEMA_SQL = `
     walk_ins_allowed INTEGER,
     suggester_email TEXT,
     submitted_by_user_id TEXT,
+    completeness_score INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
   );
@@ -152,6 +153,19 @@ const SCHEMA_SQL = `
     enhanced_profile_expires_at INTEGER,
     gallery_images TEXT NOT NULL DEFAULT '[]',
     featured_priority INTEGER NOT NULL DEFAULT 0,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    claimed_at INTEGER,
+    claimed_by TEXT,
+    view_count INTEGER NOT NULL DEFAULT 0,
+    verified_pro INTEGER NOT NULL DEFAULT 0,
+    verified_pro_at INTEGER,
+    verified_pro_by TEXT,
+    deleted_at INTEGER,
+    redirect_to_vendor_id TEXT,
+    enrichment_source TEXT,
+    enrichment_attempted_at INTEGER,
+    domain_hijacked INTEGER NOT NULL DEFAULT 0,
+    completeness_score INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
   );
@@ -196,6 +210,19 @@ const SCHEMA_SQL = `
     closed INTEGER DEFAULT 0,
     vendor_only INTEGER DEFAULT 0,
     status TEXT
+  );
+
+  CREATE TABLE enrichment_log (
+    id TEXT PRIMARY KEY,
+    target_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attempted_at INTEGER NOT NULL,
+    finished_at INTEGER,
+    fields_changed TEXT,
+    notes TEXT,
+    actor_user_id TEXT
   );
 
   CREATE TABLE url_domain_classifications (
