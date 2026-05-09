@@ -75,6 +75,11 @@ function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const defaultRole = searchParams.get("role") || "USER";
+  // Pre-fill from /vendors/[slug] "Claim this listing" CTA. The register
+  // POST forwards `claimVendorSlug` so the API can transfer ownership of
+  // the placeholder vendor row instead of inserting a duplicate.
+  const prefilledBusinessName = searchParams.get("businessName") || "";
+  const claimVendorSlug = searchParams.get("claim") || "";
 
   const [formData, setFormData] = useState({
     email: "",
@@ -83,7 +88,7 @@ function RegisterForm() {
     name: "",
     role: defaultRole.toUpperCase(),
     companyName: "",
-    businessName: "",
+    businessName: prefilledBusinessName,
   });
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -201,6 +206,7 @@ function RegisterForm() {
           role: formData.role,
           companyName: formData.companyName,
           businessName: formData.businessName,
+          claimVendorSlug: claimVendorSlug || undefined,
           turnstileToken: turnstileToken || undefined,
         }),
       });
@@ -233,9 +239,12 @@ function RegisterForm() {
         trackEvent("sign_up", { category: "conversion", label: "email" });
         // Role-aware first-run: send vendors and promoters to their
         // highest-leverage setup surface instead of a generic dashboard.
+        // Vendors arriving via the public "Claim this listing" CTA get a
+        // claim=<slug> hint so the welcome banner / claim widget can
+        // surface "you've taken ownership of <slug>".
         const firstRunTarget =
           formData.role === "VENDOR"
-            ? "/vendor/profile?welcome=1"
+            ? `/vendor/profile?welcome=1${claimVendorSlug ? `&claim=${encodeURIComponent(claimVendorSlug)}` : ""}`
             : formData.role === "PROMOTER"
               ? "/promoter/events/new?welcome=1"
               : "/dashboard?welcome=1";

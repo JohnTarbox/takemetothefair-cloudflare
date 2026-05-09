@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { createSlug } from "@/lib/utils";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
@@ -21,6 +21,12 @@ const registerSchema = z.object({
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
   companyName: z.string().optional(),
   businessName: z.string().optional(),
+  // Set when the signup originates from the public "Claim this listing"
+  // CTA on /vendors/[slug]. The handler attempts to transfer ownership of
+  // the placeholder vendor row instead of inserting a duplicate. Falls
+  // back to insert if the slug is unknown / already claimed / owned by a
+  // real (non-placeholder) account.
+  claimVendorSlug: z.string().optional(),
   turnstileToken: z.string().optional(), // Turnstile verification token
 });
 
@@ -44,8 +50,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { email, password, name, role, companyName, businessName, turnstileToken } =
-      validation.data;
+    const {
+      email,
+      password,
+      name,
+      role,
+      companyName,
+      businessName,
+      claimVendorSlug,
+      turnstileToken,
+    } = validation.data;
 
     // Verify Turnstile token (required for all registration attempts)
     const turnstileResult = await verifyTurnstileToken(turnstileToken || "", request);
@@ -86,12 +100,58 @@ export async function POST(request: NextRequest) {
     }
 
     if (role === "VENDOR" && businessName) {
-      await db.insert(vendors).values({
-        id: crypto.randomUUID(),
-        userId,
-        businessName,
-        slug: createSlug(businessName),
-      });
+      let claimedExistingRow = false;
+      if (claimVendorSlug) {
+        // Public "Claim this listing" CTA path: attempt to transfer the
+        // placeholder vendor row to the new account instead of inserting
+        // a duplicate. Safe to transfer only if:
+        //   1. Vendor row exists, isn't soft-deleted, and isn't already claimed
+        //   2. Its current userId points to a placeholder account
+        //      (no passwordHash AND no emailVerified) — i.e. nobody else
+        //      has actually logged in as the "owner" yet.
+        const [target] = await db
+          .select({ id: vendors.id, userId: vendors.userId, claimed: vendors.claimed })
+          .from(vendors)
+          .where(and(eq(vendors.slug, claimVendorSlug), isNull(vendors.deletedAt)))
+          .limit(1);
+        if (target && target.claimed === false) {
+          const [existingOwner] = await db
+            .select({
+              passwordHash: users.passwordHash,
+              emailVerified: users.emailVerified,
+            })
+            .from(users)
+            .where(eq(users.id, target.userId))
+            .limit(1);
+          const isPlaceholderOwner =
+            !!existingOwner && !existingOwner.passwordHash && !existingOwner.emailVerified;
+          if (isPlaceholderOwner) {
+            // Race-safe: WHERE claimed = false ensures a concurrent claim
+            // can't double-bind. SQLite/D1 doesn't expose rowsAffected on
+            // .update() through Drizzle, so re-read after the write.
+            await db
+              .update(vendors)
+              .set({ userId })
+              .where(and(eq(vendors.id, target.id), eq(vendors.claimed, false)));
+            const [confirm] = await db
+              .select({ userId: vendors.userId })
+              .from(vendors)
+              .where(eq(vendors.id, target.id))
+              .limit(1);
+            if (confirm?.userId === userId) {
+              claimedExistingRow = true;
+            }
+          }
+        }
+      }
+      if (!claimedExistingRow) {
+        await db.insert(vendors).values({
+          id: crypto.randomUUID(),
+          userId,
+          businessName,
+          slug: createSlug(businessName),
+        });
+      }
     }
 
     // Fire-and-forget email verification. If the send fails (e.g. no email

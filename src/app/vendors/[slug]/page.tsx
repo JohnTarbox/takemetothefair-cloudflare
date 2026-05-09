@@ -36,6 +36,7 @@ import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { VendorTierBadges } from "@/components/vendors/VendorTierBadges";
 import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
+import { ClaimListingCTA } from "@/components/vendors/ClaimListingCTA";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
@@ -540,6 +541,10 @@ export default async function VendorDetailPage({ params }: Props) {
                   </Link>
                 </CardContent>
               </Card>
+            )}
+
+            {!vendor.claimed && !isOwner && !isAdmin && (
+              <ClaimListingCTA businessName={vendor.businessName} vendorSlug={vendor.slug} />
             )}
 
             <Card>
