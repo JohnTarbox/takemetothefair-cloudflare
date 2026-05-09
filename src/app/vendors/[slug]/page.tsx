@@ -151,7 +151,19 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
-  const indexable = isVendorIndexable(vendor);
+  // The §6.6 SEO gate considers event-venue geo as a fallback geographic
+  // anchor when the vendor has neither own city+state nor an own address.
+  // getVendor() above already pulled the joined venues, so we count locally
+  // rather than running a second D1 query.
+  const eventAssociationCount = vendor.eventVendors.length;
+  const eventVenueGeoCount = vendor.eventVendors.filter(
+    (ev) => !!ev.event.venue?.city?.trim() && !!ev.event.venue?.state?.trim()
+  ).length;
+  const indexable = isVendorIndexable({
+    ...vendor,
+    eventAssociationCount,
+    eventVenueGeoCount,
+  });
 
   return {
     title,

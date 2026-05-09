@@ -3,7 +3,7 @@ import { computeVendorCompleteness, type VendorCompletenessInput } from "../vend
 
 const FULL: VendorCompletenessInput = {
   logoUrl: "https://example.com/logo.png",
-  description: "Hand-crafted goods, made locally with care.",
+  description: "Hand-crafted goods, made locally with care.", // 44 chars (≥30)
   products: '["Mugs","Plates"]',
   contactEmail: "vendor@example.com",
   contactPhone: null,
@@ -30,7 +30,7 @@ describe("computeVendorCompleteness — 5-field bar (legacy semantics preserved)
     expect(r.complete).toBe(false);
   });
 
-  it("description must be ≥20 chars to count", () => {
+  it("description must be ≥20 chars to count for the application bar", () => {
     const r = computeVendorCompleteness({ ...FULL, description: "short" });
     expect(r.missing).toContain("description");
   });
@@ -45,7 +45,7 @@ describe("computeVendorCompleteness — 5-field bar (legacy semantics preserved)
   });
 });
 
-describe("computeVendorCompleteness — tier derivation", () => {
+describe("computeVendorCompleteness — tier derivation (§6.6 SEO gate)", () => {
   it("returns ENHANCED tier when enhancedProfile=true", () => {
     const r = computeVendorCompleteness({ ...FULL, enhancedProfile: true });
     expect(r.currentTier).toBe("ENHANCED");
@@ -54,7 +54,7 @@ describe("computeVendorCompleteness — tier derivation", () => {
     expect(r.nextTierAction).toBeNull();
   });
 
-  it("STANDARD tier with all criteria; next tier is ENHANCED via upgrade", () => {
+  it("STANDARD tier with description+geo; next tier is ENHANCED via upgrade", () => {
     const r = computeVendorCompleteness(FULL);
     expect(r.currentTier).toBe("STANDARD");
     expect(r.nextTier).toBe("ENHANCED");
@@ -62,19 +62,28 @@ describe("computeVendorCompleteness — tier derivation", () => {
     expect(r.nextTierAction).toBe("upgrade_to_enhanced");
   });
 
-  it("STUB tier (event assoc but missing description+location+signal); gap lists all 3", () => {
+  it("STUB when description+location but description <30 chars", () => {
+    const r = computeVendorCompleteness({
+      ...FULL,
+      description: "Too short to rank.", // 18 chars
+      eventAssociationCount: 1,
+    });
+    expect(r.currentTier).toBe("STUB");
+    expect(r.tierGap).toContain("description");
+  });
+
+  it("STUB tier (event assoc but no description+no geo); gap lists description+geo", () => {
     const r = computeVendorCompleteness({
       ...FULL,
       description: null,
       city: null,
       state: null,
-      website: null,
-      socialLinks: null,
+      address: null,
       eventAssociationCount: 1,
     });
     expect(r.currentTier).toBe("STUB");
     expect(r.nextTier).toBe("STANDARD");
-    expect(r.tierGap).toEqual(["description", "city and state", "website or social link"]);
+    expect(r.tierGap).toEqual(["description", "city and state"]);
     expect(r.nextTierAction).toBe("fill_fields");
   });
 
@@ -84,56 +93,62 @@ describe("computeVendorCompleteness — tier derivation", () => {
       description: null,
       city: null,
       state: null,
-      website: null,
-      socialLinks: null,
+      address: null,
       eventAssociationCount: 0,
     });
     expect(r.currentTier).toBe("MENTION");
     expect(r.nextTier).toBe("STANDARD");
-    expect(r.tierGap).toEqual(["description", "city and state", "website or social link"]);
+    expect(r.tierGap).toEqual(["description", "city and state"]);
   });
 
-  it("STUB with description only — gap lists location + external signal", () => {
+  it("STANDARD when description ≥30 chars + geo, no website/socialLinks (external signal dropped)", () => {
+    const r = computeVendorCompleteness({
+      ...FULL,
+      website: null,
+      socialLinks: null,
+      eventAssociationCount: 2,
+    });
+    expect(r.currentTier).toBe("STANDARD");
+    expect(r.tierGap).toEqual([]);
+  });
+
+  it("STANDARD when geo comes via own address (no city/state)", () => {
     const r = computeVendorCompleteness({
       ...FULL,
       city: null,
       state: null,
-      website: null,
-      socialLinks: null,
-      eventAssociationCount: 2,
-    });
-    expect(r.currentTier).toBe("STUB");
-    expect(r.tierGap).toEqual(["city and state", "website or social link"]);
-  });
-
-  it("STUB with description + location but no external signal", () => {
-    const r = computeVendorCompleteness({
-      ...FULL,
-      website: null,
-      socialLinks: null,
-      eventAssociationCount: 2,
-    });
-    expect(r.currentTier).toBe("STUB");
-    expect(r.tierGap).toEqual(["website or social link"]);
-  });
-
-  it("social_links string with content satisfies external signal", () => {
-    const r = computeVendorCompleteness({
-      ...FULL,
-      website: null,
-      socialLinks: '{"instagram":"https://instagram.com/foo"}',
+      address: "100 Main St, Suite 200",
     });
     expect(r.currentTier).toBe("STANDARD");
   });
 
-  it("social_links empty object string does NOT satisfy external signal", () => {
+  it("STANDARD when geo comes via event-venue fallback only", () => {
     const r = computeVendorCompleteness({
       ...FULL,
-      website: null,
-      socialLinks: "{}",
-      eventAssociationCount: 1,
+      city: null,
+      state: null,
+      address: null,
+      eventAssociationCount: 3,
+      eventVenueGeoCount: 3,
+    });
+    expect(r.currentTier).toBe("STANDARD");
+  });
+
+  it("STUB when description ≥30 chars + event assoc but NO geo of any kind", () => {
+    const r = computeVendorCompleteness({
+      ...FULL,
+      city: null,
+      state: null,
+      address: null,
+      eventAssociationCount: 2,
+      eventVenueGeoCount: 0,
     });
     expect(r.currentTier).toBe("STUB");
-    expect(r.tierGap).toContain("website or social link");
+    expect(r.tierGap).toEqual(["city and state"]);
+  });
+
+  it("MENTION when domainHijacked=true regardless of other fields", () => {
+    const r = computeVendorCompleteness({ ...FULL, domainHijacked: true });
+    expect(r.currentTier).toBe("MENTION");
   });
 });

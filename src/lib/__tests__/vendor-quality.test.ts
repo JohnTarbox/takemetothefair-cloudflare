@@ -1,31 +1,53 @@
 import { describe, it, expect } from "vitest";
 import { isVendorIndexable } from "../vendor-quality";
 
-// isVendorIndexable now delegates to the four-tier model in vendor-tier.ts.
-// The binary answer = STANDARD or ENHANCED. STANDARD requires:
-//   description (non-empty) AND city+state (non-empty) AND
-//   (website non-empty OR has at least one social_links entry).
-// ENHANCED requires enhancedProfile === true and overrides everything.
+// isVendorIndexable delegates to the four-tier model in vendor-tier.ts.
+// Indexable = STANDARD or ENHANCED. STANDARD requires:
+//   description (≥30 chars after trim) AND any geographic anchor:
+//     own city+state, OR own address, OR ≥1 event association at a
+//     venue with city+state.
+// ENHANCED requires enhancedProfile === true and overrides STANDARD/STUB.
+// domainHijacked === true overrides everything → never indexable.
+
+const D30 = "Hand-crafted goods, made local.";
 
 describe("isVendorIndexable — STANDARD criteria", () => {
-  it("indexable when STANDARD criteria all met (description + location + website)", () => {
+  it("indexable when description ≥30 chars + own city/state", () => {
     expect(
       isVendorIndexable({
-        description: "Hand-crafted goods",
+        description: D30,
         city: "Boston",
         state: "MA",
-        website: "https://example.com",
       })
     ).toBe(true);
   });
 
-  it("indexable when STANDARD criteria met via social_links instead of website", () => {
+  it("indexable when description ≥30 chars + own address (no city/state)", () => {
     expect(
       isVendorIndexable({
-        description: "Hand-crafted goods",
+        description: D30,
+        address: "100 Main St, Suite 200",
+      })
+    ).toBe(true);
+  });
+
+  it("indexable when description ≥30 chars + event-venue geo only", () => {
+    expect(
+      isVendorIndexable({
+        description: D30,
+        eventVenueGeoCount: 1,
+      })
+    ).toBe(true);
+  });
+
+  it("indexable without external signal (website/socialLinks no longer required)", () => {
+    expect(
+      isVendorIndexable({
+        description: D30,
         city: "Boston",
         state: "MA",
-        socialLinks: '{"instagram":"https://instagram.com/foo"}',
+        website: null,
+        socialLinks: null,
       })
     ).toBe(true);
   });
@@ -37,73 +59,81 @@ describe("isVendorIndexable — ENHANCED override", () => {
   });
 });
 
-describe("isVendorIndexable — non-indexable cases", () => {
-  it("not indexable when description-only (no location, no external signal)", () => {
-    // Behavioral change vs. PR #81's binary predicate: this used to be true.
-    // Per §6.6 STANDARD criteria, description alone is no longer enough.
-    expect(isVendorIndexable({ description: "Hand-crafted goods" })).toBe(false);
-  });
-
-  it("not indexable when website-only (no description, no location)", () => {
-    expect(isVendorIndexable({ website: "https://example.com" })).toBe(false);
-  });
-
-  it("not indexable when missing location", () => {
+describe("isVendorIndexable — domainHijacked override", () => {
+  it("NOT indexable when domainHijacked=true regardless of other fields", () => {
     expect(
       isVendorIndexable({
-        description: "Hand-crafted goods",
-        website: "https://example.com",
+        description: D30,
+        city: "Boston",
+        state: "MA",
+        domainHijacked: true,
       })
     ).toBe(false);
   });
 
-  it("not indexable when missing external signal", () => {
+  it("NOT indexable when domainHijacked=true even with Enhanced", () => {
     expect(
       isVendorIndexable({
-        description: "Hand-crafted goods",
+        enhancedProfile: true,
+        domainHijacked: true,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("isVendorIndexable — non-indexable cases", () => {
+  it("NOT indexable when description is 29 chars (just below threshold)", () => {
+    expect(
+      isVendorIndexable({
+        description: "Hand-crafted goods, made loca", // 29 chars
         city: "Boston",
         state: "MA",
       })
     ).toBe(false);
   });
 
-  it("not indexable when both description and website are null", () => {
-    expect(isVendorIndexable({ description: null, website: null })).toBe(false);
+  it("NOT indexable when description-only (no geo of any kind)", () => {
+    expect(isVendorIndexable({ description: D30 })).toBe(false);
   });
 
-  it("not indexable when all fields are missing", () => {
-    expect(isVendorIndexable({})).toBe(false);
+  it("NOT indexable when geo only (no description)", () => {
+    expect(
+      isVendorIndexable({
+        city: "Boston",
+        state: "MA",
+      })
+    ).toBe(false);
   });
 
-  it("not indexable when description is whitespace-only", () => {
+  it("NOT indexable when state is empty string (own-geo requires both city AND state)", () => {
+    expect(
+      isVendorIndexable({
+        description: D30,
+        city: "Boston",
+        state: "",
+      })
+    ).toBe(false);
+  });
+
+  it("NOT indexable when description is whitespace-only", () => {
     expect(
       isVendorIndexable({
         description: "   ",
         city: "Boston",
         state: "MA",
-        website: "https://example.com",
       })
     ).toBe(false);
   });
 
-  it("not indexable when state is empty", () => {
-    expect(
-      isVendorIndexable({
-        description: "Hand-crafted goods",
-        city: "Boston",
-        state: "",
-        website: "https://example.com",
-      })
-    ).toBe(false);
+  it("NOT indexable when all fields are missing", () => {
+    expect(isVendorIndexable({})).toBe(false);
   });
 
-  it("not indexable when social_links is empty object", () => {
+  it("NOT indexable when description+null + eventVenueGeoCount=0", () => {
     expect(
       isVendorIndexable({
-        description: "Hand-crafted goods",
-        city: "Boston",
-        state: "MA",
-        socialLinks: "{}",
+        description: D30,
+        eventVenueGeoCount: 0,
       })
     ).toBe(false);
   });
