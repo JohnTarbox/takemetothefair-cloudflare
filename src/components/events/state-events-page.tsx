@@ -3,7 +3,7 @@ import { MapPin } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, gte, or, isNull, count, inArray } from "drizzle-orm";
+import { eq, and, gte, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
@@ -45,7 +45,8 @@ async function getStateEvents(
 
   const conditions = [isPublicEventStatus(), eq(events.stateCode, stateCode)];
   if (!includePast) {
-    conditions.push(or(gte(events.endDate, new Date()), isNull(events.endDate))!);
+    conditions.push(isNotNull(events.startDate));
+    conditions.push(gte(events.endDate, new Date()));
   }
 
   const results = await db
@@ -54,7 +55,7 @@ async function getStateEvents(
     .leftJoin(venues, eq(events.venueId, venues.id))
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
     .where(and(...conditions))
-    .orderBy(events.startDate)
+    .orderBy(sql`COALESCE(${events.startDate}, 9999999999) ASC`)
     .limit(limit)
     .offset(offset);
 

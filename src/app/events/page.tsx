@@ -134,10 +134,12 @@ async function getEvents(
 
     // Date filtering logic:
     // - includePast=true: show all events (past, future, and TBD)
-    // - default: show future events AND events with null dates (TBD)
+    // - default: only events with a real start date that hasn't ended yet.
+    //   Excluding NULL start_date keeps undated TENTATIVE rows out of the
+    //   upcoming feed (where ORDER BY start_date ASC otherwise floats them).
     if (searchParams.includePast !== "true") {
-      // Show future events OR events with null end dates (TBD)
-      conditions.push(or(gte(events.endDate, new Date()), isNull(events.endDate))!);
+      conditions.push(isNotNull(events.startDate));
+      conditions.push(gte(events.endDate, new Date()));
     }
 
     if (searchParams.query) {
@@ -241,14 +243,19 @@ async function getEvents(
       ? [...conditions, eq(events.stateCode, searchParams.state)]
       : conditions;
 
-    const orderByMap: Record<string, ReturnType<typeof asc>> = {
-      "date-asc": asc(events.startDate),
+    // COALESCE protects ORDER BY against NULL start_date even though the
+    // default (no includePast) WHERE clause already excludes them. When
+    // includePast=true, NULL-start TBD rows are present and would otherwise
+    // float to the top under plain ASC; 9999999999 (year 2286) sorts them last.
+    const startDateAsc = sql`COALESCE(${events.startDate}, 9999999999) ASC`;
+    const orderByMap = {
+      "date-asc": startDateAsc,
       "date-desc": desc(events.startDate),
       "name-asc": asc(events.name),
       "name-desc": desc(events.name),
       popular: desc(events.viewCount),
     };
-    const orderBy = orderByMap[sort] || asc(events.startDate);
+    const orderBy = orderByMap[sort as keyof typeof orderByMap] || startDateAsc;
 
     let query;
     if (isCalendarView) {

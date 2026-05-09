@@ -1,7 +1,7 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts } from "@/lib/db/schema";
-import { eq, and, or, gte, isNull, count } from "drizzle-orm";
+import { eq, and, gte, isNull, isNotNull, count } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import {
   getVendorTier,
@@ -204,10 +204,18 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
     // Get approved events. §10.2 quality gate: drop entries below
     // SITEMAP_MIN_COMPLETENESS so near-empty stubs don't dilute the sitemap.
+    // Also exclude NULL-start TENTATIVE rows — no temporal content for crawlers,
+    // and they're filtered out of every public listing page anyway.
     const eventResults = await db
       .select({ slug: events.slug, updatedAt: events.updatedAt, endDate: events.endDate })
       .from(events)
-      .where(and(isPublicEventStatus(), gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)));
+      .where(
+        and(
+          isPublicEventStatus(),
+          isNotNull(events.startDate),
+          gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)
+        )
+      );
 
     const now = new Date();
     const eventPages: MetadataRoute.Sitemap = eventResults.map((event) => {
@@ -331,11 +339,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const EVENTS_PER_PAGE = 30;
     const paginationPages: MetadataRoute.Sitemap = [];
 
-    // Count future public events for /events pagination
+    // Count future public events for /events pagination. Mirror the page
+    // query's filter exactly so total page count matches the result set.
     const futureCountResult = await db
       .select({ count: count() })
       .from(events)
-      .where(and(isPublicEventStatus(), or(gte(events.endDate, now), isNull(events.endDate))));
+      .where(and(isPublicEventStatus(), isNotNull(events.startDate), gte(events.endDate, now)));
     const futureTotal = futureCountResult[0]?.count || 0;
     const futureTotalPages = Math.ceil(futureTotal / EVENTS_PER_PAGE);
 
