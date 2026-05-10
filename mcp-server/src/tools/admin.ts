@@ -569,12 +569,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const event = eventRows[0];
 
-      // If name changed, regenerate slug with collision check
+      // If name changed, regenerate slug with collision check.
+      // Use canonical createSlug so the new slug matches what main-app and
+      // create_venue write — inline regex caused divergence (issue #120).
       if (params.name !== undefined) {
-        const baseSlug = params.name
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "");
+        const baseSlug = createSlug(params.name);
         let finalSlug = baseSlug;
         let suffix = 0;
         while (true) {

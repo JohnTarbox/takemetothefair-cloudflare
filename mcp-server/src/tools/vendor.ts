@@ -11,6 +11,7 @@ import {
   triggerIndexNow,
   recomputeVendorCompleteness,
   logEnrichment,
+  createSlug,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -604,11 +605,9 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         });
       }
 
-      // Generate unique slug
-      const baseSlug = params.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "");
+      // Generate unique slug — use canonical createSlug to match main-app and create_venue
+      // (avoids the divergence that produced duplicate venues — see issue #120)
+      const baseSlug = createSlug(params.name);
       let finalSlug = baseSlug;
       let suffix = 0;
       while (true) {
@@ -644,10 +643,9 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
 
       if (params.venue_name) {
-        const venueSlug = params.venue_name
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-|-$/g, "");
+        // Use canonical createSlug so this lookup matches what create_venue
+        // (admin.ts) writes — divergence here caused duplicate venues (issue #120).
+        const venueSlug = createSlug(params.venue_name);
         const venueCity = (params.venue_city || "").toLowerCase().trim();
         const venueState = (params.venue_state || "").toUpperCase().trim();
 
@@ -693,7 +691,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           let finalVenueSlug = venueSlug;
           if (existingVenues.length > 0) {
             finalVenueSlug = venueCity
-              ? `${venueSlug}-${venueCity.replace(/[^a-z0-9]+/g, "-")}`
+              ? `${venueSlug}-${createSlug(venueCity)}`
               : `${venueSlug}-${crypto.randomUUID().substring(0, 8)}`;
           }
           // Ensure slug uniqueness
