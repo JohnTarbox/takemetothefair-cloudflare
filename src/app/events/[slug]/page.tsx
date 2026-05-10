@@ -49,6 +49,10 @@ import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
+import { EventFAQSection } from "@/components/events/EventFAQSection";
+import { buildEventFaqItems } from "@/lib/event-faq";
+import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
 import { buildEventMetaDescription, buildEventTitle } from "@/lib/seo-utils";
@@ -490,6 +494,17 @@ export default async function EventDetailPage({ params }: Props) {
     getRelatedBlogPosts(event.id, event.name, eventCategories),
   ]);
 
+  // FAQ Phase A: only render for events in the FAQ_PILOT_EVENT_SLUGS env
+  // allowlist. Visible section and JSON-LD share this array verbatim — see
+  // MMATF-FAQ-Strategy.md §8.
+  const faqItems = isFaqPilotEvent(event.slug)
+    ? buildEventFaqItems({
+        event,
+        venue: event.venue,
+        eventDays: event.eventDays,
+      })
+    : [];
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <DetailPageTracker type="event" slug={event.slug} name={event.name} />
@@ -546,6 +561,7 @@ export default async function EventDetailPage({ params }: Props) {
           { name: event.name, url: `https://meetmeatthefair.com/events/${event.slug}` },
         ]}
       />
+      <FAQPageSchema items={faqItems} />
       {event.status === "TENTATIVE" && (
         <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
           <p className="text-sm text-amber-800">
@@ -633,6 +649,8 @@ export default async function EventDetailPage({ params }: Props) {
               </>
             );
           })()}
+
+          <EventFAQSection items={faqItems} />
 
           {event.eventVendors.length > 0 && (
             <Card>
