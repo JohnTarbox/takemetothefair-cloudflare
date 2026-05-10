@@ -230,6 +230,36 @@ When using `fill` prop, the parent must have `relative` positioning and explicit
 </div>
 ```
 
+### Slug typing and the canonical generator (#120 prevention)
+
+All stored slugs (events, venues, vendors, promoters, blog posts, slug history) must come from `createSlug()` from `@takemetothefair/utils`. Three layers of defense are in place after the May 2026 slug-divergence bug (#120):
+
+1. **Typed producers**: `createSlug()` and `createSlugFromName()` return the branded `Slug` type. Hand-rolled regex chains produce plain `string`.
+2. **Typed storage**: schema columns (`events.slug` etc.) accept only `Slug` via Drizzle's `.$type<Slug>()`. Writing a raw string is a TypeScript error.
+3. **Banned regex**: ESLint's `no-restricted-syntax` rule rejects `/[^a-z0-9]+/` regex literals outside the canonical helper. Catches the `unsafeSlug(naiveChain(x))` loophole.
+
+When you genuinely need to pass a string into a slug column from a boundary (URL params, JSON request bodies, D1 SELECT results pre-migration), use the explicit cast: `unsafeSlug(s)`. Searchable in code review.
+
+```ts
+// Good:
+const slug = createSlug(name);                  // Slug
+db.insert(events).values({ slug });              // ok
+
+// Boundary cast (URL param):
+const { slug } = await params;
+.where(eq(events.slug, unsafeSlug(slug)))        // ok, explicit
+
+// Suffix append preserving brand:
+const candidate = appendSlugSegment(baseSlug, suffix);  // Slug
+
+// Bad — TypeScript error:
+const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");  // string
+db.insert(events).values({ slug });              // TS error
+// AND the regex literal would fail lint anyway.
+```
+
+Why the `slugify`-backed `createSlug` matters: it expands `&` to `"and"`, drops apostrophes cleanly, transliterates accented chars. The naive regex doesn't, which silently produced duplicate venues in production until the three-layer defense was put in place.
+
 ### Free-text input decoding at the schema boundary
 
 User-facing string fields (names, descriptions, titles, business names) must use `.transform(decodeHtmlEntities)` at the Zod schema layer so dedup matching, slug generation, and storage all see literal characters by construction. Prevents silent failures when callers send entity-encoded text (e.g. agents posting `Earth Expo &amp; Convention Center`, which would otherwise miss dedup against the existing `Earth Expo & Convention Center` row and create a duplicate).
