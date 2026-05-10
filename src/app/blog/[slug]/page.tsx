@@ -15,6 +15,8 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { BlogStatusButton } from "@/components/blog/blog-status-button";
 import { ArticleSchema } from "@/components/seo/ArticleSchema";
+import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
+import { extractBlogFaqItems } from "@/lib/blog-faq";
 import {
   extractFirstImage,
   estimateReadingTime,
@@ -210,6 +212,11 @@ export default async function BlogPostPage({ params }: Props) {
 
   const url = `https://meetmeatthefair.com/blog/${post.slug}`;
 
+  // Tier 2: pillar posts structured as Q&A (per MMATF-FAQ-Strategy.md §4.2)
+  // emit FAQPage JSON-LD automatically. The extractor returns [] for posts
+  // without a Q&A structure, in which case <FAQPageSchema> renders null.
+  const blogFaqItems = extractBlogFaqItems(post.body);
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <BreadcrumbSchema
@@ -233,6 +240,8 @@ export default async function BlogPostPage({ params }: Props) {
         tags={tags}
         categories={categories}
       />
+
+      <FAQPageSchema items={blogFaqItems} />
 
       {/* Back link */}
       <Link
