@@ -112,6 +112,42 @@ export function sanitizeProse(text: string): string {
 }
 
 /**
+ * Branded slug type. A `Slug` is a `string` that has been through one of the
+ * canonical slug generators (createSlug or createSlugFromName) — never a
+ * raw user-supplied or hand-written string. The brand prevents accidental
+ * mixing of "string-shaped values that happen to look slug-like" with
+ * "actual normalized slugs," which silently caused duplicate venue rows
+ * in production (issue #120).
+ *
+ * At the boundary (URL params, request bodies), use `unsafeSlug()` to assert
+ * a string is already slug-shaped. This is intentionally an explicit cast —
+ * the call site is the right place to think about whether the value really
+ * came from a canonical generator.
+ */
+export type Slug = string & { readonly __brand: unique symbol };
+
+/**
+ * Boundary cast for strings that arrive in slug shape from outside the
+ * type system (Next.js URL params, JSON request bodies, D1 SELECT results
+ * pre-migration). Trust-but-name: by writing `unsafeSlug(x)` you're
+ * declaring "I know x is a canonical slug." Searchable so audits can list
+ * every assumption.
+ */
+export function unsafeSlug(s: string): Slug {
+  return s as Slug;
+}
+
+/**
+ * Append a suffix to an existing Slug while preserving the brand. Used by
+ * collision-resolution loops that build `${slug}-${n}` or `${slug}-${city}`.
+ * Hyphen and digits are valid slug characters, so the result is still a
+ * canonical slug provided `slug` is and `segment` is slug-safe.
+ */
+export function appendSlugSegment(slug: Slug, segment: Slug | string | number): Slug {
+  return `${slug}-${segment}` as Slug;
+}
+
+/**
  * Canonical slug generator, backed by the `slugify` library. Use for new
  * slugs everywhere — venue, vendor, promoter, blog post slugs.
  *
@@ -120,12 +156,12 @@ export function sanitizeProse(text: string): string {
  * (e.g. accented Latin characters fold to ASCII; non-Latin scripts get
  * transliterated where possible).
  */
-export function createSlug(text: string): string {
+export function createSlug(text: string): Slug {
   return slugify(text, {
     lower: true,
     strict: true,
     trim: true,
-  });
+  }) as Slug;
 }
 
 /**
@@ -139,11 +175,11 @@ export function createSlug(text: string): string {
  *
  * Do NOT use this for new slug generation — use `createSlug`.
  */
-export function createSlugFromName(name: string): string {
+export function createSlugFromName(name: string): Slug {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+    .replace(/^-|-$/g, "") as Slug;
 }
 
 // ---------------------------------------------------------------------------

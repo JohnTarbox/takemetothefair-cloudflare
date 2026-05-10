@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDays, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug, dollarsToCents } from "@/lib/utils";
+import { createSlug, dollarsToCents, appendSlugSegment } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
         slugSuffix++;
       }
       if (slugSuffix > 0) {
-        finalVenueSlug = `${venueSlug}-${slugSuffix}`;
+        finalVenueSlug = appendSlugSegment(venueSlug, slugSuffix);
       }
 
       const newVenueId = crypto.randomUUID();
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
       slugSuffix++;
     }
     if (slugSuffix > 0) {
-      finalEventSlug = `${eventSlug}-${slugSuffix}`;
+      finalEventSlug = appendSlugSegment(eventSlug, slugSuffix);
     }
 
     // Determine if this is a discontinuous (specific dates) event

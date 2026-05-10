@@ -10,12 +10,15 @@ export {
   stripToolCallMarkup,
   sanitizeProse,
   createSlug,
+  unsafeSlug,
+  appendSlugSegment,
   dollarsToCents,
   formatPrice,
   computeVendorCompletenessScore,
   computeEventCompletenessScore,
   SITEMAP_MIN_COMPLETENESS,
 } from "@takemetothefair/utils";
+export type { Slug } from "@takemetothefair/utils";
 
 import { eq } from "drizzle-orm";
 import { vendors, events, enrichmentLog } from "./schema.js";

@@ -12,6 +12,7 @@ import {
   recomputeVendorCompleteness,
   logEnrichment,
   createSlug,
+  appendSlugSegment,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -611,7 +612,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       let finalSlug = baseSlug;
       let suffix = 0;
       while (true) {
-        const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+        const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
         const existing = await db
           .select({ id: events.id })
           .from(events)
@@ -691,8 +692,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           let finalVenueSlug = venueSlug;
           if (existingVenues.length > 0) {
             finalVenueSlug = venueCity
-              ? `${venueSlug}-${createSlug(venueCity)}`
-              : `${venueSlug}-${crypto.randomUUID().substring(0, 8)}`;
+              ? appendSlugSegment(venueSlug, createSlug(venueCity))
+              : appendSlugSegment(venueSlug, crypto.randomUUID().substring(0, 8));
           }
           // Ensure slug uniqueness
           const slugCheck = await db
@@ -701,7 +702,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             .where(eq(venues.slug, finalVenueSlug))
             .limit(1);
           if (slugCheck.length > 0) {
-            finalVenueSlug = `${finalVenueSlug}-${crypto.randomUUID().substring(0, 8)}`;
+            finalVenueSlug = appendSlugSegment(finalVenueSlug, crypto.randomUUID().substring(0, 8));
           }
 
           const newVenueId = crypto.randomUUID();

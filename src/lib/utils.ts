@@ -12,7 +12,13 @@ import {
 
 // Re-export from the canonical packages/utils so existing `@/lib/utils`
 // imports keep working. Source of truth lives in @takemetothefair/utils.
-export { createSlug, decodeHtmlEntities } from "@takemetothefair/utils";
+export {
+  createSlug,
+  decodeHtmlEntities,
+  unsafeSlug,
+  appendSlugSegment,
+} from "@takemetothefair/utils";
+export type { Slug } from "@takemetothefair/utils";
 
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
 

@@ -19,6 +19,7 @@ import {
   escapeLike,
   jsonContent,
   createSlug,
+  appendSlugSegment,
   parseLocation,
   sanitizeProse,
   VALID_TRANSITIONS,
@@ -577,7 +578,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         let finalSlug = baseSlug;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
           const existing = await db
             .select({ id: events.id })
             .from(events)
@@ -715,7 +716,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           let finalSlug = baseSlug;
           let suffix = 0;
           while (true) {
-            const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+            const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
             const existing = await db
               .select({ id: venues.id })
               .from(venues)
@@ -1111,7 +1112,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       let finalSlug = baseSlug;
       let suffix = 0;
       while (true) {
-        const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+        const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
         const slugCheck = await db
           .select({ id: vendors.id })
           .from(vendors)
@@ -1530,7 +1531,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         let finalSlug = baseSlug;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
           const existing = await db
             .select({ id: venues.id })
             .from(venues)
@@ -1671,7 +1672,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       let finalSlug = baseSlug;
       let suffix = 0;
       while (true) {
-        const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+        const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
         const slugCheck = await db
           .select({ id: venues.id })
           .from(venues)
@@ -2096,7 +2097,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         let finalSlug = slugSeed;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? `${slugSeed}-${suffix}` : slugSeed;
+          const candidate = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
           const existing = await db
             .select({ id: vendors.id })
             .from(vendors)
@@ -2268,7 +2269,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         let finalSlug = slugSeed;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? `${slugSeed}-${suffix}` : slugSeed;
+          const candidate = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
           const existing = await db
             .select({ id: vendors.id })
             .from(vendors)
@@ -2410,7 +2411,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       let finalSlug = baseSlug;
       let suffix = 0;
       while (true) {
-        const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+        const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
         const slugCheck = await db
           .select({ id: promoters.id })
           .from(promoters)
@@ -2561,7 +2562,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         let finalSlug = baseSlug;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? `${baseSlug}-${suffix}` : baseSlug;
+          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
           const existing = await db
             .select({ id: promoters.id })
             .from(promoters)
