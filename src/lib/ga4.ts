@@ -889,6 +889,139 @@ export async function getMaxGa4DateWithUsers(
   }
 }
 
+// AEO (Answer Engine Optimization) referral tracking.
+//
+// Counts last-7d sessions whose `sessionSource` matches a known AI engine
+// referrer. Bucketed into named engines + "other" so the overview / GA4
+// dashboard cards can render a per-engine breakdown.
+//
+// `sessionSource` is intentional (NOT `firstUserSource`): we want per-visit
+// attribution to the AI engine, not the original acquisition channel —
+// AI-engine referrals tend to be one-off rather than acquisition paths.
+
+export type AeoBucket = "chatgpt" | "perplexity" | "copilot" | "claude" | "gemini" | "other";
+
+export const AEO_BUCKET_LABELS: Record<AeoBucket, string> = {
+  chatgpt: "ChatGPT",
+  perplexity: "Perplexity",
+  copilot: "Copilot",
+  claude: "Claude",
+  gemini: "Gemini",
+  other: "Other AI",
+};
+
+export const AEO_BUCKET_ORDER: AeoBucket[] = [
+  "chatgpt",
+  "perplexity",
+  "copilot",
+  "claude",
+  "gemini",
+  "other",
+];
+
+const AEO_DOMAIN_BUCKETS: Array<{ bucket: AeoBucket; domains: string[] }> = [
+  { bucket: "chatgpt", domains: ["chatgpt.com", "chat.openai.com"] },
+  { bucket: "perplexity", domains: ["perplexity.ai", "www.perplexity.ai"] },
+  { bucket: "copilot", domains: ["copilot.microsoft.com"] },
+  { bucket: "claude", domains: ["claude.ai"] },
+  { bucket: "gemini", domains: ["gemini.google.com", "bard.google.com"] },
+  // Known "other AI" sources observed in our GA4 today + early movers.
+  // Add new domains here as they appear in the trafficSources list.
+  { bucket: "other", domains: ["noai.duckduckgo.com", "duckduckgo.com", "you.com", "phind.com"] },
+];
+
+const AEO_DOMAIN_TO_BUCKET: Map<string, AeoBucket> = new Map(
+  AEO_DOMAIN_BUCKETS.flatMap(({ bucket, domains }) =>
+    domains.map((d) => [d.toLowerCase(), bucket] as const)
+  )
+);
+
+export type AeoReferralsResult = {
+  totals: Record<AeoBucket, number>;
+  total: number;
+  generatedAt: string;
+  dateRange: { startDate: string; endDate: string; days: number };
+};
+
+function emptyAeoTotals(): Record<AeoBucket, number> {
+  return { chatgpt: 0, perplexity: 0, copilot: 0, claude: 0, gemini: 0, other: 0 };
+}
+
+/**
+ * Last-7d AI-engine referrals broken down by engine.
+ *
+ * Filter: `sessionSource` EXACT match against the known-domain list in
+ * `AEO_DOMAIN_BUCKETS` (combined as an `orGroup`). Reuses `runReport`'s
+ * KV cache (10 min TTL).
+ *
+ * Throws `Ga4ConfigError` / `Ga4ApiError` on failure — consumers should
+ * catch and render an empty / "GA4 unavailable" state.
+ */
+export async function getAeoReferrals(
+  env: Ga4Env,
+  opts: { skipCache?: boolean } = {}
+): Promise<AeoReferralsResult> {
+  const startDate = "7daysAgo";
+  const endDate = "today";
+
+  const expressions: DimensionFilterExpression[] = AEO_DOMAIN_BUCKETS.flatMap(({ domains }) =>
+    domains.map((domain) => ({
+      filter: {
+        fieldName: "sessionSource",
+        stringFilter: {
+          matchType: "EXACT" as const,
+          value: domain,
+          caseSensitive: false,
+        },
+      },
+    }))
+  );
+
+  const res = await runReport(
+    env,
+    {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: "sessionSource" }],
+      metrics: [{ name: "sessions" }],
+      dimensionFilter: { orGroup: { expressions } },
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      limit: 50,
+    },
+    opts
+  );
+
+  const totals = emptyAeoTotals();
+  for (const row of res.rows ?? []) {
+    const source = (row.dimensionValues?.[0]?.value ?? "").toLowerCase();
+    const bucket = AEO_DOMAIN_TO_BUCKET.get(source);
+    if (!bucket) continue; // Defensive: filter should have excluded these.
+    totals[bucket] += toNumber(row.metricValues?.[0]?.value);
+  }
+
+  const total =
+    totals.chatgpt +
+    totals.perplexity +
+    totals.copilot +
+    totals.claude +
+    totals.gemini +
+    totals.other;
+
+  return {
+    totals,
+    total,
+    generatedAt: new Date().toISOString(),
+    dateRange: { startDate, endDate, days: 7 },
+  };
+}
+
+export const AEO_THRESHOLDS = { green: 10, yellow: 5 } as const;
+
+export function aeoBadgeColor(total: number): "green" | "yellow" | "red" {
+  if (total >= AEO_THRESHOLDS.green) return "green";
+  if (total >= AEO_THRESHOLDS.yellow) return "yellow";
+  return "red";
+}
+
 /**
  * §6.3 conversion-rate denominator: GA4 organic search sessions.
  *

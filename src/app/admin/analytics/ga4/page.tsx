@@ -3,9 +3,14 @@ import { ArrowLeft, ExternalLink, RefreshCw, Users, BarChart3 } from "lucide-rea
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
+  AEO_BUCKET_LABELS,
+  AEO_BUCKET_ORDER,
+  aeoBadgeColor,
   Ga4ApiError,
   Ga4ConfigError,
+  getAeoReferrals,
   getDashboardMetrics,
+  type AeoReferralsResult,
   type DashboardMetrics,
   type Ga4Env,
 } from "@/lib/ga4";
@@ -15,14 +20,17 @@ export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 type LoadResult =
-  | { ok: true; data: DashboardMetrics }
+  | { ok: true; data: DashboardMetrics; aeo: AeoReferralsResult }
   | { ok: false; kind: "config" | "api" | "unknown"; message: string };
 
 async function load(skipCache: boolean): Promise<LoadResult> {
   try {
     const env = getCloudflareEnv() as unknown as Ga4Env;
-    const data = await getDashboardMetrics(env, { skipCache });
-    return { ok: true, data };
+    const [data, aeo] = await Promise.all([
+      getDashboardMetrics(env, { skipCache }),
+      getAeoReferrals(env, { skipCache }),
+    ]);
+    return { ok: true, data, aeo };
   } catch (error) {
     if (error instanceof Ga4ConfigError)
       return { ok: false, kind: "config", message: error.message };
@@ -79,7 +87,7 @@ export default async function Ga4DashboardPage({ searchParams }: PageProps) {
       </div>
 
       {result.ok ? (
-        <MetricsView data={result.data} />
+        <MetricsView data={result.data} aeo={result.aeo} />
       ) : (
         <ErrorPanel kind={result.kind} message={result.message} />
       )}
@@ -87,13 +95,44 @@ export default async function Ga4DashboardPage({ searchParams }: PageProps) {
   );
 }
 
-function MetricsView({ data }: { data: DashboardMetrics }) {
+function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsResult }) {
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <StatCard label="Active users (last 7 days)" value={fmt(data.activeUsers.last7d)} />
         <StatCard label="Active users (last 28 days)" value={fmt(data.activeUsers.last28d)} />
       </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span>AEO Referrals (last 7 days)</span>
+            <AeoTotalBadge total={aeo.total} />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-gray-600">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">AI engine</th>
+                <th className="text-right px-6 py-2 font-medium">Sessions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {AEO_BUCKET_ORDER.map((bucket) => (
+                <tr key={bucket}>
+                  <td className="px-6 py-2 text-gray-900">{AEO_BUCKET_LABELS[bucket]}</td>
+                  <td className="px-6 py-2 text-right tabular-nums">{fmt(aeo.totals[bucket])}</td>
+                </tr>
+              ))}
+              <tr className="bg-gray-50 font-semibold">
+                <td className="px-6 py-2 text-gray-900">Total</td>
+                <td className="px-6 py-2 text-right tabular-nums">{fmt(aeo.total)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
 
       <Card className="mb-6">
         <CardHeader>
@@ -217,6 +256,23 @@ function MetricsView({ data }: { data: DashboardMetrics }) {
         up to 10 min
       </p>
     </>
+  );
+}
+
+function AeoTotalBadge({ total }: { total: number }) {
+  const color = aeoBadgeColor(total);
+  const classes =
+    color === "green"
+      ? "bg-green-100 text-green-800"
+      : color === "yellow"
+        ? "bg-yellow-100 text-yellow-800"
+        : "bg-red-100 text-red-800";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${classes}`}
+    >
+      {total} this week
+    </span>
   );
 }
 

@@ -11,6 +11,7 @@ import {
   DollarSign,
   FileText,
   Search,
+  Sparkles,
   TrendingUp,
 } from "lucide-react";
 import { desc, eq, gte, sql } from "drizzle-orm";
@@ -54,6 +55,15 @@ import {
   type WindowKey,
 } from "@/lib/analytics-overview";
 import { KPI_THRESHOLDS, formatStaleAge, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
+import {
+  AEO_BUCKET_LABELS,
+  aeoBadgeColor,
+  Ga4ApiError,
+  Ga4ConfigError,
+  getAeoReferrals,
+  type AeoReferralsResult,
+  type Ga4Env,
+} from "@/lib/ga4";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -137,10 +147,24 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
 
 // ─── Overview triage dashboard ──────────────────────────────────────
 
+async function loadAeoReferralsSafe(env: Ga4Env): Promise<AeoReferralsResult | null> {
+  // AEO data is informational; surface as a soft empty state rather than
+  // breaking the whole overview if GA4 is misconfigured or rate-limited.
+  try {
+    return await getAeoReferrals(env);
+  } catch (e) {
+    if (e instanceof Ga4ConfigError || e instanceof Ga4ApiError) return null;
+    return null;
+  }
+}
+
 async function OverviewTab({ window }: { window: WindowKey }) {
   const db = getCloudflareDb();
-  const env = getCloudflareEnv() as unknown as ScEnv & BingEnv;
-  const snapshot = await loadOverviewSnapshot(db, env, window);
+  const env = getCloudflareEnv() as unknown as ScEnv & BingEnv & Ga4Env;
+  const [snapshot, aeo] = await Promise.all([
+    loadOverviewSnapshot(db, env, window),
+    loadAeoReferralsSafe(env),
+  ]);
 
   return (
     <>
@@ -168,9 +192,12 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       </div>
 
       {/* §6.3: account engagement (renamed from old multi-numerator
-          "conversion rate") — preserved as Enhanced-Profile funnel signal. */}
+          "conversion rate") — preserved as Enhanced-Profile funnel signal.
+          AEO referrals card sits alongside as the leading-indicator for
+          AI-engine citation pickup. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <AccountEngagementCardView snapshot={snapshot} />
+        <AeoReferralsCardView aeo={aeo} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -640,6 +667,48 @@ function AccountEngagementCardView({ snapshot }: { snapshot: OverviewSnapshot })
             contacts {fmt(c.breakdown.contact_clicks)}
           </span>
         </div>
+      }
+    />
+  );
+}
+
+// AEO threshold (≥10/wk green, 5–9 yellow, <5 red) maps onto the KpiCard
+// state styling so the card matches the §6.3 KPI strip visually. The state
+// values here are display-only — AEO referrals aren't part of the §6.3 KPI
+// state machine in `kpi-thresholds.ts`.
+function aeoStateFromTotal(total: number): KpiState {
+  const color = aeoBadgeColor(total);
+  if (color === "green") return "GREEN";
+  if (color === "yellow") return "YELLOW";
+  return "RED";
+}
+
+function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
+  if (!aeo) {
+    return (
+      <KpiCard
+        title="AEO referrals (last 7d)"
+        value="—"
+        icon={<Sparkles className="w-5 h-5 text-gray-500" />}
+        iconColor="bg-gray-100"
+        href="/admin/analytics/ga4"
+        footer={<span className="text-xs text-gray-500">GA4 unavailable</span>}
+      />
+    );
+  }
+  return (
+    <KpiCard
+      title="AEO referrals (last 7d)"
+      value={fmt(aeo.total)}
+      icon={<Sparkles className="w-5 h-5 text-purple-600" />}
+      iconColor="bg-purple-100"
+      href="/admin/analytics/ga4"
+      state={aeoStateFromTotal(aeo.total)}
+      footer={
+        <span className="text-xs text-gray-500">
+          {AEO_BUCKET_LABELS.chatgpt} · {AEO_BUCKET_LABELS.perplexity} · {AEO_BUCKET_LABELS.copilot}{" "}
+          · {AEO_BUCKET_LABELS.claude} · {AEO_BUCKET_LABELS.gemini}
+        </span>
       }
     />
   );

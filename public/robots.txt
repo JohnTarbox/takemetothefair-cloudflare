@@ -6,6 +6,8 @@ Allow: /
 Disallow: /admin/
 Disallow: /api/
 Disallow: /dashboard/
+# Singular paths below are private user portals; the public listings live at
+# /promoters and /vendors and stay crawlable. Don't pluralize these.
 Disallow: /promoter/
 Disallow: /vendor/
 
