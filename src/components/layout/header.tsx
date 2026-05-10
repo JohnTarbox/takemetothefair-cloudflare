@@ -25,6 +25,7 @@ export function Header() {
     { name: "Events", href: "/events" },
     { name: "Venues", href: "/venues" },
     { name: "Vendors", href: "/vendors" },
+    { name: "Promoters", href: "/promoters" },
     { name: "Blog", href: "/blog" },
   ];
 
