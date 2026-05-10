@@ -36,6 +36,7 @@ import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import { VendorSchema } from "@/components/seo/VendorSchema";
 import { VendorTierBadges } from "@/components/vendors/VendorTierBadges";
 import { VendorProfileCompleteness } from "@/components/vendor/profile-completeness";
+import { ClaimListingCTA } from "@/components/vendors/ClaimListingCTA";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
@@ -151,7 +152,19 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
-  const indexable = isVendorIndexable(vendor);
+  // The §6.6 SEO gate considers event-venue geo as a fallback geographic
+  // anchor when the vendor has neither own city+state nor an own address.
+  // getVendor() above already pulled the joined venues, so we count locally
+  // rather than running a second D1 query.
+  const eventAssociationCount = vendor.eventVendors.length;
+  const eventVenueGeoCount = vendor.eventVendors.filter(
+    (ev) => !!ev.event.venue?.city?.trim() && !!ev.event.venue?.state?.trim()
+  ).length;
+  const indexable = isVendorIndexable({
+    ...vendor,
+    eventAssociationCount,
+    eventVenueGeoCount,
+  });
 
   return {
     title,
@@ -528,6 +541,10 @@ export default async function VendorDetailPage({ params }: Props) {
                   </Link>
                 </CardContent>
               </Card>
+            )}
+
+            {!vendor.claimed && !isOwner && !isAdmin && (
+              <ClaimListingCTA businessName={vendor.businessName} vendorSlug={vendor.slug} />
             )}
 
             <Card>

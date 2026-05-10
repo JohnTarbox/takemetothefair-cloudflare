@@ -1,13 +1,15 @@
 import { MetadataRoute } from "next";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, promoters, blogPosts } from "@/lib/db/schema";
-import { eq, and, gte, isNull, isNotNull, count } from "drizzle-orm";
+import { events, venues, promoters, blogPosts } from "@/lib/db/schema";
+import { eq, and, gte, isNotNull, count, sql } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import {
   getVendorTier,
+  getSitemapPriorityTier,
   isIndexableTier,
   sitemapChangeFreqFor,
   sitemapPriorityFor,
+  type VendorTierFields,
 } from "@/lib/vendor-tier";
 import { SITEMAP_MIN_COMPLETENESS } from "@/lib/completeness";
 
@@ -241,36 +243,105 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.6,
     }));
 
-    // Get vendors. Tier-based gate: only STANDARD and ENHANCED reach the
-    // sitemap, and each gets its own priority + changefreq per §6.6.
-    // ENHANCED → 0.8 / weekly; STANDARD → 0.5 / monthly. Google largely
-    // ignores these signals; Bing still uses them and currently delivers
-    // >4× MMATF's organic traffic of Google, so the gradient is meaningful.
-    const vendorResults = await db
-      .select({
-        slug: vendors.slug,
-        updatedAt: vendors.updatedAt,
-        description: vendors.description,
-        website: vendors.website,
-        socialLinks: vendors.socialLinks,
-        city: vendors.city,
-        state: vendors.state,
-        enhancedProfile: vendors.enhancedProfile,
-      })
-      .from(vendors)
-      .where(
-        and(isNull(vendors.deletedAt), gte(vendors.completenessScore, SITEMAP_MIN_COMPLETENESS))
-      );
+    // Get vendors. The SEO gate is applied as raw SQL so we can reference
+    // event_vendors → events → venues for the geographic-anchor fallback,
+    // which Drizzle's query builder can't express cleanly. Within the
+    // indexable set, getSitemapPriorityTier() classifies HIGH/MEDIUM/LOW
+    // for <priority> and <changefreq>. Google largely ignores those signals;
+    // Bing still uses them and currently delivers >4× MMATF's organic
+    // traffic of Google, so the gradient is meaningful.
+    //
+    // The EXISTS subquery in the WHERE and the correlated COUNT in the
+    // SELECT both walk event_vendors → events → venues; SQLite plans these
+    // independently, so they can't share work. At ~1.3K vendors this is
+    // fine; if it gets expensive, cache an `eventVenueGeoCount` column.
+    const vendorRows = await db.all<{
+      slug: string;
+      updatedAt: number | null;
+      description: string | null;
+      website: string | null;
+      socialLinks: string | null;
+      city: string | null;
+      state: string | null;
+      address: string | null;
+      enhancedProfile: number;
+      domainHijacked: number;
+      eventAssociationCount: number;
+      eventVenueGeoCount: number;
+    }>(sql`
+      SELECT
+        v.slug AS slug,
+        v.updated_at AS updatedAt,
+        v.description AS description,
+        v.website AS website,
+        v.social_links AS socialLinks,
+        v.city AS city,
+        v.state AS state,
+        v.address AS address,
+        v.enhanced_profile AS enhancedProfile,
+        v.domain_hijacked AS domainHijacked,
+        (SELECT COUNT(*) FROM event_vendors ev WHERE ev.vendor_id = v.id) AS eventAssociationCount,
+        (
+          SELECT COUNT(*) FROM event_vendors ev
+          JOIN events e ON ev.event_id = e.id
+          JOIN venues vn ON e.venue_id = vn.id
+          WHERE ev.vendor_id = v.id
+            AND vn.city IS NOT NULL AND vn.city != ''
+            AND vn.state IS NOT NULL AND vn.state != ''
+        ) AS eventVenueGeoCount
+      FROM vendors v
+      WHERE v.deleted_at IS NULL
+        AND v.domain_hijacked = 0
+        AND (
+          v.enhanced_profile = 1
+          OR (
+            v.description IS NOT NULL AND length(trim(v.description)) >= 30
+            AND (
+              (v.city IS NOT NULL AND v.city != '' AND v.state IS NOT NULL AND v.state != '')
+              OR (v.address IS NOT NULL AND v.address != '')
+              OR EXISTS (
+                SELECT 1 FROM event_vendors ev2
+                JOIN events e2 ON ev2.event_id = e2.id
+                JOIN venues vn2 ON e2.venue_id = vn2.id
+                WHERE ev2.vendor_id = v.id
+                  AND vn2.city IS NOT NULL AND vn2.city != ''
+                  AND vn2.state IS NOT NULL AND vn2.state != ''
+              )
+            )
+          )
+        )
+        AND v.completeness_score >= ${SITEMAP_MIN_COMPLETENESS}
+    `);
 
-    const vendorPages: MetadataRoute.Sitemap = vendorResults
-      .map((vendor) => ({ vendor, tier: getVendorTier(vendor) }))
+    const vendorPages: MetadataRoute.Sitemap = vendorRows
+      .map((row) => {
+        const fields: VendorTierFields = {
+          description: row.description,
+          website: row.website,
+          socialLinks: row.socialLinks,
+          city: row.city,
+          state: row.state,
+          address: row.address,
+          enhancedProfile: row.enhancedProfile === 1,
+          domainHijacked: row.domainHijacked === 1,
+          eventAssociationCount: row.eventAssociationCount,
+          eventVenueGeoCount: row.eventVenueGeoCount,
+        };
+        return { row, fields, tier: getVendorTier(fields) };
+      })
+      // Defense-in-depth: the SQL gate already excludes non-indexable
+      // vendors, but if criteria drift between SQL and TS, the TS check
+      // wins so we never emit a row inconsistent with the noindex meta.
       .filter(({ tier }) => isIndexableTier(tier))
-      .map(({ vendor, tier }) => ({
-        url: `${baseUrl}/vendors/${vendor.slug}`,
-        lastModified: safeLastMod(vendor.updatedAt),
-        changeFrequency: sitemapChangeFreqFor(tier) as "weekly" | "monthly",
-        priority: sitemapPriorityFor(tier),
-      }));
+      .map(({ row, fields, tier }) => {
+        const priorityTier = getSitemapPriorityTier(fields, tier);
+        return {
+          url: `${baseUrl}/vendors/${row.slug}`,
+          lastModified: safeLastMod(row.updatedAt ? new Date(row.updatedAt * 1000) : null),
+          changeFrequency: sitemapChangeFreqFor(priorityTier),
+          priority: sitemapPriorityFor(priorityTier),
+        };
+      });
 
     // Get promoters (no public/private gate — promoters table has no status
     // column; verified is just a trust badge, not a visibility filter).

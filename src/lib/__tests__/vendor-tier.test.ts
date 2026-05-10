@@ -1,125 +1,141 @@
 import { describe, it, expect } from "vitest";
 import {
   getVendorTier,
+  getSitemapPriorityTier,
   isIndexableTier,
   sitemapChangeFreqFor,
   sitemapPriorityFor,
   type VendorTier,
+  type SitemapPriorityTier,
   type VendorTierFields,
 } from "../vendor-tier";
 
+// 30-char minimum description satisfies hasMeaningfulDescription.
+const DESCRIPTION_30 = "Hand-crafted goods, made local.";
+const DESCRIPTION_29 = "Hand-crafted goods, made loca";
+
 const FULL_STANDARD: VendorTierFields = {
-  description: "Hand-crafted goods, made locally.",
+  description: DESCRIPTION_30,
   website: "https://example.com",
   socialLinks: null,
   city: "Boston",
   state: "MA",
+  address: null,
   enhancedProfile: false,
+  domainHijacked: false,
   eventAssociationCount: 3,
+  eventVenueGeoCount: 0,
 };
 
-describe("getVendorTier — ENHANCED beats everything", () => {
+describe("getVendorTier — domainHijacked overrides everything", () => {
+  it("MENTION when domainHijacked=true even with full STANDARD criteria", () => {
+    expect(getVendorTier({ ...FULL_STANDARD, domainHijacked: true })).toBe<VendorTier>("MENTION");
+  });
+
+  it("MENTION when domainHijacked=true even with enhancedProfile=true", () => {
+    expect(
+      getVendorTier({ ...FULL_STANDARD, enhancedProfile: true, domainHijacked: true })
+    ).toBe<VendorTier>("MENTION");
+  });
+});
+
+describe("getVendorTier — ENHANCED beats STANDARD/STUB/MENTION", () => {
   it("ENHANCED when enhancedProfile=true regardless of other fields", () => {
     expect(getVendorTier({ enhancedProfile: true })).toBe<VendorTier>("ENHANCED");
     expect(getVendorTier({ ...FULL_STANDARD, enhancedProfile: true })).toBe<VendorTier>("ENHANCED");
   });
 
-  it("ENHANCED even with no description, no location, no website", () => {
+  it("ENHANCED even with no description, no location", () => {
     expect(
       getVendorTier({ enhancedProfile: true, description: null, city: null, state: null })
     ).toBe<VendorTier>("ENHANCED");
   });
 });
 
-describe("getVendorTier — STANDARD criteria (description + own location + external signal)", () => {
-  it("STANDARD when all three criteria met via website", () => {
+describe("getVendorTier — STANDARD criteria (description ≥30 chars + any geo anchor)", () => {
+  it("STANDARD when description ≥30 chars + own city+state", () => {
     expect(getVendorTier(FULL_STANDARD)).toBe<VendorTier>("STANDARD");
   });
 
-  it("STANDARD when external signal is social_links instead of website", () => {
+  it("STANDARD via own address fallback (no city/state)", () => {
     expect(
       getVendorTier({
         ...FULL_STANDARD,
-        website: null,
-        socialLinks: '{"facebook":"https://facebook.com/foo"}',
+        city: null,
+        state: null,
+        address: "100 Main St, Suite 200",
       })
     ).toBe<VendorTier>("STANDARD");
   });
 
-  it("STANDARD when social_links is an object (already parsed)", () => {
+  it("STANDARD via event-venue geo fallback (no own city/state, no own address)", () => {
     expect(
       getVendorTier({
         ...FULL_STANDARD,
-        website: null,
-        socialLinks: { instagram: "https://instagram.com/foo" },
+        city: null,
+        state: null,
+        address: null,
+        eventVenueGeoCount: 1,
       })
     ).toBe<VendorTier>("STANDARD");
   });
 
-  it("not STANDARD when description is empty", () => {
-    expect(getVendorTier({ ...FULL_STANDARD, description: "" })).not.toBe<VendorTier>("STANDARD");
+  it("STANDARD without external signal (website/socialLinks no longer required)", () => {
+    expect(
+      getVendorTier({
+        ...FULL_STANDARD,
+        website: null,
+        socialLinks: null,
+      })
+    ).toBe<VendorTier>("STANDARD");
   });
 
-  it("not STANDARD when description is whitespace-only", () => {
-    expect(getVendorTier({ ...FULL_STANDARD, description: "   " })).not.toBe<VendorTier>(
+  it("not STANDARD when description is exactly 29 chars (below threshold)", () => {
+    expect(getVendorTier({ ...FULL_STANDARD, description: DESCRIPTION_29 })).not.toBe<VendorTier>(
       "STANDARD"
     );
   });
 
-  it("not STANDARD when city is missing", () => {
-    expect(getVendorTier({ ...FULL_STANDARD, city: null })).not.toBe<VendorTier>("STANDARD");
-  });
-
-  it("not STANDARD when state is missing", () => {
-    expect(getVendorTier({ ...FULL_STANDARD, state: null })).not.toBe<VendorTier>("STANDARD");
-  });
-
-  it("not STANDARD when no website AND no social_links", () => {
+  it("not STANDARD when description is null/empty/whitespace", () => {
+    expect(getVendorTier({ ...FULL_STANDARD, description: null })).not.toBe<VendorTier>("STANDARD");
+    expect(getVendorTier({ ...FULL_STANDARD, description: "" })).not.toBe<VendorTier>("STANDARD");
     expect(
-      getVendorTier({ ...FULL_STANDARD, website: null, socialLinks: null })
+      getVendorTier({ ...FULL_STANDARD, description: "      ".repeat(20) })
     ).not.toBe<VendorTier>("STANDARD");
   });
 
-  it("not STANDARD when social_links is empty object string", () => {
+  it("not STANDARD when no geographic anchor at all", () => {
     expect(
-      getVendorTier({ ...FULL_STANDARD, website: null, socialLinks: "{}" })
+      getVendorTier({
+        ...FULL_STANDARD,
+        city: null,
+        state: null,
+        address: null,
+        eventVenueGeoCount: 0,
+      })
     ).not.toBe<VendorTier>("STANDARD");
   });
 
-  it("not STANDARD when social_links is malformed JSON", () => {
+  it("not STANDARD when city set but state missing (own-geo requires both)", () => {
     expect(
-      getVendorTier({ ...FULL_STANDARD, website: null, socialLinks: "{not json" })
+      getVendorTier({ ...FULL_STANDARD, state: null, address: null, eventVenueGeoCount: 0 })
     ).not.toBe<VendorTier>("STANDARD");
   });
 });
 
 describe("getVendorTier — STUB vs MENTION (event association)", () => {
   it("STUB when event association exists but STANDARD criteria fail", () => {
-    expect(
-      getVendorTier({ description: null, website: null, eventAssociationCount: 1 })
-    ).toBe<VendorTier>("STUB");
+    expect(getVendorTier({ description: null, eventAssociationCount: 1 })).toBe<VendorTier>("STUB");
   });
 
   it("MENTION when no event association and STANDARD criteria fail", () => {
-    expect(
-      getVendorTier({ description: null, website: null, eventAssociationCount: 0 })
-    ).toBe<VendorTier>("MENTION");
+    expect(getVendorTier({ description: null, eventAssociationCount: 0 })).toBe<VendorTier>(
+      "MENTION"
+    );
   });
 
   it("MENTION when eventAssociationCount is omitted", () => {
-    expect(getVendorTier({ description: null, website: null })).toBe<VendorTier>("MENTION");
-  });
-
-  it("STUB when partial signals present but not enough for STANDARD (description only)", () => {
-    expect(
-      getVendorTier({
-        description: "Some description",
-        city: null,
-        state: null,
-        website: null,
-        eventAssociationCount: 5,
-      })
-    ).toBe<VendorTier>("STUB");
+    expect(getVendorTier({ description: null })).toBe<VendorTier>("MENTION");
   });
 });
 
@@ -135,27 +151,86 @@ describe("isIndexableTier", () => {
   });
 });
 
-describe("sitemapPriorityFor", () => {
-  it("ENHANCED is 0.8, STANDARD is 0.5", () => {
-    expect(sitemapPriorityFor("ENHANCED")).toBe(0.8);
-    expect(sitemapPriorityFor("STANDARD")).toBe(0.5);
+describe("getSitemapPriorityTier — HIGH/MEDIUM/LOW classification", () => {
+  it("HIGH when ENHANCED (paid tier always priority)", () => {
+    expect(
+      getSitemapPriorityTier({ ...FULL_STANDARD, enhancedProfile: true }, "ENHANCED")
+    ).toBe<SitemapPriorityTier>("HIGH");
   });
 
-  it("STUB and MENTION return 0 (caller should filter first)", () => {
-    expect(sitemapPriorityFor("STUB")).toBe(0);
-    expect(sitemapPriorityFor("MENTION")).toBe(0);
+  it("HIGH when STANDARD with own geo + ≥5 event associations", () => {
+    expect(
+      getSitemapPriorityTier({ ...FULL_STANDARD, eventAssociationCount: 5 }, "STANDARD")
+    ).toBe<SitemapPriorityTier>("HIGH");
+    expect(
+      getSitemapPriorityTier({ ...FULL_STANDARD, eventAssociationCount: 12 }, "STANDARD")
+    ).toBe<SitemapPriorityTier>("HIGH");
+  });
+
+  it("MEDIUM when STANDARD with own geo, <5 events", () => {
+    expect(
+      getSitemapPriorityTier({ ...FULL_STANDARD, eventAssociationCount: 3 }, "STANDARD")
+    ).toBe<SitemapPriorityTier>("MEDIUM");
+    expect(
+      getSitemapPriorityTier({ ...FULL_STANDARD, eventAssociationCount: 0 }, "STANDARD")
+    ).toBe<SitemapPriorityTier>("MEDIUM");
+  });
+
+  it("MEDIUM when own-address-only (no city/state)", () => {
+    expect(
+      getSitemapPriorityTier(
+        { ...FULL_STANDARD, city: null, state: null, address: "100 Main St" },
+        "STANDARD"
+      )
+    ).toBe<SitemapPriorityTier>("MEDIUM");
+  });
+
+  it("LOW when STANDARD via event-venue geo only", () => {
+    expect(
+      getSitemapPriorityTier(
+        {
+          ...FULL_STANDARD,
+          city: null,
+          state: null,
+          address: null,
+          eventAssociationCount: 3,
+          eventVenueGeoCount: 3,
+        },
+        "STANDARD"
+      )
+    ).toBe<SitemapPriorityTier>("LOW");
+  });
+
+  it("LOW even with ≥5 events when geo is event-venue-only", () => {
+    expect(
+      getSitemapPriorityTier(
+        {
+          ...FULL_STANDARD,
+          city: null,
+          state: null,
+          address: null,
+          eventAssociationCount: 8,
+          eventVenueGeoCount: 8,
+        },
+        "STANDARD"
+      )
+    ).toBe<SitemapPriorityTier>("LOW");
+  });
+});
+
+describe("sitemapPriorityFor", () => {
+  it("HIGH=0.8, MEDIUM=0.5, LOW=0.3", () => {
+    expect(sitemapPriorityFor("HIGH")).toBe(0.8);
+    expect(sitemapPriorityFor("MEDIUM")).toBe(0.5);
+    expect(sitemapPriorityFor("LOW")).toBe(0.3);
   });
 });
 
 describe("sitemapChangeFreqFor", () => {
-  it("ENHANCED is weekly, STANDARD is monthly", () => {
-    expect(sitemapChangeFreqFor("ENHANCED")).toBe("weekly");
-    expect(sitemapChangeFreqFor("STANDARD")).toBe("monthly");
-  });
-
-  it("STUB and MENTION return never", () => {
-    expect(sitemapChangeFreqFor("STUB")).toBe("never");
-    expect(sitemapChangeFreqFor("MENTION")).toBe("never");
+  it("HIGH=weekly, MEDIUM/LOW=monthly", () => {
+    expect(sitemapChangeFreqFor("HIGH")).toBe("weekly");
+    expect(sitemapChangeFreqFor("MEDIUM")).toBe("monthly");
+    expect(sitemapChangeFreqFor("LOW")).toBe("monthly");
   });
 });
 
@@ -170,24 +245,36 @@ describe("isVendorIndexable (delegation through vendor-quality)", () => {
     expect(isVendorIndexable({ enhancedProfile: true })).toBe(true);
   });
 
+  it("Hijacked vendor is NOT indexable even with Enhanced", async () => {
+    const { isVendorIndexable } = await import("../vendor-quality");
+    expect(isVendorIndexable({ enhancedProfile: true, domainHijacked: true })).toBe(false);
+  });
+
   it("STUB vendor (event assoc but no STANDARD criteria) is NOT indexable", async () => {
     const { isVendorIndexable } = await import("../vendor-quality");
-    expect(isVendorIndexable({ description: null, website: null, eventAssociationCount: 2 })).toBe(
-      false
-    );
+    expect(isVendorIndexable({ description: null, eventAssociationCount: 2 })).toBe(false);
   });
 
   it("MENTION vendor is NOT indexable", async () => {
     const { isVendorIndexable } = await import("../vendor-quality");
-    expect(isVendorIndexable({ description: null, website: null })).toBe(false);
+    expect(isVendorIndexable({ description: null })).toBe(false);
   });
 
-  it("backward-compat: vendor with description-only is now NOT indexable (was true under PR #81 binary, now requires location too)", async () => {
-    // This is the key behavioral shift. PR #81's predicate was OR; the tier
-    // model requires AND across description+location+external signal. Vendors
-    // with only a description but no location/external signal demote from
-    // indexable to non-indexable. This is intentional per §6.6 STANDARD.
+  it("description+geo without external signal is now indexable (PR §6.6 loosening)", async () => {
     const { isVendorIndexable } = await import("../vendor-quality");
-    expect(isVendorIndexable({ description: "Just a description, no other fields" })).toBe(false);
+    expect(
+      isVendorIndexable({
+        description: DESCRIPTION_30,
+        city: "Boston",
+        state: "MA",
+        website: null,
+        socialLinks: null,
+      })
+    ).toBe(true);
+  });
+
+  it("description-only (no geo of any kind) is NOT indexable", async () => {
+    const { isVendorIndexable } = await import("../vendor-quality");
+    expect(isVendorIndexable({ description: DESCRIPTION_30 })).toBe(false);
   });
 });

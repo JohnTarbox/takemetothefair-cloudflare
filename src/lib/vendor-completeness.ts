@@ -45,6 +45,13 @@ function nonEmpty(value: string | null | undefined): boolean {
   return !!value && value.trim().length > 0;
 }
 
+// SEO-gate description threshold; mirrors MIN_DESCRIPTION_LENGTH in vendor-tier.ts.
+const MIN_DESCRIPTION_LENGTH = 30;
+
+function hasMeaningfulDescription(v: VendorTierFields): boolean {
+  return !!v.description && v.description.trim().length >= MIN_DESCRIPTION_LENGTH;
+}
+
 function computeTierGap(
   v: VendorTierFields,
   currentTier: VendorTier
@@ -55,17 +62,14 @@ function computeTierGap(
   if (currentTier === "STANDARD") {
     return { nextTier: "ENHANCED", tierGap: [], nextTierAction: "upgrade_to_enhanced" };
   }
-  // STUB or MENTION → STANDARD: spell out the missing STANDARD criteria.
+  // STUB or MENTION → STANDARD: spell out the missing §6.6 criteria.
+  // External signal (website / social) is no longer required for STANDARD;
+  // a meaningful description plus any geographic anchor is enough.
   const gap: string[] = [];
-  if (!nonEmpty(v.description)) gap.push("description");
-  if (!nonEmpty(v.city) || !nonEmpty(v.state)) gap.push("city and state");
-  const hasWebsite = nonEmpty(v.website);
-  const hasSocial =
-    !!v.socialLinks &&
-    (typeof v.socialLinks === "string"
-      ? v.socialLinks.trim() !== "" && v.socialLinks.trim() !== "{}"
-      : Object.keys(v.socialLinks).length > 0);
-  if (!hasWebsite && !hasSocial) gap.push("website or social link");
+  if (!hasMeaningfulDescription(v)) gap.push("description");
+  const hasOwnGeo = (nonEmpty(v.city) && nonEmpty(v.state)) || nonEmpty(v.address);
+  const hasEventGeo = (v.eventVenueGeoCount ?? 0) > 0;
+  if (!hasOwnGeo && !hasEventGeo) gap.push("city and state");
   return { nextTier: "STANDARD", tierGap: gap, nextTierAction: "fill_fields" };
 }
 
