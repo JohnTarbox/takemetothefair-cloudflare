@@ -12,6 +12,7 @@ import {
   PUBLIC_EVENT_STATUSES,
   PUBLIC_VENDOR_STATUSES,
   jsonContent,
+  unsafeSlug,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 
@@ -243,7 +244,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(and(eq(events.slug, slug), inArray(events.status, [...PUBLIC_EVENT_STATUSES])))
+        .where(
+          and(eq(events.slug, unsafeSlug(slug)), inArray(events.status, [...PUBLIC_EVENT_STATUSES]))
+        )
         .limit(1);
 
       if (rows.length === 0) {
@@ -335,7 +338,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .from(events)
         .where(
           and(
-            eq(events.slug, params.event_slug),
+            eq(events.slug, unsafeSlug(params.event_slug)),
             inArray(events.status, [...PUBLIC_EVENT_STATUSES])
           )
         )
@@ -547,7 +550,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
         };
       }
 
-      const condition = params.id ? eq(venues.id, params.id) : eq(venues.slug, params.slug!);
+      const condition = params.id
+        ? eq(venues.id, params.id)
+        : eq(venues.slug, unsafeSlug(params.slug!));
 
       const rows = await db
         .select({
@@ -639,7 +644,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
         };
       }
 
-      const condition = params.id ? eq(vendors.id, params.id) : eq(vendors.slug, params.slug!);
+      const condition = params.id
+        ? eq(vendors.id, params.id)
+        : eq(vendors.slug, unsafeSlug(params.slug!));
 
       const rows = await db
         .select({
@@ -725,7 +732,9 @@ export function registerPublicTools(server: McpServer, db: Db) {
         };
       }
 
-      const condition = params.id ? eq(promoters.id, params.id) : eq(promoters.slug, params.slug!);
+      const condition = params.id
+        ? eq(promoters.id, params.id)
+        : eq(promoters.slug, unsafeSlug(params.slug!));
 
       const rows = await db
         .select({

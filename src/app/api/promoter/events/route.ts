@@ -9,6 +9,7 @@ import {
   findUniqueSlug,
   computePublicDates,
   dollarsToCents,
+  unsafeSlug,
 } from "@/lib/utils";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -150,7 +151,10 @@ export async function POST(request: NextRequest) {
       .select({ slug: events.slug })
       .from(events)
       .where(
-        or(eq(events.slug, baseSlug), and(gt(events.slug, lowerBound), lt(events.slug, upperBound)))
+        or(
+          eq(events.slug, unsafeSlug(baseSlug)),
+          and(gt(events.slug, unsafeSlug(lowerBound)), lt(events.slug, unsafeSlug(upperBound)))
+        )
       );
     const slug = findUniqueSlug(
       baseSlug,

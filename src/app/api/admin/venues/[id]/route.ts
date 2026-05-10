@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, events } from "@/lib/db/schema";
 import { eq, desc, and, ne } from "drizzle-orm";
-import { createSlug } from "@/lib/utils";
+import { createSlug, unsafeSlug } from "@/lib/utils";
 import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
@@ -129,7 +129,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
             .from(venues)
             .where(
               and(
-                eq(venues.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+                eq(venues.slug, unsafeSlug(slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug)),
                 ne(venues.id, id)
               )
             )

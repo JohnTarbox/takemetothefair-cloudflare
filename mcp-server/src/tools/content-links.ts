@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { blogPosts, contentLinks, events, vendors, venues } from "../schema.js";
-import { jsonContent } from "../helpers.js";
+import { jsonContent, unsafeSlug } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -175,7 +175,7 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
       const [post] = await db
         .select({ id: blogPosts.id, slug: blogPosts.slug, title: blogPosts.title })
         .from(blogPosts)
-        .where(eq(blogPosts.slug, slug))
+        .where(eq(blogPosts.slug, unsafeSlug(slug)))
         .limit(1);
       if (!post) {
         return { content: [jsonContent({ error: "Blog post not found" })] };

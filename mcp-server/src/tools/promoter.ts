@@ -9,6 +9,7 @@ import {
   VALID_TRANSITIONS,
   VENDOR_STATUS_ENUM,
   PAYMENT_STATUS_ENUM,
+  unsafeSlug,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -65,7 +66,8 @@ export function registerPromoterTools(server: McpServer, db: Db, auth: AuthConte
 
       // Batch-fetch vendor counts per event
       const eventIds = eventRows.map((e) => e.id);
-      const vendorCounts: Record<string, { total: number; applied: number; confirmed: number }> = {};
+      const vendorCounts: Record<string, { total: number; applied: number; confirmed: number }> =
+        {};
 
       if (eventIds.length > 0) {
         const allApps = await db
@@ -144,7 +146,9 @@ export function registerPromoterTools(server: McpServer, db: Db, auth: AuthConte
       const eventRows = await db
         .select({ id: events.id, name: events.name })
         .from(events)
-        .where(and(eq(events.slug, params.event_slug), eq(events.promoterId, promoterId)))
+        .where(
+          and(eq(events.slug, unsafeSlug(params.event_slug)), eq(events.promoterId, promoterId))
+        )
         .limit(1);
 
       if (eventRows.length === 0) {
@@ -236,7 +240,9 @@ export function registerPromoterTools(server: McpServer, db: Db, auth: AuthConte
       const eventRows = await db
         .select({ id: events.id, name: events.name })
         .from(events)
-        .where(and(eq(events.slug, params.event_slug), eq(events.promoterId, promoterId)))
+        .where(
+          and(eq(events.slug, unsafeSlug(params.event_slug)), eq(events.promoterId, promoterId))
+        )
         .limit(1);
 
       if (eventRows.length === 0) {

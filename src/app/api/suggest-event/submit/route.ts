@@ -10,6 +10,7 @@ import {
   decodeHtmlEntities,
   dollarsToCents,
   appendSlugSegment,
+  unsafeSlug,
 } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
@@ -129,7 +130,7 @@ export async function POST(request: NextRequest) {
         id: COMMUNITY_PROMOTER_ID,
         userId: null,
         companyName: "Community Suggestions",
-        slug: "community-suggestions",
+        slug: unsafeSlug("community-suggestions"),
         description: "Events suggested by the community. These events are pending admin review.",
         verified: false,
       });
@@ -143,7 +144,9 @@ export async function POST(request: NextRequest) {
       const existingSlug = await db
         .select()
         .from(events)
-        .where(eq(events.slug, slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
+        .where(
+          eq(events.slug, unsafeSlug(slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
+        )
         .limit(1);
       if (existingSlug.length === 0) break;
       slugSuffix++;

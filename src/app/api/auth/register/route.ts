@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
-import { createSlug } from "@/lib/utils";
+import { createSlug, unsafeSlug } from "@/lib/utils";
 import { and, eq, isNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
         const [target] = await db
           .select({ id: vendors.id, userId: vendors.userId, claimed: vendors.claimed })
           .from(vendors)
-          .where(and(eq(vendors.slug, claimVendorSlug), isNull(vendors.deletedAt)))
+          .where(and(eq(vendors.slug, unsafeSlug(claimVendorSlug)), isNull(vendors.deletedAt)))
           .limit(1);
         if (target && target.claimed === false) {
           const [existingOwner] = await db

@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
 import { decodeHtmlEntities } from "@/lib/scrapers/utils";
 import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
-import { createSlug, appendSlugSegment } from "@/lib/utils";
+import { createSlug, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
@@ -38,7 +38,10 @@ async function findOrCreateVenue(
   const venueState = (scrapedVenue.state || "").toUpperCase().trim();
 
   // Try to find existing venue by slug
-  const existingVenues = await db.select().from(venues).where(eq(venues.slug, venueSlug));
+  const existingVenues = await db
+    .select()
+    .from(venues)
+    .where(eq(venues.slug, unsafeSlug(venueSlug)));
 
   // Look for a venue with matching city (if we have city info)
   if (existingVenues.length > 0 && venueCity) {
@@ -80,7 +83,11 @@ async function findOrCreateVenue(
     }
 
     // Check if this slug also exists, add random suffix if needed
-    const slugCheck = await db.select().from(venues).where(eq(venues.slug, finalSlug)).limit(1);
+    const slugCheck = await db
+      .select()
+      .from(venues)
+      .where(eq(venues.slug, unsafeSlug(finalSlug)))
+      .limit(1);
     if (slugCheck.length > 0) {
       finalSlug = appendSlugSegment(finalSlug, crypto.randomUUID().substring(0, 8));
     }
@@ -357,7 +364,10 @@ export async function POST(request: Request) {
           );
 
           // Check if venue exists with matching name AND city
-          const existingVenues = await db.select().from(venues).where(eq(venues.slug, venueSlug));
+          const existingVenues = await db
+            .select()
+            .from(venues)
+            .where(eq(venues.slug, unsafeSlug(venueSlug)));
 
           console.warn(
             `[Venue Match] Found ${existingVenues.length} existing venue(s) with slug "${venueSlug}"`
@@ -465,7 +475,7 @@ export async function POST(request: Request) {
           const existingSlug = await db
             .select()
             .from(events)
-            .where(eq(events.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug))
+            .where(eq(events.slug, unsafeSlug(slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug)))
             .limit(1);
           if (existingSlug.length === 0) break;
           slugSuffix++;

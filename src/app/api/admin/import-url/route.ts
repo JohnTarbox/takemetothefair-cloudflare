@@ -4,7 +4,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDays, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug, dollarsToCents, appendSlugSegment } from "@/lib/utils";
+import { createSlug, dollarsToCents, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
@@ -85,7 +85,9 @@ export async function POST(request: NextRequest) {
         const existingSlug = await db
           .select()
           .from(venues)
-          .where(eq(venues.slug, slugSuffix > 0 ? `${venueSlug}-${slugSuffix}` : venueSlug))
+          .where(
+            eq(venues.slug, unsafeSlug(slugSuffix > 0 ? `${venueSlug}-${slugSuffix}` : venueSlug))
+          )
           .limit(1);
         if (existingSlug.length === 0) break;
         slugSuffix++;
@@ -141,7 +143,9 @@ export async function POST(request: NextRequest) {
       const existingSlug = await db
         .select()
         .from(events)
-        .where(eq(events.slug, slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
+        .where(
+          eq(events.slug, unsafeSlug(slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
+        )
         .limit(1);
       if (existingSlug.length === 0) break;
       slugSuffix++;

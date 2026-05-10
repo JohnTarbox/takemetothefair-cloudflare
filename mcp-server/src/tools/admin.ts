@@ -20,6 +20,8 @@ import {
   jsonContent,
   createSlug,
   appendSlugSegment,
+  unsafeSlug,
+  type Slug,
   parseLocation,
   sanitizeProse,
   VALID_TRANSITIONS,
@@ -633,7 +635,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             await db.insert(eventSlugHistory).values({
               eventId: event.id,
               oldSlug: event.slug,
-              newSlug: updates.slug,
+              newSlug: unsafeSlug(updates.slug),
               changedAt: new Date(),
               changedBy: auth.userId,
             });
@@ -2157,7 +2159,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         await db.insert(vendorSlugHistory).values({
           vendorId: vendor.id,
           oldSlug: vendor.slug,
-          newSlug: updates.slug as string,
+          newSlug: unsafeSlug(updates.slug as string),
           changedAt: new Date(),
           changedBy: auth.userId,
         });
@@ -2263,7 +2265,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Custom slug handling — same shape as update_vendor's slug logic.
-      let slugChanged: { from: string; to: string } | null = null;
+      let slugChanged: { from: Slug; to: Slug } | null = null;
       if (params.custom_slug && params.custom_slug !== vendor.slug) {
         const slugSeed = createSlug(params.custom_slug);
         let finalSlug = slugSeed;

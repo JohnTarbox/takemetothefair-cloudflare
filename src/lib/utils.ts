@@ -12,13 +12,15 @@ import {
 
 // Re-export from the canonical packages/utils so existing `@/lib/utils`
 // imports keep working. Source of truth lives in @takemetothefair/utils.
-export {
+import {
   createSlug,
   decodeHtmlEntities,
   unsafeSlug,
   appendSlugSegment,
+  type Slug,
 } from "@takemetothefair/utils";
-export type { Slug } from "@takemetothefair/utils";
+export { createSlug, decodeHtmlEntities, unsafeSlug, appendSlugSegment };
+export type { Slug };
 
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
 
@@ -50,12 +52,12 @@ export function getSlugPrefixBounds(baseSlug: string): [string, string] {
  * Find a unique slug by checking existing slugs with the same base.
  * Appends -2, -3, etc. if the base slug is taken.
  */
-export function findUniqueSlug(baseSlug: string, existingSlugs: (string | null)[]): string {
+export function findUniqueSlug(baseSlug: Slug, existingSlugs: (string | null)[]): Slug {
   const existing = new Set(existingSlugs);
   if (!existing.has(baseSlug)) return baseSlug;
   let i = 2;
   while (existing.has(`${baseSlug}-${i}`)) i++;
-  return `${baseSlug}-${i}`;
+  return appendSlugSegment(baseSlug, i);
 }
 
 /**

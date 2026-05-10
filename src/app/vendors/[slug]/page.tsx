@@ -16,7 +16,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
+import { decodeHtmlEntities, formatDateRange, unsafeSlug } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, vendorSlugHistory } from "@/lib/db/schema";
 import { eq, and, asc, desc, sql } from "drizzle-orm";
@@ -61,7 +61,7 @@ async function findCurrentSlugForOld(slug: string): Promise<string | null> {
     const rows = await db
       .select({ newSlug: vendorSlugHistory.newSlug })
       .from(vendorSlugHistory)
-      .where(eq(vendorSlugHistory.oldSlug, cursor))
+      .where(eq(vendorSlugHistory.oldSlug, unsafeSlug(cursor)))
       .orderBy(desc(vendorSlugHistory.changedAt))
       .limit(1);
     if (rows.length === 0) {
@@ -83,7 +83,7 @@ async function getVendor(slug: string) {
       .select()
       .from(vendors)
       .leftJoin(users, eq(vendors.userId, users.id))
-      .where(eq(vendors.slug, slug))
+      .where(eq(vendors.slug, unsafeSlug(slug)))
       .limit(1);
 
     if (vendorResults.length === 0) return null;

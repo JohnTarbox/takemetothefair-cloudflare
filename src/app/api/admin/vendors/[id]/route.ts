@@ -13,7 +13,7 @@ import {
   recommendationItems,
 } from "@/lib/db/schema";
 import { eq, and, ne, inArray, gte, sql } from "drizzle-orm";
-import { createSlug, appendSlugSegment } from "@/lib/utils";
+import { createSlug, appendSlugSegment, unsafeSlug, type Slug } from "@/lib/utils";
 import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -143,7 +143,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           .from(vendors)
           .where(
             and(
-              eq(vendors.slug, slugSuffix > 0 ? `${slugSeed}-${slugSuffix}` : slugSeed),
+              eq(vendors.slug, slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed),
               ne(vendors.id, id)
             )
           )
@@ -272,7 +272,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       await db.insert(vendorSlugHistory).values({
         vendorId: id,
         oldSlug: currentVendor.slug,
-        newSlug: updateData.slug as string,
+        newSlug: unsafeSlug(updateData.slug as string),
         changedAt: now,
         changedBy: session.user.id,
       });
@@ -549,7 +549,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     // ─── REDIRECT-TARGET VALIDATION ─────────────────────────────────
 
-    let redirectTarget: { id: string; slug: string; businessName: string } | null = null;
+    let redirectTarget: { id: string; slug: Slug; businessName: string } | null = null;
     if (redirect_to_vendor_id) {
       if (redirect_to_vendor_id === id) {
         return NextResponse.json(
@@ -605,7 +605,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       .leftJoin(blogPosts, eq(contentLinks.sourceId, blogPosts.id))
       .where(and(eq(contentLinks.targetType, "VENDOR"), eq(contentLinks.targetId, id)));
     const blogPostsWithDeadLinks = Array.from(
-      new Set(blogLinkRows.map((r) => r.sourceSlug).filter((s): s is string => !!s))
+      new Set(blogLinkRows.map((r) => r.sourceSlug).filter((s): s is Slug => !!s))
     );
 
     const [{ historicalCount }] = await db

@@ -6,6 +6,7 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseJsonArray } from "@/types";
 import { logError } from "@/lib/logger";
+import { unsafeSlug } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -54,7 +55,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(eq(events.slug, slug), isPublicEventStatus()))
+      .where(and(eq(events.slug, unsafeSlug(slug)), isPublicEventStatus()))
       .limit(1);
 
     if (results.length === 0) {

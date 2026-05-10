@@ -27,7 +27,7 @@ import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
 import type { Metadata } from "next";
 import { logError } from "@/lib/logger";
 import { buildVenueMetaDescription } from "@/lib/seo-utils";
-import { decodeHtmlEntities } from "@/lib/utils";
+import { decodeHtmlEntities, unsafeSlug } from "@/lib/utils";
 import { VenueSchema } from "@/components/seo/VenueSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
@@ -48,7 +48,7 @@ async function getVenue(slug: string) {
     const venueResults = await db
       .select()
       .from(venues)
-      .where(and(eq(venues.slug, slug), eq(venues.status, "ACTIVE")))
+      .where(and(eq(venues.slug, unsafeSlug(slug)), eq(venues.status, "ACTIVE")))
       .limit(1);
 
     if (venueResults.length === 0) return null;

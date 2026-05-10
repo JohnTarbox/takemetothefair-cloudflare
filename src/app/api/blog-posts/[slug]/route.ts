@@ -3,7 +3,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { isAuthorized } from "@/lib/api-auth";
 import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
+import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, ne } from "drizzle-orm";
 import { findBrokenLinksInDb } from "@/lib/blog-links";
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   const admin = await isAuthorized(request);
 
   try {
-    const conditions = [eq(blogPosts.slug, slug)];
+    const conditions = [eq(blogPosts.slug, unsafeSlug(slug))];
     // Non-admin users can only see published posts
     if (!admin) {
       conditions.push(eq(blogPosts.status, "PUBLISHED"));
@@ -89,7 +89,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   try {
     // Fetch the existing post
-    const [existing] = await db.select().from(blogPosts).where(eq(blogPosts.slug, slug)).limit(1);
+    const [existing] = await db
+      .select()
+      .from(blogPosts)
+      .where(eq(blogPosts.slug, unsafeSlug(slug)))
+      .limit(1);
 
     if (!existing) {
       return NextResponse.json({ error: "Blog post not found" }, { status: 404 });
@@ -112,7 +116,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
               ne(blogPosts.id, existing.id),
               or(
                 eq(blogPosts.slug, baseSlug),
-                and(gt(blogPosts.slug, lowerBound), lt(blogPosts.slug, upperBound))
+                and(
+                  gt(blogPosts.slug, unsafeSlug(lowerBound)),
+                  lt(blogPosts.slug, unsafeSlug(upperBound))
+                )
               )
             )
           );
@@ -239,7 +246,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const [existing] = await db
       .select({ id: blogPosts.id })
       .from(blogPosts)
-      .where(eq(blogPosts.slug, slug))
+      .where(eq(blogPosts.slug, unsafeSlug(slug)))
       .limit(1);
 
     if (!existing) {

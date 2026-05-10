@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { vendors, events, eventSlugHistory } from "@/lib/db/schema";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { unsafeSlug } from "@/lib/utils";
 
 /**
  * Middleware handles four pre-route concerns that must NOT be cached:
@@ -156,7 +157,7 @@ export async function middleware(request: NextRequest) {
       const [row] = await db
         .select({ status: events.status })
         .from(events)
-        .where(eq(events.slug, slug))
+        .where(eq(events.slug, unsafeSlug(slug)))
         .limit(1);
 
       if (row) {
@@ -192,7 +193,7 @@ export async function middleware(request: NextRequest) {
         const [historyRow] = await db
           .select({ newSlug: eventSlugHistory.newSlug })
           .from(eventSlugHistory)
-          .where(eq(eventSlugHistory.oldSlug, cursor))
+          .where(eq(eventSlugHistory.oldSlug, unsafeSlug(cursor)))
           .orderBy(desc(eventSlugHistory.changedAt))
           .limit(1);
         if (!historyRow || seen.has(historyRow.newSlug)) break;
@@ -205,7 +206,12 @@ export async function middleware(request: NextRequest) {
         const [target] = await db
           .select({ status: events.status })
           .from(events)
-          .where(and(eq(events.slug, cursor), inArray(events.status, [...PUBLIC_EVENT_STATUSES])))
+          .where(
+            and(
+              eq(events.slug, unsafeSlug(cursor)),
+              inArray(events.status, [...PUBLIC_EVENT_STATUSES])
+            )
+          )
           .limit(1);
         if (target) {
           const url = request.nextUrl.clone();
@@ -239,7 +245,7 @@ export async function middleware(request: NextRequest) {
           redirectToVendorId: vendors.redirectToVendorId,
         })
         .from(vendors)
-        .where(eq(vendors.slug, slug))
+        .where(eq(vendors.slug, unsafeSlug(slug)))
         .limit(1);
       if (!row || !row.deletedAt) return NextResponse.next();
 
