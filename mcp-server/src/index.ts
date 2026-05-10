@@ -197,6 +197,58 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       }
     }
   }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Workaround for issue #121 / upstream MCP TS SDK #1186 (open, P2):
+  // "Zombie Task Collision in StreamableHTTPServerTransport"
+  //
+  // The agents package's StreamableHTTPServerTransport.send() routes responses
+  // by walking agent.getConnections() and picking the first connection whose
+  // state.requestIds includes the response's request id. When two concurrent
+  // clients (or one client reusing JSON-RPC ids across parallel requests) end
+  // up with the same id in their per-connection state, the find() returns
+  // either connection arbitrarily. Result: the response is written to the
+  // wrong client's HTTP socket — silently, with the wrong shape.
+  //
+  // We hit this in production on 2026-05-10 (8 parallel update_event MCP calls,
+  // 3 returned page_analytics-shaped responses). Filed upstream with concurrent-
+  // variant analysis.
+  //
+  // This wrap doesn't fix the routing — that requires a transport-level change
+  // (composite (streamId, requestId) keys, or upstream's id-collision rejection).
+  // What it DOES is structured-log every collision detection so we can quantify
+  // recurrence in `wrangler tail` and confirm when an upstream fix takes effect.
+  //
+  // Removable when: agents package upgrades past the upstream SDK fix for #1186.
+  async onStart(props?: UserProps) {
+    await super.onStart(props);
+    // Access the protected `_transport` via `any` cast — agents package doesn't
+    // expose it for instrumentation but it's safe to read after onStart.
+    const transport = (this as unknown as { _transport?: unknown })._transport as
+      | { send?: (m: unknown, o?: { relatedRequestId?: unknown }) => Promise<unknown> }
+      | undefined;
+    if (!transport || typeof transport.send !== "function") return;
+
+    const originalSend = transport.send.bind(transport);
+    const getConnections = () => this.getConnections();
+    transport.send = async (m: unknown, o?: { relatedRequestId?: unknown }) => {
+      const message = m as { id?: unknown };
+      const reqId = o?.relatedRequestId ?? message?.id;
+      if (reqId !== undefined && reqId !== null) {
+        const conns = Array.from(getConnections() ?? []);
+        const matches = conns.filter((c) => {
+          const ids = (c.state as { requestIds?: unknown[] } | undefined)?.requestIds;
+          return Array.isArray(ids) && ids.includes(reqId);
+        });
+        if (matches.length > 1) {
+          console.error(
+            `[MCP/#121] JSON-RPC id collision detected — request id ${String(reqId)} matches ${matches.length} active connections. Response routing is ambiguous; one or more clients will receive the wrong response shape. See upstream modelcontextprotocol/typescript-sdk#1186.`
+          );
+        }
+      }
+      return originalSend(m, o);
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
