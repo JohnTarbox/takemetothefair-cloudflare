@@ -90,7 +90,11 @@ async function getVendor(slug: string) {
 
     const vendor = vendorResults[0];
 
-    // Get event vendors with events and venues
+    // Get event vendors with events and venues. Filtered by public status
+    // for display (Upcoming/Past Events sections only show APPROVED/CONFIRMED
+    // associations). The §6.6 SEO predicate uses a separate, status-agnostic
+    // count below so the page-level noindex matches the sitemap's gate
+    // exactly — see commit ab17bc4 for the SQL it mirrors.
     const eventVendorResults = await db
       .select()
       .from(eventVendors)
@@ -114,6 +118,23 @@ async function getVendor(slug: string) {
         return aTime - bTime;
       });
 
+    // Status-agnostic counts for the §6.6 SEO predicate. Mirrors the SQL
+    // gate in src/app/sitemap.ts so page noindex and sitemap inclusion
+    // can never disagree for the same vendor.
+    const [seoCounts] = await db
+      .select({
+        eventAssociationCount: sql<number>`COUNT(*)`,
+        eventVenueGeoCount: sql<number>`SUM(
+          CASE WHEN ${venues.city} IS NOT NULL AND ${venues.city} != ''
+                AND ${venues.state} IS NOT NULL AND ${venues.state} != ''
+               THEN 1 ELSE 0 END
+        )`,
+      })
+      .from(eventVendors)
+      .leftJoin(events, eq(eventVendors.eventId, events.id))
+      .leftJoin(venues, eq(events.venueId, venues.id))
+      .where(eq(eventVendors.vendorId, vendor.vendors.id));
+
     // Increment view count (drizzle/0051). Mirrors events/[slug]/page.tsx pattern.
     // ISR cache provides implicit ~5-min dedup; absolute count undercounts but
     // relative ordering (used by claimed_ready_for_enhanced_upsell rule) is preserved.
@@ -128,6 +149,8 @@ async function getVendor(slug: string) {
         ? { name: vendor.users.name, email: vendor.users.email }
         : { name: null, email: null },
       eventVendors: vendorEvents,
+      seoEventAssociationCount: Number(seoCounts?.eventAssociationCount ?? 0),
+      seoEventVenueGeoCount: Number(seoCounts?.eventVenueGeoCount ?? 0),
     };
   } catch (e) {
     await logError(db, {
@@ -152,18 +175,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
-  // The §6.6 SEO gate considers event-venue geo as a fallback geographic
-  // anchor when the vendor has neither own city+state nor an own address.
-  // getVendor() above already pulled the joined venues, so we count locally
-  // rather than running a second D1 query.
-  const eventAssociationCount = vendor.eventVendors.length;
-  const eventVenueGeoCount = vendor.eventVendors.filter(
-    (ev) => !!ev.event.venue?.city?.trim() && !!ev.event.venue?.state?.trim()
-  ).length;
+  // §6.6 SEO predicate. Uses status-agnostic counts (computed in getVendor)
+  // to mirror the sitemap's SQL gate exactly — page noindex and sitemap
+  // inclusion must never disagree for the same vendor.
   const indexable = isVendorIndexable({
     ...vendor,
-    eventAssociationCount,
-    eventVenueGeoCount,
+    eventAssociationCount: vendor.seoEventAssociationCount,
+    eventVenueGeoCount: vendor.seoEventVenueGeoCount,
   });
 
   return {

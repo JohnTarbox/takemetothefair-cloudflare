@@ -310,7 +310,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
             )
           )
         )
-        AND v.completeness_score >= ${SITEMAP_MIN_COMPLETENESS}
     `);
 
     const vendorPages: MetadataRoute.Sitemap = vendorRows
