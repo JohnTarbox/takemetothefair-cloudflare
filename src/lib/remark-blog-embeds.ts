@@ -19,16 +19,28 @@ function isDirective(node: AnyNode): node is DirectiveNode & AnyNode {
   );
 }
 
-// HTML/JSX tag names must start with a letter. remark-directive's permissive
-// parser accepts directive *names* like "30am" or "1" (extracted from prose
-// like "6:30am" or "1:1"), but those produce invalid React elements and crash
-// the server-side render with "Invalid tag" errors. Restrict directive
-// rewriting to names that actually look like component identifiers; everything
-// else falls back to react-markdown's default text handling.
-const VALID_DIRECTIVE_NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
+export interface RemarkBlogEmbedsOptions {
+  /**
+   * Names of components that the consumer's react-markdown `components` map
+   * can render. Only directives whose `name` is in this allowlist get rewritten
+   * to a custom hName; every other directive falls back to react-markdown's
+   * default text handling.
+   *
+   * Why an allowlist (not a regex / not "any valid identifier"):
+   * remark-directive's permissive parser produces text directives from prose
+   * like "6:30am" (name="30am") or "1:1" (name="1"). Setting hName to those
+   * crashes the SSR with "Invalid tag" errors. Even names that LOOK valid
+   * (e.g. "foo") would render as inert unknown elements unless the consumer
+   * has a component for them. Restricting to the registered set is the only
+   * configuration where every rewritten directive renders something
+   * intentional. (Empty/missing allow → plugin is a no-op, which is the
+   * safe default for callers that haven't audited their content yet.)
+   */
+  allow?: ReadonlyArray<string>;
+}
 
-function walk(node: AnyNode) {
-  if (isDirective(node) && node.name && VALID_DIRECTIVE_NAME.test(node.name)) {
+function walk(node: AnyNode, allow: ReadonlySet<string>) {
+  if (isDirective(node) && node.name && allow.has(node.name)) {
     const data = node.data ?? (node.data = {});
     data.hName = node.name;
     const attrs = node.attributes ?? {};
@@ -39,15 +51,19 @@ function walk(node: AnyNode) {
     data.hProperties = props;
   }
   if (Array.isArray(node.children)) {
-    for (const child of node.children) walk(child);
+    for (const child of node.children) walk(child, allow);
   }
 }
 
 /**
- * Rewrites remark-directive nodes so react-markdown can resolve them
- * through its `components` map via the directive's name as the tag.
- * `::foo{bar="1"}` → `<foo bar="1">`, `:::foo` → `<foo>children</foo>`.
+ * Rewrites remark-directive nodes so react-markdown can resolve them through
+ * its `components` map. Only names listed in `options.allow` are rewritten —
+ * see `RemarkBlogEmbedsOptions.allow` for why an allowlist is the right shape.
+ *
+ * `::foo{bar="1"}` → `<foo bar="1">`, `:::foo …` → `<foo>…</foo>`.
  */
-export const remarkBlogEmbeds: Plugin<[], Root> = () => (tree) => {
-  walk(tree as unknown as AnyNode);
+export const remarkBlogEmbeds: Plugin<[RemarkBlogEmbedsOptions?], Root> = (options) => (tree) => {
+  const allow = new Set(options?.allow ?? []);
+  if (allow.size === 0) return;
+  walk(tree as unknown as AnyNode, allow);
 };

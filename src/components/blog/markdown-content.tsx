@@ -7,7 +7,7 @@ import remarkDirective from "remark-directive";
 import rehypeExternalLinks from "rehype-external-links";
 import { headingSlug } from "@/lib/markdown-utils";
 import { remarkBlogEmbeds } from "@/lib/remark-blog-embeds";
-import { BLOG_EMBEDS } from "@/components/blog/embeds/registry";
+import { BLOG_EMBEDS, BLOG_EMBED_NAMES } from "@/components/blog/embeds/registry";
 
 interface MarkdownContentProps {
   content: string;
@@ -53,7 +53,11 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
   return (
     <div className="prose prose-lg max-w-none prose-headings:text-navy prose-headings:scroll-mt-20 prose-a:text-royal prose-a:underline hover:prose-a:text-royal/80 prose-img:rounded-lg prose-blockquote:border-royal/30 prose-blockquote:text-gray-700">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkDirective, remarkBlogEmbeds]}
+        remarkPlugins={[
+          remarkGfm,
+          remarkDirective,
+          [remarkBlogEmbeds, { allow: BLOG_EMBED_NAMES }],
+        ]}
         rehypePlugins={[
           [rehypeExternalLinks, { target: "_blank", rel: ["noopener", "noreferrer"] }],
         ]}
