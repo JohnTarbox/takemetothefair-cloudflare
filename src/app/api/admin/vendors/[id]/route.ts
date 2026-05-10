@@ -13,7 +13,7 @@ import {
   recommendationItems,
 } from "@/lib/db/schema";
 import { eq, and, ne, inArray, gte, sql } from "drizzle-orm";
-import { createSlug } from "@/lib/utils";
+import { createSlug, appendSlugSegment } from "@/lib/utils";
 import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -149,7 +149,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           )
           .limit(1);
         if (existingSlug.length === 0) {
-          candidate = slugSuffix > 0 ? `${slugSeed}-${slugSuffix}` : slugSeed;
+          candidate = slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed;
           break;
         }
         slugSuffix++;

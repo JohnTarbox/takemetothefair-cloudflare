@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
 import { decodeHtmlEntities } from "@/lib/scrapers/utils";
 import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
-import { createSlug } from "@/lib/utils";
+import { createSlug, appendSlugSegment } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
@@ -72,17 +72,17 @@ async function findOrCreateVenue(
   if (existingVenues.length > 0) {
     // Slug already exists - make it unique
     if (venueCity) {
-      finalSlug = `${venueSlug}-${createSlug(venueCity)}`;
+      finalSlug = appendSlugSegment(venueSlug, createSlug(venueCity));
     } else if (venueState) {
-      finalSlug = `${venueSlug}-${venueState.toLowerCase()}`;
+      finalSlug = appendSlugSegment(venueSlug, venueState.toLowerCase());
     } else {
-      finalSlug = `${venueSlug}-${crypto.randomUUID().substring(0, 8)}`;
+      finalSlug = appendSlugSegment(venueSlug, crypto.randomUUID().substring(0, 8));
     }
 
     // Check if this slug also exists, add random suffix if needed
     const slugCheck = await db.select().from(venues).where(eq(venues.slug, finalSlug)).limit(1);
     if (slugCheck.length > 0) {
-      finalSlug = `${finalSlug}-${crypto.randomUUID().substring(0, 8)}`;
+      finalSlug = appendSlugSegment(finalSlug, crypto.randomUUID().substring(0, 8));
     }
   }
 
@@ -471,7 +471,7 @@ export async function POST(request: Request) {
           slugSuffix++;
         }
         if (slugSuffix > 0) {
-          slug = `${slug}-${slugSuffix}`;
+          slug = appendSlugSegment(slug, slugSuffix);
         }
 
         // Insert the event

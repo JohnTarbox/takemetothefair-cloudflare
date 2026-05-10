@@ -4,7 +4,13 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import { createSlug, computePublicDates, decodeHtmlEntities, dollarsToCents } from "@/lib/utils";
+import {
+  createSlug,
+  computePublicDates,
+  decodeHtmlEntities,
+  dollarsToCents,
+  appendSlugSegment,
+} from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -143,7 +149,7 @@ export async function POST(request: NextRequest) {
       slugSuffix++;
     }
     if (slugSuffix > 0) {
-      finalEventSlug = `${eventSlug}-${slugSuffix}`;
+      finalEventSlug = appendSlugSegment(eventSlug, slugSuffix);
     }
 
     // Parse dates
