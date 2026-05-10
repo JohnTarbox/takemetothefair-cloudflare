@@ -176,10 +176,13 @@ export function createSlug(text: string): Slug {
  * Do NOT use this for new slug generation — use `createSlug`.
  */
 export function createSlugFromName(name: string): Slug {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") as Slug;
+  return (
+    name
+      .toLowerCase()
+      // eslint-disable-next-line no-restricted-syntax -- canonical legacy implementation; this is the one place the regex chain is intentional.
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") as Slug
+  );
 }
 
 // ---------------------------------------------------------------------------

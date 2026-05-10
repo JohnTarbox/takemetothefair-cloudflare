@@ -810,6 +810,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         sourceId: params.source_url
           ? params.source_url
               .toLowerCase()
+              // eslint-disable-next-line no-restricted-syntax -- sourceId is an external-system identifier derived from URL, not a slug. Stability matters more than canonical-slug semantics.
               .replace(/[^a-z0-9]+/g, "-")
               .replace(/^-|-$/g, "")
           : eventId,

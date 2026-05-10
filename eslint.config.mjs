@@ -27,6 +27,26 @@ export default [
       ],
       "@typescript-eslint/no-explicit-any": "warn",
       "no-console": ["warn", { allow: ["warn", "error"] }],
+      // Catch handcrafted "slug from name" regex chains. The exact pattern
+      // /[^a-z0-9]+/ produces a different result than canonical createSlug()
+      // (the slugify library handles & → "and", apostrophes, accented chars
+      // correctly; the regex doesn't). This divergence silently created
+      // duplicate venue rows in production — see issue #120.
+      //
+      // Brand-typed Slug already prevents the bug at storage time (#123/#124),
+      // but this lint rule additionally catches the `unsafeSlug(naiveChain(x))`
+      // loophole where the cast hides the algorithmic mismatch.
+      //
+      // Allowlist: `createSlugFromName` in @takemetothefair/utils is the
+      // canonical legacy implementation and disables this rule inline.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[regex.pattern='[^a-z0-9]+']",
+          message:
+            "Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → \"and\", apostrophes, and accented chars; this regex doesn't. See issue #120.",
+        },
+      ],
     },
   },
   {
