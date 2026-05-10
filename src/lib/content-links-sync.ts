@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { getCloudflareDb } from "@/lib/cloudflare";
+import type { Slug } from "@/lib/utils";
 import {
   contentLinks,
   events,
@@ -71,7 +72,7 @@ export async function syncContentLinks(
       const rows = await db
         .select({ id: table.id, slug: table.slug })
         .from(table)
-        .where(inArray(table.slug, slugs));
+        .where(inArray(table.slug, slugs as Slug[]));
       for (const r of rows) {
         targetIdsByTypeSlug.set(`${type}|${r.slug.toLowerCase()}`, r.id);
       }

@@ -13,6 +13,7 @@ import {
   logEnrichment,
   createSlug,
   appendSlugSegment,
+  unsafeSlug,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -247,7 +248,7 @@ export function registerVendorTools(
           commercialVendorsAllowed: events.commercialVendorsAllowed,
         })
         .from(events)
-        .where(eq(events.slug, params.event_slug))
+        .where(eq(events.slug, unsafeSlug(params.event_slug)))
         .limit(1);
 
       if (eventRows.length === 0) {
@@ -328,7 +329,7 @@ export function registerVendorTools(
       const eventRows = await db
         .select({ id: events.id, name: events.name })
         .from(events)
-        .where(eq(events.slug, params.event_slug))
+        .where(eq(events.slug, unsafeSlug(params.event_slug)))
         .limit(1);
 
       if (eventRows.length === 0) {
@@ -419,7 +420,7 @@ export function registerVendorTools(
             venueId: events.venueId,
           })
           .from(events)
-          .where(eq(events.slug, params.event_slug))
+          .where(eq(events.slug, unsafeSlug(params.event_slug)))
           .limit(1);
 
         if (eventRows.length === 0) {
@@ -600,7 +601,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         await db.insert(promoters).values({
           id: COMMUNITY_PROMOTER_ID,
           companyName: "Community Suggestions",
-          slug: "community-suggestions",
+          slug: unsafeSlug("community-suggestions"),
           description: "Events suggested by the community.",
           verified: false,
         });
@@ -616,7 +617,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         const existing = await db
           .select({ id: events.id })
           .from(events)
-          .where(eq(events.slug, candidate))
+          .where(eq(events.slug, unsafeSlug(candidate)))
           .limit(1);
         if (existing.length === 0) {
           finalSlug = candidate;
@@ -654,7 +655,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         const existingVenues = await db
           .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
           .from(venues)
-          .where(eq(venues.slug, venueSlug));
+          .where(eq(venues.slug, unsafeSlug(venueSlug)));
 
         let matched = false;
 
@@ -699,7 +700,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           const slugCheck = await db
             .select({ id: venues.id })
             .from(venues)
-            .where(eq(venues.slug, finalVenueSlug))
+            .where(eq(venues.slug, unsafeSlug(finalVenueSlug)))
             .limit(1);
           if (slugCheck.length > 0) {
             finalVenueSlug = appendSlugSegment(finalVenueSlug, crypto.randomUUID().substring(0, 8));

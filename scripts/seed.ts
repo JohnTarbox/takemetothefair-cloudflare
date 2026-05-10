@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "../src/lib/db/schema";
+import { unsafeSlug } from "@takemetothefair/utils";
 
 // Inline hashPassword to avoid importing from src/lib/auth.ts which pulls in
 // Cloudflare-specific modules that aren't available in the seed script context.
@@ -60,7 +61,7 @@ async function main() {
       id: promoterId,
       userId: promoterUserId,
       companyName: "Fair Events Co.",
-      slug: "fair-events-co",
+      slug: unsafeSlug("fair-events-co"),
       description: "We organize the best fairs and festivals in the region!",
       website: "https://faireventsco.example.com",
       verified: true,
@@ -76,7 +77,7 @@ async function main() {
       id: communityPromoterId,
       userId: null, // No user account - system promoter
       companyName: "Community Suggestions",
-      slug: "community-suggestions",
+      slug: unsafeSlug("community-suggestions"),
       description: "Events suggested by the community. These events are pending admin review.",
       verified: false,
     })
@@ -103,7 +104,7 @@ async function main() {
       id: vendorId,
       userId: vendorUserId,
       businessName: "Artisan Crafts",
-      slug: "artisan-crafts",
+      slug: unsafeSlug("artisan-crafts"),
       description: "Handmade crafts and artisan goods",
       vendorType: "Arts & Crafts",
       products: JSON.stringify(["Pottery", "Jewelry", "Woodwork"]),
@@ -118,7 +119,7 @@ async function main() {
     .values({
       id: venue1Id,
       name: "County Fairgrounds",
-      slug: "county-fairgrounds",
+      slug: unsafeSlug("county-fairgrounds"),
       address: "1234 Fair Lane",
       city: "Springfield",
       state: "IL",
@@ -140,7 +141,7 @@ async function main() {
     .values({
       id: venue2Id,
       name: "Riverside Park",
-      slug: "riverside-park",
+      slug: unsafeSlug("riverside-park"),
       address: "500 River Road",
       city: "Austin",
       state: "TX",
@@ -161,7 +162,7 @@ async function main() {
     .values({
       id: venue3Id,
       name: "Downtown Convention Center",
-      slug: "downtown-convention-center",
+      slug: unsafeSlug("downtown-convention-center"),
       address: "100 Main Street",
       city: "Chicago",
       state: "IL",
@@ -188,7 +189,7 @@ async function main() {
     .values({
       id: event1Id,
       name: "Summer County Fair 2025",
-      slug: "summer-county-fair-2025",
+      slug: unsafeSlug("summer-county-fair-2025"),
       description:
         "Join us for the biggest summer fair in the county! Featuring live music, carnival rides, agricultural exhibits, and delicious fair food. Fun for the whole family!",
       promoterId: promoterId,
@@ -211,7 +212,7 @@ async function main() {
     .values({
       id: event2Id,
       name: "Artisan Market Festival",
-      slug: "artisan-market-festival",
+      slug: unsafeSlug("artisan-market-festival"),
       description:
         "Discover unique handmade goods from local artisans. Browse jewelry, pottery, woodwork, textiles, and more. Live demonstrations and workshops available.",
       promoterId: promoterId,
@@ -233,7 +234,7 @@ async function main() {
     .values({
       id: event3Id,
       name: "Holiday Craft Show",
-      slug: "holiday-craft-show",
+      slug: unsafeSlug("holiday-craft-show"),
       description:
         "Get a head start on holiday shopping! Over 200 vendors selling handmade gifts, decorations, and treats. Perfect for finding unique presents.",
       promoterId: promoterId,

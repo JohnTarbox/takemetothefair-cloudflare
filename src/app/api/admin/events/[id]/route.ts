@@ -11,7 +11,7 @@ import {
   eventSlugHistory,
 } from "@/lib/db/schema";
 import { eq, and, ne } from "drizzle-orm";
-import { createSlug, computePublicDates } from "@/lib/utils";
+import { createSlug, computePublicDates, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
@@ -142,7 +142,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
             .from(events)
             .where(
               and(
-                eq(events.slug, slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug),
+                eq(events.slug, slugSuffix > 0 ? appendSlugSegment(slug, slugSuffix) : slug),
                 ne(events.id, id)
               )
             )
@@ -250,7 +250,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         await db.insert(eventSlugHistory).values({
           eventId: id,
           oldSlug: currentEvent.slug,
-          newSlug: updateData.slug,
+          newSlug: unsafeSlug(updateData.slug),
           changedAt: new Date(),
           changedBy: session.user.id,
         });

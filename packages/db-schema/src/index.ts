@@ -7,6 +7,7 @@ import {
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
+import type { Slug } from "@takemetothefair/utils";
 
 // Users table
 export const users = sqliteTable("users", {
@@ -34,7 +35,7 @@ export const venues = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     name: text("name").notNull(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
     address: text("address").notNull(),
     city: text("city").notNull(),
     state: text("state").notNull(),
@@ -74,7 +75,7 @@ export const promoters = sqliteTable("promoters", {
     .unique()
     .references(() => users.id, { onDelete: "set null" }),
   companyName: text("company_name").notNull(),
-  slug: text("slug").notNull().unique(),
+  slug: text("slug").$type<Slug>().notNull().unique(),
   description: text("description"),
   website: text("website"),
   socialLinks: text("social_links"),
@@ -96,7 +97,7 @@ export const events = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     name: text("name").notNull(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
     description: text("description"),
     promoterId: text("promoter_id")
       .notNull()
@@ -184,7 +185,7 @@ export const vendors = sqliteTable("vendors", {
     .unique()
     .references(() => users.id, { onDelete: "cascade" }),
   businessName: text("business_name").notNull(),
-  slug: text("slug").notNull().unique(),
+  slug: text("slug").$type<Slug>().notNull().unique(),
   description: text("description"),
   vendorType: text("vendor_type"),
   products: text("products").default("[]"),
@@ -290,8 +291,8 @@ export const vendorSlugHistory = sqliteTable(
     vendorId: text("vendor_id")
       .notNull()
       .references(() => vendors.id, { onDelete: "cascade" }),
-    oldSlug: text("old_slug").notNull(),
-    newSlug: text("new_slug").notNull(),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
     changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
     changedBy: text("changed_by"),
   },
@@ -312,8 +313,8 @@ export const eventSlugHistory = sqliteTable(
     eventId: text("event_id")
       .notNull()
       .references(() => events.id, { onDelete: "cascade" }),
-    oldSlug: text("old_slug").notNull(),
-    newSlug: text("new_slug").notNull(),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
     changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
     changedBy: text("changed_by"),
   },
@@ -619,7 +620,7 @@ export const blogPosts = sqliteTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     title: text("title").notNull(),
-    slug: text("slug").notNull().unique(),
+    slug: text("slug").$type<Slug>().notNull().unique(),
     body: text("body").notNull(), // Markdown content
     excerpt: text("excerpt"),
     authorId: text("author_id")

@@ -2,6 +2,7 @@ import { inArray } from "drizzle-orm";
 import { blogPosts } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import { EVENT_LISTING_SLUGS } from "@/lib/constants";
+import type { Slug } from "@/lib/utils";
 
 // Match /blog/<slug> occurrences (hrefs, markdown links, bare text).
 const BLOG_LINK_RE = /\/blog\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
@@ -81,7 +82,7 @@ export async function findBrokenLinksInDb(
   const rows = await db
     .select({ slug: blogPosts.slug })
     .from(blogPosts)
-    .where(inArray(blogPosts.slug, referenced));
+    .where(inArray(blogPosts.slug, referenced as Slug[]));
   const known = new Set(rows.map((r) => r.slug.toLowerCase()));
   return referenced.filter((s) => !known.has(s));
 }

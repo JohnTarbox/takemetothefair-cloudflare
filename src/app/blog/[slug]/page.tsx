@@ -23,7 +23,7 @@ import {
   countWords,
   extractHeadings,
 } from "@/lib/markdown-utils";
-import { formatAuthorName } from "@/lib/utils";
+import { formatAuthorName, unsafeSlug } from "@/lib/utils";
 import { TableOfContents } from "@/components/blog/table-of-contents";
 import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
@@ -58,7 +58,7 @@ async function getPost(slug: string) {
     })
     .from(blogPosts)
     .leftJoin(users, eq(blogPosts.authorId, users.id))
-    .where(eq(blogPosts.slug, slug))
+    .where(eq(blogPosts.slug, unsafeSlug(slug)))
     .limit(1);
 
   return post || null;

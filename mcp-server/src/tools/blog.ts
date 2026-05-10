@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
-import { parseJsonArray, formatDate, jsonContent, sanitizeProse } from "../helpers.js";
+import { parseJsonArray, formatDate, jsonContent, sanitizeProse, unsafeSlug } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -137,7 +137,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         })
         .from(blogPosts)
         .leftJoin(users, eq(blogPosts.authorId, users.id))
-        .where(eq(blogPosts.slug, params.slug))
+        .where(eq(blogPosts.slug, unsafeSlug(params.slug)))
         .limit(1);
 
       if (!post) {

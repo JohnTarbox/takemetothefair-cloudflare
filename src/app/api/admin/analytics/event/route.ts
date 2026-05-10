@@ -12,6 +12,7 @@ import {
   type SearchQueryRow,
 } from "@/lib/search-console";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
+import { unsafeSlug } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -60,7 +61,7 @@ export async function GET(request: NextRequest) {
     .from(events)
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
     .leftJoin(venues, eq(events.venueId, venues.id))
-    .where(eventId ? eq(events.id, eventId) : eq(events.slug, slugParam!))
+    .where(eventId ? eq(events.id, eventId) : eq(events.slug, unsafeSlug(slugParam!)))
     .limit(1);
 
   const event = rows[0];

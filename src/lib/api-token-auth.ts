@@ -1,6 +1,7 @@
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { apiTokens, vendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { unsafeSlug } from "@/lib/utils";
 
 function toHex(buffer: ArrayBuffer): string {
   return Array.from(new Uint8Array(buffer))
@@ -65,7 +66,7 @@ export async function authenticateVendorToken(
   const vendorResults = await db
     .select({ id: vendors.id })
     .from(vendors)
-    .where(and(eq(vendors.slug, vendorSlug), eq(vendors.userId, userId)))
+    .where(and(eq(vendors.slug, unsafeSlug(vendorSlug)), eq(vendors.userId, userId)))
     .limit(1);
 
   if (vendorResults.length === 0) {

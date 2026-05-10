@@ -21,6 +21,7 @@ import { vendors } from "@/lib/db/schema";
 import { sendEmail } from "@/lib/email/send";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
+import { unsafeSlug } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -62,7 +63,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
         enhancedProfile: vendors.enhancedProfile,
       })
       .from(vendors)
-      .where(eq(vendors.slug, slug))
+      .where(eq(vendors.slug, unsafeSlug(slug)))
       .limit(1);
 
     if (rows.length === 0) {

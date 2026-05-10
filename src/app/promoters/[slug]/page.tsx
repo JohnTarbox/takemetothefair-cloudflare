@@ -33,6 +33,7 @@ import { logError } from "@/lib/logger";
 import type { Metadata } from "next";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
+import { unsafeSlug } from "@/lib/utils";
 
 export const runtime = "edge";
 export const revalidate = 300; // 5-minute ISR
@@ -48,7 +49,7 @@ async function getPromoter(slug: string) {
     const promoterResults = await db
       .select()
       .from(promoters)
-      .where(eq(promoters.slug, slug))
+      .where(eq(promoters.slug, unsafeSlug(slug)))
       .limit(1);
 
     if (promoterResults.length === 0) return null;

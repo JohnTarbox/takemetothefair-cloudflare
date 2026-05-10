@@ -23,7 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { formatDateRange, formatDiscontinuousDates, formatPrice } from "@/lib/utils";
+import { formatDateRange, formatDiscontinuousDates, formatPrice, unsafeSlug } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   events,
@@ -172,7 +172,7 @@ async function getEvent(slug: string) {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(eq(events.slug, slug), isPublicEventStatus()))
+      .where(and(eq(events.slug, unsafeSlug(slug)), isPublicEventStatus()))
       .limit(1);
 
     if (eventResults.length === 0) return null;

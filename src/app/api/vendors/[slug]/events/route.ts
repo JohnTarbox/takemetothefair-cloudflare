@@ -5,6 +5,7 @@ import { eq, and, asc } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
+import { unsafeSlug } from "@/lib/utils";
 
 export const runtime = "edge";
 
@@ -17,7 +18,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     const vendorResults = await db
       .select({ id: vendors.id, businessName: vendors.businessName, slug: vendors.slug })
       .from(vendors)
-      .where(eq(vendors.slug, slug))
+      .where(eq(vendors.slug, unsafeSlug(slug)))
       .limit(1);
 
     if (vendorResults.length === 0) {

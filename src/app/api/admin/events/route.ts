@@ -9,6 +9,7 @@ import {
   findUniqueSlug,
   computePublicDates,
   dollarsToCents,
+  unsafeSlug,
 } from "@/lib/utils";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
@@ -110,7 +111,10 @@ export async function POST(request: NextRequest) {
       .select({ slug: events.slug })
       .from(events)
       .where(
-        or(eq(events.slug, baseSlug), and(gt(events.slug, lowerBound), lt(events.slug, upperBound)))
+        or(
+          eq(events.slug, baseSlug),
+          and(gt(events.slug, unsafeSlug(lowerBound)), lt(events.slug, unsafeSlug(upperBound)))
+        )
       );
     const slug = findUniqueSlug(
       baseSlug,
@@ -147,7 +151,7 @@ export async function POST(request: NextRequest) {
     await db.insert(events).values({
       id: eventId,
       name: data.name,
-      slug,
+      slug: unsafeSlug(slug),
       description: data.description,
       venueId: data.venueId,
       stateCode: resolvedStateCode,

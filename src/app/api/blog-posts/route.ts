@@ -5,7 +5,7 @@ import { isAuthorized, getAuthorizedSession } from "@/lib/api-auth";
 import { blogPostCreateSchema, validateRequestBody } from "@/lib/validations";
 import { findBrokenLinksInDb } from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
-import { createSlug, getSlugPrefixBounds, findUniqueSlug } from "@/lib/utils";
+import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, desc, sql } from "drizzle-orm";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -147,8 +147,11 @@ export async function POST(request: NextRequest) {
       .from(blogPosts)
       .where(
         or(
-          eq(blogPosts.slug, baseSlug),
-          and(gt(blogPosts.slug, lowerBound), lt(blogPosts.slug, upperBound))
+          eq(blogPosts.slug, unsafeSlug(baseSlug)),
+          and(
+            gt(blogPosts.slug, unsafeSlug(lowerBound)),
+            lt(blogPosts.slug, unsafeSlug(upperBound))
+          )
         )
       );
     const slug = findUniqueSlug(
