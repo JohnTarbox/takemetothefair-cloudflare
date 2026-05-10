@@ -359,4 +359,66 @@ describe("suggest_event", () => {
     });
     expect(mock.calls.map((c) => c.source)).toEqual(["event-create"]);
   });
+
+  // Regression for issue #120: suggest_event used an inline naive slug regex
+  // while create_venue used canonical createSlug. For names with "&" the two
+  // produced different slugs (canonical inserts "and"), so the dedup SELECT
+  // missed the existing row and a duplicate venue was created.
+  it("dedups against canonical-slug venue when name contains '&'", async () => {
+    seedVenue({
+      id: "venue-existing-amp",
+      name: "Capital City Sports & Fitness",
+      slug: "capital-city-sports-and-fitness",
+      city: "Concord",
+      state: "NH",
+    });
+    await vendorServer.invoke("suggest_event", {
+      name: "Holiday Show",
+      venue_name: "Capital City Sports & Fitness",
+      venue_city: "Concord",
+      venue_state: "NH",
+      start_date: "2026-12-15",
+      force_create: true,
+    });
+    const sources = mock.calls.map((c) => c.source).sort();
+    // venue-create MUST NOT fire — the existing row should match.
+    expect(sources).toEqual(["event-create"]);
+
+    // Verify no second row was inserted under any slug variant.
+    const rows = db
+      .select({ id: venues.id, slug: venues.slug })
+      .from(venues)
+      .where(eq(venues.name, "Capital City Sports & Fitness"))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("venue-existing-amp");
+  });
+
+  // Sibling case: apostrophe handling differs between canonical (drops it
+  // entirely → "robin-hoods-...") and the old inline regex (treats it as a
+  // separator → "robin-hood-s-..."). Confirms the dedup is now consistent.
+  it("dedups against canonical-slug venue when name contains an apostrophe", async () => {
+    seedVenue({
+      id: "venue-existing-apos",
+      name: "Robin Hood's Faire Grounds",
+      slug: "robin-hoods-faire-grounds",
+      city: "Harwinton",
+      state: "CT",
+    });
+    await vendorServer.invoke("suggest_event", {
+      name: "Renaissance Weekend",
+      venue_name: "Robin Hood's Faire Grounds",
+      venue_city: "Harwinton",
+      venue_state: "CT",
+      start_date: "2026-09-12",
+      force_create: true,
+    });
+    expect(mock.calls.map((c) => c.source).sort()).toEqual(["event-create"]);
+    const rows = db
+      .select({ id: venues.id })
+      .from(venues)
+      .where(eq(venues.name, "Robin Hood's Faire Grounds"))
+      .all();
+    expect(rows).toHaveLength(1);
+  });
 });
