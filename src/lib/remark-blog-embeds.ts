@@ -19,8 +19,16 @@ function isDirective(node: AnyNode): node is DirectiveNode & AnyNode {
   );
 }
 
+// HTML/JSX tag names must start with a letter. remark-directive's permissive
+// parser accepts directive *names* like "30am" or "1" (extracted from prose
+// like "6:30am" or "1:1"), but those produce invalid React elements and crash
+// the server-side render with "Invalid tag" errors. Restrict directive
+// rewriting to names that actually look like component identifiers; everything
+// else falls back to react-markdown's default text handling.
+const VALID_DIRECTIVE_NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
+
 function walk(node: AnyNode) {
-  if (isDirective(node)) {
+  if (isDirective(node) && node.name && VALID_DIRECTIVE_NAME.test(node.name)) {
     const data = node.data ?? (node.data = {});
     data.hName = node.name;
     const attrs = node.attributes ?? {};
