@@ -346,6 +346,7 @@ export function parseEventsFromHtml(
         ? extractSlugFromUrl(detailUrl)
         : name
             .toLowerCase()
+            // eslint-disable-next-line no-restricted-syntax -- sourceId is the scraper's stable external identifier, not a slug. Changing it would re-import existing events as "new" rows.
             .replace(/[^a-z0-9]+/g, "-")
             .replace(/-+/g, "-");
 

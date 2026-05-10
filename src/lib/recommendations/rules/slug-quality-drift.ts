@@ -46,6 +46,7 @@ export const slugQualityDriftRule: RuleDefinition = {
     // it requires per-row name + slug + city comparison.
     const matches = rows.filter((r) => {
       const slugLower = r.slug.toLowerCase();
+      // eslint-disable-next-line no-restricted-syntax -- comparison heuristic, not a slug producer. Approximate slug-shape from name to detect drift in stored slugs; intentionally simple to avoid masking the very mismatches we're looking for.
       const nameLower = r.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
       // Already trimmed nameLower to slug-shape; check if slug has trailing
       // segments beyond the name. If yes, those segments are the suspect
