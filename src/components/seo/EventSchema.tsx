@@ -39,8 +39,10 @@ interface EventSchemaProps {
     name: string;
     url?: string | null;
   } | null;
-  ticketPriceMin?: number | null;
-  ticketPriceMax?: number | null;
+  // Integer cents per the project's money convention (post-PR-#56).
+  // Component converts to dollars locally before emitting to JSON-LD.
+  ticketPriceMinCents?: number | null;
+  ticketPriceMaxCents?: number | null;
   ticketUrl?: string | null;
   categories?: string[];
   datesConfirmed?: boolean | null;
@@ -71,8 +73,8 @@ export function EventSchema({
   venue,
   stateCode,
   organizer,
-  ticketPriceMin,
-  ticketPriceMax,
+  ticketPriceMinCents,
+  ticketPriceMaxCents,
   ticketUrl,
   categories,
   datesConfirmed,
@@ -80,9 +82,24 @@ export function EventSchema({
   vendors,
   createdAt,
 }: EventSchemaProps) {
-  // Calculate isAccessibleForFree based on ticket price
-  const isAccessibleForFree =
-    ticketPriceMin === 0 || ticketPriceMin === null || ticketPriceMin === undefined;
+  // Convert integer cents → dollars for JSON-LD emission. Round-2 backlog
+  // item 1 (2026-05-11): only emit `offers` and `isAccessibleForFree` when
+  // price is *known*. The previous code treated null/undefined as free,
+  // which surfaced "Free admission" on Google's event-rich-result carousel
+  // for paid events like the $14-gate Fryeburg Fair.
+  const hasKnownPrice =
+    (ticketPriceMinCents !== null && ticketPriceMinCents !== undefined) ||
+    (ticketPriceMaxCents !== null && ticketPriceMaxCents !== undefined);
+  const priceMinDollars =
+    ticketPriceMinCents !== null && ticketPriceMinCents !== undefined
+      ? ticketPriceMinCents / 100
+      : null;
+  const priceMaxDollars =
+    ticketPriceMaxCents !== null && ticketPriceMaxCents !== undefined
+      ? ticketPriceMaxCents / 100
+      : null;
+  // Confirmed-free only when min is explicitly 0; omitted when unknown.
+  const isAccessibleForFree = priceMinDollars === 0 ? true : undefined;
 
   const location = venue
     ? {
@@ -124,30 +141,26 @@ export function EventSchema({
       ? "https://schema.org/EventPostponed"
       : "https://schema.org/EventScheduled";
 
-  const offers =
-    ticketPriceMin !== null && ticketPriceMin !== undefined
-      ? ticketPriceMax !== null && ticketPriceMax !== undefined && ticketPriceMax !== ticketPriceMin
-        ? {
-            "@type": "AggregateOffer",
-            url: ticketUrl || url,
-            lowPrice: ticketPriceMin,
-            highPrice: ticketPriceMax,
-            priceCurrency: "USD",
-            availability: "https://schema.org/InStock",
-            validFrom: validFromDate,
-          }
-        : {
-            "@type": "Offer",
-            url: ticketUrl || url,
-            price: ticketPriceMin,
-            priceCurrency: "USD",
-            availability: "https://schema.org/InStock",
-            validFrom: validFromDate,
-          }
+  // Only emit `offers` when price is known. Schema.org marks `offers` as
+  // recommended-but-not-required, so omitting is the honest signal when we
+  // don't know whether an event is free or paid. `JSON.parse(JSON.stringify())`
+  // below strips the `undefined` from the final output.
+  const offers = !hasKnownPrice
+    ? undefined
+    : priceMaxDollars !== null && priceMinDollars !== null && priceMaxDollars !== priceMinDollars
+      ? {
+          "@type": "AggregateOffer",
+          url: ticketUrl || url,
+          lowPrice: priceMinDollars,
+          highPrice: priceMaxDollars,
+          priceCurrency: "USD",
+          availability: "https://schema.org/InStock",
+          validFrom: validFromDate,
+        }
       : {
           "@type": "Offer",
           url: ticketUrl || url,
-          price: 0,
+          price: priceMinDollars ?? priceMaxDollars ?? 0,
           priceCurrency: "USD",
           availability: "https://schema.org/InStock",
           validFrom: validFromDate,
