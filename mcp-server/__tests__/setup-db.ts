@@ -259,6 +259,28 @@ const SCHEMA_SQL = `
     flushed_at INTEGER,
     flushed_batch_id TEXT
   );
+
+  CREATE TABLE event_data_citations (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    year INTEGER,
+    source_url TEXT NOT NULL,
+    source_name TEXT,
+    source_type TEXT NOT NULL,
+    confidence REAL,
+    state TEXT NOT NULL DEFAULT 'active',
+    notes TEXT,
+    supersedes_citation_id TEXT,
+    created_by TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX idx_citations_event_field ON event_data_citations (event_id, field_name);
+  CREATE INDEX idx_citations_event_state ON event_data_citations (event_id, state);
+  CREATE INDEX idx_citations_state ON event_data_citations (state);
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {

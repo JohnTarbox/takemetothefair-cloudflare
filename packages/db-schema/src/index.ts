@@ -394,6 +394,63 @@ export const eventVendors = sqliteTable(
   ]
 );
 
+// Event Data Citations table — provenance log for event field values that come
+// from external sources (homepage hero, press release, vendor PDF, etc.). One
+// row per citation, not per field; lifecycle (active / superseded / rejected /
+// stale) resolves which row is the current authority. The denormalized
+// columns on events (estimatedAttendance, vendorFeeMinCents, etc.) stay as
+// the consumer-facing cache of the current `active` citation. See
+// MMATF-Analysis/MMATF-Automation-Spec.md §4.3.1.
+export const eventDataCitations = sqliteTable(
+  "event_data_citations",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    fieldName: text("field_name").notNull(),
+    value: text("value").notNull(),
+    year: integer("year"),
+    sourceUrl: text("source_url").notNull(),
+    sourceName: text("source_name"),
+    sourceType: text("source_type", {
+      enum: [
+        "official_website",
+        "news_article",
+        "press_release",
+        "social_media",
+        "user_submitted",
+        "other",
+      ],
+    }).notNull(),
+    confidence: real("confidence"),
+    state: text("state", {
+      enum: ["active", "superseded", "rejected", "stale"],
+    })
+      .notNull()
+      .default("active"),
+    notes: text("notes"),
+    supersedesCitationId: text("supersedes_citation_id").references(
+      (): AnySQLiteColumn => eventDataCitations.id,
+      { onDelete: "set null" }
+    ),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("idx_citations_event_field").on(table.eventId, table.fieldName),
+    index("idx_citations_event_state").on(table.eventId, table.state),
+    index("idx_citations_state").on(table.state),
+  ]
+);
+
 // Event Days table - per-day schedules for multi-day events
 export const eventDays = sqliteTable("event_days", {
   id: text("id")
@@ -677,6 +734,7 @@ export const eventsRelations = relations(events, ({ one, many }) => ({
   eventVendors: many(eventVendors),
   eventDays: many(eventDays),
   schemaOrg: one(eventSchemaOrg, { fields: [events.id], references: [eventSchemaOrg.eventId] }),
+  dataCitations: many(eventDataCitations),
 }));
 
 export const eventSchemaOrgRelations = relations(eventSchemaOrg, ({ one }) => ({
@@ -695,6 +753,19 @@ export const vendorsRelations = relations(vendors, ({ one, many }) => ({
 export const eventVendorsRelations = relations(eventVendors, ({ one }) => ({
   event: one(events, { fields: [eventVendors.eventId], references: [events.id] }),
   vendor: one(vendors, { fields: [eventVendors.vendorId], references: [vendors.id] }),
+}));
+
+export const eventDataCitationsRelations = relations(eventDataCitations, ({ one }) => ({
+  event: one(events, { fields: [eventDataCitations.eventId], references: [events.id] }),
+  createdByUser: one(users, {
+    fields: [eventDataCitations.createdBy],
+    references: [users.id],
+  }),
+  supersedes: one(eventDataCitations, {
+    fields: [eventDataCitations.supersedesCitationId],
+    references: [eventDataCitations.id],
+    relationName: "citation_supersession",
+  }),
 }));
 
 export const userFavoritesRelations = relations(userFavorites, ({ one }) => ({

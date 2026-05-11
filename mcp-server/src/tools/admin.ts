@@ -12,6 +12,7 @@ import {
   vendorSlugHistory,
   eventSlugHistory,
   adminActions,
+  eventDataCitations,
 } from "../schema.js";
 import {
   formatDateRange,
@@ -43,6 +44,11 @@ import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { dollarsToCents } from "../helpers.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
+import {
+  registerCitationTools,
+  DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
+  SOURCE_TYPE_VALUES as CITATION_SOURCE_TYPE_VALUES,
+} from "./admin-citations.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -63,6 +69,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Outbox drainer for the defer_search_ping flag — fires one batched
   // IndexNow call instead of N inline pings after a bulk ingestion run.
   registerFlushPendingSearchPingsTool(server, db, auth, env);
+
+  // event_data_citations provenance tooling (drizzle/0064). Adds
+  // create_event_citation, list_event_citations, update_event_citation,
+  // delete_event_citation, bulk_create_event_citations.
+  registerCitationTools(server, db, auth, env);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
@@ -401,11 +412,44 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       venue_city: z.string().optional().describe("Update linked venue's city"),
       venue_state: z.string().optional().describe("Update linked venue's state (2-letter code)"),
       venue_zip: z.string().optional().describe("Update linked venue's ZIP code"),
+      is_statewide: z
+        .boolean()
+        .optional()
+        .describe(
+          "Mark event as statewide (no single venue, e.g. Maine Maple Sunday). When true, also set state_code; venue_id is typically cleared in a separate call."
+        ),
+      state_code: z
+        .string()
+        .length(2)
+        .optional()
+        .describe(
+          "2-letter state code (uppercased automatically). Required pairing for statewide events; also valid for venue-anchored events as a denormalized convenience."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
         .default(false)
         .describe("If true, queue the IndexNow ping for batched flush."),
+      // Optional provenance for tracked fields. When supplied AND any of
+      // estimated_attendance / vendor_fee_min / vendor_fee_max /
+      // ticket_price_min / ticket_price_max / application_deadline is being
+      // changed in this call, a citation row is inserted for each tracked
+      // field touched (auto-superseding the prior active row for the same
+      // (event, field, year) tuple). Omitting `citation` keeps existing
+      // behavior — column writes proceed with no provenance row recorded.
+      citation: z
+        .object({
+          source_url: z.string().url(),
+          source_type: z.enum(CITATION_SOURCE_TYPE_VALUES),
+          source_name: z.string().max(200).transform(sanitizeProse).optional(),
+          year: z.number().int().min(1900).max(2100).optional(),
+          confidence: z.number().min(0).max(1).optional(),
+          notes: z.string().max(1000).transform(sanitizeProse).optional(),
+        })
+        .optional()
+        .describe(
+          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline). When set, one citation row is inserted per tracked field touched."
+        ),
     },
     async (params) => {
       // Load URL domain classifications once so the ticket_url / application_url
@@ -458,6 +502,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "recurrence_rule", column: "recurrenceRule" },
         { param: "discontinuous_dates", column: "discontinuousDates" },
         { param: "sync_enabled", column: "syncEnabled" },
+        // Statewide modeling — migration 0033 introduced these columns. Allows
+        // events with no single venue (Maine Maple Sunday, Open Lighthouse
+        // Day) to surface on /events/<state> via state_code.
+        { param: "is_statewide", column: "isStatewide" },
+        {
+          param: "state_code",
+          column: "stateCode",
+          transform: (v: unknown) => (typeof v === "string" ? v.toUpperCase() : v),
+        },
         {
           param: "categories",
           column: "categories",
@@ -550,6 +603,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // Validate state_code shape when explicitly set. The length(2) Zod
+      // check catches malformed input; this catches "12" / "ZZ" etc. that
+      // pass length but aren't real US state codes.
+      if (typeof updates.stateCode === "string" && !/^[A-Z]{2}$/.test(updates.stateCode)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Invalid state_code "${updates.stateCode}". Use a 2-letter US state code (e.g. "ME", "NH").`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       // Validate venue FK exists if provided
       if (params.venue_id) {
         const venueRows = await db
@@ -595,6 +663,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const event = eventRows[0];
+
+      // Statewide requires a state code. If the caller flips is_statewide=true
+      // without supplying state_code AND the existing row has no state_code,
+      // refuse — surfacing the event on /events/<state> requires the code.
+      if (
+        updates.isStatewide === true &&
+        updates.stateCode === undefined &&
+        !(event as { stateCode?: string | null }).stateCode
+      ) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "state_code is required when is_statewide=true (this event has no existing state_code). Pass state_code in the same call.",
+            },
+          ],
+          isError: true,
+        };
+      }
 
       // If name changed, regenerate slug with collision check.
       // Use canonical createSlug so the new slug matches what main-app and
@@ -672,12 +759,98 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // Citation insert: for each tracked field touched, record a citation
+      // row keyed to the supplied source. Mirrors create_event_citation but
+      // skips the denormalized column write (already happened above). Runs
+      // after the event update so a citation row never exists without the
+      // corresponding column write.
+      const citationsInserted: Array<{
+        citation_id: string;
+        field_name: string;
+        superseded_count: number;
+      }> = [];
+      if (params.citation && requestedFields.length > 0) {
+        const citationYear = params.citation.year ?? null;
+        for (const field of requestedFields) {
+          const denorm = CITATION_DENORM_FIELD_MAP[field];
+          if (!denorm) continue;
+          const rawValue = (params as Record<string, unknown>)[field];
+          if (rawValue === undefined || rawValue === null) continue;
+          const valueText = String(rawValue);
+
+          // Supersede prior active for (event, field, year). Match NULL year
+          // explicitly because SQL `=` treats NULL as unequal.
+          let supersededId: string | null = null;
+          let supersededCount = 0;
+          const yearFilter =
+            citationYear === null
+              ? sql`${eventDataCitations.year} IS NULL`
+              : eq(eventDataCitations.year, citationYear);
+          const prior = await db
+            .select({ id: eventDataCitations.id })
+            .from(eventDataCitations)
+            .where(
+              and(
+                eq(eventDataCitations.eventId, event.id),
+                eq(eventDataCitations.fieldName, field),
+                yearFilter,
+                eq(eventDataCitations.state, "active")
+              )
+            );
+          if (prior.length > 0) {
+            supersededId = prior[0].id;
+            const ids = prior.map((r) => r.id);
+            await db
+              .update(eventDataCitations)
+              .set({ state: "superseded", updatedAt: new Date() })
+              .where(inArray(eventDataCitations.id, ids));
+            supersededCount = ids.length;
+          }
+
+          const citationId = crypto.randomUUID();
+          await db.insert(eventDataCitations).values({
+            id: citationId,
+            eventId: event.id,
+            fieldName: field,
+            value: valueText,
+            year: citationYear,
+            sourceUrl: params.citation.source_url,
+            sourceName: params.citation.source_name ?? null,
+            sourceType: params.citation.source_type,
+            confidence: params.citation.confidence ?? null,
+            state: "active",
+            notes: params.citation.notes ?? null,
+            supersedesCitationId: supersededId,
+            createdBy: auth.userId ?? null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+          citationsInserted.push({
+            citation_id: citationId,
+            field_name: field,
+            superseded_count: supersededCount,
+          });
+        }
+      }
+
       // IndexNow: ping if a material field changed on an already-public event.
       // "Material" = fields rendered on the public detail page that affect SERP
       // snippets — name, description, dates, venue. Other admin-y fields
       // (featured, source_id, etc.) don't merit a re-index ping.
+      // is_statewide / state_code re-trigger because they reclassify the event
+      // onto /events/<state>; the URL itself doesn't change but the listing
+      // pages do (per feedback_enum_widening_audit.md re: classification flips
+      // silently bypassing IndexNow).
       if (env && PUBLIC_EVENT_SET.has(event.status)) {
-        const materialFields = ["name", "description", "start_date", "end_date", "venue_id"];
+        const materialFields = [
+          "name",
+          "description",
+          "start_date",
+          "end_date",
+          "venue_id",
+          "is_statewide",
+          "state_code",
+        ];
         if (requestedFields.some((f) => materialFields.includes(f))) {
           const finalSlug = (updates.slug as string | undefined) ?? event.slug;
           await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-update", {
@@ -787,6 +960,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (venueUpdateResult) {
         result.venueUpdated = venueUpdateResult;
+      }
+      if (citationsInserted.length > 0) {
+        result.citationsInserted = citationsInserted;
       }
 
       return { content: [jsonContent(result)] };
