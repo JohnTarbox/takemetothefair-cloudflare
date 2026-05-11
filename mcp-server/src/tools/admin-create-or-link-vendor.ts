@@ -207,7 +207,7 @@ export function registerCreateOrLinkVendorTool(
         .optional()
         .default(false)
         .describe(
-          "If true, queue IndexNow ping for later flush via flush_pending_search_pings. No-op until that tool ships in PR 2."
+          "If true, queue the IndexNow ping in pending_search_pings instead of firing inline. Drain with flush_pending_search_pings at end of batch. Default false."
         ),
     },
     async (params) => {
