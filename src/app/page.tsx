@@ -1,4 +1,4 @@
-import { OrganizationSchema } from "@/components/seo/OrganizationSchema";
+import { WebSiteSchema } from "@/components/seo/WebSiteSchema";
 import Link from "next/link";
 import { Search, Calendar, MapPin, Users, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -178,7 +178,7 @@ export default async function HomePage() {
 
   return (
     <div>
-      <OrganizationSchema />
+      <WebSiteSchema />
       {/* Hero Section */}
       <section className="bg-navy text-white">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28 max-h-[600px]">

@@ -134,6 +134,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (data.excerpt !== undefined) updateData.excerpt = data.excerpt;
     if (data.tags !== undefined) updateData.tags = JSON.stringify(data.tags);
     if (data.categories !== undefined) updateData.categories = JSON.stringify(data.categories);
+    if (data.faqs !== undefined) updateData.faqs = JSON.stringify(data.faqs);
     if (data.featuredImageUrl !== undefined) updateData.featuredImageUrl = data.featuredImageUrl;
     if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
     if (data.metaDescription !== undefined) updateData.metaDescription = data.metaDescription;

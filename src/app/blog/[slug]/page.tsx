@@ -17,6 +17,7 @@ import { BlogStatusButton } from "@/components/blog/blog-status-button";
 import { ArticleSchema } from "@/components/seo/ArticleSchema";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { extractBlogFaqItems } from "@/lib/blog-faq";
+import { FAQ_MIN_ITEMS, type FaqItem } from "@/lib/event-faq";
 import {
   extractFirstImage,
   estimateReadingTime,
@@ -48,6 +49,7 @@ async function getPost(slug: string) {
       authorName: users.name,
       tags: blogPosts.tags,
       categories: blogPosts.categories,
+      faqs: blogPosts.faqs,
       featuredImageUrl: blogPosts.featuredImageUrl,
       status: blogPosts.status,
       publishDate: blogPosts.publishDate,
@@ -212,10 +214,33 @@ export default async function BlogPostPage({ params }: Props) {
 
   const url = `https://meetmeatthefair.com/blog/${post.slug}`;
 
-  // Tier 2: pillar posts structured as Q&A (per MMATF-FAQ-Strategy.md §4.2)
-  // emit FAQPage JSON-LD automatically. The extractor returns [] for posts
-  // without a Q&A structure, in which case <FAQPageSchema> renders null.
-  const blogFaqItems = extractBlogFaqItems(post.body);
+  // FAQ source priority: explicit `faqs` column (MCP/admin-managed) wins
+  // when it has >= FAQ_MIN_ITEMS pairs. Otherwise fall back to the original
+  // Tier 2 extractor that parses `## Q: ...` H2 headings in the markdown
+  // body (MMATF-FAQ-Strategy.md §4.2). Posts with neither emit no FAQ
+  // schema — <FAQPageSchema> renders null for an empty array.
+  const blogFaqItems: FaqItem[] = (() => {
+    let parsed: unknown = [];
+    try {
+      parsed = JSON.parse(post.faqs || "[]");
+    } catch {
+      parsed = [];
+    }
+    if (
+      Array.isArray(parsed) &&
+      parsed.length >= FAQ_MIN_ITEMS &&
+      parsed.every(
+        (it): it is FaqItem =>
+          typeof it === "object" &&
+          it !== null &&
+          typeof (it as FaqItem).question === "string" &&
+          typeof (it as FaqItem).answer === "string"
+      )
+    ) {
+      return parsed;
+    }
+    return extractBlogFaqItems(post.body);
+  })();
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">

@@ -690,6 +690,7 @@ export const blogPosts = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     tags: text("tags").default("[]"),
     categories: text("categories").default("[]"),
+    faqs: text("faqs").notNull().default("[]"),
     featuredImageUrl: text("featured_image_url"),
     status: text("status", { enum: ["DRAFT", "PUBLISHED"] })
       .default("DRAFT")

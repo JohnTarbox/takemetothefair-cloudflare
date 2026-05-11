@@ -7,6 +7,7 @@ import { Footer } from "@/components/layout/footer";
 import { UnverifiedBanner } from "@/components/layout/unverified-banner";
 import { WebVitals } from "@/components/WebVitals";
 import { ErrorAnalyticsBridge } from "@/components/ErrorAnalyticsBridge";
+import { OrganizationSchema } from "@/components/seo/OrganizationSchema";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -66,6 +67,7 @@ export default function RootLayout({
         <link rel="dns-prefetch" href="https://www.google-analytics.com" />
       </head>
       <body className="antialiased min-h-screen flex flex-col">
+        <OrganizationSchema />
         <Providers>
           <WebVitals />
           <ErrorAnalyticsBridge />

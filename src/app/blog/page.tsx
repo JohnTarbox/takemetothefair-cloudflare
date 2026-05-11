@@ -145,6 +145,8 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
             url: `https://meetmeatthefair.com/blog/${p.slug}`,
             image: p.featuredImageUrl,
           }))}
+          totalCount={total}
+          positionStart={(page - 1) * POSTS_PER_PAGE + 1}
           order="descending"
           asCollectionPage
           pageUrl="https://meetmeatthefair.com/blog"

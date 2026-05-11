@@ -32,6 +32,7 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 import type { Metadata } from "next";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { unsafeSlug } from "@/lib/utils";
 
@@ -171,6 +172,18 @@ export default async function PromoterDetailPage({ params }: Props) {
           },
         ]}
       />
+      {promoter.upcomingEvents.length > 0 && (
+        <ItemListSchema
+          name={`Upcoming events from ${promoter.companyName}`}
+          description={`Events organized by ${promoter.companyName}`}
+          items={promoter.upcomingEvents.map((e) => ({
+            name: e.name,
+            url: `https://meetmeatthefair.com/events/${e.slug}`,
+            image: e.imageUrl,
+          }))}
+          pageUrl={`https://meetmeatthefair.com/promoters/${promoter.slug}`}
+        />
+      )}
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">

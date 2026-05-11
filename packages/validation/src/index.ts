@@ -14,7 +14,7 @@ import {
   INDOOR_OUTDOOR,
   EVENT_SCALE,
 } from "@takemetothefair/constants";
-import { sanitizeProse } from "@takemetothefair/utils";
+import { sanitizeProse, decodeHtmlEntities } from "@takemetothefair/utils";
 import { parseDateOnly } from "@takemetothefair/datetime";
 
 /** Length and format limits used across input validators. App-only
@@ -548,6 +548,14 @@ export const favoriteSchema = z.object({
   id: z.string().min(1),
 });
 
+// FAQ item shape for blog posts. Decoded at the boundary so JSON-LD,
+// schema validators, and dedup all see literal characters (e.g. agents
+// posting `&amp;` round-trip to `&`). Matches src/lib/event-faq.ts:FaqItem.
+const blogFaqItemSchema = z.object({
+  question: z.string().min(1).max(500).transform(decodeHtmlEntities),
+  answer: z.string().min(1).max(5000).transform(decodeHtmlEntities),
+});
+
 // Blog post schemas
 export const blogPostCreateSchema = z.object({
   title: z.string().min(1).max(200),
@@ -556,6 +564,7 @@ export const blogPostCreateSchema = z.object({
   authorId: z.string().min(1).optional(), // Optional — defaults to session user
   tags: z.array(z.string()).optional().default([]),
   categories: z.array(z.string()).optional().default([]),
+  faqs: z.array(blogFaqItemSchema).optional().default([]),
   featuredImageUrl: urlSchema,
   status: z
     .enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED])
@@ -574,6 +583,7 @@ export const blogPostUpdateSchema = blogPostCreateSchema
     // remove defaults, so omitted fields would get filled with default values on update.
     tags: z.array(z.string()).optional(),
     categories: z.array(z.string()).optional(),
+    faqs: z.array(blogFaqItemSchema).optional(),
     status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
   });
 

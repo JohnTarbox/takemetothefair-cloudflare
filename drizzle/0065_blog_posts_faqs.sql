@@ -1,0 +1,23 @@
+-- Blog posts: explicit faqs override column.
+--
+-- Each row is a JSON array of {question, answer} pairs. When non-empty
+-- (length >= FAQ_MIN_ITEMS), the blog detail page uses this column as the
+-- source for FAQPageSchema instead of falling back to the content-driven
+-- extraction in src/lib/blog-faq.ts (which parses `## Q: ...` H2 headings).
+--
+-- Why both paths: the markdown-extraction path was the original Tier-2
+-- pillar-post implementation, but it forces a specific authoring convention.
+-- The column lets MCP agents (and future admin UIs) attach a clean,
+-- machine-readable FAQ to any post — pillar or not — without rewriting the
+-- body. The fallback keeps existing pillars working until they're
+-- explicitly backfilled.
+--
+-- Default '[]' keeps every existing row valid and inert (length 0 < min,
+-- so fallback kicks in unchanged).
+--
+-- See packages/db-schema/src/index.ts:blogPosts for the typed schema.
+-- See src/lib/event-faq.ts:FAQ_MIN_ITEMS for the threshold.
+-- See src/app/blog/[slug]/page.tsx for the override-vs-fallback logic.
+-- Migration added 2026-05-11.
+
+ALTER TABLE blog_posts ADD COLUMN faqs TEXT NOT NULL DEFAULT '[]';
