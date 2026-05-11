@@ -3,9 +3,14 @@
 # dependencies
 /node_modules
 /mcp-server/node_modules
+/packages/*/node_modules
 /.pnp
 .pnp.js
 .yarn/install-state.gz
+
+# claude code local state (user-specific permissions + runtime lock)
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
 
 # testing
 /coverage
