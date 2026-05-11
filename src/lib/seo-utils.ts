@@ -39,6 +39,28 @@ function truncateAtWord(text: string, maxLength: number, preferSentence = false)
 }
 
 /**
+ * Truncate at the latest clause boundary within maxLength. Clause boundary =
+ * `.`, `!`, `?`, `;`, `—` (em-dash), `–` (en-dash). Accepts cuts as short as
+ * 50% of the budget — sentence-clean is more important than maxing out chars.
+ * After cutting, strips trailing `;`/`—`/`–` (these suggest continuation) and
+ * any dangling function word. Falls back to word boundary when no clause break
+ * exists in the budget (round-2 backlog item 2, 2026-05-11).
+ */
+function truncateAtClause(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const truncated = text.slice(0, maxLength);
+  const safeFloor = maxLength * 0.5;
+  const clauseMatch = truncated.match(/^(.*[.!?;—–])(?:\s+\S*)?$/s);
+  if (clauseMatch && clauseMatch[1].length > safeFloor) {
+    const stripped = clauseMatch[1].replace(/[;—–]\s*$/, "").trimEnd();
+    return trimTrailingFunctionWord(stripped);
+  }
+  const lastSpace = truncated.lastIndexOf(" ");
+  const fallback = lastSpace > safeFloor ? truncated.slice(0, lastSpace) : truncated;
+  return trimTrailingFunctionWord(fallback);
+}
+
+/**
  * Trim trailing function words (conjunctions, articles, prepositions) from
  * a word-truncated string. The truncator stops at word boundaries, which
  * sometimes leaves a hanging "and" / "for" / "the" / "of" before the suffix
@@ -209,14 +231,17 @@ export function buildEventTitle(event: {
 }
 
 /**
- * Build the event meta description. Algorithm:
- *   1. Compute a date+location suffix (each piece conditionally included).
- *   2. If event has a clean DB description (per isCleanDbDescription), strip
- *      any redundant lead sentence, lead with the cleaned description,
- *      truncate to fit within budget minus suffix length, append suffix.
- *   3. If gate fails, use a structured fallback form:
- *        `${date} · ${venue}, ${city} ${state} · ${category}. Browse vendors,
- *         schedule, directions, and how to attend.`
+ * Build the event meta description. Algorithm (round-2 backlog 2026-05-11):
+ *   1. If event has a clean DB description (per isCleanDbDescription), strip
+ *      any redundant lead sentence; return verbatim if it fits in 160 chars,
+ *      otherwise truncate at clause boundary.
+ *   2. If gate fails, use a natural-language fallback form:
+ *        `${name} happening ${date} at ${venue} in ${city}, ${state}. ${cat}.`
+ *      with each piece skipped gracefully when missing.
+ *
+ * No appended `· DateRange · Venue, City State` suffix — the title and the
+ * rendered card already cover that, and the suffix was forcing mid-word
+ * truncation of the lead text.
  */
 export function buildEventMetaDescription(event: {
   name: string;
@@ -233,54 +258,29 @@ export function buildEventMetaDescription(event: {
   const state = event.venue?.state?.trim() || "";
   const desc = decodeHtmlEntities(event.description?.trim() || "");
 
-  // Suffix builder — included pieces conditional on (a) value present and
-  // (b) value not already mentioned in the lead text passed in.
-  function buildSuffix(leadText: string): string {
-    const leadLower = leadText.toLowerCase();
-    const pieces: string[] = [];
-    if (dateStr && !leadLower.includes(dateStr.toLowerCase())) {
-      pieces.push(dateStr);
-    }
-    if (venueName && !leadLower.includes(venueName.toLowerCase())) {
-      const loc = city && state ? `${venueName}, ${city} ${state}` : venueName;
-      pieces.push(loc);
-    } else if (!venueName && city && state && !leadLower.includes(city.toLowerCase())) {
-      pieces.push(`${city}, ${state}`);
-    }
-    if (pieces.length === 0) return "";
-    return ` ${pieces.join(" · ")}.`;
-  }
-
-  // Path 1: clean DB description leads.
+  // Path 1: clean DB description leads. No suffix — render full description
+  // verbatim when it fits, otherwise cut at clause boundary.
   if (isCleanDbDescription(desc)) {
     const cleaned = stripRedundantLeadSentence(desc, name);
-    // Reserve room for the suffix. Compute suffix against placeholder lead
-    // first to estimate length, then re-compute against actual lead.
-    const placeholderSuffix = buildSuffix("");
-    const leadBudget = META_DESCRIPTION_MAX - placeholderSuffix.length;
-    const truncatedLead = truncateAtWord(cleaned, leadBudget, /* preferSentence */ true);
-    const lead = trimTrailingFunctionWord(truncatedLead);
-    const suffix = buildSuffix(lead);
-    return (lead + suffix).slice(0, META_DESCRIPTION_MAX);
+    if (cleaned.length <= META_DESCRIPTION_MAX) return cleaned;
+    return truncateAtClause(cleaned, META_DESCRIPTION_MAX);
   }
 
-  // Path 2: structured fallback when DB description fails the gate.
+  // Path 2: natural-language fallback when DB description fails the gate.
   const categories = parseJsonArray(event.categories);
   const primaryCategory = categories[0];
-  const fallbackPieces: string[] = [];
-  if (dateStr) fallbackPieces.push(dateStr);
+  const pieces: string[] = [name];
+  if (dateStr) pieces.push(`happening ${dateStr}`);
   if (venueName) {
-    const loc = city && state ? `${venueName}, ${city} ${state}` : venueName;
-    fallbackPieces.push(loc);
+    pieces.push(`at ${venueName}`);
+    if (city && state) pieces.push(`in ${city}, ${state}`);
   } else if (city && state) {
-    fallbackPieces.push(`${city}, ${state}`);
+    pieces.push(`in ${city}, ${state}`);
   }
-  if (primaryCategory) fallbackPieces.push(primaryCategory);
-
-  const head = fallbackPieces.length > 0 ? `${fallbackPieces.join(" · ")}.` : `${name}.`;
-  const tail = " Browse vendors, schedule, directions, and how to attend.";
-  if (head.length + tail.length <= META_DESCRIPTION_MAX) return head + tail;
-  return truncateAtWord(head, META_DESCRIPTION_MAX, /* preferSentence */ true);
+  let result = pieces.join(" ") + ".";
+  if (primaryCategory) result += ` ${primaryCategory}.`;
+  if (result.length <= META_DESCRIPTION_MAX) return result;
+  return truncateAtClause(result, META_DESCRIPTION_MAX);
 }
 
 export function buildVenueMetaDescription(venue: {
@@ -292,29 +292,22 @@ export function buildVenueMetaDescription(venue: {
   capacity?: number | null;
 }): string {
   const name = decodeHtmlEntities(venue.name);
-  const location = venue.city && venue.state ? ` in ${venue.city}, ${venue.state}` : "";
-  const base = `${name}${location}`;
+  const locPhrase = venue.city && venue.state ? ` in ${venue.city}, ${venue.state}` : "";
 
   const desc = decodeHtmlEntities(venue.description?.trim() || "");
   if (desc.length >= META_DESCRIPTION_MIN_USEFUL) {
-    const remaining = 155 - base.length - 2;
+    const prefix = `${name}${locPhrase}. `;
+    const remaining = META_DESCRIPTION_MAX - prefix.length;
     if (remaining > 20) {
-      return truncateAtWord(`${base}. ${truncateAtWord(desc, remaining)}`, META_DESCRIPTION_MAX);
+      return prefix + truncateAtClause(desc, remaining);
     }
   }
 
-  // Structured fallback: prefer top amenities, otherwise generic event hint.
-  const amenities = parseJsonArray(venue.amenities);
-  if (amenities.length > 0) {
-    const featured = amenities.slice(0, 3).join(", ");
-    return truncateAtWord(
-      `${base}. Featuring ${featured}. Browse upcoming fairs, festivals, and events.`,
-      META_DESCRIPTION_MAX
-    );
-  }
-
+  // Fallback when no usable DB description: 73% of venues hit this path
+  // (round-2 backlog item 3, 2026-05-11). Plain location-first form, no
+  // amenities pull — keeps the meta clean and consistent across the catalog.
   return truncateAtWord(
-    `${base}. Hosting fairs, festivals, and events. View upcoming dates and vendor lineups.`,
+    `${name} is an event venue${locPhrase}. View upcoming fairs, festivals, and shows on Meet Me at the Fair.`,
     META_DESCRIPTION_MAX
   );
 }
@@ -328,32 +321,26 @@ export function buildVendorMetaDescription(vendor: {
   state?: string | null;
 }): string {
   const businessName = decodeHtmlEntities(vendor.businessName);
-  const base = vendor.vendorType ? `${businessName} — ${vendor.vendorType}` : businessName;
+  const vendorType = vendor.vendorType ? decodeHtmlEntities(vendor.vendorType) : "";
+  const base = vendorType ? `${businessName} — ${vendorType}` : businessName;
 
   const desc = decodeHtmlEntities(vendor.description?.trim() || "");
   if (desc.length >= META_DESCRIPTION_MIN_USEFUL) {
-    const remaining = 155 - base.length - 2;
+    const prefix = `${base}. `;
+    const remaining = META_DESCRIPTION_MAX - prefix.length;
     if (remaining > 20) {
-      return truncateAtWord(`${base}. ${truncateAtWord(desc, remaining)}`, META_DESCRIPTION_MAX);
+      return prefix + truncateAtClause(desc, remaining);
     }
   }
 
-  // Structured fallback: top products + location so each vendor's meta
-  // description differs from the next, even with no DB description.
-  const products = parseJsonArray(vendor.products);
-  const productPhrase = products.length > 0 ? `. ${products.slice(0, 3).join(", ")}` : "";
+  // Fallback when no usable DB description: 75% of vendors hit this path
+  // (round-2 backlog item 3, 2026-05-11). ~half of vendors lack city+state,
+  // so the location phrase is optional.
+  const typePhrase = vendorType ? `${businessName} — ${vendorType} vendor` : businessName;
   const locationPhrase =
-    vendor.city && vendor.state ? `, based in ${vendor.city}, ${vendor.state}` : "";
-
-  if (productPhrase || locationPhrase) {
-    return truncateAtWord(
-      `${base}${productPhrase}${locationPhrase}. Find upcoming events on Meet Me at the Fair.`,
-      META_DESCRIPTION_MAX
-    );
-  }
-
+    vendor.city && vendor.state ? ` based in ${vendor.city}, ${vendor.state}` : "";
   return truncateAtWord(
-    `${base}. Find upcoming events and learn more on Meet Me at the Fair.`,
+    `${typePhrase}${locationPhrase}. View upcoming events on Meet Me at the Fair.`,
     META_DESCRIPTION_MAX
   );
 }

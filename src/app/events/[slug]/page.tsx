@@ -432,7 +432,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       url,
       siteName: "Meet Me at the Fair",
-      type: "article",
+      // `og:type` set via `other` below — OG protocol supports "event" but
+      // Next.js's openGraph.type union doesn't (only article/website/profile/
+      // book/music.*/video.*). Round-2 backlog item 4 (2026-05-11).
       images: [
         {
           url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
@@ -447,6 +449,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title,
       description,
       images: [event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`],
+    },
+    other: {
+      "og:type": "event",
     },
   };
 }
@@ -542,8 +547,8 @@ export default async function EventDetailPage({ params }: Props) {
                 url: "https://meetmeatthefair.com",
               }
         }
-        ticketPriceMin={event.ticketPriceMinCents}
-        ticketPriceMax={event.ticketPriceMaxCents}
+        ticketPriceMinCents={event.ticketPriceMinCents}
+        ticketPriceMaxCents={event.ticketPriceMaxCents}
         ticketUrl={event.ticketUrl}
         categories={parseJsonArray(event.categories)}
         datesConfirmed={event.datesConfirmed}
