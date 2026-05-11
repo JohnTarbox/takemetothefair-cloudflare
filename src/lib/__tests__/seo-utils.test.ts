@@ -318,12 +318,33 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
       startDate: new Date("2027-03-26T00:00:00Z"),
       endDate: new Date("2027-03-27T00:00:00Z"),
     });
-    expect(out).toContain("Vermont Maple Sugar Makers");
-    // Description carries no year, and we no longer append a date suffix.
-    expect(out).not.toMatch(/\b2027\b/);
-    // Should cut at the period after "Association."
-    expect(out).toContain("Association.");
-    expect(out.length).toBeLessThanOrEqual(160);
+    // Cut at clause boundary — second sentence is too long to include and the
+    // first ends cleanly at "Association.". Pin the exact output to guard
+    // against the multi-trailer regex bug that prod verification 2026-05-11
+    // surfaced (was cutting at word boundary "...doors for" instead).
+    expect(out).toBe(
+      "Free statewide weekend event hosted by the Vermont Maple Sugar Makers' Association."
+    );
+  });
+
+  it("Fryeburg-style multi-word trailer: cuts at the period, not the word boundary (regression)", () => {
+    // 2026-05-11 prod bug: previously emitted "...annually. Eight days"
+    // (word-boundary cut after the period) because the clause-boundary regex
+    // only allowed one trailing word. With the linear-scan fix the output
+    // ends cleanly at "...annually."
+    const desc =
+      "Maine's Blue Ribbon Classic Agricultural Fair since 1851 — the state's largest agricultural fair, drawing approximately 260,000 attendees annually. Eight days of farming traditions, livestock exhibits, harness racing, horse and ox pulls, Woodsmen's Field Day, Firemen's Muster, midway rides, and night shows.";
+    const out = buildEventMetaDescription({
+      name: "Fryeburg Fair 2026",
+      description: desc,
+      categories: '["Fair"]',
+      venue: { name: "Fryeburg Fairgrounds", city: "Fryeburg", state: "ME" },
+      startDate: new Date("2026-10-04T00:00:00Z"),
+      endDate: new Date("2026-10-11T00:00:00Z"),
+    });
+    expect(out).toBe(
+      "Maine's Blue Ribbon Classic Agricultural Fair since 1851 — the state's largest agricultural fair, drawing approximately 260,000 attendees annually."
+    );
   });
 
   it("Kennebunkport Christmas Prelude: no clause break within 160 chars, falls back to word boundary", () => {

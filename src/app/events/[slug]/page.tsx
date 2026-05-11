@@ -432,9 +432,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       description,
       url,
       siteName: "Meet Me at the Fair",
-      // `og:type` set via `other` below — OG protocol supports "event" but
-      // Next.js's openGraph.type union doesn't (only article/website/profile/
-      // book/music.*/video.*). Round-2 backlog item 4 (2026-05-11).
+      // OG protocol supports "event" but Next.js's openGraph.type union
+      // doesn't (article/website/profile/book/music.*/video.*). Cast through
+      // `never` so Next.js emits `<meta property="og:type" content="event">`
+      // (the canonical OG attribute form). Using `other: { "og:type": ... }`
+      // would emit `name=` instead of `property=` (non-canonical, though OG
+      // consumers tolerate it). Round-2 backlog item 4 (2026-05-11).
+      type: "event" as never,
       images: [
         {
           url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
@@ -449,9 +453,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       title,
       description,
       images: [event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`],
-    },
-    other: {
-      "og:type": "event",
     },
   };
 }
