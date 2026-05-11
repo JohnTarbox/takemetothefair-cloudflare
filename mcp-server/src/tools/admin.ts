@@ -41,6 +41,7 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { dollarsToCents } from "../helpers.js";
+import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -53,6 +54,10 @@ interface Env {
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
   // Defense-in-depth: guard even though registration is already gated in index.ts
   if (auth.role !== "ADMIN") return;
+
+  // Combined dedup + create + link tool — separate file to keep this one
+  // manageable.
+  registerCreateOrLinkVendorTool(server, db, auth, env);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values

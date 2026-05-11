@@ -313,6 +313,8 @@ export function computeEventCompletenessScore(e: EventScoreInput): number {
   return score;
 }
 
+export * from "./duplicates.js";
+
 export function formatPrice(minCents?: number | null, maxCents?: number | null): string {
   const renderOne = (cents: number) => {
     const dollars = cents / 100;

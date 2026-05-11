@@ -200,6 +200,9 @@ const SCHEMA_SQL = `
     updated_at INTEGER
   );
 
+  CREATE UNIQUE INDEX idx_eventvendors_event_vendor_unique
+    ON event_vendors (event_id, vendor_id);
+
   CREATE TABLE event_days (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,

@@ -4,6 +4,7 @@ import {
   integer,
   real,
   index,
+  uniqueIndex,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { relations } from "drizzle-orm";
@@ -386,6 +387,10 @@ export const eventVendors = sqliteTable(
   (table) => [
     index("idx_eventvendors_eventid_status").on(table.eventId, table.status),
     index("idx_eventvendors_vendorid").on(table.vendorId),
+    // Closes the race in update_vendor_status / create_or_link_vendor where
+    // SELECT-then-INSERT could yield duplicate (event,vendor) rows under
+    // concurrent calls. Added 2026-05-10.
+    uniqueIndex("idx_eventvendors_event_vendor_unique").on(table.eventId, table.vendorId),
   ]
 );
 
