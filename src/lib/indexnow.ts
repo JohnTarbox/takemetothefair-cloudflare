@@ -16,7 +16,7 @@
  * table for the /admin/analytics → IndexNow tab.
  */
 
-import { indexnowSubmissions, timeToIndexLog } from "@/lib/db/schema";
+import { indexnowSubmissions, pendingSearchPings, timeToIndexLog } from "@/lib/db/schema";
 import { lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
@@ -132,17 +132,55 @@ async function recordTimeToIndexSeed(db: Db, urls: string[], submittedAt: Date):
   }
 }
 
+/**
+ * Defer hook for bulk-ingest paths. When the caller wants to batch the
+ * IndexNow call across many entity writes, pass `opts.defer: true` plus the
+ * entity metadata; the function queues a row in `pending_search_pings`
+ * instead of firing the ping inline. flush_pending_search_pings (MCP admin
+ * tool) or the MCP server's hourly cron drains the outbox into one batched
+ * submit. If db or entity metadata is missing, the deferral falls through
+ * to inline — callers don't have to thread args perfectly at every site.
+ */
+export interface DeferEntity {
+  type: "vendor" | "venue" | "event" | "promoter" | "blog";
+  id: string;
+  slug: string;
+  action: "create" | "update" | "status_change";
+}
+
+async function enqueueDeferredPing(db: NonNullable<Db>, entity: DeferEntity): Promise<void> {
+  await db.insert(pendingSearchPings).values({
+    entityType: entity.type,
+    entityId: entity.id,
+    entitySlug: entity.slug,
+    action: entity.action,
+    queuedAt: new Date(),
+  });
+}
+
 export async function pingIndexNow(
   db: Db,
   urls: string | string[],
   env: IndexNowEnv,
-  source: string
+  source: string,
+  opts?: { defer?: boolean; entity?: DeferEntity }
 ): Promise<void> {
   const key = env.INDEXNOW_KEY;
   const list = Array.isArray(urls) ? urls : [urls];
   const filtered = list
     .map((u) => u?.trim())
     .filter((u): u is string => Boolean(u && u.startsWith(`https://${HOST}/`)));
+
+  // Deferred path — write outbox row and return. Failures here log + fall
+  // through to inline so a misconfigured caller still gets indexed.
+  if (opts?.defer && db && opts.entity) {
+    try {
+      await enqueueDeferredPing(db, opts.entity);
+      return;
+    } catch (err) {
+      console.error("[IndexNow defer] enqueue failed, falling through to inline:", err);
+    }
+  }
 
   if (!key) {
     console.warn("[IndexNow] INDEXNOW_KEY not configured — skipping ping");

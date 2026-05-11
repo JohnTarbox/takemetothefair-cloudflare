@@ -464,6 +464,34 @@ async function runScheduledGa4LivenessCheck(env: Env): Promise<void> {
   );
 }
 
+/**
+ * Hourly drain of pending_search_pings (deferred IndexNow outbox).
+ *
+ * Bulk-ingest workflows pair `defer_search_ping: true` writes with an
+ * explicit `flush_pending_search_pings` call at end of batch. This cron is
+ * the safety net: rows queued without a paired flush still drain within an
+ * hour, so a forgotten flush doesn't silently leak entities from the index.
+ * max_age_seconds=3600 means we only sweep rows that have been waiting at
+ * least an hour — leaving fresh bulk-run drains to the explicit flush call.
+ */
+async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
+  try {
+    const { getDb } = await import("./db.js");
+    const { claimAndFlush } = await import("./pending-pings.js");
+    const db = getDb(env.DB);
+    const result = await claimAndFlush(db, env, {
+      entityType: "all",
+      maxAgeSeconds: 3600,
+      source: "cron-flush",
+    });
+    console.warn(
+      `[cron] pending-pings flush ok — flushed=${result.flushedCount} batch=${result.batchId} indexnow=${result.indexnowResponse}`
+    );
+  } catch (error) {
+    console.error("[cron] pending-pings flush threw:", error);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Workflow exports
 // ---------------------------------------------------------------------------
@@ -511,11 +539,16 @@ export default {
     // ScheduledController carries which one fired in `controller.cron`.
     //   - "0 6 * * *"     → daily heavy work (recs, gsc, time-to-index)
     //   - "*/10 * * * *"  → §6.3 KPI state-machine recompute (light)
+    //   - "0 * * * *"     → hourly: drain pending_search_pings older than 1h
     console.warn(
       `[cron] firing for cron='${controller.cron}' at ${new Date(controller.scheduledTime).toISOString()}`
     );
     if (controller.cron === "*/10 * * * *") {
       ctx.waitUntil(runScheduledKpiRecompute(env));
+      return;
+    }
+    if (controller.cron === "0 * * * *") {
+      ctx.waitUntil(runScheduledPendingPingsFlush(env));
       return;
     }
     // Default daily branch (covers "0 6 * * *" and any future daily crons).

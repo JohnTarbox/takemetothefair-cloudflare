@@ -202,6 +202,13 @@ export function publicUrlFor(
  *  "vendor-create") so the analytics tab matches the labels emitted by the
  *  main app's API routes. Falls back to "internal-api" if omitted.
  *
+ *  `opts.defer` (PR 2 of the bulk-ingest perf work): when true AND opts.db is
+ *  provided AND opts.entity is provided, the ping is enqueued in the
+ *  pending_search_pings outbox instead of firing inline. flush_pending_search_pings
+ *  (admin MCP tool) or the hourly cron drains the outbox into one batched call.
+ *  If any prerequisite is missing the deferral silently falls through to
+ *  inline — callers don't have to perfectly thread args at every site.
+ *
  *  Transport: prefers the MAIN_APP service binding (zero-latency in-account
  *  call) when bound. Falls back to public HTTPS via MAIN_APP_URL +
  *  INTERNAL_API_KEY when not — typical in local dev where Pages service
@@ -213,10 +220,38 @@ export async function triggerIndexNow(
     MAIN_APP_URL?: string;
     INTERNAL_API_KEY?: string;
   },
-  source?: string
+  source?: string,
+  opts?: {
+    defer?: boolean;
+    db?: import("./db.js").Db;
+    entity?: {
+      type: "vendor" | "venue" | "event" | "promoter" | "blog";
+      id: string;
+      slug: string;
+      action: "create" | "update" | "status_change";
+    };
+  }
 ): Promise<void> {
   const list = Array.isArray(urls) ? urls : [urls];
   if (list.length === 0) return;
+
+  // Deferred path: write an outbox row instead of firing the ping. Requires
+  // db + entity metadata; if either is missing, fall through to inline.
+  if (opts?.defer && opts.db && opts.entity) {
+    try {
+      const { enqueuePendingPing } = await import("./pending-pings.js");
+      await enqueuePendingPing(opts.db, {
+        entityType: opts.entity.type,
+        entityId: opts.entity.id,
+        entitySlug: opts.entity.slug,
+        action: opts.entity.action,
+      });
+      return;
+    } catch (err) {
+      console.error("[MCP/IndexNow defer] enqueue failed, falling through:", err);
+      // Don't return — let it fire inline as a degraded but-correct fallback.
+    }
+  }
 
   const body = JSON.stringify(source ? { urls: list, source } : { urls: list });
 

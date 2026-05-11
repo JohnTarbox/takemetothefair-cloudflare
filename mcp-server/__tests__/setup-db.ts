@@ -237,6 +237,28 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER
   );
+
+  CREATE TABLE indexnow_submissions (
+    id TEXT PRIMARY KEY,
+    timestamp INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    urls TEXT NOT NULL DEFAULT '[]',
+    url_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    http_status INTEGER,
+    error_message TEXT
+  );
+
+  CREATE TABLE pending_search_pings (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    entity_slug TEXT NOT NULL,
+    action TEXT NOT NULL,
+    queued_at INTEGER NOT NULL,
+    flushed_at INTEGER,
+    flushed_batch_id TEXT
+  );
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {

@@ -806,6 +806,43 @@ export const indexnowSubmissions = sqliteTable(
   (table) => [index("idx_indexnow_submissions_timestamp").on(table.timestamp)]
 );
 
+// Pending Search Pings — outbox for deferred IndexNow + schema.org regen
+// requests. Bulk ingestion workflows set `defer_search_ping: true` on each
+// write, which routes the lifecycle hook into this table instead of firing
+// immediately. `flush_pending_search_pings` (MCP admin tool) or the hourly
+// cron drains the table, dedupes URLs, and submits one batched IndexNow call.
+// Added 2026-05-10 alongside create_or_link_vendor (PR 2 of the perf work).
+//
+// Columns:
+//   - entityType: 'vendor' | 'venue' | 'event' | 'promoter' | 'blog'
+//   - entityId: PK of the entity (FK not enforced — entities can be deleted
+//     before flush and we still want the row to drain harmlessly)
+//   - entitySlug: denormalized so URL construction doesn't need a JOIN
+//   - action: 'create' | 'update' | 'status_change' (informational only;
+//     flushes just submit the URL regardless)
+//   - queuedAt / flushedAt: seconds-epoch
+//   - flushedBatchId: filled by flush invocations as both a claim marker
+//     (concurrent flushes claim disjoint batches) and traceability link
+export const pendingSearchPings = sqliteTable(
+  "pending_search_pings",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    entitySlug: text("entity_slug").notNull(),
+    action: text("action").notNull(),
+    queuedAt: integer("queued_at", { mode: "timestamp" }).notNull(),
+    flushedAt: integer("flushed_at", { mode: "timestamp" }),
+    flushedBatchId: text("flushed_batch_id"),
+  },
+  (table) => [
+    index("idx_pending_pings_unflushed").on(table.flushedAt, table.queuedAt),
+    index("idx_pending_pings_batch").on(table.flushedBatchId),
+  ]
+);
+
 // URL Domain Classifications — see drizzle/0036_add_url_domain_classifications.sql
 // Gates which outbound URLs are legitimate as ticket / application destinations
 // or as ingestion sources. Three independent flags handle context asymmetry
@@ -1037,6 +1074,7 @@ export type HealthIssue = typeof healthIssues.$inferSelect;
 export type HealthIssueSnooze = typeof healthIssueSnoozes.$inferSelect;
 export type GscInspectionState = typeof gscInspectionState.$inferSelect;
 export type IndexnowSubmission = typeof indexnowSubmissions.$inferSelect;
+export type PendingSearchPing = typeof pendingSearchPings.$inferSelect;
 export type UrlDomainClassification = typeof urlDomainClassifications.$inferSelect;
 export type RecommendationRule = typeof recommendationRules.$inferSelect;
 export type RecommendationItem = typeof recommendationItems.$inferSelect;

@@ -42,6 +42,7 @@ import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { dollarsToCents } from "../helpers.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
+import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
@@ -58,6 +59,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Combined dedup + create + link tool — separate file to keep this one
   // manageable.
   registerCreateOrLinkVendorTool(server, db, auth, env);
+
+  // Outbox drainer for the defer_search_ping flag — fires one batched
+  // IndexNow call instead of N inline pings after a bulk ingestion run.
+  registerFlushPendingSearchPingsTool(server, db, auth, env);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
@@ -237,6 +242,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     {
       event_id: z.string().describe("Event ID"),
       status: z.enum(EVENT_STATUS_ENUM).describe("New event status"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       const eventRows = await db
@@ -301,7 +311,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           source = "event-approve";
         }
         if (source) {
-          await triggerIndexNow(publicUrlFor("events", event.slug), env, source);
+          await triggerIndexNow(publicUrlFor("events", event.slug), env, source, {
+            defer: params.defer_search_ping ?? false,
+            db,
+            entity: { type: "event", id: event.id, slug: event.slug, action: "status_change" },
+          });
         }
       }
 
@@ -387,6 +401,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       venue_city: z.string().optional().describe("Update linked venue's city"),
       venue_state: z.string().optional().describe("Update linked venue's state (2-letter code)"),
       venue_zip: z.string().optional().describe("Update linked venue's ZIP code"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       // Load URL domain classifications once so the ticket_url / application_url
@@ -661,7 +680,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         const materialFields = ["name", "description", "start_date", "end_date", "venue_id"];
         if (requestedFields.some((f) => materialFields.includes(f))) {
           const finalSlug = (updates.slug as string | undefined) ?? event.slug;
-          await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-update");
+          await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-update", {
+            defer: params.defer_search_ping ?? false,
+            db,
+            entity: { type: "event", id: event.id, slug: finalSlug, action: "update" },
+          });
         }
       }
 
@@ -1084,6 +1107,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
       logo_url: z.string().optional().describe("URL to vendor logo image"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true, queue the IndexNow ping for batched flush via flush_pending_search_pings. Bulk-ingestion workflows should set this true."
+        ),
     },
     async (params) => {
       // Check for duplicate business name (exact match, case-insensitive via LIKE)
@@ -1185,7 +1215,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // IndexNow: vendors have no status field — they're public on creation.
       if (env) {
-        await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-create");
+        await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-create", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          entity: { type: "vendor", id: vendorId, slug: finalSlug, action: "create" },
+        });
       }
 
       return {
@@ -1210,6 +1244,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       vendor_id: z.string().describe("Vendor ID"),
       status: z.enum(VENDOR_STATUS_ENUM).optional().describe("New vendor application status"),
       payment_status: z.enum(PAYMENT_STATUS_ENUM).optional().describe("New payment status"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "If true, queue the IndexNow ping for batched flush via flush_pending_search_pings."
+        ),
     },
     async (params) => {
       if (!params.status && !params.payment_status) {
@@ -1295,7 +1336,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         });
 
         if (env && PUBLIC_VENDOR_SET.has(newStatus) && eventSlug) {
-          await triggerIndexNow(publicUrlFor("events", eventSlug), env);
+          await triggerIndexNow(publicUrlFor("events", eventSlug), env, "event-vendor-link", {
+            defer: params.defer_search_ping ?? false,
+            db,
+            entity: { type: "event", id: params.event_id, slug: eventSlug, action: "update" },
+          });
         }
 
         return {
@@ -1375,7 +1420,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         !PUBLIC_VENDOR_SET.has(record.status) &&
         eventSlug
       ) {
-        await triggerIndexNow(publicUrlFor("events", eventSlug), env);
+        await triggerIndexNow(publicUrlFor("events", eventSlug), env, "event-vendor-link", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          entity: { type: "event", id: params.event_id, slug: eventSlug, action: "status_change" },
+        });
       }
 
       return { content: [jsonContent(result)] };
@@ -1469,6 +1518,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_phone: z.string().optional().describe("Contact phone"),
       image_url: z.string().optional().describe("Venue image URL"),
       status: z.enum(["ACTIVE", "INACTIVE"]).optional().describe("Venue status"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -1596,7 +1650,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
         if (venueSource) {
           const finalSlug = (updates.slug as string | undefined) ?? venue.slug;
-          await triggerIndexNow(publicUrlFor("venues", finalSlug), env, venueSource);
+          await triggerIndexNow(publicUrlFor("venues", finalSlug), env, venueSource, {
+            defer: params.defer_search_ping ?? false,
+            db,
+            entity: {
+              type: "venue",
+              id: venue.id,
+              slug: finalSlug,
+              action: venueSource === "venue-activate" ? "status_change" : "update",
+            },
+          });
         }
       }
 
@@ -1640,6 +1703,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       image_url: z.string().optional().describe("Venue image URL"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       // Warn on potential duplicate (same name + city + state)
@@ -1721,7 +1789,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // IndexNow: venues created via this tool default to ACTIVE (public)
       // immediately, so ping right away.
       if (env) {
-        await triggerIndexNow(publicUrlFor("venues", finalSlug), env, "venue-create");
+        await triggerIndexNow(publicUrlFor("venues", finalSlug), env, "venue-create", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          entity: { type: "venue", id: venueId, slug: finalSlug, action: "create" },
+        });
       }
 
       return {
@@ -2006,6 +2078,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .int()
         .optional()
         .describe("Featured rotation pin override; 0 = participate in shuffle, >0 = pinned high."),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -2188,7 +2265,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ];
         if (requestedFields.some((f) => materialFields.includes(f))) {
           const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
-          await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update");
+          await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update", {
+            defer: params.defer_search_ping ?? false,
+            db,
+            entity: { type: "vendor", id: vendor.id, slug: finalSlug, action: "update" },
+          });
         }
       }
 
@@ -2240,6 +2321,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .string()
         .optional()
         .describe("Optional custom slug (e.g. branded URL). Triggers vendor_slug_history row."),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       const vendorRows = await db
@@ -2344,7 +2430,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // visibility flips or expires_at shifts), so always ping.
       if (env) {
         const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
-        await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update");
+        await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          entity: { type: "vendor", id: vendor.id, slug: finalSlug, action: "status_change" },
+        });
       }
 
       return {
@@ -2385,6 +2475,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
       logo_url: z.string().optional().describe("URL to promoter logo image"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       // Check for duplicate company name (exact match)
@@ -2468,7 +2563,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // /promoters/[slug] as a real public surface, so this no longer pings a
       // 404. Mirrors the main-app POST /api/admin/promoters hook.
       if (env) {
-        await triggerIndexNow(publicUrlFor("promoters", finalSlug), env, "promoter-create");
+        await triggerIndexNow(publicUrlFor("promoters", finalSlug), env, "promoter-create", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          entity: { type: "promoter", id: promoterId, slug: finalSlug, action: "create" },
+        });
       }
 
       return {
@@ -2504,6 +2603,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       logo_url: z.string().optional().describe("Logo image URL"),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
       verified: z.boolean().optional().describe("Verified status"),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -2628,7 +2732,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         if (updates.slug && updates.slug !== promoter.slug) {
           indexNowUrls.push(publicUrlFor("promoters", promoter.slug));
         }
-        await triggerIndexNow(indexNowUrls, env, "promoter-update");
+        await triggerIndexNow(indexNowUrls, env, "promoter-update", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          // Defer only enqueues the new-slug URL; the old-slug 301-redirect
+          // ping is rarely meaningful in the deferred case (it's typically
+          // batched alongside the new one anyway).
+          entity: { type: "promoter", id: promoter.id, slug: newSlug, action: "update" },
+        });
       }
 
       return {

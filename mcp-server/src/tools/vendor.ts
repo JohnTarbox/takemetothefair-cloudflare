@@ -571,6 +571,11 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         .describe(
           "Set to true to bypass duplicate detection and create the event even if potential duplicates exist at the same venue with overlapping dates."
         ),
+      defer_search_ping: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
       // Validate promoter FK if provided
@@ -825,17 +830,28 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // The auto-created promoter (if any) is NOT pinged — no public
       // /promoters/[slug] page exists.
       if (env) {
-        await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-create");
+        await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-create", {
+          defer: params.defer_search_ping ?? false,
+          db,
+          entity: { type: "event", id: eventId, slug: finalSlug, action: "create" },
+        });
         if (venueResult && venueResult.matched === false) {
-          // newVenueSlug was generated above (finalVenueSlug); pull it from the
-          // freshly-inserted row's slug, which we know matches.
           const newVenue = await db
             .select({ slug: venues.slug })
             .from(venues)
             .where(eq(venues.id, venueResult.venueId))
             .limit(1);
           if (newVenue[0]?.slug) {
-            await triggerIndexNow(publicUrlFor("venues", newVenue[0].slug), env, "venue-create");
+            await triggerIndexNow(publicUrlFor("venues", newVenue[0].slug), env, "venue-create", {
+              defer: params.defer_search_ping ?? false,
+              db,
+              entity: {
+                type: "venue",
+                id: venueResult.venueId,
+                slug: newVenue[0].slug,
+                action: "create",
+              },
+            });
           }
         }
       }

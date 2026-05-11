@@ -57,7 +57,9 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # "0 6 * * *"     → daily heavy: recommendations scan + GSC URL Inspection sweep
 #                   + time-to-index reconcile (06:00 UTC, overnight NA)
 # "*/10 * * * *"  → §6.3 KPI state-machine recompute (light, ~5 INSERTs per fire)
-crons = ["0 6 * * *", "*/10 * * * *"]
+# "0 * * * *"     → hourly: drain pending_search_pings older than 1 hour
+#                   (safety net for forgotten flushes after deferred-ingest runs)
+crons = ["0 6 * * *", "*/10 * * * *", "0 * * * *"]
 
 # Queue producers — also wired here so MCP tools can enqueue (e.g., MCP's
 # create_event triggers an IndexNow ping; same code path as the main app).

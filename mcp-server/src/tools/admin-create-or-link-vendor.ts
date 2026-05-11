@@ -449,14 +449,28 @@ export function registerCreateOrLinkVendorTool(
         }
       }
 
-      // 5. Lifecycle hooks (defer_search_ping is plumbed but the deferred
-      //    branch is wired in PR 2; today it falls through to inline).
-      if (env && !deferSearchPing) {
+      // 5. Lifecycle hooks. When defer_search_ping is true the helper queues
+      //    rows in pending_search_pings instead of firing IndexNow inline;
+      //    flush_pending_search_pings drains the outbox into one batched call.
+      if (env) {
         if (was_created) {
-          await triggerIndexNow(publicUrlFor("vendors", vendorSlug), env, "vendor-create-or-link");
+          await triggerIndexNow(publicUrlFor("vendors", vendorSlug), env, "vendor-create-or-link", {
+            defer: deferSearchPing,
+            db,
+            entity: { type: "vendor", id: vendorId, slug: vendorSlug, action: "create" },
+          });
         }
         if ((was_linked || status_changed) && PUBLIC_VENDOR_SET.has(status)) {
-          await triggerIndexNow(publicUrlFor("events", event.slug), env, "event-vendor-link");
+          await triggerIndexNow(publicUrlFor("events", event.slug), env, "event-vendor-link", {
+            defer: deferSearchPing,
+            db,
+            entity: {
+              type: "event",
+              id: event.id,
+              slug: event.slug,
+              action: "update",
+            },
+          });
         }
       }
 
