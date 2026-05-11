@@ -701,6 +701,7 @@ export default async function EventsPage({
           image: e.imageUrl,
         }))}
         totalCount={total}
+        positionStart={(page - 1) * limit + 1}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/events"
       />

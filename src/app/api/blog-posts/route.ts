@@ -177,6 +177,7 @@ export async function POST(request: NextRequest) {
       authorId,
       tags: JSON.stringify(data.tags),
       categories: JSON.stringify(data.categories),
+      faqs: JSON.stringify(data.faqs),
       featuredImageUrl: data.featuredImageUrl || null,
       status: data.status,
       publishDate,

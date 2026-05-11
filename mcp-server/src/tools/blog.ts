@@ -2,7 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { blogPosts, users } from "../schema.js";
-import { parseJsonArray, formatDate, jsonContent, sanitizeProse, unsafeSlug } from "../helpers.js";
+import {
+  parseJsonArray,
+  formatDate,
+  jsonContent,
+  sanitizeProse,
+  unsafeSlug,
+  decodeHtmlEntities,
+} from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -12,6 +19,16 @@ interface Env {
 }
 
 const BLOG_STATUS_ENUM = ["DRAFT", "PUBLISHED"] as const;
+
+// FAQ pairs attached to a blog post. When >= FAQ_MIN_ITEMS pairs are
+// provided, they override the markdown-extracted `## Q: ...` headings on
+// the public detail page. Decode at boundary so dedup/JSON-LD see literals.
+const blogFaqInputSchema = z.array(
+  z.object({
+    question: z.string().min(1).max(500).transform(decodeHtmlEntities),
+    answer: z.string().min(1).max(5000).transform(decodeHtmlEntities),
+  })
+);
 
 export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
   if (auth.role !== "ADMIN") return;
@@ -31,6 +48,11 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         .describe("Short excerpt/summary"),
       tags: z.array(z.string()).optional().describe("Array of tag strings"),
       categories: z.array(z.string()).optional().describe("Array of category strings"),
+      faqs: blogFaqInputSchema
+        .optional()
+        .describe(
+          "Array of {question, answer} pairs. When >= 3 pairs are set, overrides the markdown `## Q: ...` extraction for FAQPage JSON-LD. Use for non-pillar posts that should still emit FAQ schema, or to clean up rough pillar Q&A authoring."
+        ),
       featured_image_url: z.string().url().optional().describe("URL of the featured image"),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("DRAFT (default) or PUBLISHED"),
       publish_date: z
@@ -71,6 +93,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
             authorId: auth.userId,
             tags: params.tags || [],
             categories: params.categories || [],
+            faqs: params.faqs ?? [],
             featuredImageUrl: params.featured_image_url,
             status: params.status || "DRAFT",
             publishDate: params.publish_date,
@@ -127,6 +150,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           authorName: users.name,
           tags: blogPosts.tags,
           categories: blogPosts.categories,
+          faqs: blogPosts.faqs,
           featuredImageUrl: blogPosts.featuredImageUrl,
           status: blogPosts.status,
           publishDate: blogPosts.publishDate,
@@ -153,6 +177,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
             ...post,
             tags: parseJsonArray(post.tags),
             categories: parseJsonArray(post.categories),
+            faqs: parseJsonArray(post.faqs),
             publishDate: formatDate(post.publishDate),
             createdAt: formatDate(post.createdAt),
             updatedAt: formatDate(post.updatedAt),
@@ -263,6 +288,11 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         .array(z.string())
         .optional()
         .describe("New categories array (replaces existing)"),
+      faqs: blogFaqInputSchema
+        .optional()
+        .describe(
+          "Replace the post's faqs array. Pass [] to clear and revert to markdown extraction. Omit to leave unchanged."
+        ),
       featured_image_url: z.string().url().optional().describe("New featured image URL"),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("New status: DRAFT or PUBLISHED"),
       publish_date: z.string().optional().describe("New publish date (ISO 8601)"),
@@ -290,6 +320,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         if (params.excerpt !== undefined) payload.excerpt = params.excerpt;
         if (params.tags !== undefined) payload.tags = params.tags;
         if (params.categories !== undefined) payload.categories = params.categories;
+        if (params.faqs !== undefined) payload.faqs = params.faqs;
         if (params.featured_image_url !== undefined)
           payload.featuredImageUrl = params.featured_image_url;
         if (params.status !== undefined) payload.status = params.status;

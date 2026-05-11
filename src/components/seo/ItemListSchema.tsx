@@ -14,6 +14,8 @@ interface ItemListSchemaProps {
   order?: ItemListOrder;
   asCollectionPage?: boolean;
   pageUrl?: string;
+  /** First ListItem position. Paginated callers pass (page-1)*limit+1. */
+  positionStart?: number;
 }
 
 export function ItemListSchema({
@@ -24,18 +26,19 @@ export function ItemListSchema({
   order = "ascending",
   asCollectionPage,
   pageUrl,
+  positionStart = 1,
 }: ItemListSchemaProps) {
-  const capped = items.slice(0, 30);
-
+  // numberOfItems may exceed itemListElement.length when the caller paginates
+  // a larger collection — Google explicitly supports this for paginated lists.
   const itemList = {
     "@type": "ItemList",
     name,
     description: description || undefined,
-    numberOfItems: totalCount ?? capped.length,
+    numberOfItems: totalCount ?? items.length,
     itemListOrder: itemListOrderMap[order],
-    itemListElement: capped.map((item, index) => ({
+    itemListElement: items.map((item, index) => ({
       "@type": "ListItem",
-      position: index + 1,
+      position: positionStart + index,
       name: item.name,
       url: item.url,
       image: item.image || undefined,

@@ -331,6 +331,7 @@ export default async function VendorsPage({
           image: v.logoUrl,
         }))}
         totalCount={totalCount}
+        positionStart={(currentPage - 1) * PAGE_SIZE + 1}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/vendors"
       />

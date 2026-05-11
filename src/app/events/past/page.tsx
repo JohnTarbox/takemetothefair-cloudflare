@@ -148,6 +148,8 @@ export default async function PastEventsPage({
           image: e.imageUrl,
         }))}
         totalCount={total}
+        positionStart={(page - 1) * limit + 1}
+        order="descending"
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/events/past"
       />

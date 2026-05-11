@@ -30,6 +30,7 @@ import { buildVenueMetaDescription } from "@/lib/seo-utils";
 import { decodeHtmlEntities, unsafeSlug } from "@/lib/utils";
 import { VenueSchema } from "@/components/seo/VenueSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 
@@ -177,6 +178,18 @@ export default async function VenueDetailPage({ params }: Props) {
           { name: venue.name, url: `https://meetmeatthefair.com/venues/${venue.slug}` },
         ]}
       />
+      {venue.events.length > 0 && (
+        <ItemListSchema
+          name={`Upcoming events at ${venue.name}`}
+          description={`Events scheduled at ${venue.name}`}
+          items={venue.events.map((e) => ({
+            name: e.name,
+            url: `https://meetmeatthefair.com/events/${e.slug}`,
+            image: e.imageUrl,
+          }))}
+          pageUrl={`https://meetmeatthefair.com/venues/${venue.slug}`}
+        />
+      )}
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
