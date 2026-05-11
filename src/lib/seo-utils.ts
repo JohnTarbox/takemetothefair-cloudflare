@@ -45,14 +45,26 @@ function truncateAtWord(text: string, maxLength: number, preferSentence = false)
  * After cutting, strips trailing `;`/`—`/`–` (these suggest continuation) and
  * any dangling function word. Falls back to word boundary when no clause break
  * exists in the budget (round-2 backlog item 2, 2026-05-11).
+ *
+ * 2026-05-11 fix: prod verification showed Fryeburg's description cutting at
+ * word boundary "...Eight days" instead of clause boundary "...annually."
+ * The previous regex `^(.*[.!?;—–])(?:\s+\S*)?$` only allowed ONE trailing
+ * word after the clause character; multi-word trailers caused the match to
+ * fail and fall through to word-boundary fallback. Replaced with a linear
+ * scan for the latest clause character, which handles any trailer length.
  */
 function truncateAtClause(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   const truncated = text.slice(0, maxLength);
   const safeFloor = maxLength * 0.5;
-  const clauseMatch = truncated.match(/^(.*[.!?;—–])(?:\s+\S*)?$/s);
-  if (clauseMatch && clauseMatch[1].length > safeFloor) {
-    const stripped = clauseMatch[1].replace(/[;—–]\s*$/, "").trimEnd();
+  let lastClause = -1;
+  for (const ch of ".!?;—–") {
+    const idx = truncated.lastIndexOf(ch);
+    if (idx > lastClause) lastClause = idx;
+  }
+  if (lastClause + 1 > safeFloor) {
+    const prefix = truncated.slice(0, lastClause + 1);
+    const stripped = prefix.replace(/[;—–]\s*$/, "").trimEnd();
     return trimTrailingFunctionWord(stripped);
   }
   const lastSpace = truncated.lastIndexOf(" ");
