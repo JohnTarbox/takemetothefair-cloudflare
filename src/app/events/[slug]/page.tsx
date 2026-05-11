@@ -437,8 +437,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       // (PR #135, 2026-05-11) to emit canonical `property=` — but Next.js's
       // openGraph serializer throws on the unknown discriminant and silently
       // skips ALL metadata generation, breaking every page. Reverted same day
-      // (PR #136). `other` emits `name="og:type"` which is non-canonical but
-      // functional (FB/Google honor both attribute forms).
+      // (PR #136). `other` emits `name="og:type"` which is non-canonical:
+      // Google honors both attribute forms, but Facebook's Sharing Debugger
+      // only honors `property=` and flags `name=` as a warning (confirmed by
+      // audit 2026-05-11). Accepted trade-off: cosmetic FB warning vs. risk
+      // of re-breaking site-wide metadata. See
+      // feedback_nextjs_metadata_type_cast_runtime.md.
       images: [
         {
           url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
