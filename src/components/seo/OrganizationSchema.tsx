@@ -7,10 +7,17 @@
 // PNG, which works but is not a branded logo asset.
 const LOGO_URL = "https://meetmeatthefair.com/og-default.png";
 
-// TODO(jtarbox): replace with real MMATF social profile URLs (Facebook,
-// Instagram, X/Twitter if any). Current values are placeholders left over
-// from the original homepage-only emission.
-const SAME_AS = ["https://facebook.com/meetmeatthefair", "https://instagram.com/meetmeatthefair"];
+// sameAs asserts Organization-level identity. Only include URLs that
+// resolve to a profile owned by MMATF and branded as such — pointing at a
+// personal or unrelated account weakens the Knowledge Graph signal.
+//
+// Facebook: real MMATF page (verified 2026-05-12 — og:title "Meet Me at
+//   the Fair", og:description matches site description).
+// Instagram: the @meetmeatthefair handle belongs to a different person;
+//   MMATF does not yet have a business Instagram. Add the real URL here
+//   once one exists.
+// X/Twitter: none yet.
+const SAME_AS = ["https://facebook.com/meetmeatthefair"];
 
 export function OrganizationSchema() {
   const schema = {
