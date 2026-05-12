@@ -13,7 +13,8 @@ const LOGO_URL = "https://meetmeatthefair.com/og-default.png";
 //
 // Facebook: real MMATF page (verified 2026-05-12 — og:title "Meet Me at
 //   the Fair", og:description matches site description). Knowledge Graph
-//   reciprocity audit (FB page Website field → meetmeatthefair.com): #140.
+//   reciprocity loop closed 2026-05-12 — FB Page Website field points at
+//   meetmeatthefair.com (#140).
 // Instagram: the @meetmeatthefair handle belongs to a different person;
 //   MMATF does not yet have a business Instagram. Add the real URL here
 //   once one exists.
