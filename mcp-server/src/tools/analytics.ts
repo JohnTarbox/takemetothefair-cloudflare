@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
+import { buildUtmUrl } from "../utm.js";
 import type { AuthContext } from "../auth.js";
 
 interface Env {
@@ -986,6 +987,65 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
           isError: true,
         };
       }
+    }
+  );
+
+  // ── build_utm_url ────────────────────────────────────────────
+  server.tool(
+    "build_utm_url",
+    "Compose a UTM-tagged URL for outbound posts (Facebook, newsletter, partner links, etc.) so GA4 can distinguish manual posts from organic referrals. Only meetmeatthefair.com URLs are accepted. UTM param values are auto-slugified for GA4 consistency. Existing utm_* params on the input URL are replaced (not appended).",
+    {
+      url: z.string().url().describe("Destination URL on meetmeatthefair.com (http or https)"),
+      source: z
+        .string()
+        .min(1)
+        .max(100)
+        .describe(
+          "utm_source — origin of the link (e.g. 'facebook', 'newsletter', 'partner-fryeburg')"
+        ),
+      medium: z
+        .string()
+        .min(1)
+        .max(100)
+        .describe("utm_medium — channel type (e.g. 'social', 'email', 'display', 'referral')"),
+      campaign: z
+        .string()
+        .min(1)
+        .max(100)
+        .describe("utm_campaign — campaign identifier (e.g. 'weekend-roundup-2026-05-12')"),
+      content: z
+        .string()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("utm_content — differentiates links within one campaign (optional)"),
+      term: z
+        .string()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("utm_term — paid keyword tracking, usually unused for organic posts (optional)"),
+    },
+    async (params) => {
+      const result = buildUtmUrl(params);
+      if (!result.ok) {
+        return {
+          content: [{ type: "text", text: result.error }],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          jsonContent({
+            url: result.url,
+            source: result.source,
+            medium: result.medium,
+            campaign: result.campaign,
+            content: result.content,
+            term: result.term,
+          }),
+        ],
+      };
     }
   );
 }
