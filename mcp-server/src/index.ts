@@ -395,11 +395,62 @@ async function runMainAppSweep(
 }
 
 async function runScheduledRecommendationsScan(env: Env): Promise<void> {
-  await runMainAppSweep(
-    env,
-    "recommendations scan",
-    "/api/admin/recommendations/scan",
-    (r) => `scanned=${r.scannedRules} resolved=${r.resolved} failed=${r.failedRules ?? 0}`
+  // The /api/admin/recommendations/scan endpoint is chunked to fit Cloudflare's
+  // 30s per-request budget (PR #153). Single POST only scans the first 8
+  // rules; loop with ?cursor=N until { more: false } to cover ALL_RULES.
+  // Hard ceiling of 50 chunks defends against a runaway server bug.
+  const MAX_CHUNKS = 50;
+  let cursor = 0;
+  let chunks = 0;
+  const totals = { scannedRules: 0, inserted: 0, resolved: 0, failedRules: 0 };
+  while (chunks < MAX_CHUNKS) {
+    chunks++;
+    const url = `https://meetmeatthefair.com/api/admin/recommendations/scan?cursor=${cursor}`;
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+      },
+    };
+    try {
+      const response = env.MAIN_APP
+        ? await env.MAIN_APP.fetch(new Request(url, init))
+        : await fetch(url, init);
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 300);
+        console.error(`[cron] recommendations scan chunk@${cursor} ${response.status}: ${text}`);
+        return;
+      }
+      const body = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        data?: {
+          scannedRules?: number;
+          inserted?: number;
+          resolved?: number;
+          failedRules?: number;
+          nextCursor?: number;
+          more?: boolean;
+        };
+      };
+      const d = body.data;
+      if (!d) {
+        console.error(`[cron] recommendations scan chunk@${cursor} returned no data`);
+        return;
+      }
+      totals.scannedRules += d.scannedRules ?? 0;
+      totals.inserted += d.inserted ?? 0;
+      totals.resolved += d.resolved ?? 0;
+      totals.failedRules += d.failedRules ?? 0;
+      cursor = d.nextCursor ?? cursor;
+      if (!d.more) break;
+    } catch (error) {
+      console.error(`[cron] recommendations scan chunk@${cursor} threw:`, error);
+      return;
+    }
+  }
+  console.warn(
+    `[cron] recommendations scan ok — scanned=${totals.scannedRules} resolved=${totals.resolved} failed=${totals.failedRules} chunks=${chunks}`
   );
 }
 
