@@ -53,14 +53,18 @@ export async function GET(request: Request) {
         capacity: venues.capacity,
         amenities: venues.amenities,
         website: venues.website,
-        // end_date is ms-epoch; unixepoch() is seconds — multiply for an apples
-        // comparison. See venues/page.tsx for the same pattern + rationale.
+        // end_date is seconds-epoch (Drizzle mode:"timestamp" stores seconds —
+        // see reference_drizzle_timestamp_mode_is_seconds memory). Earlier
+        // comments here claimed ms; that was wrong, and the resulting
+        // *1000 made the filter `seconds >= ms` which is always false.
+        // Result: every venue card showed event_count = 0 sitewide until
+        // PR #161 corrected it.
         eventCount: sql<number>`(
           SELECT COUNT(*) FROM events
           WHERE events.venue_id = venues.id
           AND events.status IN ('APPROVED', 'TENTATIVE')
           AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
-          AND events.end_date >= (unixepoch('now') * 1000)
+          AND events.end_date >= unixepoch('now')
         )`.as("event_count"),
       })
       .from(venues)
