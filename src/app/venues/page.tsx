@@ -104,7 +104,8 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
     const eventCountSubquery = sql<number>`(
       SELECT COUNT(*) FROM events
       WHERE events.venue_id = venues.id
-      AND events.status = 'APPROVED'
+      AND events.status IN ('APPROVED', 'TENTATIVE')
+      AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
       AND events.end_date >= (unixepoch('now') * 1000)
     )`;
 

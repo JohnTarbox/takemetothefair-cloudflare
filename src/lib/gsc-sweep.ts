@@ -14,7 +14,7 @@
  * as Bing-sourced issues.
  */
 
-import { eq, and, gte, inArray, asc, desc, isNull, or } from "drizzle-orm";
+import { eq, and, gte, asc, desc, isNull, or } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   events,
@@ -27,7 +27,7 @@ import {
 } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
-import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { publicEventWhere } from "@/lib/event-lifecycle";
 import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { fingerprintFor } from "@/lib/site-health";
@@ -130,9 +130,7 @@ async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   const recentEvents = await db
     .select({ slug: events.slug })
     .from(events)
-    .where(
-      and(inArray(events.status, [...PUBLIC_EVENT_STATUSES]), gte(events.updatedAt, oneDayAgo))
-    );
+    .where(and(publicEventWhere(), gte(events.updatedAt, oneDayAgo)));
   for (const e of recentEvents) {
     picked.add(`${HOST}/events/${e.slug}`);
     if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
@@ -167,7 +165,7 @@ async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     const activeEvents = await db
       .select({ slug: events.slug })
       .from(events)
-      .where(inArray(events.status, [...PUBLIC_EVENT_STATUSES]))
+      .where(publicEventWhere())
       .limit(batchSize - picked.size);
     for (const e of activeEvents) {
       picked.add(`${HOST}/events/${e.slug}`);

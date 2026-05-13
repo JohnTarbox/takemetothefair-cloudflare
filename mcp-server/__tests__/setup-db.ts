@@ -117,6 +117,11 @@ const SCHEMA_SQL = `
     suggester_email TEXT,
     submitted_by_user_id TEXT,
     completeness_score INTEGER NOT NULL DEFAULT 0,
+    lifecycle_status TEXT NOT NULL DEFAULT 'SCHEDULED',
+    lifecycle_status_changed_at INTEGER,
+    lifecycle_reason TEXT,
+    previous_start_date INTEGER,
+    previous_end_date INTEGER,
     created_at INTEGER,
     updated_at INTEGER
   );

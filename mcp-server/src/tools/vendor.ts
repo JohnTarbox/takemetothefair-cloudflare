@@ -811,6 +811,9 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
         ticketUrl: gatedTicketUrl,
         status: "TENTATIVE",
+        // Mirror the main-app suggest-event behavior: vendor submissions are
+        // TENTATIVE-lifecycle (dates unconfirmed at submission time).
+        lifecycleStatus: "TENTATIVE",
         sourceName: "vendor-submission",
         sourceUrl: params.source_url || null,
         sourceId: params.source_url

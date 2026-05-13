@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { vendors, events, eventSlugHistory } from "@/lib/db/schema";
-import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import { unsafeSlug } from "@/lib/utils";
 
 /**
@@ -155,13 +155,13 @@ export async function middleware(request: NextRequest) {
 
     try {
       const [row] = await db
-        .select({ status: events.status })
+        .select({ status: events.status, lifecycleStatus: events.lifecycleStatus })
         .from(events)
         .where(eq(events.slug, unsafeSlug(slug)))
         .limit(1);
 
       if (row) {
-        // Event exists at this slug — gate by status.
+        // Event exists at this slug — gate by editorial + lifecycle status.
         if (row.status === "REJECTED") {
           // 410 Gone: crawlers treat as "intentionally removed, drop from
           // index" — sharper signal than 404 for content we deliberately
@@ -172,17 +172,18 @@ export async function middleware(request: NextRequest) {
             headers: { "Content-Type": "text/plain; charset=utf-8" },
           });
         }
-        if (!(PUBLIC_EVENT_STATUSES as readonly string[]).includes(row.status)) {
-          // DRAFT, PENDING, CANCELLED — not in PUBLIC_EVENT_STATUSES.
-          // 404 rather than 410: these may transition back to public
-          // (a CANCELLED event might be uncancelled; a DRAFT may be
-          // approved). We don't want crawlers to drop the URL permanently.
+        if (!isPubliclyVisible(row.status, row.lifecycleStatus as EventLifecycle)) {
+          // Hidden by either editorial (DRAFT/PENDING/legacy-CANCELLED) or
+          // lifecycle (lifecycle CANCELLED/NO_SHOW). 404 rather than 410:
+          // these may transition back to public (a CANCELLED-lifecycle event
+          // can be uncancelled; a DRAFT can be approved). We don't want
+          // crawlers to drop the URL permanently.
           return new NextResponse("Not Found", {
             status: 404,
             headers: { "Content-Type": "text/plain; charset=utf-8" },
           });
         }
-        // APPROVED or TENTATIVE — let the page render.
+        // Public — let the page render.
         return NextResponse.next();
       }
 
@@ -206,12 +207,7 @@ export async function middleware(request: NextRequest) {
         const [target] = await db
           .select({ status: events.status })
           .from(events)
-          .where(
-            and(
-              eq(events.slug, unsafeSlug(cursor)),
-              inArray(events.status, [...PUBLIC_EVENT_STATUSES])
-            )
-          )
+          .where(and(eq(events.slug, unsafeSlug(cursor)), publicEventWhere()))
           .limit(1);
         if (target) {
           const url = request.nextUrl.clone();

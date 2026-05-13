@@ -164,6 +164,32 @@ export const events = sqliteTable(
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
+    // Lifecycle status — orthogonal to editorial `status`. Maps 1:1 to schema.org
+    // Event status URIs for SCHEDULED/POSTPONED/RESCHEDULED/CANCELLED/MOVED_ONLINE;
+    // OCCURRED, NO_SHOW, TENTATIVE are MMATF additions for past-event semantics +
+    // dates-not-yet-confirmed. Source of truth lives in src/lib/event-lifecycle.ts.
+    lifecycleStatus: text("lifecycle_status", {
+      enum: [
+        "SCHEDULED",
+        "TENTATIVE",
+        "POSTPONED",
+        "RESCHEDULED",
+        "CANCELLED",
+        "OCCURRED",
+        "MOVED_ONLINE",
+        "NO_SHOW",
+      ],
+    })
+      .notNull()
+      .default("SCHEDULED"),
+    lifecycleStatusChangedAt: integer("lifecycle_status_changed_at", { mode: "timestamp" }),
+    lifecycleReason: text("lifecycle_reason"),
+    // For RESCHEDULED events — the dates the event was previously scheduled
+    // for. Schema.org's EventRescheduled rich snippet needs the immediately-
+    // previous pair to render in Google. Single pair only; multi-reschedule
+    // history would need a separate event_date_history table.
+    previousStartDate: integer("previous_start_date", { mode: "timestamp" }),
+    previousEndDate: integer("previous_end_date", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -173,6 +199,7 @@ export const events = sqliteTable(
     index("idx_events_promoterid").on(table.promoterId),
     index("idx_events_state_code").on(table.stateCode),
     index("idx_events_completeness_score").on(table.completenessScore),
+    index("idx_events_lifecycle_status").on(table.lifecycleStatus),
   ]
 );
 

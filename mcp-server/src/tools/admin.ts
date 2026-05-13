@@ -44,6 +44,8 @@ import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { dollarsToCents } from "../helpers.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
+import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
+import { registerRecommendationsTools } from "./admin-recommendations.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -74,6 +76,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // create_event_citation, list_event_citations, update_event_citation,
   // delete_event_citation, bulk_create_event_citations.
   registerCitationTools(server, db, auth, env);
+
+  // Event lifecycle transitions (drizzle/0067). Adds update_event_lifecycle
+  // with transition validation, date-swap for RESCHEDULED/POSTPONED,
+  // admin_actions audit logging, and IndexNow on visibility crossings.
+  registerEventLifecycleTools(server, db, auth, env);
+
+  // Read-only recommendations feed — same data as /admin/analytics ▸
+  // Recommendations. Adds get_recommendations, get_recommendation_rule.
+  // Dispositions (snooze/dismiss) stay in the admin UI by design.
+  registerRecommendationsTools(server, db, auth);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values

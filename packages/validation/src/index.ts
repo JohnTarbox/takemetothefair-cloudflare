@@ -7,6 +7,7 @@
 import { z } from "zod";
 import {
   EVENT_STATUS,
+  EVENT_LIFECYCLE_VALUES,
   VENUE_STATUS,
   EVENT_VENDOR_STATUS,
   PAYMENT_STATUS,
@@ -586,6 +587,49 @@ export const blogPostUpdateSchema = blogPostCreateSchema
     faqs: z.array(blogFaqItemSchema).optional(),
     status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
   });
+
+// ── Event lifecycle update ───────────────────────────────────────
+//
+// Used by /api/admin/events/[id]/lifecycle PATCH and the MCP
+// `update_event_lifecycle` tool. Validation-layer only — transition
+// legality is enforced server-side via validateLifecycleTransition().
+
+export const eventLifecycleUpdateSchema = z
+  .object({
+    new_lifecycle: z.enum(EVENT_LIFECYCLE_VALUES as [string, ...string[]]),
+    reason: z.string().min(1).max(500).transform(decodeHtmlEntities).optional().nullable(),
+    new_start_date: z.string().datetime().optional().nullable(),
+    new_end_date: z.string().datetime().optional().nullable(),
+  })
+  .refine(
+    (d) => {
+      // For RESCHEDULED, new dates are required. POSTPONED may pass null
+      // dates (we don't know the new dates yet) — that's valid. Other
+      // transitions ignore date fields.
+      if (d.new_lifecycle === "RESCHEDULED") {
+        return d.new_start_date != null && d.new_end_date != null;
+      }
+      return true;
+    },
+    {
+      message: "RESCHEDULED transition requires new_start_date and new_end_date",
+      path: ["new_start_date"],
+    }
+  )
+  .refine(
+    (d) => {
+      if (d.new_start_date && d.new_end_date) {
+        return new Date(d.new_end_date) >= new Date(d.new_start_date);
+      }
+      return true;
+    },
+    {
+      message: "new_end_date must be on or after new_start_date",
+      path: ["new_end_date"],
+    }
+  );
+
+export type EventLifecycleUpdate = z.infer<typeof eventLifecycleUpdateSchema>;
 
 // Helper function to validate and parse request body
 export async function validateRequestBody<T extends z.ZodType>(

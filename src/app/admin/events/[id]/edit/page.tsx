@@ -58,6 +58,7 @@ interface Event {
   featured: boolean;
   commercialVendorsAllowed: boolean;
   status: string;
+  lifecycleStatus?: string;
   eventDays?: EventDay[];
   sourceName?: string | null;
   sourceUrl?: string | null;
@@ -520,7 +521,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
               </div>
 
               <div>
-                <Label htmlFor="status">Status</Label>
+                <Label htmlFor="status">Editorial Status</Label>
                 <select
                   id="status"
                   name="status"
@@ -532,8 +533,28 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   <option value="TENTATIVE">Tentative</option>
                   <option value="APPROVED">Approved</option>
                   <option value="REJECTED">Rejected</option>
-                  <option value="CANCELLED">Cancelled</option>
+                  <option value="CANCELLED">Cancelled (legacy)</option>
                 </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Workflow visibility. To mark cancelled / postponed / rescheduled / occurred /
+                  no-show, change <strong>Lifecycle</strong> below (use the lifecycle MCP tool or
+                  the <code className="text-xs">/api/admin/events/{event.id}/lifecycle</code>{" "}
+                  endpoint).
+                </p>
+              </div>
+
+              <div>
+                <Label>Lifecycle Status</Label>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-10 items-center rounded-md border border-input bg-muted px-3 py-2 text-sm font-mono">
+                    {event.lifecycleStatus ?? "SCHEDULED"}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Real-world state (separate from editorial). Transitions go through the dedicated
+                  lifecycle endpoint with audit logging + date swapping for RESCHEDULED/POSTPONED.
+                  Read-only here in PR 1.
+                </p>
               </div>
 
               <div className="flex items-center gap-4">

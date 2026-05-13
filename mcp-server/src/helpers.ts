@@ -175,7 +175,25 @@ export function escapeLike(s: string): string {
 
 // PUBLIC_EVENT_STATUSES and PUBLIC_VENDOR_STATUSES re-exported from
 // the canonical @takemetothefair/constants package. Single source of truth.
-export { PUBLIC_EVENT_STATUSES, PUBLIC_VENDOR_STATUSES } from "@takemetothefair/constants";
+export {
+  PUBLIC_EVENT_STATUSES,
+  PUBLIC_VENDOR_STATUSES,
+  PUBLIC_LIFECYCLE_STATUSES,
+} from "@takemetothefair/constants";
+
+import { and, inArray as inArrayMcp } from "drizzle-orm";
+import {
+  PUBLIC_EVENT_STATUSES as PE,
+  PUBLIC_LIFECYCLE_STATUSES as PL,
+} from "@takemetothefair/constants";
+
+/** Mirrors src/lib/event-lifecycle.ts:publicEventWhere() — combined editorial
+ *  + lifecycle visibility gate. Single source-of-truth for "should this event
+ *  appear in MCP public-read tool output?" Keep in sync with the main app's
+ *  helper; lifecycle additions to either set must land in both places. */
+export function publicEventWhere() {
+  return and(inArrayMcp(events.status, [...PE]), inArrayMcp(events.lifecycleStatus, [...PL]));
+}
 
 /** Build a concise text content response for MCP */
 export function jsonContent(data: unknown): { type: "text"; text: string } {

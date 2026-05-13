@@ -36,8 +36,44 @@ export type EventStatus = (typeof EVENT_STATUS)[keyof typeof EVENT_STATUS];
 /** Tuple form for Zod enums and other Array-like consumers. */
 export const EVENT_STATUS_VALUES = Object.values(EVENT_STATUS) as readonly EventStatus[];
 
-/** Statuses visible on public pages. */
+/** Statuses visible on public pages.
+ *
+ *  Legacy gate — kept for backward compat. New code should use
+ *  `publicEventWhere()` from `src/lib/event-lifecycle.ts` which combines
+ *  this editorial gate with the lifecycle gate. The plan was to drop
+ *  TENTATIVE here once it migrated to the lifecycle column, but we leave
+ *  it in to keep the legacy check identical to current production
+ *  behavior — anything visible BEFORE the lifecycle migration must stay
+ *  visible AFTER, even on read paths that haven't been upgraded yet. */
 export const PUBLIC_EVENT_STATUSES = [EVENT_STATUS.APPROVED, EVENT_STATUS.TENTATIVE] as const;
+
+// ── Event lifecycle (real-world status, orthogonal to editorial) ──
+
+export const EVENT_LIFECYCLE = {
+  SCHEDULED: "SCHEDULED",
+  TENTATIVE: "TENTATIVE",
+  POSTPONED: "POSTPONED",
+  RESCHEDULED: "RESCHEDULED",
+  CANCELLED: "CANCELLED",
+  OCCURRED: "OCCURRED",
+  MOVED_ONLINE: "MOVED_ONLINE",
+  NO_SHOW: "NO_SHOW",
+} as const;
+export type EventLifecycle = (typeof EVENT_LIFECYCLE)[keyof typeof EVENT_LIFECYCLE];
+export const EVENT_LIFECYCLE_VALUES = Object.values(EVENT_LIFECYCLE) as readonly EventLifecycle[];
+
+/** Lifecycle states that allow public visibility — combined with the
+ *  editorial APPROVED check via `publicEventWhere()` in
+ *  src/lib/event-lifecycle.ts. CANCELLED and NO_SHOW are deliberately
+ *  excluded; OCCURRED stays public as evergreen SEO content. */
+export const PUBLIC_LIFECYCLE_STATUSES = [
+  EVENT_LIFECYCLE.SCHEDULED,
+  EVENT_LIFECYCLE.TENTATIVE,
+  EVENT_LIFECYCLE.POSTPONED,
+  EVENT_LIFECYCLE.RESCHEDULED,
+  EVENT_LIFECYCLE.OCCURRED,
+  EVENT_LIFECYCLE.MOVED_ONLINE,
+] as const;
 
 // ── Venue statuses ────────────────────────────────────────────────
 
