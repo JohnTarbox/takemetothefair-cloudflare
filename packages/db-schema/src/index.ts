@@ -979,6 +979,10 @@ export const recommendationRules = sqliteTable("recommendation_rules", {
   // in 0046; engine writes on every scanAll().
   totalMatchCount: integer("total_match_count").default(0),
   lastScannedAt: integer("last_scanned_at", { mode: "timestamp" }),
+  // Per-rule last-scan error message. NULL = last scan succeeded (or rule
+  // has never scanned). Set to the thrown Error.message when scanAll() catches
+  // a rule's run() failure; cleared to NULL on next successful scan. Added 0066.
+  lastScanError: text("last_scan_error"),
 });
 
 export const recommendationItems = sqliteTable(

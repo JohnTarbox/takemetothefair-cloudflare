@@ -240,10 +240,12 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
         }
       }
 
-      // Record total + last-scan for the "Showing N of M" UI label.
+      // Record total + last-scan for the "Showing N of M" UI label. Clear
+      // lastScanError so a previously-failing rule that's now succeeding
+      // stops surfacing its stale error banner in the admin UI.
       await db
         .update(recommendationRules)
-        .set({ totalMatchCount: matches.length, lastScannedAt: now })
+        .set({ totalMatchCount: matches.length, lastScannedAt: now, lastScanError: null })
         .where(eq(recommendationRules.id, ruleId));
 
       perRule.push({
@@ -257,11 +259,19 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
       totalRefreshed += refreshed;
       totalResolved += resolved;
     } catch (err) {
-      // Log + continue. Don't update last_scanned_at on the failed rule —
-      // its row keeps the prior timestamp so the admin UI can show staleness
-      // and operators can spot which rules are silently broken.
+      // Log + persist + continue. Don't update last_scanned_at on the failed
+      // rule — its row keeps the prior timestamp so the admin UI can show
+      // staleness ("last successful scan was N days ago") and operators can
+      // spot which rules are silently broken.
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[recommendations.scanAll] rule "${def.ruleKey}" failed:`, message);
+      // Persist the message onto recommendation_rules so the admin tab can
+      // surface a red banner without operators having to tail Pages logs.
+      // Truncate to keep the column reasonable; full message is in logs.
+      await db
+        .update(recommendationRules)
+        .set({ lastScanError: message.slice(0, 2000) })
+        .where(eq(recommendationRules.id, ruleId));
       perRule.push({
         ruleKey: def.ruleKey,
         matched: 0,
@@ -409,4 +419,62 @@ export async function markActedAllForTarget(
       .where(eq(recommendationItems.id, row.id));
   }
   return open.length;
+}
+
+/**
+ * Scan-state summary for the admin Recommendations tab header + per-rule
+ * error banners. Returned as a single object so the page can read both
+ * pieces in one round-trip.
+ *
+ * `lastSuccessfulScanAt` is the MAX of recommendation_rules.last_scanned_at
+ * across all rules — which is the most recent time scanAll() ran and at
+ * least one rule completed successfully (per-rule failures preserve their
+ * prior last_scanned_at). Null when no rule has ever scanned.
+ *
+ * `failedRules` lists rules whose last attempted scan threw, ordered by
+ * rule_key for stable rendering. Each entry includes the persisted error
+ * message and the rule's frozen last_scanned_at so the banner can show
+ * staleness ("last successful scan: 7d ago").
+ */
+export type ScanState = {
+  lastSuccessfulScanAt: Date | null;
+  failedRules: Array<{
+    ruleId: string;
+    ruleKey: string;
+    title: string;
+    error: string;
+    lastScannedAt: Date | null;
+  }>;
+};
+
+export async function getScanState(db: Db): Promise<ScanState> {
+  const rows = await db
+    .select({
+      id: recommendationRules.id,
+      ruleKey: recommendationRules.ruleKey,
+      title: recommendationRules.title,
+      lastScannedAt: recommendationRules.lastScannedAt,
+      lastScanError: recommendationRules.lastScanError,
+    })
+    .from(recommendationRules)
+    .where(eq(recommendationRules.enabled, true));
+
+  let lastSuccessfulScanAt: Date | null = null;
+  const failedRules: ScanState["failedRules"] = [];
+  for (const r of rows) {
+    if (r.lastScannedAt && (!lastSuccessfulScanAt || r.lastScannedAt > lastSuccessfulScanAt)) {
+      lastSuccessfulScanAt = r.lastScannedAt;
+    }
+    if (r.lastScanError) {
+      failedRules.push({
+        ruleId: r.id,
+        ruleKey: r.ruleKey,
+        title: r.title,
+        error: r.lastScanError,
+        lastScannedAt: r.lastScannedAt,
+      });
+    }
+  }
+  failedRules.sort((a, b) => a.ruleKey.localeCompare(b.ruleKey));
+  return { lastSuccessfulScanAt, failedRules };
 }

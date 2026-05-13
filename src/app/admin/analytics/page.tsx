@@ -1300,7 +1300,7 @@ function ActivityIcon({ kind }: { kind: ActivityEntry["kind"] }) {
 // ─── Recommendations tab ────────────────────────────────────────────
 
 async function RecommendationsTab() {
-  const { getActiveItems } = await import("@/lib/recommendations/engine");
+  const { getActiveItems, getScanState } = await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
   const { RecommendationBulkActions } =
     await import("@/components/admin/recommendation-bulk-actions");
@@ -1311,7 +1311,7 @@ async function RecommendationsTab() {
   type Tier = import("@/lib/recommendations/tiers").Tier;
 
   const db = getCloudflareDb();
-  const items = await getActiveItems(db);
+  const [items, scanState] = await Promise.all([getActiveItems(db), getScanState(db)]);
 
   type Sev = "red" | "yellow" | "blue";
   type Item = (typeof items)[number];
@@ -1472,8 +1472,40 @@ async function RecommendationsTab() {
                 totalRules === 1 ? "" : "s"
               }. Click any rule to expand affected targets.`}
         </p>
-        <RecommendationScanButton />
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">
+            {scanState.lastSuccessfulScanAt
+              ? `Last successful scan: ${formatTimestampForServer(scanState.lastSuccessfulScanAt)}`
+              : "Never scanned"}
+          </span>
+          <RecommendationScanButton />
+        </div>
       </div>
+
+      {/* Per-rule scan-error banners. PR #148 + #150 (this PR): scanAll
+          catches per-rule failures, persists the message on
+          recommendation_rules.last_scan_error, and clears on next success.
+          Surfaces here so silent broken rules don't decay invisibly. */}
+      {scanState.failedRules.length > 0 && (
+        <div className="mb-6 rounded-md border border-red-300 bg-red-50 p-4">
+          <p className="text-sm font-medium text-red-900 mb-2">
+            {scanState.failedRules.length} rule
+            {scanState.failedRules.length === 1 ? "" : "s"} failed during last scan
+          </p>
+          <ul className="space-y-2">
+            {scanState.failedRules.map((fr) => (
+              <li key={fr.ruleId} className="text-xs">
+                <div className="font-mono text-red-900">{fr.ruleKey}</div>
+                <div className="text-red-800 break-words">{fr.error}</div>
+                <div className="text-red-700/80 mt-0.5">
+                  Last successful scan:{" "}
+                  {fr.lastScannedAt ? formatTimestampForServer(fr.lastScannedAt) : "never"}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* §10.3 opportunities feed — top 10 across all tiers ordered by score. */}
       {opportunities.length > 0 && (
