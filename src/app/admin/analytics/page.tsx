@@ -1593,30 +1593,37 @@ async function RecommendationsTab() {
                         </div>
                       </summary>
                       <div className="border-t border-gray-100 divide-y divide-gray-100">
-                        {group.items.map((item) => {
-                          const link = targetLink(item);
-                          const meta2 = targetMeta(item);
-                          return (
-                            <div
-                              key={item.itemId}
-                              className="px-5 py-3 flex items-start justify-between gap-4 flex-wrap hover:bg-gray-50"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm text-gray-900">
-                                  {link ? (
-                                    <Link href={link} className="text-blue-600 hover:underline">
-                                      {targetLabel(item)}
-                                    </Link>
-                                  ) : (
-                                    <span className="font-mono">{targetLabel(item)}</span>
-                                  )}
-                                </p>
-                                {meta2 && <p className="text-xs text-gray-500 mt-0.5">{meta2}</p>}
+                        {[...group.items]
+                          .sort((a, b) =>
+                            targetLabel(a).localeCompare(targetLabel(b), undefined, {
+                              sensitivity: "base",
+                              numeric: true,
+                            })
+                          )
+                          .map((item) => {
+                            const link = targetLink(item);
+                            const meta2 = targetMeta(item);
+                            return (
+                              <div
+                                key={item.itemId}
+                                className="px-5 py-3 flex items-start justify-between gap-4 flex-wrap hover:bg-gray-50"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm text-gray-900">
+                                    {link ? (
+                                      <Link href={link} className="text-blue-600 hover:underline">
+                                        {targetLabel(item)}
+                                      </Link>
+                                    ) : (
+                                      <span className="font-mono">{targetLabel(item)}</span>
+                                    )}
+                                  </p>
+                                  {meta2 && <p className="text-xs text-gray-500 mt-0.5">{meta2}</p>}
+                                </div>
+                                <RecommendationActions itemId={item.itemId} />
                               </div>
-                              <RecommendationActions itemId={item.itemId} />
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
                       </div>
                     </details>
                   </Card>
