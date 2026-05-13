@@ -98,15 +98,18 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
     }
 
     // Single query: Get venues with event counts using subquery.
-    // events.end_date is ms-epoch (Drizzle mode:"timestamp"), unixepoch() returns
-    // seconds — multiply by 1000 to compare apples to apples. Without this, the
-    // filter is always-true (1.78e12 >= 1.78e9) and silently includes past events.
+    // events.end_date is seconds-epoch (Drizzle mode:"timestamp" stores
+    // seconds — see reference_drizzle_timestamp_mode_is_seconds memory).
+    // Earlier comments here claimed ms-epoch; that was wrong, and the
+    // resulting *1000 made the filter `seconds >= ms` which is always
+    // false. Result: every venue card showed event_count = 0 sitewide
+    // until PR #161 corrected it.
     const eventCountSubquery = sql<number>`(
       SELECT COUNT(*) FROM events
       WHERE events.venue_id = venues.id
       AND events.status IN ('APPROVED', 'TENTATIVE')
       AND events.lifecycle_status NOT IN ('CANCELLED', 'NO_SHOW')
-      AND events.end_date >= (unixepoch('now') * 1000)
+      AND events.end_date >= unixepoch('now')
     )`;
 
     if (searchParams.missingGoogle === "true") {
