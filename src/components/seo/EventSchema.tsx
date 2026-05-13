@@ -1,4 +1,5 @@
 import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from "@/lib/datetime";
+import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 
 interface EventDay {
   date: string;
@@ -46,6 +47,14 @@ interface EventSchemaProps {
   ticketUrl?: string | null;
   categories?: string[];
   datesConfirmed?: boolean | null;
+  // Lifecycle drives the schema.org eventStatus URI (post-PR-#157). Optional
+  // on the prop so callers that haven't been updated yet keep working — the
+  // mapping falls back to the legacy `datesConfirmed`-based heuristic below.
+  lifecycleStatus?: EventLifecycle | string | null;
+  // For RESCHEDULED events, the dates the event was previously scheduled for.
+  // Required by schema.org's EventRescheduled rich snippet to render in Google.
+  previousStartDate?: Date | null;
+  previousEndDate?: Date | null;
   eventDays?: EventDay[];
   vendors?: EventVendor[];
   createdAt?: Date | null;
@@ -78,6 +87,9 @@ export function EventSchema({
   ticketUrl,
   categories,
   datesConfirmed,
+  lifecycleStatus,
+  previousStartDate,
+  previousEndDate,
   eventDays,
   vendors,
   createdAt,
@@ -136,10 +148,38 @@ export function EventSchema({
   const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;
   const resolvedImage = imageUrl || `https://meetmeatthefair.com/api/og?slug=${slug}`;
 
+  // Schema.org eventStatus: prefer the lifecycle column (post-PR-#157), fall
+  // back to the legacy datesConfirmed heuristic for any caller / fixture not
+  // yet passing lifecycleStatus. LIFECYCLE_TO_SCHEMA_ORG.OCCURRED is null —
+  // we omit eventStatus for past events since schema.org's vocabulary has no
+  // OCCURRED equivalent and emitting EventScheduled for a past event sends
+  // a misleading signal to crawlers.
+  const lifecycleSchemaStatus = lifecycleStatus
+    ? (LIFECYCLE_TO_SCHEMA_ORG[lifecycleStatus as EventLifecycle] ?? null)
+    : null;
   const eventStatus =
-    !hasDates || datesConfirmed === false
+    lifecycleSchemaStatus ??
+    (!hasDates || datesConfirmed === false
       ? "https://schema.org/EventPostponed"
-      : "https://schema.org/EventScheduled";
+      : "https://schema.org/EventScheduled");
+
+  // MOVED_ONLINE flips the attendance mode; otherwise the default Offline.
+  const eventAttendanceMode =
+    lifecycleStatus === "MOVED_ONLINE"
+      ? "https://schema.org/OnlineEventAttendanceMode"
+      : "https://schema.org/OfflineEventAttendanceMode";
+
+  // EventRescheduled rich snippet requires previousStartDate to render. Emit
+  // both endpoints when present so Google can show the "rescheduled from X
+  // to Y" annotation in search results.
+  const previousStartIso =
+    lifecycleStatus === "RESCHEDULED" && previousStartDate
+      ? (parseDateLoose(previousStartDate)?.toISOString() ?? undefined)
+      : undefined;
+  const previousEndIso =
+    lifecycleStatus === "RESCHEDULED" && previousEndDate
+      ? (parseDateLoose(previousEndDate)?.toISOString() ?? undefined)
+      : undefined;
 
   // Only emit `offers` when price is known. Schema.org marks `offers` as
   // recommended-but-not-required, so omitting is the honest signal when we
@@ -216,7 +256,9 @@ export function EventSchema({
     image: resolvedImage,
     url,
     eventStatus,
-    eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    previousStartDate: previousStartIso,
+    previousEndDate: previousEndIso,
+    eventAttendanceMode,
     isAccessibleForFree,
     about:
       categories && categories.length > 0

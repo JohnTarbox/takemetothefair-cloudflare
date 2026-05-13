@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { events, adminActions } from "../schema.js";
+import { eq, and, desc, or } from "drizzle-orm";
+import { events, adminActions, eventSlugHistory } from "../schema.js";
 import {
   EVENT_LIFECYCLE_VALUES,
   PUBLIC_LIFECYCLE_STATUSES,
@@ -239,6 +239,139 @@ export function registerEventLifecycleTools(
             previous_start_date: dateUpdate.previousStartDate?.toISOString() ?? null,
             previous_end_date: dateUpdate.previousEndDate?.toISOString() ?? null,
             indexnow_fired: indexNowFired,
+          }),
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "get_event_lifecycle_history",
+    [
+      "Read the lifecycle + status transition history for one event, joined with",
+      "slug-rename history. Returns a chronological timeline of state changes for",
+      "forensic / audit use — useful for answering 'when did this become CANCELLED'",
+      "and 'what was the previous slug before that 301'.",
+      "",
+      "Sources:",
+      "  - admin_actions WHERE action IN (event.lifecycle_change, event.status_change)",
+      "  - event_slug_history WHERE event_id = <id>",
+      "  - events row for current state",
+      "",
+      "Events created before the MCP audit hook existed (most pre-2026-04 rows) will",
+      "have empty history. Audit gaps documented in the original PR #157 thread.",
+    ].join(" "),
+    {
+      event_id: z.string().min(1).describe("Event UUID."),
+    },
+    async (params) => {
+      const { event_id } = params;
+
+      const [eventRow] = await db
+        .select({
+          id: events.id,
+          slug: events.slug,
+          name: events.name,
+          status: events.status,
+          lifecycleStatus: events.lifecycleStatus,
+          lifecycleStatusChangedAt: events.lifecycleStatusChangedAt,
+          lifecycleReason: events.lifecycleReason,
+          previousStartDate: events.previousStartDate,
+          previousEndDate: events.previousEndDate,
+          startDate: events.startDate,
+          endDate: events.endDate,
+        })
+        .from(events)
+        .where(eq(events.id, event_id))
+        .limit(1);
+
+      if (!eventRow) {
+        return {
+          content: [jsonContent({ error: "event_not_found", event_id })],
+          isError: true,
+        };
+      }
+
+      const actions = await db
+        .select({
+          id: adminActions.id,
+          action: adminActions.action,
+          actorUserId: adminActions.actorUserId,
+          payloadJson: adminActions.payloadJson,
+          createdAt: adminActions.createdAt,
+        })
+        .from(adminActions)
+        .where(
+          and(
+            eq(adminActions.targetType, "event"),
+            eq(adminActions.targetId, event_id),
+            or(
+              eq(adminActions.action, "event.lifecycle_change"),
+              eq(adminActions.action, "event.status_change")
+            )
+          )
+        )
+        .orderBy(desc(adminActions.createdAt));
+
+      const slugChanges = await db
+        .select({
+          oldSlug: eventSlugHistory.oldSlug,
+          newSlug: eventSlugHistory.newSlug,
+          changedAt: eventSlugHistory.changedAt,
+        })
+        .from(eventSlugHistory)
+        .where(eq(eventSlugHistory.eventId, event_id))
+        .orderBy(desc(eventSlugHistory.changedAt));
+
+      const timeline = [
+        ...actions.map((a) => {
+          let payload: Record<string, unknown> | null = null;
+          if (a.payloadJson) {
+            try {
+              payload = JSON.parse(a.payloadJson) as Record<string, unknown>;
+            } catch {
+              payload = null;
+            }
+          }
+          return {
+            at: a.createdAt ? Math.floor(a.createdAt.getTime() / 1000) : null,
+            kind: a.action,
+            actor_user_id: a.actorUserId,
+            details: payload,
+          };
+        }),
+        ...slugChanges.map((s) => ({
+          at: s.changedAt ? Math.floor(s.changedAt.getTime() / 1000) : null,
+          kind: "event.slug_change",
+          actor_user_id: null,
+          details: { old_slug: s.oldSlug, new_slug: s.newSlug },
+        })),
+      ].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+
+      return {
+        content: [
+          jsonContent({
+            event_id: eventRow.id,
+            slug: eventRow.slug,
+            name: eventRow.name,
+            current_state: {
+              status: eventRow.status,
+              lifecycle_status: eventRow.lifecycleStatus,
+              lifecycle_status_changed_at: eventRow.lifecycleStatusChangedAt
+                ? Math.floor(eventRow.lifecycleStatusChangedAt.getTime() / 1000)
+                : null,
+              lifecycle_reason: eventRow.lifecycleReason,
+              start_date: eventRow.startDate?.toISOString() ?? null,
+              end_date: eventRow.endDate?.toISOString() ?? null,
+              previous_start_date: eventRow.previousStartDate?.toISOString() ?? null,
+              previous_end_date: eventRow.previousEndDate?.toISOString() ?? null,
+            },
+            timeline,
+            timeline_entry_count: timeline.length,
+            audit_gap_warning:
+              actions.length === 0
+                ? "No audit entries. Event predates the audit hook OR was modified only via direct D1 writes (bulk import / pre-2026-04 scrapers)."
+                : null,
           }),
         ],
       };

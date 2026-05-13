@@ -32,6 +32,7 @@ const TIER_BY_RULE_KEY: Record<string, "T1" | "T2" | "T3"> = {
   vendors_no_description: "T3",
   vendors_short_description: "T3",
   stubs_ready_for_enrichment: "T3",
+  confirm_past_event_occurrence: "T3",
 };
 
 function tierFor(ruleKey: string): "T1" | "T2" | "T3" {

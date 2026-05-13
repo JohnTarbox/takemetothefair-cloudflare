@@ -33,6 +33,7 @@ export const TIER_BY_RULE_KEY: Record<string, Tier> = {
   vendors_no_description: "T3",
   vendors_short_description: "T3",
   stubs_ready_for_enrichment: "T3",
+  confirm_past_event_occurrence: "T3",
 };
 
 export function tierFor(ruleKey: string): Tier {
