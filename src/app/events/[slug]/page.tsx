@@ -560,6 +560,9 @@ export default async function EventDetailPage({ params }: Props) {
         ticketUrl={event.ticketUrl}
         categories={parseJsonArray(event.categories)}
         datesConfirmed={event.datesConfirmed}
+        lifecycleStatus={event.lifecycleStatus}
+        previousStartDate={event.previousStartDate}
+        previousEndDate={event.previousEndDate}
         eventDays={event.eventDays}
         vendors={event.eventVendors.slice(0, 10).map(({ vendor }) => ({
           name: vendor.businessName,
