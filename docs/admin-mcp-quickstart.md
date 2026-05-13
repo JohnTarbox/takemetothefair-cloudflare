@@ -46,12 +46,12 @@ You should see all eight admin toolsets listed:
 - `user tools (2)`
 - `vendor tools (7)` _(or `vendor tools (1 — suggest_event only)` if your admin account isn't also a vendor)_
 - `promoter tools (3)`
-- `admin tools (16)`
+- `admin tools (20)`
 - `analytics tools (11)`
 - `blog tools (6)`
 - `content-links tools (4)`
 
-That's **59 tools total** (58 role-based + `whoami`).
+That's **63 tools total** (62 role-based + `whoami`).
 
 Then try an admin action:
 
@@ -76,6 +76,24 @@ As an admin, you get the full superset of public, user, vendor, promoter, admin,
 | "Re-scrape these 5 events to refresh their data"         | `rescrape_events`                       |
 
 **Admin event tools:** `list_all_events`, `update_event_status`, `update_event`, `rescrape_events`
+
+### Event Lifecycle (Real-World Status)
+
+Lifecycle is the **real-world** state of an event (did it happen? cancelled? rescheduled?), separate from editorial status (DRAFT/PENDING/APPROVED/REJECTED, which controls whether it's publicly visible). Lifecycle values: `SCHEDULED`, `TENTATIVE`, `POSTPONED`, `RESCHEDULED`, `CANCELLED`, `OCCURRED`, `MOVED_ONLINE`, `NO_SHOW`. The first five map 1:1 to schema.org Event status URIs for Google rich-snippet rendering.
+
+| What to ask                                                            | Tool                          |
+| ---------------------------------------------------------------------- | ----------------------------- |
+| "Mark the Fryeburg Fair cancelled, the promoter notified us"           | `update_event_lifecycle`      |
+| "Reschedule this event from May 15 to June 1"                          | `update_event_lifecycle`      |
+| "This past event was a no-show — flip it from OCCURRED to NO_SHOW"     | `update_event_lifecycle`      |
+| "When was this event cancelled? Show me the timeline"                  | `get_event_lifecycle_history` |
+| "What's the full audit trail for this event — status changes, renames" | `get_event_lifecycle_history` |
+
+`update_event_lifecycle` validates transitions server-side (e.g. you can't move directly from OCCURRED to SCHEDULED — Claude will reply with the list of allowed transitions from the current state). For RESCHEDULED, you must provide `new_start_date` and `new_end_date`; the current dates are preserved in `previous_start_date`/`previous_end_date` and emitted in JSON-LD for Google's "rescheduled from X to Y" rich snippet. All transitions write an `admin_actions` audit row and fire IndexNow when public visibility changes.
+
+`get_event_lifecycle_history` returns a unified timeline (lifecycle changes, editorial status changes, slug renames) for forensics. Events created before the audit hook existed surface an `audit_gap_warning` field.
+
+**Lifecycle tools:** `update_event_lifecycle`, `get_event_lifecycle_history`
 
 ### Event Vendors
 
@@ -163,6 +181,24 @@ Tracks which events, venues, vendors, and promoters are being linked to from blo
 
 **Content-link tools:** `list_entities_without_blog_coverage`, `get_blog_coverage`, `get_blog_links_in_post`, `get_blog_coverage_stats`
 
+### Recommendations Feed (Read-Only)
+
+Read the same data that powers the `/admin/analytics ▸ Recommendations` panel. Useful for autonomous morning sweeps ("what's new since yesterday?"), disposition verification ("did that batch fix resolve the rule?"), and cross-rule analysis. Dispositions (snooze/dismiss/acted) stay in the admin UI by design — these tools are read-only.
+
+| What to ask                                                      | Tool                      |
+| ---------------------------------------------------------------- | ------------------------- |
+| "Show me all active recommendations"                             | `get_recommendations`     |
+| "Just the T1 revenue-tier items"                                 | `get_recommendations`     |
+| "Show snoozed items so I can see what's been deferred"           | `get_recommendations`     |
+| "Drill into vendors_no_description — list every affected vendor" | `get_recommendation_rule` |
+| "Which events trigger cannibalization_detection right now?"      | `get_recommendation_rule` |
+
+`get_recommendations` filters by `tier` (T1/T2/T3), `status` (active/snoozed/resolved), `rule_slug`, and `limit` (default 50, max 500). Returns rule-grouped output with affected_items, last_scanned_at, and last_scan_error (so you know if a rule's count is stale due to a scan failure).
+
+`get_recommendation_rule` returns ALL active items for one rule (cap 500) with parsed payloads, entity labels, public detail URLs, and a `history_note` reminder that per-day count history isn't stored — first_seen_at/last_seen_at per item is the closest proxy.
+
+**Recommendations tools:** `get_recommendations`, `get_recommendation_rule`
+
 ### Browsing (Public Tools — 9)
 
 | What to ask                                  | Tool                   |
@@ -223,10 +259,16 @@ Claude only sees admin tools when your account has the **Admin** role. Run `whoa
 Some MCP clients cache the tool list. Fully **disconnect** the connector in Claude's Settings → Connectors and re-add it. Reconnecting without removing is not always enough.
 
 **Claude can't find an event you know exists:**
-The public `search_events` tool only returns events with **Approved** or **Tentative** status. Use `list_all_events` — it covers Draft, Pending, Rejected, and Cancelled too.
+The public tools (`search_events`, `get_event_details`, etc.) only return events that are BOTH editorially **Approved** or **Tentative** AND lifecycle is not `CANCELLED` / `NO_SHOW`. Use `list_all_events` — it covers Draft, Pending, Rejected, Cancelled, and lifecycle-suppressed events too.
 
 **"Invalid transition" error when updating vendor status:**
 Vendor application statuses follow a lifecycle with valid transitions. You can't move a vendor directly from CONFIRMED to APPLIED, for example. Claude will tell you which transitions are allowed from the current status.
+
+**"Invalid transition" error when updating event lifecycle:**
+Same pattern — event lifecycle follows a state machine. For example, OCCURRED → SCHEDULED is rejected (an OCCURRED event can only flip to NO_SHOW, as an admin correction). The error response includes the list of `allowed_targets` from the event's current lifecycle state.
+
+**Recommendation count looks frozen (last_scanned_at is hours old):**
+The recommendations engine scans on a `0 6 * * *` daily cron. Counts in `get_recommendations` reflect the last scan's output. Check `last_scan_error` on the rule — if non-null, that rule's scan failed and the displayed count is stale.
 
 **Analytics tool returns "MAIN_APP_URL and INTERNAL_API_KEY must be configured":**
 The analytics tools proxy to the main Pages app. If either secret is missing in the MCP worker environment, analytics is unreachable. This is a deploy-time configuration issue — contact the platform owner.
