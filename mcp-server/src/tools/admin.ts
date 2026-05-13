@@ -351,7 +351,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .string()
         .transform(sanitizeProse)
         .optional()
-        .describe("Event name (also regenerates slug)"),
+        .describe("Event name (also regenerates slug unless `slug` is explicitly set)"),
+      slug: z
+        .string()
+        .optional()
+        .describe(
+          "Custom slug. When provided, takes priority over the name-derived slug. The old slug is captured in event_slug_history for 301-redirect. Mirrors update_vendor.slug."
+        ),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
       start_date: z.string().optional().describe("Start date as ISO 8601 string"),
       end_date: z.string().optional().describe("End date as ISO 8601 string"),
@@ -553,10 +559,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      // Handle name separately (triggers slug regeneration)
+      // Handle name separately (triggers slug regeneration unless slug is
+      // explicitly provided below)
       if (params.name !== undefined) {
         updates.name = params.name;
         requestedFields.push("name");
+      }
+      // Track explicit slug as a requested field so previousValues / audit
+      // logging captures it (the actual slug write happens in the slug-resolve
+      // block below, which mirrors update_vendor).
+      if (params.slug !== undefined) {
+        requestedFields.push("slug");
       }
 
       // Collect inline venue fields
@@ -683,15 +696,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
-      // If name changed, regenerate slug with collision check.
-      // Use canonical createSlug so the new slug matches what main-app and
-      // create_venue write — inline regex caused divergence (issue #120).
-      if (params.name !== undefined) {
-        const baseSlug = createSlug(params.name);
-        let finalSlug = baseSlug;
+      // Resolve final slug. Tri-case mirror of update_vendor (admin.ts ~L2344):
+      //   - explicit `slug` param wins; auto-regen from name is suppressed
+      //   - name alone → derive from name
+      //   - neither → no slug change
+      // Always run through createSlug for the canonical Slug brand (PR #120
+      // three-layer defense), then collision-check with the appendSlugSegment
+      // suffix loop. Bail with a clear error after 20 collisions instead of
+      // looping forever.
+      const explicitSlug = params.slug;
+      const slugSeed =
+        explicitSlug !== undefined
+          ? createSlug(explicitSlug)
+          : params.name !== undefined
+            ? createSlug(params.name)
+            : null;
+      if (slugSeed && slugSeed !== event.slug) {
+        let finalSlug: Slug = slugSeed;
         let suffix = 0;
         while (true) {
-          const candidate = suffix > 0 ? appendSlugSegment(baseSlug, suffix) : baseSlug;
+          const candidate: Slug = suffix > 0 ? appendSlugSegment(slugSeed, suffix) : slugSeed;
           const existing = await db
             .select({ id: events.id })
             .from(events)
@@ -702,8 +726,21 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             break;
           }
           suffix++;
+          if (suffix > 20) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Too many slug collisions. Try a more unique slug.",
+                },
+              ],
+              isError: true,
+            };
+          }
         }
-        updates.slug = finalSlug;
+        if (finalSlug !== event.slug) {
+          updates.slug = finalSlug;
+        }
       }
 
       // Always set updatedAt
@@ -714,6 +751,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       for (const field of requestedFields) {
         if (field === "name") {
           previousValues.name = event.name;
+          previousValues.slug = event.slug;
+          continue;
+        }
+        if (field === "slug") {
           previousValues.slug = event.slug;
           continue;
         }

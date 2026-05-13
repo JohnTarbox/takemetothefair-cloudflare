@@ -357,6 +357,43 @@ export function buildVendorMetaDescription(vendor: {
   );
 }
 
+// State index pages target high-intent generic queries like "fairs in
+// massachusetts". GSC was showing position-15 with the generic static title
+// "Fairs & Festivals in {State} | Meet Me at the Fair". The dynamic title +
+// meta below interpolate the state name, year, and a live (rounded) event
+// count for numeric specificity.
+
+/** Round down to nearest 10 for stable inventory counts in meta descriptions.
+ *  Avoids "187+" jittering with every ingest. */
+export function roundDownToTen(n: number): number {
+  if (n <= 0) return 0;
+  return Math.floor(n / 10) * 10;
+}
+
+export function buildStateTitle(
+  stateName: string,
+  year: number = new Date().getFullYear()
+): string {
+  return `Fairs in ${stateName} ${year}: Calendar of Festivals & Craft Shows`;
+}
+
+export function buildStateMetaDescription(
+  stateName: string,
+  eventCount: number,
+  stateAdjective: string,
+  year: number = new Date().getFullYear()
+): string {
+  const rounded = roundDownToTen(eventCount);
+  // When count is below 10, drop the "{N}+" prefix to avoid "0+ Bay State
+  // events" — a rare path (state has no upcoming events) but the meta
+  // shouldn't lie. Fall back to plain phrasing.
+  const countPhrase =
+    rounded > 0
+      ? `${rounded}+ ${stateAdjective} events`
+      : `${stateAdjective} fairs, festivals, and craft shows`;
+  return `Browse all fairs, festivals, craft shows, and farmers markets in ${stateName}. ${countPhrase} with dates, venues, and vendor info for ${year}.`;
+}
+
 // Suppress unused-import warnings during typecheck — TITLE_SOFT_MAX is
 // referenced in tests that audit title length but not in the runtime path
 // (buildEventTitle has no truncation; long names stay long, Google handles).

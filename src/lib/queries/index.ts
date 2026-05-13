@@ -14,6 +14,7 @@ import {
   userFavorites,
 } from "@/lib/db/schema";
 import type { EventStatus, FavoritableType } from "@takemetothefair/constants";
+import { isPublicEventStatus } from "@/lib/event-status";
 
 // Types for query results
 export type VenueWithCount = typeof venues.$inferSelect & {
@@ -390,4 +391,26 @@ export async function findVenueByGooglePlaceId(
     .limit(1);
 
   return existing || null;
+}
+
+/**
+ * Count upcoming public events for a given state code. Mirrors the WHERE
+ * clause used by the state index page (`src/components/events/state-events-page.tsx`)
+ * so the SEO meta count matches what the page lists. Used by `generateMetadata`
+ * on the six state index pages.
+ */
+export async function countUpcomingEventsByState(db: Database, stateCode: string): Promise<number> {
+  const now = new Date();
+  const [row] = await db
+    .select({ count: count() })
+    .from(events)
+    .where(
+      and(
+        isPublicEventStatus(),
+        eq(events.stateCode, stateCode),
+        isNotNull(events.startDate),
+        gte(events.endDate, now)
+      )
+    );
+  return row?.count ?? 0;
 }

@@ -179,6 +179,15 @@ const SCHEMA_SQL = `
     changed_by TEXT
   );
 
+  CREATE TABLE event_slug_history (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    old_slug TEXT NOT NULL,
+    new_slug TEXT NOT NULL,
+    changed_at INTEGER NOT NULL,
+    changed_by TEXT
+  );
+
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY,
     action TEXT NOT NULL,
