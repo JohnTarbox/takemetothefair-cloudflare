@@ -23,6 +23,7 @@ import {
   promoters,
   events,
   vendorSlugHistory,
+  eventSlugHistory,
   adminActions,
 } from "../src/schema.js";
 import { eq } from "drizzle-orm";
@@ -168,6 +169,58 @@ describe("update_event material-change", () => {
     const id = seedEvent({ status: "DRAFT" });
     await adminServer.invoke("update_event", { event_id: id, description: "anything" });
     expect(mock.calls).toHaveLength(0);
+  });
+
+  // Slug param (mirrors update_vendor) — added with the analyst's
+  // "rename without orphaning GSC impressions" request.
+  it("slug param alone writes event_slug_history without changing name", async () => {
+    const id = seedEvent({ status: "APPROVED", slug: "old-event-slug" });
+    await adminServer.invoke("update_event", { event_id: id, slug: "branded-event-slug" });
+    const e = db.select().from(events).where(eq(events.id, id)).all()[0];
+    expect(e.slug).toBe("branded-event-slug");
+    expect(e.name).toBe("Test Event"); // seedEvent default
+    const history = db
+      .select()
+      .from(eventSlugHistory)
+      .where(eq(eventSlugHistory.eventId, id))
+      .all();
+    expect(history).toHaveLength(1);
+    expect(history[0].oldSlug).toBe("old-event-slug");
+    expect(history[0].newSlug).toBe("branded-event-slug");
+  });
+
+  it("explicit slug takes priority over name-derived auto-regen", async () => {
+    const id = seedEvent({ status: "APPROVED", slug: "old-event-slug" });
+    await adminServer.invoke("update_event", {
+      event_id: id,
+      name: "Brand New Name",
+      slug: "explicit-slug",
+    });
+    const e = db.select().from(events).where(eq(events.id, id)).all()[0];
+    expect(e.name).toBe("Brand New Name");
+    expect(e.slug).toBe("explicit-slug"); // not "brand-new-name"
+    const history = db
+      .select()
+      .from(eventSlugHistory)
+      .where(eq(eventSlugHistory.eventId, id))
+      .all();
+    expect(history).toHaveLength(1);
+    expect(history[0].newSlug).toBe("explicit-slug");
+  });
+
+  it("name change with no slug param still auto-regenerates (backwards compat)", async () => {
+    const id = seedEvent({ status: "APPROVED", slug: "old-event-slug" });
+    await adminServer.invoke("update_event", { event_id: id, name: "Brand New Name" });
+    const e = db.select().from(events).where(eq(events.id, id)).all()[0];
+    expect(e.slug).toBe("brand-new-name");
+    const history = db
+      .select()
+      .from(eventSlugHistory)
+      .where(eq(eventSlugHistory.eventId, id))
+      .all();
+    expect(history).toHaveLength(1);
+    expect(history[0].oldSlug).toBe("old-event-slug");
+    expect(history[0].newSlug).toBe("brand-new-name");
   });
 });
 

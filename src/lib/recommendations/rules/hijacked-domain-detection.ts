@@ -14,35 +14,62 @@ import { sql, isNotNull } from "drizzle-orm";
 import { vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
-// Known gambling/casino spam terms observed in hijacked-domain content per
-// memory feedback_ai_category_fallback.md. Keep this list narrow — false
-// positives on legitimate brewery / gaming-themed events would be costly.
-const SPAM_TERMS = [
-  "BAKI",
-  "gacor",
-  "slot demo",
-  "judi online",
-  "togel",
-  "rtp slot",
-  "slot pulsa",
-  "situs slot",
-  "akun pro",
+// Known gambling/casino spam terms. Each entry is a SQL `LIKE %like%`
+// prefilter PLUS an optional JS `refine` regex that must also match for the
+// row to count. Multi-stage filter keeps the SQL selective while letting JS
+// enforce word boundaries / brand-suffix requirements that D1 can't reliably
+// express.
+//
+// History: bare `"baki"` matched the substring inside `baking` / `bakery` /
+// `bakeries`, flagging 8 legitimate Maine bakeries on 2026-05-12. Real
+// gambling-affiliate spam always brands the token (BAKI77, BAKI88, BakiSlot,
+// BakiGacor). The refine regex codifies that — bare `baki` is no longer a
+// match; only `\bbaki<digits|known-suffix>\b` is.
+//
+// The other terms are multi-word phrases ("slot demo", "judi online", etc.)
+// — their natural word boundaries already prevent the BAKI-style false
+// positives, so no refine regex is needed.
+const SPAM_TERMS: Array<{ like: string; refine?: RegExp }> = [
+  { like: "baki", refine: /\bbaki(?:\d+|slot|gacor|togel|maxwin)\b/i },
+  { like: "gacor" },
+  { like: "slot demo" },
+  { like: "judi online" },
+  { like: "togel" },
+  { like: "rtp slot" },
+  { like: "slot pulsa" },
+  { like: "situs slot" },
+  { like: "akun pro" },
 ];
+
+/**
+ * Test exposure: returns true iff `description` matches any spam term per
+ * the same two-stage filter the rule uses at runtime. Kept narrow so tests
+ * can assert on the predicate directly without spinning up a D1 fixture.
+ */
+export function isHijackedDescription(description: string): boolean {
+  const lower = description.toLowerCase();
+  return SPAM_TERMS.some((t) => {
+    if (!lower.includes(t.like)) return false;
+    if (t.refine && !t.refine.test(description)) return false;
+    return true;
+  });
+}
 
 export const hijackedDomainDetectionRule: RuleDefinition = {
   ruleKey: "hijacked_domain_detection",
   title: "Vendors with gambling-spam patterns in description (likely hijacked source domain)",
   rationaleTemplate:
-    "{n} vendor descriptions contain known gambling/casino spam patterns (BAKI, gacor, slot demo, etc.). The source website was likely hijacked between when we last enriched it and now. Manual review needed — verify the website, mark domain_hijacked if confirmed, scrub the description.",
+    "{n} vendor descriptions contain known gambling/casino spam patterns (BAKI77, gacor, slot demo, etc.). The source website was likely hijacked between when we last enriched it and now. Manual review needed — verify the website, mark domain_hijacked if confirmed, scrub the description.",
   severity: "red",
   category: "data_quality",
   autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
-    // Build OR predicate for any spam term in description (case-insensitive
-    // via LOWER). Skip this rule if SPAM_TERMS is empty.
     if (SPAM_TERMS.length === 0) return [];
+    // SQL prefilter: any LIKE %like% on a non-deleted vendor with a non-null
+    // description. JS refines below to enforce word-boundary / brand-suffix
+    // requirements.
     const termClauses = SPAM_TERMS.map(
-      (t) => sql`LOWER(${vendors.description}) LIKE ${"%" + t.toLowerCase() + "%"}`
+      (t) => sql`LOWER(${vendors.description}) LIKE ${"%" + t.like.toLowerCase() + "%"}`
     ).reduce((acc, c) => sql`${acc} OR ${c}`);
 
     const rows = await db
@@ -51,20 +78,23 @@ export const hijackedDomainDetectionRule: RuleDefinition = {
         businessName: vendors.businessName,
         slug: vendors.slug,
         website: vendors.website,
+        description: vendors.description,
       })
       .from(vendors)
       .where(
         sql`${isNotNull(vendors.description)} AND ${vendors.deletedAt} IS NULL AND (${termClauses})`
       );
 
-    return rows.map((r) => ({
-      targetType: "vendor",
-      targetId: r.id,
-      payload: {
-        businessName: r.businessName,
-        slug: r.slug,
-        website: r.website,
-      },
-    }));
+    return rows
+      .filter((r) => r.description && isHijackedDescription(r.description))
+      .map((r) => ({
+        targetType: "vendor",
+        targetId: r.id,
+        payload: {
+          businessName: r.businessName,
+          slug: r.slug,
+          website: r.website,
+        },
+      }));
   },
 };

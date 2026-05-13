@@ -14,10 +14,19 @@
  * as Bing-sourced issues.
  */
 
-import { eq, and, gte, inArray, asc, isNull, or } from "drizzle-orm";
+import { eq, and, gte, inArray, asc, desc, isNull, or } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { events, venues, blogPosts, gscInspectionState, healthIssues } from "@/lib/db/schema";
+import {
+  events,
+  venues,
+  blogPosts,
+  gscInspectionState,
+  healthIssues,
+  eventSlugHistory,
+  vendorSlugHistory,
+} from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
+import { unsafeSlug } from "@takemetothefair/utils";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
@@ -30,6 +39,58 @@ const HOST = SITE_URL;
 
 function pathFromUrl(url: string): string {
   return url.replace(HOST, "") || "/";
+}
+
+/**
+ * "Successful slug migration" detector. Returns true when:
+ *   1. `url` is a path like `/events/<slug>` or `/vendors/<slug>`, AND
+ *   2. the slug appears as an `old_slug` in `event_slug_history` /
+ *      `vendor_slug_history` and resolves (walking up to 5 hops, mirroring
+ *      `src/middleware.ts`) to a terminus slug that, AND
+ *   3. the terminus URL has a PASS / SUCCESS verdict in
+ *      `gsc_inspection_state`.
+ *
+ * When this returns true, the URL's non-PASS verdict on the old slug is the
+ * expected outcome of a rename — Google's URL Inspection reports the source
+ * URL non-indexable because it 301s. Flagging it in `health_issues` is noise.
+ *
+ * Promoter / venue slug history tables don't exist yet — the URL path
+ * matcher narrows to events/vendors only. Extend when those tables land.
+ */
+async function isRedirectToIndexed(db: Db, url: string): Promise<boolean> {
+  const path = pathFromUrl(url);
+  const match = path.match(/^\/(events|vendors)\/([^/]+)$/);
+  if (!match) return false;
+  const [, kind, slug] = match;
+  let cursor = slug;
+  const seen = new Set<string>([cursor]);
+  for (let hop = 0; hop < 5; hop++) {
+    const [row] =
+      kind === "events"
+        ? await db
+            .select({ newSlug: eventSlugHistory.newSlug })
+            .from(eventSlugHistory)
+            .where(eq(eventSlugHistory.oldSlug, unsafeSlug(cursor)))
+            .orderBy(desc(eventSlugHistory.changedAt))
+            .limit(1)
+        : await db
+            .select({ newSlug: vendorSlugHistory.newSlug })
+            .from(vendorSlugHistory)
+            .where(eq(vendorSlugHistory.oldSlug, unsafeSlug(cursor)))
+            .orderBy(desc(vendorSlugHistory.changedAt))
+            .limit(1);
+    if (!row || seen.has(row.newSlug)) break;
+    cursor = row.newSlug;
+    seen.add(cursor);
+  }
+  if (cursor === slug) return false; // no rename history
+  const targetUrl = `${HOST}/${kind}/${cursor}`;
+  const [target] = await db
+    .select({ verdict: gscInspectionState.lastVerdict })
+    .from(gscInspectionState)
+    .where(eq(gscInspectionState.url, targetUrl))
+    .limit(1);
+  return target?.verdict === "PASS" || target?.verdict === "SUCCESS";
 }
 
 interface SweepResult {
@@ -175,7 +236,16 @@ export async function runSweep(
       const issueType = "GSC_INSPECTION_NON_OK";
       const fp = await fingerprintFor("GSC_URL_INSPECTION", issueType, url);
 
-      if (verdict !== "PASS" && verdict !== "SUCCESS") {
+      // Suppress legitimate slug renames: when the URL is a renamed entity
+      // whose terminus is already indexed, GSC's non-PASS verdict on the old
+      // URL is expected (it 301s). Treat as effectively passing so any open
+      // issue is auto-closed and no new noise row is created.
+      const isLegitimateRedirect =
+        verdict !== "PASS" && verdict !== "SUCCESS" ? await isRedirectToIndexed(db, url) : false;
+      const effectivelyPassing =
+        verdict === "PASS" || verdict === "SUCCESS" || isLegitimateRedirect;
+
+      if (!effectivelyPassing) {
         const [existing] = await db
           .select()
           .from(healthIssues)
@@ -207,7 +277,8 @@ export async function runSweep(
           result.newIssues++;
         }
       } else {
-        // Pass — close any open issue for this URL
+        // Effectively passing (real PASS/SUCCESS, or legitimate 301-to-indexed)
+        // — close any open issue for this URL.
         const [existing] = await db
           .select()
           .from(healthIssues)

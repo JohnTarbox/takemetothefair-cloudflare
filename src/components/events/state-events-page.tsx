@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { MapPin } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -9,6 +10,9 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { getStateColors } from "@/lib/state-colors";
+import { STATES, STATE_BY_SLUG } from "@/lib/states";
+import { countUpcomingEventsByState } from "@/lib/queries";
+import { buildStateTitle, buildStateMetaDescription } from "@/lib/seo-utils";
 
 export const STATE_MAP: Record<string, { code: string; name: string }> = {
   maine: { code: "ME", name: "Maine" },
@@ -120,6 +124,53 @@ async function getStateEvents(
     total: countResult[0]?.count || 0,
     page,
     limit,
+  };
+}
+
+/**
+ * Build Metadata for a state index page. Each `/events/{state}/page.tsx`
+ * delegates its `generateMetadata` here so the per-state title/description
+ * stays in one place. Count is live (rounded down to nearest 10 for stability
+ * across the 5-min revalidate window) and matches what the page actually
+ * lists (future events only, public status only).
+ */
+export async function getStateMetadata(stateSlug: string): Promise<Metadata> {
+  const code = STATE_BY_SLUG[stateSlug];
+  // Fallback to a minimal Metadata if the slug isn't recognized — the route
+  // is statically defined so this branch is mostly a type-narrowing guard.
+  if (!code) {
+    return { title: "Fairs & Festivals | Meet Me at the Fair" };
+  }
+  const { name, adjective } = STATES[code];
+  const db = getCloudflareDb();
+  const eventCount = await countUpcomingEventsByState(db, code);
+  const title = buildStateTitle(name);
+  const description = buildStateMetaDescription(name, eventCount, adjective);
+  const canonical = `https://meetmeatthefair.com/events/${stateSlug}`;
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      title,
+      description,
+      url: canonical,
+      siteName: "Meet Me at the Fair",
+      images: [
+        {
+          url: "https://meetmeatthefair.com/og-default.png",
+          width: 1200,
+          height: 630,
+          alt: `Meet Me at the Fair — Fairs & Festivals in ${name}`,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: ["https://meetmeatthefair.com/og-default.png"],
+    },
   };
 }
 
