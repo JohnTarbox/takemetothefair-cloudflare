@@ -90,12 +90,19 @@ export type ScanResult = {
   inserted: number;
   refreshed: number;
   resolved: number;
+  /** Count of rules whose run() threw — scan kept going for the others. */
+  failedRules: number;
   perRule: Array<{
     ruleKey: string;
     matched: number;
     inserted: number;
     refreshed: number;
     resolved: number;
+    /** Set when this rule's run() threw. Other rules in the same scan are
+     *  unaffected (engine catches per-rule). lastScannedAt is NOT updated
+     *  on the failed rule so the previous timestamp is preserved as a
+     *  staleness signal in the admin UI. */
+    error?: string;
   }>;
 };
 
@@ -150,6 +157,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
   let totalInserted = 0;
   let totalRefreshed = 0;
   let totalResolved = 0;
+  let failedRules = 0;
   const perRule: ScanResult["perRule"] = [];
 
   for (const def of defs) {
@@ -157,92 +165,113 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     const ruleId = ruleIds.get(def.ruleKey);
     if (!ruleId) continue;
 
-    const matches = await def.run(db);
-    let inserted = 0;
-    let refreshed = 0;
-    let resolved = 0;
+    // Per-rule isolation: one rule's failure must not kill the scan for
+    // every later rule. Daily cron + manual "Run scan" were both losing
+    // ~21 rules of work because a single failing rule mid-list threw out
+    // of the loop (incident 2026-05-13 — see commit message).
+    try {
+      const matches = await def.run(db);
+      let inserted = 0;
+      let refreshed = 0;
+      let resolved = 0;
 
-    // Pull existing items for this rule so we can decide insert vs update vs
-    // resolve without relying on D1's UPSERT semantics (which would clobber
-    // dismissed_until).
-    const existing = await db
-      .select({
-        id: recommendationItems.id,
-        targetId: recommendationItems.targetId,
-        actedAt: recommendationItems.actedAt,
-      })
-      .from(recommendationItems)
-      .where(eq(recommendationItems.ruleId, ruleId));
-    const existingByTarget = new Map<string, { id: string; actedAt: Date | null }>();
-    for (const e of existing) {
-      existingByTarget.set(e.targetId ?? "", { id: e.id, actedAt: e.actedAt });
-    }
-
-    const matchedTargets = new Set<string>();
-    for (const m of matches) {
-      const key = m.targetId ?? "";
-      matchedTargets.add(key);
-      const existingRow = existingByTarget.get(key);
-      const payloadJson = m.payload ? JSON.stringify(m.payload) : null;
-      if (existingRow) {
-        // Refresh: bump last_seen_at + payload. Don't clear acted_at — both
-        // manual "Mark done" and prior auto-resolve set it, and we can't tell
-        // them apart. Manually-acted items should stay terminal: admin said
-        // they handled it, even if the entity is technically still matching.
-        // If admin wants the rule to re-surface, they delete or undo the row
-        // (or wait for the entity to leave + re-enter the match set, which
-        // creates a brand-new item).
-        await db
-          .update(recommendationItems)
-          .set({ lastSeenAt: now, payloadJson })
-          .where(eq(recommendationItems.id, existingRow.id));
-        refreshed++;
-      } else {
-        await db.insert(recommendationItems).values({
-          id: crypto.randomUUID(),
-          ruleId,
-          targetType: m.targetType,
-          targetId: m.targetId,
-          payloadJson,
-          firstSeenAt: now,
-          lastSeenAt: now,
-        });
-        inserted++;
+      // Pull existing items for this rule so we can decide insert vs update vs
+      // resolve without relying on D1's UPSERT semantics (which would clobber
+      // dismissed_until).
+      const existing = await db
+        .select({
+          id: recommendationItems.id,
+          targetId: recommendationItems.targetId,
+          actedAt: recommendationItems.actedAt,
+        })
+        .from(recommendationItems)
+        .where(eq(recommendationItems.ruleId, ruleId));
+      const existingByTarget = new Map<string, { id: string; actedAt: Date | null }>();
+      for (const e of existing) {
+        existingByTarget.set(e.targetId ?? "", { id: e.id, actedAt: e.actedAt });
       }
-    }
 
-    // Auto-resolve: existing items whose target_id is no longer in the current
-    // match set get marked acted, so they drop out of the active list. Skipped
-    // for rules where the match set might be empty due to fetch failure (see
-    // RuleDefinition.autoResolve docs).
-    if (def.autoResolve) {
-      for (const [targetId, existingRow] of existingByTarget.entries()) {
-        if (matchedTargets.has(targetId)) continue;
-        if (existingRow.actedAt) continue; // already resolved/acted; skip
-        await db
-          .update(recommendationItems)
-          .set({ actedAt: now })
-          .where(eq(recommendationItems.id, existingRow.id));
-        resolved++;
+      const matchedTargets = new Set<string>();
+      for (const m of matches) {
+        const key = m.targetId ?? "";
+        matchedTargets.add(key);
+        const existingRow = existingByTarget.get(key);
+        const payloadJson = m.payload ? JSON.stringify(m.payload) : null;
+        if (existingRow) {
+          // Refresh: bump last_seen_at + payload. Don't clear acted_at — both
+          // manual "Mark done" and prior auto-resolve set it, and we can't tell
+          // them apart. Manually-acted items should stay terminal: admin said
+          // they handled it, even if the entity is technically still matching.
+          // If admin wants the rule to re-surface, they delete or undo the row
+          // (or wait for the entity to leave + re-enter the match set, which
+          // creates a brand-new item).
+          await db
+            .update(recommendationItems)
+            .set({ lastSeenAt: now, payloadJson })
+            .where(eq(recommendationItems.id, existingRow.id));
+          refreshed++;
+        } else {
+          await db.insert(recommendationItems).values({
+            id: crypto.randomUUID(),
+            ruleId,
+            targetType: m.targetType,
+            targetId: m.targetId,
+            payloadJson,
+            firstSeenAt: now,
+            lastSeenAt: now,
+          });
+          inserted++;
+        }
       }
+
+      // Auto-resolve: existing items whose target_id is no longer in the current
+      // match set get marked acted, so they drop out of the active list. Skipped
+      // for rules where the match set might be empty due to fetch failure (see
+      // RuleDefinition.autoResolve docs).
+      if (def.autoResolve) {
+        for (const [targetId, existingRow] of existingByTarget.entries()) {
+          if (matchedTargets.has(targetId)) continue;
+          if (existingRow.actedAt) continue; // already resolved/acted; skip
+          await db
+            .update(recommendationItems)
+            .set({ actedAt: now })
+            .where(eq(recommendationItems.id, existingRow.id));
+          resolved++;
+        }
+      }
+
+      // Record total + last-scan for the "Showing N of M" UI label.
+      await db
+        .update(recommendationRules)
+        .set({ totalMatchCount: matches.length, lastScannedAt: now })
+        .where(eq(recommendationRules.id, ruleId));
+
+      perRule.push({
+        ruleKey: def.ruleKey,
+        matched: matches.length,
+        inserted,
+        refreshed,
+        resolved,
+      });
+      totalInserted += inserted;
+      totalRefreshed += refreshed;
+      totalResolved += resolved;
+    } catch (err) {
+      // Log + continue. Don't update last_scanned_at on the failed rule —
+      // its row keeps the prior timestamp so the admin UI can show staleness
+      // and operators can spot which rules are silently broken.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[recommendations.scanAll] rule "${def.ruleKey}" failed:`, message);
+      perRule.push({
+        ruleKey: def.ruleKey,
+        matched: 0,
+        inserted: 0,
+        refreshed: 0,
+        resolved: 0,
+        error: message,
+      });
+      failedRules++;
     }
-
-    // Record total + last-scan for the "Showing N of M" UI label.
-    await db
-      .update(recommendationRules)
-      .set({ totalMatchCount: matches.length, lastScannedAt: now })
-      .where(eq(recommendationRules.id, ruleId));
-
-    perRule.push({
-      ruleKey: def.ruleKey,
-      matched: matches.length,
-      inserted,
-      refreshed,
-      resolved,
-    });
-    totalInserted += inserted;
-    totalRefreshed += refreshed;
-    totalResolved += resolved;
   }
 
   return {
@@ -250,6 +279,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     inserted: totalInserted,
     refreshed: totalRefreshed,
     resolved: totalResolved,
+    failedRules,
     perRule,
   };
 }
