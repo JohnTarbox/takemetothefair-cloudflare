@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { gte, inArray, eq, and } from "drizzle-orm";
+import { gte, eq, and } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues, blogPosts } from "@/lib/db/schema";
-import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { publicEventWhere } from "@/lib/event-lifecycle";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
 export const runtime = "edge";
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     db
       .select({ slug: events.slug })
       .from(events)
-      .where(and(inArray(events.status, [...PUBLIC_EVENT_STATUSES]), gte(events.updatedAt, since))),
+      .where(and(publicEventWhere(), gte(events.updatedAt, since))),
     db
       .select({ slug: venues.slug })
       .from(venues)

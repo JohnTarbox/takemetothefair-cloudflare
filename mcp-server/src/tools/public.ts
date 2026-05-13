@@ -9,8 +9,8 @@ import {
   escapeLike,
   fuzzyTokenScore,
   tokenize,
-  PUBLIC_EVENT_STATUSES,
   PUBLIC_VENDOR_STATUSES,
+  publicEventWhere,
   jsonContent,
   unsafeSlug,
 } from "../helpers.js";
@@ -57,7 +57,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
-      const conditions = [inArray(events.status, [...PUBLIC_EVENT_STATUSES])];
+      const conditions = [publicEventWhere()];
 
       if (params.query && !params.fuzzy) {
         conditions.push(like(events.name, `%${escapeLike(params.query)}%`));
@@ -244,9 +244,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
-        .where(
-          and(eq(events.slug, unsafeSlug(slug)), inArray(events.status, [...PUBLIC_EVENT_STATUSES]))
-        )
+        .where(and(eq(events.slug, unsafeSlug(slug)), publicEventWhere()))
         .limit(1);
 
       if (rows.length === 0) {
@@ -336,12 +334,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const eventRows = await db
         .select({ id: events.id, name: events.name })
         .from(events)
-        .where(
-          and(
-            eq(events.slug, unsafeSlug(params.event_slug)),
-            inArray(events.status, [...PUBLIC_EVENT_STATUSES])
-          )
-        )
+        .where(and(eq(events.slug, unsafeSlug(params.event_slug)), publicEventWhere()))
         .limit(1);
 
       if (eventRows.length === 0) {
@@ -592,11 +585,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .select({ id: events.id })
         .from(events)
         .where(
-          and(
-            eq(events.venueId, venue.id),
-            inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
-            gte(events.endDate, new Date())
-          )
+          and(eq(events.venueId, venue.id), publicEventWhere(), gte(events.endDate, new Date()))
         );
 
       return {
@@ -686,7 +675,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
           and(
             eq(eventVendors.vendorId, vendor.id),
             inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
-            inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+            publicEventWhere(),
             gte(events.endDate, new Date())
           )
         );
@@ -765,7 +754,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .where(
           and(
             eq(events.promoterId, promoter.id),
-            inArray(events.status, [...PUBLIC_EVENT_STATUSES]),
+            publicEventWhere(),
             gte(events.endDate, new Date())
           )
         );

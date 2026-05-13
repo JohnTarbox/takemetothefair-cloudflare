@@ -182,8 +182,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Determine status: vendor submissions get TENTATIVE (publicly visible), others get PENDING
+    // Determine status: vendor submissions get TENTATIVE (publicly visible), others get PENDING.
+    // Lifecycle pairs with editorial: vendor submissions are TENTATIVE-lifecycle (dates
+    // unconfirmed at submission time); all others default to SCHEDULED.
     const eventStatus = data.source === "vendor" ? "TENTATIVE" : "PENDING";
+    const eventLifecycle: "TENTATIVE" | "SCHEDULED" =
+      data.source === "vendor" ? "TENTATIVE" : "SCHEDULED";
     const tagList =
       data.source === "vendor"
         ? ["community-suggestion", "vendor-submission"]
@@ -235,6 +239,7 @@ export async function POST(request: NextRequest) {
       ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
       imageUrl: data.imageUrl || null,
       status: eventStatus,
+      lifecycleStatus: eventLifecycle,
       sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,

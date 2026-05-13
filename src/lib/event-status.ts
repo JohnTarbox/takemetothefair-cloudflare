@@ -3,13 +3,14 @@
  * for events, paralleling vendor-status.ts for eventVendors.
  */
 
-import { inArray } from "drizzle-orm";
-import { events } from "@/lib/db/schema";
-import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { publicEventWhere } from "@/lib/event-lifecycle";
 
-/** Drizzle WHERE clause: status IN (APPROVED, TENTATIVE) */
+/** Drizzle WHERE clause combining editorial visibility (APPROVED/TENTATIVE)
+ *  with the lifecycle gate (excludes CANCELLED/NO_SHOW). All existing
+ *  callers of isPublicEventStatus() automatically get the lifecycle gate
+ *  via this delegation — see src/lib/event-lifecycle.ts for the rationale. */
 export function isPublicEventStatus() {
-  return inArray(events.status, [...PUBLIC_EVENT_STATUSES]);
+  return publicEventWhere();
 }
 
 /** Check if an event status is tentative */
