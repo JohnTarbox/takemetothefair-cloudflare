@@ -5,7 +5,7 @@
  * most from Enhanced Profile features.
  */
 
-import { and, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { eventVendors, events, vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
@@ -18,18 +18,25 @@ export const enhancedProfileCohortRule: RuleDefinition = {
   category: "revenue",
   autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
-    // Two-step to keep the query readable: find approved-upcoming-event vendor ids,
-    // then filter the vendors table by those ids + missing-logo + non-paying.
-    const upcomingVendorIds = await db
+    // Two queries + in-memory intersection. We previously used inArray() on
+    // the upcoming-vendor id set, but D1 caps SQL parameters at 100 and the
+    // set is ~260 entries in production — every scan since the cohort grew
+    // past 100 has thrown "D1_ERROR: too many SQL variables" (issue #149).
+    //
+    // The non-inArray filters narrow vendors to ~600 candidates today (no
+    // enhanced profile + missing logo + not deleted); we hash-join against
+    // the upcoming set in JS. Both halves are well within the 30s budget.
+    const upcomingRows = await db
       .selectDistinct({ vendorId: eventVendors.vendorId })
       .from(eventVendors)
       .innerJoin(events, eq(eventVendors.eventId, events.id))
       .where(and(eq(events.status, "APPROVED"), gt(events.startDate, new Date())));
+    const upcomingIds = new Set(
+      upcomingRows.map((r) => r.vendorId).filter((id): id is string => id != null)
+    );
+    if (upcomingIds.size === 0) return [];
 
-    const ids = upcomingVendorIds.map((r) => r.vendorId);
-    if (ids.length === 0) return [];
-
-    const rows = await db
+    const candidates = await db
       .select({
         id: vendors.id,
         businessName: vendors.businessName,
@@ -41,22 +48,23 @@ export const enhancedProfileCohortRule: RuleDefinition = {
       .from(vendors)
       .where(
         and(
-          inArray(vendors.id, ids),
           eq(vendors.enhancedProfile, false),
           or(isNull(vendors.logoUrl), eq(vendors.logoUrl, "")),
           isNull(vendors.deletedAt)
         )
       );
 
-    return rows.map((r) => ({
-      targetType: "vendor",
-      targetId: r.id,
-      payload: {
-        businessName: r.businessName,
-        slug: r.slug,
-        vendorType: r.vendorType,
-        location: [r.city, r.state].filter(Boolean).join(", "),
-      },
-    }));
+    return candidates
+      .filter((c) => upcomingIds.has(c.id))
+      .map((r) => ({
+        targetType: "vendor",
+        targetId: r.id,
+        payload: {
+          businessName: r.businessName,
+          slug: r.slug,
+          vendorType: r.vendorType,
+          location: [r.city, r.state].filter(Boolean).join(", "),
+        },
+      }));
   },
 };
