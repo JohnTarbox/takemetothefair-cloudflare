@@ -399,7 +399,7 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
     env,
     "recommendations scan",
     "/api/admin/recommendations/scan",
-    (r) => `scanned=${r.scannedRules} resolved=${r.resolved}`
+    (r) => `scanned=${r.scannedRules} resolved=${r.resolved} failed=${r.failedRules ?? 0}`
   );
 }
 
