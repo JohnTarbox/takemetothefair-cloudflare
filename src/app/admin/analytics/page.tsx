@@ -1395,8 +1395,12 @@ async function RecommendationsTab() {
   }
 
   function targetLink(item: Item): string | null {
-    if (item.targetType === "vendor" && item.payload && typeof item.payload.slug === "string") {
-      return `/admin/vendors/${item.payload.slug}`;
+    // Admin vendor edit page is keyed by id (route is /admin/vendors/[id]/edit
+    // — there is no slug-based admin vendor route). targetId is the vendor.id
+    // for every vendor-targeting rule; previous code used payload.slug which
+    // always 404'd.
+    if (item.targetType === "vendor" && item.targetId) {
+      return `/admin/vendors/${item.targetId}/edit`;
     }
     if (item.targetType === "event" && item.payload && typeof item.payload.slug === "string") {
       return `/events/${item.payload.slug}`;
