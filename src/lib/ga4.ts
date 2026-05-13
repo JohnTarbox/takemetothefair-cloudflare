@@ -1074,6 +1074,30 @@ export function summarizeFacebookTraffic(
 }
 
 /**
+ * FB-traffic helper for the /admin/analytics Overview tab KPI tile.
+ *
+ * Wraps getDashboardMetrics (28d window, GA4-cached for 10 min) and runs
+ * the trafficSources rows through summarizeFacebookTraffic. Returns null
+ * on any GA4 config/API error so the Overview can soft-empty-state rather
+ * than 500 the whole page (mirrors loadAeoReferralsSafe).
+ *
+ * The 28d window matches the per-page FB tile on /admin/analytics/ga4 so
+ * clicking through doesn't surprise the operator with a different number.
+ * Different window from AEO (which is 7d) — the AEO 7d is intentional for
+ * leading-indicator sensitivity; FB volume is generally lower so a wider
+ * window surfaces signal earlier in MMATF's posting lifecycle.
+ */
+export async function getFacebookTrafficSafe(env: Ga4Env): Promise<FacebookTrafficSummary | null> {
+  try {
+    const data = await getDashboardMetrics(env);
+    return summarizeFacebookTraffic(data.trafficSources);
+  } catch (e) {
+    if (e instanceof Ga4ConfigError || e instanceof Ga4ApiError) return null;
+    return null;
+  }
+}
+
+/**
  * §6.3 conversion-rate denominator: GA4 organic search sessions.
  *
  * Used by `loadConversionRate` and `recomputeKpiStates` for the §6.3 KPI

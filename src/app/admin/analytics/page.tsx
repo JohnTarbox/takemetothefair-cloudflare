@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ClipboardList,
   DollarSign,
+  Facebook,
   FileText,
   Search,
   Sparkles,
@@ -61,7 +62,9 @@ import {
   Ga4ApiError,
   Ga4ConfigError,
   getAeoReferrals,
+  getFacebookTrafficSafe,
   type AeoReferralsResult,
+  type FacebookTrafficSummary,
   type Ga4Env,
 } from "@/lib/ga4";
 
@@ -161,9 +164,10 @@ async function loadAeoReferralsSafe(env: Ga4Env): Promise<AeoReferralsResult | n
 async function OverviewTab({ window }: { window: WindowKey }) {
   const db = getCloudflareDb();
   const env = getCloudflareEnv() as unknown as ScEnv & BingEnv & Ga4Env;
-  const [snapshot, aeo] = await Promise.all([
+  const [snapshot, aeo, fb] = await Promise.all([
     loadOverviewSnapshot(db, env, window),
     loadAeoReferralsSafe(env),
+    getFacebookTrafficSafe(env),
   ]);
 
   return (
@@ -198,6 +202,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <AccountEngagementCardView snapshot={snapshot} />
         <AeoReferralsCardView aeo={aeo} />
+        <FacebookReferralsCardView summary={fb} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
@@ -708,6 +713,41 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
         <span className="text-xs text-gray-500">
           {AEO_BUCKET_LABELS.chatgpt} · {AEO_BUCKET_LABELS.perplexity} · {AEO_BUCKET_LABELS.copilot}{" "}
           · {AEO_BUCKET_LABELS.claude} · {AEO_BUCKET_LABELS.gemini}
+        </span>
+      }
+    />
+  );
+}
+
+// Facebook traffic KPI tile. No state coloring — FB volume is highly
+// posting-dependent and "0 sessions" likely means "we haven't posted",
+// not "something is broken" — so a RED dot would mislead. Clicks through
+// to the detailed FB tile on /admin/analytics/ga4. 28d window matches
+// that detail view so the number doesn't change when you click through.
+function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummary | null }) {
+  if (!summary) {
+    return (
+      <KpiCard
+        title="Facebook traffic (last 28d)"
+        value="—"
+        icon={<Facebook className="w-5 h-5 text-gray-500" />}
+        iconColor="bg-gray-100"
+        href="/admin/analytics/ga4"
+        footer={<span className="text-xs text-gray-500">GA4 unavailable</span>}
+      />
+    );
+  }
+  return (
+    <KpiCard
+      title="Facebook traffic (last 28d)"
+      value={fmt(summary.sessions)}
+      icon={<Facebook className="w-5 h-5 text-blue-600" />}
+      iconColor="bg-blue-100"
+      href="/admin/analytics/ga4"
+      footer={
+        <span className="text-xs text-gray-500">
+          {summary.sessions === 1 ? "1 session" : `${fmt(summary.sessions)} sessions`} ·{" "}
+          {summary.activeUsers === 1 ? "1 user" : `${fmt(summary.activeUsers)} users`}
         </span>
       }
     />
