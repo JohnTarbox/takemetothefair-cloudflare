@@ -10,6 +10,7 @@ import {
   Ga4ConfigError,
   getAeoReferrals,
   getDashboardMetrics,
+  summarizeFacebookTraffic,
   type AeoReferralsResult,
   type DashboardMetrics,
   type Ga4Env,
@@ -134,6 +135,8 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
         </CardContent>
       </Card>
 
+      <FacebookTrafficCard data={data} />
+
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Top pages (last 28 days)</CardTitle>
@@ -256,6 +259,59 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
         up to 10 min
       </p>
     </>
+  );
+}
+
+function FacebookTrafficCard({ data }: { data: DashboardMetrics }) {
+  const fb = summarizeFacebookTraffic(data.trafficSources);
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span>Facebook traffic (last 28 days)</span>
+          <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+            {fmt(fb.sessions)} session{fb.sessions === 1 ? "" : "s"} · {fmt(fb.activeUsers)} user
+            {fb.activeUsers === 1 ? "" : "s"}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-600">
+            <tr>
+              <th className="text-left px-6 py-2 font-medium">Source</th>
+              <th className="text-left px-6 py-2 font-medium">Medium</th>
+              <th className="text-right px-6 py-2 font-medium">Sessions</th>
+              <th className="text-right px-6 py-2 font-medium">Users</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {fb.rows.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-6 py-6 text-gray-500">
+                  No Facebook referrals in the last 28 days. Manual posts with
+                  <code className="mx-1 px-1 bg-gray-100 rounded text-xs">
+                    ?utm_source=facebook&amp;utm_medium=social
+                  </code>
+                  on the link will start showing up here.
+                </td>
+              </tr>
+            ) : (
+              fb.rows.map((row, i) => (
+                <tr key={`${row.source}-${row.medium}-${i}`}>
+                  <td className="px-6 py-2 text-gray-900">{row.source}</td>
+                  <td className="px-6 py-2 text-gray-700">{row.medium || "(none)"}</td>
+                  <td className="px-6 py-2 text-right tabular-nums">{fmt(row.sessions)}</td>
+                  <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    {fmt(row.activeUsers)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   );
 }
 

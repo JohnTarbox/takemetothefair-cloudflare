@@ -1022,6 +1022,57 @@ export function aeoBadgeColor(total: number): "green" | "yellow" | "red" {
   return "red";
 }
 
+// Facebook traffic summary.
+//
+// Aggregates GA4 trafficSources rows whose `source` resolves to a Facebook
+// surface — desktop, mobile web, and FB's link-redirector hostnames all
+// surface as different `source` values, so a single "facebook.com" filter
+// undercounts. Used by the GA4 dashboard FB tile (Knowledge Graph
+// reciprocity verification follow-up — see issue #140 close-out).
+//
+// Trades on `source` (not `medium`) because UTM-tagged outbound links from
+// FB posts surface as `source=facebook / medium=social` while organic FB
+// clicks surface as `source=facebook.com / medium=referral`. Both should
+// count toward "FB sent us traffic."
+
+const FACEBOOK_EXACT = new Set([
+  "facebook.com",
+  "m.facebook.com",
+  "l.facebook.com",
+  "lm.facebook.com",
+  "lite.facebook.com",
+  "fb.com",
+  "fb.me",
+  "facebook",
+]);
+
+export function isFacebookSource(source: string): boolean {
+  const s = source.trim().toLowerCase();
+  if (!s) return false;
+  if (FACEBOOK_EXACT.has(s)) return true;
+  // Catch subdomain variants we haven't seen yet (e.g. business.facebook.com)
+  // without false-positives like `bookface.com` or `notfacebook.io`.
+  return s.endsWith(".facebook.com") || s === "facebook.com";
+}
+
+export type FacebookTrafficSummary = {
+  sessions: number;
+  activeUsers: number;
+  rows: TrafficSourceRow[];
+};
+
+export function summarizeFacebookTraffic(
+  trafficSources: TrafficSourceRow[]
+): FacebookTrafficSummary {
+  const rows = trafficSources.filter((r) => isFacebookSource(r.source));
+  const sessions = rows.reduce((sum, r) => sum + r.sessions, 0);
+  const activeUsers = rows.reduce((sum, r) => sum + r.activeUsers, 0);
+  // Sort by sessions descending so the dominant surface (usually m.facebook.com)
+  // renders first in the breakdown table.
+  rows.sort((a, b) => b.sessions - a.sessions);
+  return { sessions, activeUsers, rows };
+}
+
 /**
  * §6.3 conversion-rate denominator: GA4 organic search sessions.
  *
