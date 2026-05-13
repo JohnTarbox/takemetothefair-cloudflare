@@ -31,6 +31,7 @@ import { hijackedDomainDetectionRule } from "./hijacked-domain-detection";
 import { cannibalizationDetectionRule } from "./cannibalization-detection";
 import { competitorUrlContaminationRule } from "./competitor-url-contamination";
 import { longSnoozedItemsRule } from "./long-snoozed-items";
+import { confirmPastEventOccurrenceRule } from "./confirm-past-event-occurrence";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -59,4 +60,8 @@ export const ALL_RULES: RuleDefinition[] = [
   cannibalizationDetectionRule,
   competitorUrlContaminationRule,
   longSnoozedItemsRule,
+  // Lifecycle audit (PR #157 follow-up): triage the 203 events auto-tagged
+  // OCCURRED by migration 0067's backfill. Drops out as soon as admin
+  // confirms the lifecycle (any transition writes admin_actions).
+  confirmPastEventOccurrenceRule,
 ];
