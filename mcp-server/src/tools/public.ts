@@ -359,6 +359,7 @@ export function registerPublicTools(server: McpServer, db: Db) {
             inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES])
           )
         )
+        .orderBy(vendors.businessName)
         .limit(params.limit ?? 20)
         .offset(params.offset ?? 0);
 

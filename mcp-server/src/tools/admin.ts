@@ -1271,6 +1271,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .from(eventVendors)
         .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
         .where(and(...conditions))
+        .orderBy(vendors.businessName)
         .limit(limit)
         .offset(offset);
 
