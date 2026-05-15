@@ -191,9 +191,11 @@ async function getEvent(slug: string) {
     // Get event vendors. Soft-deleted vendors (drizzle/0053) are filtered
     // out — the entry hides entirely from the event's vendor lineup per the
     // delete_vendor UX contract.
-    // Sorted alphabetically by businessName so the public lineup is stable
-    // across page loads (pre-fix it was rowid/insertion order, which shifts
-    // unpredictably as SQLite reorganizes pages).
+    // Sorted alphabetically (case-insensitive via COLLATE NOCASE) by
+    // businessName so the public lineup is stable across page loads and
+    // mixed-case names sort naturally — pre-fix it was rowid/insertion
+    // order (PR #161), then BINARY-collation alphabetical (PR #162, which
+    // landed "AccuTech" after all all-uppercase names).
     const eventVendorResults = await db
       .select()
       .from(eventVendors)
@@ -205,7 +207,7 @@ async function getEvent(slug: string) {
           isNull(vendors.deletedAt)
         )
       )
-      .orderBy(vendors.businessName);
+      .orderBy(sql`${vendors.businessName} COLLATE NOCASE`);
 
     // Get event days (per-day schedule)
     const eventDayResults = await db
