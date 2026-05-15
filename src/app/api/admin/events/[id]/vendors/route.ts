@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { eventVendors, events, vendors } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import {
   eventVendorAddSchema,
   eventVendorUpdateSchema,
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
       .where(eq(eventVendors.eventId, id))
-      .orderBy(vendors.businessName);
+      .orderBy(sql`${vendors.businessName} COLLATE NOCASE`);
 
     const vendorList = eventVendorResults
       .filter((ev) => ev.vendors !== null)
