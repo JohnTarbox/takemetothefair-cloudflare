@@ -37,7 +37,8 @@ export async function GET(request: NextRequest, { params }: Params) {
       .select()
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
-      .where(eq(eventVendors.eventId, id));
+      .where(eq(eventVendors.eventId, id))
+      .orderBy(vendors.businessName);
 
     const vendorList = eventVendorResults
       .filter((ev) => ev.vendors !== null)
