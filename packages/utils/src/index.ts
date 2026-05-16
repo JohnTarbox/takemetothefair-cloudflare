@@ -330,3 +330,7 @@ export function formatPrice(minCents?: number | null, maxCents?: number | null):
   if (min == null) return `Up to ${renderOne(max)}`;
   return `${renderOne(min)} - ${renderOne(max)}`;
 }
+
+// Pre-ingest date-quality gates — pure-function helpers shared by main app
+// ingest paths and the MCP server's vendor.suggest_event tool.
+export * from "./event-date-gates";

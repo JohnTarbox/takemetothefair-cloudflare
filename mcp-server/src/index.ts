@@ -499,6 +499,62 @@ async function runScheduledTimeToIndexSweep(env: Env): Promise<void> {
 }
 
 /**
+ * Periodic re-verification sweep for event start_date drift. Reads APPROVED
+ * events with start_date 30-90 days out, refetches the canonical source URL,
+ * and records drift > 1 day in event_date_drift_findings. The
+ * event_date_drift recommendation rule surfaces drift to admin triage.
+ *
+ * Sweep is chunked (200 events / call) and may iterate via next_cursor if a
+ * single chunk doesn't cover the active window. Hard ceiling 50 chunks to
+ * guard against a runaway server bug.
+ */
+async function runScheduledEventDateDrift(env: Env): Promise<void> {
+  const MAX_CHUNKS = 50;
+  let cursor = 0;
+  let chunks = 0;
+  const totals = { scanned: 0, drift_recorded: 0, fetch_failed: 0 };
+  while (chunks < MAX_CHUNKS) {
+    chunks++;
+    const url = `https://meetmeatthefair.com/api/admin/event-date-drift/sweep?cursor=${cursor}`;
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
+      },
+    };
+    try {
+      const response = env.MAIN_APP
+        ? await env.MAIN_APP.fetch(new Request(url, init))
+        : await fetch(url, init);
+      if (!response.ok) {
+        const text = (await response.text()).slice(0, 300);
+        console.error(`[cron] event-date-drift sweep chunk@${cursor} ${response.status}: ${text}`);
+        return;
+      }
+      const body = (await response.json().catch(() => ({}))) as {
+        success?: boolean;
+        scanned?: number;
+        drift_recorded?: number;
+        fetch_failed?: number;
+        next_cursor?: number | null;
+      };
+      totals.scanned += body.scanned ?? 0;
+      totals.drift_recorded += body.drift_recorded ?? 0;
+      totals.fetch_failed += body.fetch_failed ?? 0;
+      if (body.next_cursor == null) break;
+      cursor = body.next_cursor;
+    } catch (error) {
+      console.error(`[cron] event-date-drift sweep chunk@${cursor} threw:`, error);
+      return;
+    }
+  }
+  console.warn(
+    `[cron] event-date-drift sweep ok — scanned=${totals.scanned} drift=${totals.drift_recorded} fetch_failed=${totals.fetch_failed} chunks=${chunks}`
+  );
+}
+
+/**
  * §6.3 Phase 2 GA4 liveness check — daily belt-and-suspenders detection
  * for the failure mode that caused the 2026-04-27 → 2026-05-05 silent
  * outage. Pings GA4 once a day; on 2 consecutive critical/degraded fires,
@@ -609,6 +665,7 @@ export default {
         runScheduledGscSweep(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),
+        runScheduledEventDateDrift(env),
       ]).then(() => undefined)
     );
   },

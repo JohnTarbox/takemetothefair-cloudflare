@@ -18,6 +18,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
+import { evaluateGates } from "@takemetothefair/utils";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
@@ -796,6 +797,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       }
       const gatedTicketUrl = await gateUrlOnce(db, params.ticket_url, "ticket");
 
+      // Pre-ingest date-quality gates. Same evaluator the main-app paths use
+      // — imported from @takemetothefair/utils so MCP + main app share one
+      // source of truth. Vendor submissions default to TENTATIVE; a gate
+      // failure downgrades them to PENDING with the trace in gate_flags.
+      const gateResult = evaluateGates({
+        name: params.name,
+        sourceUrl: params.source_url ?? null,
+        sourceName: "vendor-submission",
+        startDate,
+        endDate,
+        applicationDeadline: null,
+        description,
+      });
+      const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "TENTATIVE";
+      const gateFlagsJson =
+        gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
         id: eventId,
@@ -810,7 +828,8 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         categories: JSON.stringify(["Event"]),
         tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
         ticketUrl: gatedTicketUrl,
-        status: "TENTATIVE",
+        status: eventStatus,
+        gateFlags: gateFlagsJson,
         // Mirror the main-app suggest-event behavior: vendor submissions are
         // TENTATIVE-lifecycle (dates unconfirmed at submission time).
         lifecycleStatus: "TENTATIVE",

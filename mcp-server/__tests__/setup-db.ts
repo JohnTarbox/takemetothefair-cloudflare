@@ -122,6 +122,7 @@ const SCHEMA_SQL = `
     lifecycle_reason TEXT,
     previous_start_date INTEGER,
     previous_end_date INTEGER,
+    gate_flags TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );

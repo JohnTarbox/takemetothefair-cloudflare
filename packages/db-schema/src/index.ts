@@ -190,6 +190,10 @@ export const events = sqliteTable(
     // history would need a separate event_date_history table.
     previousStartDate: integer("previous_start_date", { mode: "timestamp" }),
     previousEndDate: integer("previous_end_date", { mode: "timestamp" }),
+    // Pre-ingest gate trace. JSON array of short reason codes when
+    // evaluateGates() routed the row to PENDING_REVIEW. NULL = gate did
+    // not fire OR row predates the gates. See src/lib/event-date-gates.ts.
+    gateFlags: text("gate_flags"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -200,6 +204,39 @@ export const events = sqliteTable(
     index("idx_events_state_code").on(table.stateCode),
     index("idx_events_completeness_score").on(table.completenessScore),
     index("idx_events_lifecycle_status").on(table.lifecycleStatus),
+  ]
+);
+
+// Periodic re-verification cron findings (drizzle/0070). Stores drift
+// between events.start_date and canonical_start_date fetched from
+// events.source_url. Drives the event_date_drift recommendation card.
+// Sweep details: src/app/api/admin/event-date-drift/sweep/route.ts.
+export const eventDateDriftFindings = sqliteTable(
+  "event_date_drift_findings",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    storedStartDate: integer("stored_start_date", { mode: "timestamp" }).notNull(),
+    canonicalStartDate: integer("canonical_start_date", { mode: "timestamp" }),
+    driftDays: integer("drift_days").notNull(),
+    canonicalUrl: text("canonical_url"),
+    canonicalHtmlExcerpt: text("canonical_html_excerpt"),
+    checkedAt: integer("checked_at", { mode: "timestamp" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    index("idx_event_date_drift_findings_event_id").on(t.eventId),
+    index("idx_event_date_drift_findings_resolved_at").on(t.resolvedAt),
+    // Mirrors the migration's UNIQUE constraint so Drizzle's inferred
+    // type knows the upsert key.
+    uniqueIndex("uq_event_date_drift_findings_event_id_stored_start").on(
+      t.eventId,
+      t.storedStartDate
+    ),
   ]
 );
 
