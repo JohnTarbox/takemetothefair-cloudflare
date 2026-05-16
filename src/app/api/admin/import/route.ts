@@ -18,6 +18,7 @@ import {
   shouldIngestFromSource,
 } from "@/lib/url-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { evaluateGates } from "@/lib/event-date-gates";
 
 // Helper function to find or create a venue
 // Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
@@ -493,6 +494,26 @@ export async function POST(request: Request) {
         const decodedNewDescription = eventData.description
           ? decodeHtmlEntities(eventData.description)
           : null;
+
+        // Pre-ingest date-quality gates. Bulk-import is Tier 2 by default
+        // (named scrapers), but the URL inside eventData.sourceUrl may
+        // resolve to a Tier 3 aggregator host — evaluateGates handles
+        // either case. Failures land in PENDING_REVIEW with gate_flags
+        // populated so admins can triage from the recommendations panel.
+        const gateInput = {
+          name: decodedNewEventName,
+          sourceUrl: eventData.sourceUrl ?? null,
+          sourceName: eventData.sourceName ?? null,
+          startDate: eventData.startDate ? new Date(eventData.startDate) : null,
+          endDate: eventData.endDate ? new Date(eventData.endDate) : null,
+          applicationDeadline: null,
+          description: decodedNewDescription,
+        };
+        const gateResult = evaluateGates(gateInput);
+        const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "APPROVED";
+        const gateFlagsJson =
+          gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+
         const newEventId = crypto.randomUUID();
         await db.insert(events).values({
           id: newEventId,
@@ -512,7 +533,8 @@ export async function POST(request: Request) {
             urlClassifications
           ),
           imageUrl: eventData.imageUrl,
-          status: "APPROVED",
+          status: finalStatus,
+          gateFlags: gateFlagsJson,
           sourceName: eventData.sourceName,
           sourceUrl: eventData.sourceUrl,
           sourceId: eventData.sourceId,

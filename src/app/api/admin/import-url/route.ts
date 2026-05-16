@@ -15,6 +15,7 @@ import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { evaluateGates } from "@/lib/event-date-gates";
 
 export const runtime = "edge";
 
@@ -198,6 +199,25 @@ export async function POST(request: NextRequest) {
       urlClassifications
     );
 
+    // Pre-ingest gate evaluation. URL-import is the path that produced the
+    // analyst's 2026-05-16 failures (TEC aggregator hosts, application
+    // deadline as start_date, stale prior-year dates). evaluateGates routes
+    // suspicious rows to PENDING_REVIEW with reasons recorded in gate_flags.
+    const gateResult = evaluateGates({
+      name: event.name,
+      sourceUrl: sourceUrl ?? null,
+      sourceName: "url-import",
+      startDate,
+      endDate,
+      // ExtractedEventData has no applicationDeadline field today — gate
+      // skips the start_equals_deadline check on URL-import for that reason.
+      // If the URL extractor learns to pull applicationDeadline, pass it here.
+      applicationDeadline: null,
+      description: event.description,
+    });
+    const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : "APPROVED";
+    const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -228,7 +248,8 @@ export async function POST(request: NextRequest) {
       ticketPriceMinCents: dollarsToCents(event.ticketPriceMin),
       ticketPriceMaxCents: dollarsToCents(event.ticketPriceMax),
       imageUrl: event.imageUrl,
-      status: "APPROVED",
+      status: finalStatus,
+      gateFlags: gateFlagsJson,
       sourceName: "url-import",
       sourceUrl: sourceUrl || null,
       sourceId: sourceUrl ? createSlug(sourceUrl) : newEventId,

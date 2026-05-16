@@ -15,6 +15,7 @@ import {
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { evaluateGates } from "@/lib/event-date-gates";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
 import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
@@ -185,9 +186,25 @@ export async function POST(request: NextRequest) {
     // Determine status: vendor submissions get TENTATIVE (publicly visible), others get PENDING.
     // Lifecycle pairs with editorial: vendor submissions are TENTATIVE-lifecycle (dates
     // unconfirmed at submission time); all others default to SCHEDULED.
-    const eventStatus = data.source === "vendor" ? "TENTATIVE" : "PENDING";
+    const baseEventStatus = data.source === "vendor" ? "TENTATIVE" : "PENDING";
     const eventLifecycle: "TENTATIVE" | "SCHEDULED" =
       data.source === "vendor" ? "TENTATIVE" : "SCHEDULED";
+
+    // Pre-ingest date-quality gates. Community/vendor submissions can include
+    // arbitrary source URLs, so evaluateGates may downgrade TENTATIVE-vendor
+    // submissions to PENDING if a name/date pattern fires. (PENDING submissions
+    // already hit PENDING — gate just adds the trace flags.)
+    const gateResult = evaluateGates({
+      name: data.name,
+      sourceUrl: data.sourceUrl ?? null,
+      sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
+      startDate,
+      endDate,
+      applicationDeadline: null,
+      description,
+    });
+    const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
+    const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
     const tagList =
       data.source === "vendor"
         ? ["community-suggestion", "vendor-submission"]
@@ -239,6 +256,7 @@ export async function POST(request: NextRequest) {
       ticketPriceMaxCents: dollarsToCents(data.ticketPriceMax),
       imageUrl: data.imageUrl || null,
       status: eventStatus,
+      gateFlags: gateFlagsJson,
       lifecycleStatus: eventLifecycle,
       sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
       sourceUrl: data.sourceUrl || null,

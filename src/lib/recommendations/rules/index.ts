@@ -32,6 +32,7 @@ import { cannibalizationDetectionRule } from "./cannibalization-detection";
 import { competitorUrlContaminationRule } from "./competitor-url-contamination";
 import { longSnoozedItemsRule } from "./long-snoozed-items";
 import { confirmPastEventOccurrenceRule } from "./confirm-past-event-occurrence";
+import { eventDateDriftRule } from "./event-date-drift";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -64,4 +65,8 @@ export const ALL_RULES: RuleDefinition[] = [
   // OCCURRED by migration 0067's backfill. Drops out as soon as admin
   // confirms the lifecycle (any transition writes admin_actions).
   confirmPastEventOccurrenceRule,
+  // Daily re-verification finding surfacer (analyst backlog #1, 2026-05-16).
+  // Lights up when the cron detects > 1 day drift between stored start_date
+  // and the canonical source URL.
+  eventDateDriftRule,
 ];
