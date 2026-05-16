@@ -9,6 +9,11 @@ import { analyticsEvents, events } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
 const TRAFFIC_LOOKBACK_DAYS = 30;
+// Minimum 30-day view count to qualify as "top-traffic". Below this the rule
+// surfaces noise — 7 zero-traffic events were trained-to-ignore matches per the
+// analyst's 2026-05-16 audit. Tightening preserves the rule's promise of
+// "highest-leverage conversion gap" over completeness.
+const MIN_VIEWS_30D = 5;
 
 export const eventsMissingApplicationUrlRule: RuleDefinition = {
   ruleKey: "events_missing_application_url",
@@ -58,9 +63,12 @@ export const eventsMissingApplicationUrlRule: RuleDefinition = {
         )
       );
 
-    // Step 3: rank by traffic. Return all matches; engine handles storage.
+    // Step 3: rank by traffic. Filter out below-threshold events so the rule
+    // delivers on its "top-traffic" promise rather than surfacing zero-traffic
+    // noise. Engine handles storage of the returned matches.
     const ranked = candidates
       .map((c) => ({ ...c, views: viewsBySlug.get(c.slug) ?? 0 }))
+      .filter((c) => c.views >= MIN_VIEWS_30D)
       .sort((a, b) => b.views - a.views);
 
     return ranked.map((c) => ({

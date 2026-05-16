@@ -374,24 +374,30 @@ export function buildStateTitle(
   stateName: string,
   year: number = new Date().getFullYear()
 ): string {
-  return `Fairs in ${stateName} ${year}: Calendar of Festivals & Craft Shows`;
+  // Per analyst's 2026-05-16 SEO recommendation: lead with state + intent
+  // categories, end with brand. Drives ranking on "fairs in {state} {year}"
+  // queries that ranked page-2 with the prior title (e.g. "fairs in
+  // massachusetts 2026" at position 15.4 in GSC).
+  return `${stateName} Fairs & Festivals ${year} — Find Craft Fairs, Home Shows, Festivals · MMATF`;
 }
 
 export function buildStateMetaDescription(
   stateName: string,
   eventCount: number,
-  stateAdjective: string,
+  // stateAdjective retained for callsite-compat; the new template uses
+  // stateName directly. Will go away once all callers drop the arg.
+  _stateAdjective: string,
   year: number = new Date().getFullYear()
 ): string {
   const rounded = roundDownToTen(eventCount);
-  // When count is below 10, drop the "{N}+" prefix to avoid "0+ Bay State
-  // events" — a rare path (state has no upcoming events) but the meta
-  // shouldn't lie. Fall back to plain phrasing.
+  // When count is below 10, drop the "{N}+" prefix to avoid "0+ upcoming
+  // Bay State fairs" — a rare path (state has no upcoming events) but the
+  // meta shouldn't lie. Fall back to plain phrasing.
   const countPhrase =
     rounded > 0
-      ? `${rounded}+ ${stateAdjective} events`
-      : `${stateAdjective} fairs, festivals, and craft shows`;
-  return `Browse all fairs, festivals, craft shows, and farmers markets in ${stateName}. ${countPhrase} with dates, venues, and vendor info for ${year}.`;
+      ? `${rounded}+ upcoming ${stateName} fairs, festivals, craft shows, and home shows for ${year}`
+      : `Upcoming ${stateName} fairs, festivals, craft shows, and home shows for ${year}`;
+  return `${countPhrase}. Browse events by month, category, or venue. Updated daily.`;
 }
 
 // Suppress unused-import warnings during typecheck — TITLE_SOFT_MAX is
