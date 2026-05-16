@@ -36,22 +36,47 @@ import { decodeHtmlEntities } from "./index";
 //   lakesregion.org, mainetourism.com, capecodchamber.org, berkshires.org
 // Plus any source containing the TEC-API marker substring.
 
+// Tier 3 — regional / DMO aggregator hosts that have historically shipped
+// wrong dates. Confirmed by the analyst 2026-05-16 follow-up. Plus the
+// implicit rule "any other regional chamber / DMO TEC feed not on the
+// Tier 2 allowlist below" — captured here as the explicit list we know
+// about; expand when new aggregator hosts surface.
 const TIER_3_HOSTS = new Set<string>([
   "lakesregion.org",
-  "mainetourism.com",
-  "capecodchamber.org",
   "berkshires.org",
+  "capecodchamber.org",
+  "visitwhitemountains.com",
+  "mainemade.com",
+  "visitfreeport.com",
+  // Other regional DMOs not in the Tier 2 allowlist — treat as Tier 3
+  // until they earn promotion by surfacing clean data over time.
   "mass-vacation.com",
   "visitmaine.com",
-  "visitnh.gov",
   "vermont.com",
   "visitri.com",
   "visitconnecticut.com",
-  "ctvisit.com",
 ]);
 
+// Tier 2 — DMO/aggregator hostnames the analyst has confirmed produce
+// generally-clean data; name-pattern and date-plausibility gates still
+// apply, but Tier 2 is auto-approve when those pass.
+//
+// CAVEAT (analyst 2026-05-16): mainetourism.com was the source of the
+// NH Maker Fest "CALL FOR MAKERS" error. Keeping it in Tier 2 with strict
+// gates; if PENDING_REVIEW rate per source exceeds 30% after a month of
+// observation, demote to Tier 3.
+const TIER_2_AGGREGATOR_HOSTS = new Set<string>([
+  "mainetourism.com",
+  "visitrhodeisland.com",
+  "visitvermont.com",
+  "ctvisit.com",
+  "visitnh.gov",
+]);
+
+// Tier 2 source-name identifiers — internal scraper sources we maintain
+// in-repo. Same trust level as Tier 2 aggregator hosts (gated but
+// auto-approve on clean data).
 const TIER_2_SOURCE_NAMES = new Set<string>([
-  // Named scrapers maintained in-repo. Update when scrapers/ adds/removes.
   "mainefairs.net",
   "mainefairs",
   "fairgrounds-scraper",
@@ -79,6 +104,7 @@ export function sourceCredibilityTier(source: string | null | undefined): 1 | 2 
   }
 
   if (TIER_3_HOSTS.has(host)) return 3;
+  if (TIER_2_AGGREGATOR_HOSTS.has(host)) return 2;
   if (TIER_2_SOURCE_NAMES.has(host) || TIER_2_SOURCE_NAMES.has(normalized)) return 2;
   return 1;
 }

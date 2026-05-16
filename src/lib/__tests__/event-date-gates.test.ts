@@ -172,11 +172,24 @@ describe("dateLooksImplausible", () => {
 // ---------------------------------------------------------------------------
 
 describe("sourceCredibilityTier", () => {
-  it("classifies TEC aggregator hostnames as Tier 3 (analyst case 7)", () => {
+  it("classifies confirmed-Tier-3 DMO/aggregator hostnames as Tier 3 (analyst 2026-05-16)", () => {
     expect(sourceCredibilityTier("https://lakesregion.org/events/123")).toBe(3);
-    expect(sourceCredibilityTier("https://www.mainetourism.com/listing")).toBe(3);
     expect(sourceCredibilityTier("capecodchamber.org")).toBe(3);
     expect(sourceCredibilityTier("https://berkshires.org/events/foo")).toBe(3);
+    expect(sourceCredibilityTier("https://visitwhitemountains.com/listing")).toBe(3);
+    expect(sourceCredibilityTier("mainemade.com")).toBe(3);
+    expect(sourceCredibilityTier("https://www.visitfreeport.com/events")).toBe(3);
+  });
+
+  it("classifies Tier-2 DMO allowlist as Tier 2 (analyst 2026-05-16)", () => {
+    // Tier 2 = clean data historically; gates still apply but auto-approve
+    // on pass. mainetourism.com is in this list with a caveat — re-eval if
+    // PENDING_REVIEW rate >30% after a month.
+    expect(sourceCredibilityTier("https://www.mainetourism.com/listing")).toBe(2);
+    expect(sourceCredibilityTier("visitrhodeisland.com")).toBe(2);
+    expect(sourceCredibilityTier("https://visitvermont.com/events")).toBe(2);
+    expect(sourceCredibilityTier("ctvisit.com")).toBe(2);
+    expect(sourceCredibilityTier("https://www.visitnh.gov/things-to-do")).toBe(2);
   });
 
   it("classifies TEC-API marker as Tier 3 regardless of host", () => {
