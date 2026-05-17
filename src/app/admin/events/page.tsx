@@ -27,6 +27,11 @@ interface Event {
   venue: { name: string } | null;
   promoter: { companyName: string } | null;
   blogPostCount: number;
+  // Pre-ingest gate trace. JSON array of short reason codes (e.g.
+  // ["source_tier_3_aggregator", "start_equals_deadline"]) populated by
+  // evaluateGates() when the row routed to PENDING_REVIEW. NULL = no gate
+  // fired OR row predates the gates (pre-2026-05-16).
+  gateFlags?: string | null;
 }
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
@@ -48,6 +53,7 @@ export default function AdminEventsPage() {
   const [rescrapingId, setRescrapingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [venueFilter, setVenueFilter] = useState<string>("all");
+  const [flagFilter, setFlagFilter] = useState<string>("all");
 
   useEffect(() => {
     fetchEvents();
@@ -117,6 +123,13 @@ export default function AdminEventsPage() {
     if (statusFilter !== "all" && e.status !== statusFilter) return false;
     if (venueFilter === "no-venue" && e.venue !== null) return false;
     if (venueFilter === "has-venue" && e.venue === null) return false;
+    // Gate-flag filter (PR #?, analyst spec 2026-05-16): "flagged" surfaces
+    // rows held by evaluateGates(); "clean" surfaces rows that passed. The
+    // gateFlags column is JSON-string; treat any non-null/empty value as
+    // flagged regardless of the actual reasons.
+    const isFlagged = e.gateFlags != null && e.gateFlags !== "" && e.gateFlags !== "[]";
+    if (flagFilter === "flagged" && !isFlagged) return false;
+    if (flagFilter === "clean" && isFlagged) return false;
     return true;
   });
 
@@ -173,11 +186,22 @@ export default function AdminEventsPage() {
           <option value="no-venue">No Venue</option>
           <option value="has-venue">Has Venue</option>
         </select>
-        {(statusFilter !== "all" || venueFilter !== "all") && (
+        <select
+          value={flagFilter}
+          onChange={(e) => setFlagFilter(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+          title="Filter by pre-ingest gate flags"
+        >
+          <option value="all">All (flag status)</option>
+          <option value="flagged">Flagged only</option>
+          <option value="clean">Clean only</option>
+        </select>
+        {(statusFilter !== "all" || venueFilter !== "all" || flagFilter !== "all") && (
           <button
             onClick={() => {
               setStatusFilter("all");
               setVenueFilter("all");
+              setFlagFilter("all");
             }}
             className="text-sm text-royal hover:underline"
           >
@@ -249,6 +273,14 @@ export default function AdminEventsPage() {
                         {event.featured && (
                           <Badge variant="warning" className="mt-1">
                             Featured
+                          </Badge>
+                        )}
+                        {event.gateFlags && event.gateFlags !== "[]" && (
+                          // Pre-ingest gate flagged this row — admin should
+                          // verify against the source before approving. The
+                          // edit page shows the full reason list.
+                          <Badge variant="danger" className="mt-1 ml-1" title={event.gateFlags}>
+                            Flagged
                           </Badge>
                         )}
                       </div>
