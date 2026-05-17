@@ -46,6 +46,7 @@ import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
+import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -86,6 +87,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Recommendations. Adds get_recommendations, get_recommendation_rule.
   // Dispositions (snooze/dismiss) stay in the admin UI by design.
   registerRecommendationsTools(server, db, auth);
+
+  // Direct base64 image upload (no source URL required). Adds
+  // upload_image_bytes. Generic across event/vendor/venue. Phase 1 stores
+  // bytes as-is; Phase 2 will add server-side optimization.
+  registerUploadImageBytesTool(server, auth, env);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
