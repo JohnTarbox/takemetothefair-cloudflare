@@ -30,6 +30,8 @@ const TIER_BY_RULE_KEY: Record<string, "T1" | "T2" | "T3"> = {
   competitor_url_contamination: "T2",
   cannibalization_detection: "T2",
   event_date_drift: "T2",
+  events_pending_review: "T2",
+  events_legacy_gate_candidates: "T2",
   vendors_no_description: "T3",
   vendors_short_description: "T3",
   stubs_ready_for_enrichment: "T3",
