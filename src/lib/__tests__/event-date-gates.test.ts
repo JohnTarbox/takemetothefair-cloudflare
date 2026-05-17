@@ -49,6 +49,71 @@ describe("nameMatchesAdminFlag", () => {
     expect(r.reasons).toContain("name_em_dash_subvenue");
   });
 
+  // Em-dash suffix refinement (2026-05-17): the original pattern \s—\s flagged
+  // any name with an em-dash separator, producing 74% false positives in
+  // production (show-series with city/year qualifiers, recurring markets with
+  // date instances). The refined matcher blocklists year/date/season/state-code
+  // suffixes so only true sub-venue-looking suffixes still fire.
+
+  it("does NOT flag em-dash suffix containing a 4-digit year (show series)", () => {
+    // "New England Home Show — Marlboro 2026" → city + year qualifier.
+    expect(nameMatchesAdminFlag("New England Home Show — Marlboro 2026").reasons).not.toContain(
+      "name_em_dash_subvenue"
+    );
+    // "Vintage Market Days of Vermont — Spring 2026" → season + year.
+    expect(
+      nameMatchesAdminFlag("Vintage Market Days of Vermont — Spring 2026").reasons
+    ).not.toContain("name_em_dash_subvenue");
+  });
+
+  it("does NOT flag em-dash suffix containing an ISO date (recurring market)", () => {
+    // "Brattleboro Area Farmers Market — 2026-05-02" → date instance.
+    expect(
+      nameMatchesAdminFlag("Brattleboro Area Farmers Market — 2026-05-02").reasons
+    ).not.toContain("name_em_dash_subvenue");
+  });
+
+  it("does NOT flag em-dash suffix ending with a 2-letter state code", () => {
+    // "VSRPA Gun Show — Derby, VT" → city + state qualifier.
+    expect(nameMatchesAdminFlag("VSRPA Gun Show — Derby, VT").reasons).not.toContain(
+      "name_em_dash_subvenue"
+    );
+  });
+
+  it("does NOT flag em-dash suffix containing a season name alone", () => {
+    // "Some Festival — Fall" → season qualifier with no year.
+    expect(nameMatchesAdminFlag("Some Festival — Fall").reasons).not.toContain(
+      "name_em_dash_subvenue"
+    );
+  });
+
+  it("does NOT flag em-dash suffix with mm/dd/yyyy date format", () => {
+    expect(nameMatchesAdminFlag("Market — 5/9/2026").reasons).not.toContain(
+      "name_em_dash_subvenue"
+    );
+  });
+
+  it("STILL flags em-dash suffix that looks like a sub-venue (no year/date/state)", () => {
+    // The original analyst case must still trip:
+    expect(nameMatchesAdminFlag("Concord Arts Festival — Arts Alley").reasons).toContain(
+      "name_em_dash_subvenue"
+    );
+    // Hypothetical sub-component names (no year, no date, no state suffix):
+    expect(nameMatchesAdminFlag("Big Fair — Hall A").reasons).toContain("name_em_dash_subvenue");
+    expect(nameMatchesAdminFlag("Big Fair — Building 7").reasons).toContain(
+      "name_em_dash_subvenue"
+    );
+  });
+
+  it("STILL flags em-dash + bare city without year (acceptable residual FP)", () => {
+    // "Maine Boat Show — Orono" → just a city, no year. Cannot reliably
+    // distinguish from a sub-venue without a city dictionary. Documented as
+    // an accepted residual false-positive rate (~5% post-refinement vs 29% pre).
+    expect(nameMatchesAdminFlag("Maine Boat Show — Orono").reasons).toContain(
+      "name_em_dash_subvenue"
+    );
+  });
+
   it("handles null + empty name without throwing", () => {
     expect(nameMatchesAdminFlag(null).matched).toBe(false);
     expect(nameMatchesAdminFlag(undefined).matched).toBe(false);

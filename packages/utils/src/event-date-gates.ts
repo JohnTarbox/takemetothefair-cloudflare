@@ -116,21 +116,58 @@ export function sourceCredibilityTier(source: string | null | undefined): 1 | 2 
 // Event names that announce themselves as something other than a real event
 // listing: vendor calls, sub-venue suffixes, registration pages.
 
-// Patterns that surface as flags. Each regex is documented inline with the
-// failure mode it guards against. Tests in __tests__/event-date-gates.test.ts.
-const NAME_PATTERNS: { reason: string; pattern: RegExp }[] = [
+// Patterns that surface as flags. Each entry documents the failure mode it
+// guards against. Tests in __tests__/event-date-gates.test.ts. The `match`
+// field is either a regex (simple substring/word check) or a predicate
+// function for patterns that need more context-aware logic.
+type NamePattern = {
+  reason: string;
+  match: RegExp | ((decodedName: string) => boolean);
+};
+const NAME_PATTERNS: NamePattern[] = [
   // "CALL FOR ARTISTS", "Call for Vendors", "Call for Submissions"
-  { reason: "name_call_for_pattern", pattern: /\bcall for\b/i },
+  { reason: "name_call_for_pattern", match: /\bcall for\b/i },
   // "Vendor REGISTRATION Open", "Registration Now Available"
-  { reason: "name_registration_pattern", pattern: /\bregistration\b/i },
+  { reason: "name_registration_pattern", match: /\bregistration\b/i },
   // "Apply Today", "Vendor Applications Open" — distinct from "apply" inside
   // a longer word like "application". \b on both sides.
-  { reason: "name_apply_pattern", pattern: /\bapply\b/i },
+  { reason: "name_apply_pattern", match: /\bapply\b/i },
   // Em-dash sub-venue suffix: "Concord Arts Festival — Arts Alley" indicates
   // a sub-component, not a top-level event. Hyphen and en-dash are NOT
-  // flagged (those appear in normal names like "rock-n-roll").
-  { reason: "name_em_dash_subvenue", pattern: /\s—\s/ },
+  // flagged (those appear in normal names like "rock-n-roll"). The 2026-05-17
+  // production scan surfaced ~233 false positives (74% of em-dash hits) from
+  // show-series city/year qualifiers — "New England Home Show — Marlboro 2026",
+  // "Brattleboro Area Farmers Market — 2026-05-02", "VSRPA Gun Show — Derby, VT".
+  // emDashSuffixLooksLikeSubvenue() blocklists year/date/season/state-code
+  // suffixes so only true sub-venue-like suffixes still fire.
+  { reason: "name_em_dash_subvenue", match: emDashSuffixLooksLikeSubvenue },
 ];
+
+// Suffix patterns that indicate a non-sub-venue qualifier on the right side
+// of an em-dash. When the suffix matches any of these, em-dash is treated as
+// a series/recurrence separator, not a sub-component indicator.
+const NON_SUBVENUE_SUFFIX_PATTERNS = [
+  // Any 4-digit year (covers "2026", "Marlboro 2026", "Spring 2026",
+  // "2026-05-02" ISO dates — all contain 4 consecutive digits).
+  /\b\d{4}\b/,
+  // Season name standalone or with other text but no year (rare; mostly
+  // covered by the year rule, but guards "— Spring" / "— Fall").
+  /\b(?:spring|summer|fall|autumn|winter)\b/i,
+  // Trailing 2-letter US state code: "— Derby, VT", "— Boston, MA".
+  /,\s*[A-Z]{2}\s*$/,
+  // mm/dd/yyyy or mm/dd/yy date format.
+  /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/,
+];
+
+/** Decide whether an em-dash suffix represents a sub-venue (= flag) or a
+ *  series/recurrence qualifier (= skip). Returns true to flag. */
+function emDashSuffixLooksLikeSubvenue(decodedName: string): boolean {
+  const m = decodedName.match(/\s—\s(.+)$/);
+  if (!m) return false;
+  const suffix = m[1].trim();
+  if (NON_SUBVENUE_SUFFIX_PATTERNS.some((p) => p.test(suffix))) return false;
+  return true;
+}
 
 export interface NameFlagResult {
   matched: boolean;
@@ -143,7 +180,9 @@ export function nameMatchesAdminFlag(name: string | null | undefined): NameFlagR
   // `&amp;` / `&#8212;` etc. Memory `feedback_mcp_input_decode.md` covers
   // why this matters at every text-input boundary.
   const decoded = decodeHtmlEntities(name);
-  const reasons = NAME_PATTERNS.filter((p) => p.pattern.test(decoded)).map((p) => p.reason);
+  const reasons = NAME_PATTERNS.filter((p) =>
+    typeof p.match === "function" ? p.match(decoded) : p.match.test(decoded)
+  ).map((p) => p.reason);
   return { matched: reasons.length > 0, reasons };
 }
 
