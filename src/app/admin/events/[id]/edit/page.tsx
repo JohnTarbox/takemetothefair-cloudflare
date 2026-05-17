@@ -59,6 +59,10 @@ interface Event {
   commercialVendorsAllowed: boolean;
   status: string;
   lifecycleStatus?: string;
+  // Pre-ingest gate trace. JSON array of short reason codes; surfaced
+  // below the editorial-status dropdown so admins triaging a PENDING
+  // event can see WHY it was held.
+  gateFlags?: string | null;
   eventDays?: EventDay[];
   sourceName?: string | null;
   sourceUrl?: string | null;
@@ -556,6 +560,28 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   Read-only here in PR 1.
                 </p>
               </div>
+
+              {event.gateFlags && event.gateFlags !== "[]" && (
+                <div className="rounded-md border border-red-200 bg-red-50 p-3">
+                  <Label className="text-red-900">⚠ Pre-ingest Gate Flags</Label>
+                  <p className="text-xs text-red-900 mt-1 mb-2">
+                    This event was routed to PENDING_REVIEW by the date-quality gates. Verify
+                    against the source URL before approving.
+                  </p>
+                  <ul className="list-disc list-inside text-xs text-red-900 font-mono space-y-0.5">
+                    {(() => {
+                      try {
+                        const reasons = JSON.parse(event.gateFlags) as string[];
+                        if (!Array.isArray(reasons) || reasons.length === 0) return null;
+                        return reasons.map((r) => <li key={r}>{r}</li>);
+                      } catch {
+                        // Malformed gate_flags JSON — show raw value as a single-line fallback
+                        return <li>{event.gateFlags}</li>;
+                      }
+                    })()}
+                  </ul>
+                </div>
+              )}
 
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
