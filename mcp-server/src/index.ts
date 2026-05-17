@@ -12,6 +12,7 @@ import { registerAdminTools } from "./tools/admin.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
+import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -38,6 +39,11 @@ interface Env {
   // IndexNow API key — same pattern, for the queue consumer to call
   // api.indexnow.org directly without going through the main app.
   INDEXNOW_KEY?: string;
+  // Where inbound emails are forwarded when we can't process them
+  // (parse failure, no URL, extract/submit failure). Must be a verified
+  // destination address in Cloudflare Email Routing. Set via
+  // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
+  SUBMIT_ADMIN_FORWARD?: string;
   // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
   // Empty in local dev; populated in production so `whoami` can answer
   // "which bundle is the server running?" without a client round-trip.
@@ -639,6 +645,14 @@ export default {
     }
     console.warn(`[queue] unknown queue '${batch.queue}' — acking without action`);
     for (const m of batch.messages) m.ack();
+  },
+
+  // Inbound email — dispatched by Cloudflare Email Routing rules that
+  // target this Worker. Routes are configured in the Email Routing
+  // dashboard (or via API), NOT in wrangler.toml. Today only submit@ is
+  // wired; the handler validates and routes internally.
+  async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    await handleInboundEmail(message, env, ctx);
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -10,18 +10,26 @@ const FETCH_TIMEOUT = 15000; // 15 seconds
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Accept admin session OR X-Internal-Key (MCP Worker calls this from the
+  // inbound-email handler to fetch URLs sent to submit@meetmeatthefair.com).
+  const internalKey = request.headers.get("x-internal-key");
+  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const isInternal = !!(
+    internalKey &&
+    cfEnv.INTERNAL_API_KEY &&
+    internalKey === cfEnv.INTERNAL_API_KEY
+  );
+  if (!isInternal) {
+    const session = await auth();
+    if (!session || session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   const url = request.nextUrl.searchParams.get("url");
 
   if (!url) {
-    return NextResponse.json(
-      { success: false, error: "URL is required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ success: false, error: "URL is required" }, { status: 400 });
   }
 
   // Validate URL format
@@ -57,12 +65,12 @@ export async function GET(request: NextRequest) {
   if (ipMatch) {
     const [, a, b] = ipMatch.map(Number);
     if (
-      a === 127 ||                          // 127.0.0.0/8
-      a === 10 ||                           // 10.0.0.0/8
-      (a === 172 && b >= 16 && b <= 31) ||  // 172.16.0.0/12
-      (a === 192 && b === 168) ||           // 192.168.0.0/16
-      (a === 169 && b === 254) ||           // 169.254.0.0/16
-      a === 0                               // 0.0.0.0/8
+      a === 127 || // 127.0.0.0/8
+      a === 10 || // 10.0.0.0/8
+      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
+      (a === 192 && b === 168) || // 192.168.0.0/16
+      (a === 169 && b === 254) || // 169.254.0.0/16
+      a === 0 // 0.0.0.0/8
     ) {
       return NextResponse.json(
         { success: false, error: "Internal URLs are not allowed" },
@@ -87,8 +95,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(parsedUrl.href, {
       signal: controller.signal,
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
+        "User-Agent": "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
       },
@@ -160,7 +167,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    await logError(db, { message: "Fetch error", error, source: "api/admin/import-url/fetch", request });
+    await logError(db, {
+      message: "Fetch error",
+      error,
+      source: "api/admin/import-url/fetch",
+      request,
+    });
     return NextResponse.json(
       {
         success: false,

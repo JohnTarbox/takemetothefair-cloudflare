@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareAi, getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import type { PageMetadata } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
@@ -11,19 +11,31 @@ export const runtime = "edge";
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),
   url: z.string().url().optional(),
-  metadata: z.object({
-    title: z.string().nullable().optional(),
-    description: z.string().nullable().optional(),
-    ogImage: z.string().nullable().optional(),
-    jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
-  }).optional(),
+  metadata: z
+    .object({
+      title: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+      ogImage: z.string().nullable().optional(),
+      jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
+    })
+    .optional(),
 });
 
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Accept admin session OR X-Internal-Key (MCP Worker email handler).
+  const internalKey = request.headers.get("x-internal-key");
+  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const isInternal = !!(
+    internalKey &&
+    cfEnv.INTERNAL_API_KEY &&
+    internalKey === cfEnv.INTERNAL_API_KEY
+  );
+  if (!isInternal) {
+    const session = await auth();
+    if (!session || session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
   }
 
   try {
@@ -50,7 +62,6 @@ export async function POST(request: NextRequest) {
       (metadata || {}) as PageMetadata
     );
 
-
     // If URL provided but no ticketUrl extracted, use source URL for events without one
     if (url) {
       for (const event of events) {
@@ -67,7 +78,12 @@ export async function POST(request: NextRequest) {
       count: events.length,
     });
   } catch (error) {
-    await logError(db, { message: "Extraction error", error, source: "api/admin/import-url/extract", request });
+    await logError(db, {
+      message: "Extraction error",
+      error,
+      source: "api/admin/import-url/extract",
+      request,
+    });
     return NextResponse.json(
       {
         success: false,

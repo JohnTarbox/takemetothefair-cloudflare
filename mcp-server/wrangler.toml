@@ -18,6 +18,12 @@ database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 [vars]
 MAIN_APP_URL = "https://meetmeatthefair.com"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
+# Inbound-email failures (parse / extract / submit) get forwarded here.
+# Must be a verified destination address in Cloudflare Email Routing —
+# Cloudflare rejects forward() to unverified addresses with a 451 SMTP
+# error. Verify in Dashboard → Email → Email Routing → Destination
+# addresses before changing this.
+SUBMIT_ADMIN_FORWARD = "jtarboxme@gmail.com"
 
 # Service Binding to the main app — DISABLED 2026-05-03 because the bare
 # `service = "takemetothefair"` form errors with Cloudflare API code 10143
