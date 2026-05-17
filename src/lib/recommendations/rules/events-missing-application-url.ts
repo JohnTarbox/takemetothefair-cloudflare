@@ -17,9 +17,13 @@ const MIN_VIEWS_30D = 5;
 
 export const eventsMissingApplicationUrlRule: RuleDefinition = {
   ruleKey: "events_missing_application_url",
-  title: "Top-traffic upcoming events have no application URL",
+  // Reframed 2026-05-16: prior "Top-traffic" language overpromised relative
+  // to MMATF's traffic volume. New framing keeps the rule's actual value
+  // (traffic exists but the conversion path is broken) without claiming
+  // the matched events are sitewide top performers.
+  title: "Upcoming events with traffic, no vendor application URL",
   rationaleTemplate:
-    "{n} APPROVED upcoming events with traffic have no vendor application URL. Vendors interested have nowhere to click.",
+    "{n} APPROVED upcoming events with GA4 traffic in the last 30 days have no vendor_application_url. Interested vendors have nowhere to click to apply.",
   severity: "yellow",
   category: "conversion",
   autoResolve: true,
