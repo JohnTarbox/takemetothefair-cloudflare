@@ -15,7 +15,9 @@ CREATE TABLE kpi_state_history (
   kpi_name TEXT NOT NULL,
   computed_at INTEGER NOT NULL,                 -- unix seconds (Drizzle mode:"timestamp")
   value REAL,                                   -- nullable when state='INDETERMINATE'
-  state TEXT NOT NULL,                          -- GREEN | YELLOW | RED | INDETERMINATE
+  state TEXT NOT NULL,                          -- GREEN | YELLOW | RED | INDETERMINATE | STALE
+                                                -- (STALE added in PR #105 — data feed exceeds per-KPI SLA;
+                                                --  see src/lib/kpi-thresholds.ts:classifyKpi)
   state_changed_from_previous INTEGER NOT NULL DEFAULT 0,
   first_detected_at INTEGER,                    -- when CURRENT state run started; carries forward
   meta TEXT                                     -- JSON: numerator/denominator/window for trace
