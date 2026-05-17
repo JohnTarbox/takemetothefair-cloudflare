@@ -3,6 +3,7 @@ import { z } from "zod";
 import { and, eq, isNull, like } from "drizzle-orm";
 import { adminActions, eventVendors, events, users, vendors } from "../schema.js";
 import {
+  PARTICIPATION_TYPE_ENUM,
   PAYMENT_STATUS_ENUM,
   PUBLIC_VENDOR_STATUSES,
   VALID_TRANSITIONS,
@@ -202,6 +203,13 @@ export function registerCreateOrLinkVendorTool(
         .optional()
         .default("NOT_REQUIRED")
         .describe("Payment status on the event_vendors link"),
+      participation_type: z
+        .enum(PARTICIPATION_TYPE_ENUM)
+        .optional()
+        .default("EXHIBITOR")
+        .describe(
+          "Participation mode on the event_vendors link. EXHIBITOR = takes booth space (default); SPONSOR_ONLY = logo/program presence, no booth; SPONSOR_AND_EXHIBITOR = both (e.g. venue naming rights + a booth on the floor)."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -225,6 +233,8 @@ export function registerCreateOrLinkVendorTool(
       const status = (params.status ?? "CONFIRMED") as (typeof VENDOR_STATUS_ENUM)[number];
       const paymentStatus = (params.payment_status ??
         "NOT_REQUIRED") as (typeof PAYMENT_STATUS_ENUM)[number];
+      const participationType = (params.participation_type ??
+        "EXHIBITOR") as (typeof PARTICIPATION_TYPE_ENUM)[number];
       const dedupStrategy =
         (params.dedup_strategy as (typeof DEDUP_STRATEGY_VALUES)[number] | undefined) ?? "fuzzy";
       const deferSearchPing = params.defer_search_ping ?? false;
@@ -387,6 +397,7 @@ export function registerCreateOrLinkVendorTool(
           id: eventVendors.id,
           status: eventVendors.status,
           paymentStatus: eventVendors.paymentStatus,
+          participationType: eventVendors.participationType,
         })
         .from(eventVendors)
         .where(and(eq(eventVendors.eventId, params.event_id), eq(eventVendors.vendorId, vendorId)))
@@ -405,6 +416,7 @@ export function registerCreateOrLinkVendorTool(
           vendorId,
           status,
           paymentStatus,
+          participationType,
           boothInfo: params.booth_info ?? null,
         });
         was_linked = true;
@@ -439,6 +451,14 @@ export function registerCreateOrLinkVendorTool(
           params.payment_status !== existing.paymentStatus
         ) {
           updates.paymentStatus = params.payment_status;
+        }
+        // Same pattern for participation_type — only update when explicitly
+        // provided AND different from the existing value.
+        if (
+          params.participation_type !== undefined &&
+          params.participation_type !== existing.participationType
+        ) {
+          updates.participationType = params.participation_type;
         }
         if (params.booth_info !== undefined) {
           updates.boothInfo = params.booth_info;

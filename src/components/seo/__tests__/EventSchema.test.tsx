@@ -119,3 +119,103 @@ describe("EventSchema lifecycle → eventStatus mapping", () => {
     expect(ld.eventAttendanceMode).toBe("https://schema.org/OfflineEventAttendanceMode");
   });
 });
+
+// participationType split (drizzle/0071, 2026-05-16 analyst spec)
+describe("EventSchema participationType performer/sponsor split", () => {
+  it("EXHIBITOR vendors only → performer populated, sponsor omitted", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        vendors={[
+          {
+            name: "Acme Crafts",
+            url: "https://example.com/acme",
+            participationType: "EXHIBITOR",
+          },
+        ]}
+      />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.performer).toEqual([
+      { "@type": "Organization", name: "Acme Crafts", url: "https://example.com/acme" },
+    ]);
+    expect(ld.sponsor).toBeUndefined();
+  });
+
+  it("SPONSOR_ONLY vendors → sponsor populated, performer omitted", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        vendors={[
+          {
+            name: "RbA Greater Maine",
+            url: "https://example.com/rba",
+            participationType: "SPONSOR_ONLY",
+          },
+        ]}
+      />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.sponsor).toEqual([
+      { "@type": "Organization", name: "RbA Greater Maine", url: "https://example.com/rba" },
+    ]);
+    expect(ld.performer).toBeUndefined();
+  });
+
+  it("SPONSOR_AND_EXHIBITOR appears in BOTH performer and sponsor", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        vendors={[
+          {
+            name: "Naming Rights Co",
+            url: "https://example.com/nrc",
+            participationType: "SPONSOR_AND_EXHIBITOR",
+          },
+        ]}
+      />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.performer).toEqual([
+      { "@type": "Organization", name: "Naming Rights Co", url: "https://example.com/nrc" },
+    ]);
+    expect(ld.sponsor).toEqual([
+      { "@type": "Organization", name: "Naming Rights Co", url: "https://example.com/nrc" },
+    ]);
+  });
+
+  it("mixed lineup correctly partitions each vendor", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        vendors={[
+          { name: "Acme Crafts", url: "/acme", participationType: "EXHIBITOR" },
+          { name: "RbA Greater Maine", url: "/rba", participationType: "SPONSOR_ONLY" },
+          { name: "Both Co", url: "/both", participationType: "SPONSOR_AND_EXHIBITOR" },
+        ]}
+      />
+    );
+    const ld = extractJsonLd(container);
+    expect(Array.isArray(ld.performer)).toBe(true);
+    expect((ld.performer as Array<{ name: string }>).map((p) => p.name)).toEqual([
+      "Acme Crafts",
+      "Both Co",
+    ]);
+    expect(Array.isArray(ld.sponsor)).toBe(true);
+    expect((ld.sponsor as Array<{ name: string }>).map((p) => p.name)).toEqual([
+      "RbA Greater Maine",
+      "Both Co",
+    ]);
+  });
+
+  it("legacy vendors without participationType default to EXHIBITOR (performer only)", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} vendors={[{ name: "Legacy Vendor", url: "/legacy" }]} />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.performer).toEqual([
+      { "@type": "Organization", name: "Legacy Vendor", url: "/legacy" },
+    ]);
+    expect(ld.sponsor).toBeUndefined();
+  });
+});

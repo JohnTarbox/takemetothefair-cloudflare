@@ -131,6 +131,33 @@ export const PAYMENT_STATUS = {
 export type PaymentStatus = (typeof PAYMENT_STATUS)[keyof typeof PAYMENT_STATUS];
 export const PAYMENT_STATUS_VALUES = Object.values(PAYMENT_STATUS) as readonly PaymentStatus[];
 
+// ── Event vendor participation mode (drizzle/0071) ────────────────
+// Orthogonal to EVENT_VENDOR_STATUS. EXHIBITOR = takes booth space;
+// SPONSOR_ONLY = logo/program presence, no booth; SPONSOR_AND_EXHIBITOR
+// = both (e.g. venue naming rights + a booth on the floor).
+
+export const PARTICIPATION_TYPE = {
+  EXHIBITOR: "EXHIBITOR",
+  SPONSOR_ONLY: "SPONSOR_ONLY",
+  SPONSOR_AND_EXHIBITOR: "SPONSOR_AND_EXHIBITOR",
+} as const;
+export type ParticipationType = (typeof PARTICIPATION_TYPE)[keyof typeof PARTICIPATION_TYPE];
+export const PARTICIPATION_TYPE_VALUES = Object.values(
+  PARTICIPATION_TYPE
+) as readonly ParticipationType[];
+
+/** True when the vendor takes booth space (visible in the Exhibitors
+ *  section + emitted in schema.org `performer`). */
+export function isExhibitor(p: ParticipationType): boolean {
+  return p === PARTICIPATION_TYPE.EXHIBITOR || p === PARTICIPATION_TYPE.SPONSOR_AND_EXHIBITOR;
+}
+
+/** True when the vendor is a sponsor (visible in the Sponsors section +
+ *  emitted in schema.org `sponsor`). */
+export function isSponsor(p: ParticipationType): boolean {
+  return p === PARTICIPATION_TYPE.SPONSOR_ONLY || p === PARTICIPATION_TYPE.SPONSOR_AND_EXHIBITOR;
+}
+
 // ── Blog post statuses ────────────────────────────────────────────
 
 export const BLOG_POST_STATUS = {
