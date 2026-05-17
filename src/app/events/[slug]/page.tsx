@@ -570,9 +570,15 @@ export default async function EventDetailPage({ params }: Props) {
         previousStartDate={event.previousStartDate}
         previousEndDate={event.previousEndDate}
         eventDays={event.eventDays}
-        vendors={event.eventVendors.slice(0, 10).map(({ vendor }) => ({
-          name: vendor.businessName,
-          url: `https://meetmeatthefair.com/vendors/${vendor.slug}`,
+        vendors={event.eventVendors.slice(0, 10).map((ev) => ({
+          name: ev.vendor.businessName,
+          url: `https://meetmeatthefair.com/vendors/${ev.vendor.slug}`,
+          // Drives schema.org performer-vs-sponsor placement (drizzle/0071).
+          participationType: ev.participationType as
+            | "EXHIBITOR"
+            | "SPONSOR_ONLY"
+            | "SPONSOR_AND_EXHIBITOR"
+            | undefined,
         }))}
         createdAt={event.createdAt}
       />
@@ -674,67 +680,125 @@ export default async function EventDetailPage({ params }: Props) {
 
           <EventFAQSection items={faqItems} />
 
-          {event.eventVendors.length > 0 && (
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                    <Store className="w-5 h-5" />
-                    Participating Vendors ({event.eventVendors.length})
-                  </h2>
-                  {event.eventVendors.length > 8 && (
-                    <Link
-                      href={`/events/${event.slug}/vendors`}
-                      className="text-sm text-royal hover:text-navy font-medium"
-                    >
-                      View all vendors
-                    </Link>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {event.eventVendors.slice(0, 8).map(({ vendor }) => (
-                    <Link
-                      key={vendor.id}
-                      href={`/vendors/${vendor.slug}`}
-                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
-                        {vendor.logoUrl ? (
-                          <Image
-                            src={vendor.logoUrl}
-                            alt={vendor.businessName}
-                            fill
-                            sizes="40px"
-                            className="object-cover"
-                          />
-                        ) : (
-                          <Store className="w-5 h-5 text-gray-400" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{vendor.businessName}</p>
-                        {vendor.vendorType && (
-                          <p className="text-sm text-gray-500">{vendor.vendorType}</p>
-                        )}
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-                {event.eventVendors.length > 8 && (
-                  <div className="mt-4 text-center">
-                    <Link
-                      href={`/events/${event.slug}/vendors`}
-                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
-                    >
-                      View all {event.eventVendors.length} vendors
-                    </Link>
+          {event.eventVendors.length > 0 &&
+            (() => {
+              // Split the vendor lineup by participation_type (drizzle/0071,
+              // 2026-05-16 analyst spec). Per Q3 decision: vendors with
+              // SPONSOR_AND_EXHIBITOR appear in BOTH sections; the
+              // Exhibitors-section card shows a small "Sponsor" badge to
+              // signal cross-membership without burying the sponsor info.
+              // Alphabetical sort within each section comes from the
+              // upstream query order (event-vendor list sorted by businessName
+              // COLLATE NOCASE — see memory project_event_lifecycle.md).
+              type EvRow = (typeof event.eventVendors)[number];
+              const isExhib = (ev: EvRow) =>
+                ev.participationType === "EXHIBITOR" ||
+                ev.participationType === "SPONSOR_AND_EXHIBITOR" ||
+                // Legacy rows that pre-date the column default to EXHIBITOR
+                // semantics. Treat undefined / null the same way.
+                ev.participationType == null;
+              const isSponsor = (ev: EvRow) =>
+                ev.participationType === "SPONSOR_ONLY" ||
+                ev.participationType === "SPONSOR_AND_EXHIBITOR";
+
+              const exhibitors = event.eventVendors.filter(isExhib);
+              const sponsors = event.eventVendors.filter(isSponsor);
+
+              const renderVendorCard = (ev: EvRow, showSponsorBadge: boolean) => (
+                <Link
+                  key={ev.vendor.id}
+                  href={`/vendors/${ev.vendor.slug}`}
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
+                    {ev.vendor.logoUrl ? (
+                      <Image
+                        src={ev.vendor.logoUrl}
+                        alt={ev.vendor.businessName}
+                        fill
+                        sizes="40px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <Store className="w-5 h-5 text-gray-400" />
+                    )}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 flex items-center gap-2">
+                      <span className="truncate">{ev.vendor.businessName}</span>
+                      {showSponsorBadge && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800">
+                          Sponsor
+                        </span>
+                      )}
+                    </p>
+                    {ev.vendor.vendorType && (
+                      <p className="text-sm text-gray-500 truncate">{ev.vendor.vendorType}</p>
+                    )}
+                  </div>
+                </Link>
+              );
+
+              return (
+                <>
+                  {exhibitors.length > 0 && (
+                    <Card>
+                      <CardHeader>
+                        <div className="flex items-center justify-between">
+                          <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                            <Store className="w-5 h-5" />
+                            Exhibitors ({exhibitors.length})
+                          </h2>
+                          {exhibitors.length > 8 && (
+                            <Link
+                              href={`/events/${event.slug}/vendors`}
+                              className="text-sm text-royal hover:text-navy font-medium"
+                            >
+                              View all
+                            </Link>
+                          )}
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {exhibitors
+                            .slice(0, 8)
+                            .map((ev) =>
+                              renderVendorCard(ev, ev.participationType === "SPONSOR_AND_EXHIBITOR")
+                            )}
+                        </div>
+                        {exhibitors.length > 8 && (
+                          <div className="mt-4 text-center">
+                            <Link
+                              href={`/events/${event.slug}/vendors`}
+                              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg transition-colors"
+                            >
+                              View all {exhibitors.length} exhibitors
+                            </Link>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {sponsors.length > 0 && (
+                    <Card>
+                      <CardHeader>
+                        <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                          <Store className="w-5 h-5" />
+                          Sponsors ({sponsors.length})
+                        </h2>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {sponsors.slice(0, 8).map((ev) => renderVendorCard(ev, false))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              );
+            })()}
         </main>
 
         <aside className="space-y-6">

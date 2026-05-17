@@ -210,6 +210,7 @@ const SCHEMA_SQL = `
     vendor_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'APPLIED',
     payment_status TEXT NOT NULL DEFAULT 'NOT_REQUIRED',
+    participation_type TEXT NOT NULL DEFAULT 'EXHIBITOR',
     booth_info TEXT,
     created_at INTEGER,
     updated_at INTEGER

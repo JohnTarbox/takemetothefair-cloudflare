@@ -356,6 +356,7 @@ export {
   EVENT_STATUS_VALUES as EVENT_STATUS_ENUM,
   EVENT_VENDOR_STATUS_VALUES as VENDOR_STATUS_ENUM,
   PAYMENT_STATUS_VALUES as PAYMENT_STATUS_ENUM,
+  PARTICIPATION_TYPE_VALUES as PARTICIPATION_TYPE_ENUM,
 } from "@takemetothefair/constants";
 
 // ---------------------------------------------------------------------------

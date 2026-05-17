@@ -445,6 +445,18 @@ export const eventVendors = sqliteTable(
     })
       .default("NOT_REQUIRED")
       .notNull(),
+    // Participation mode (drizzle/0071, 2026-05-16). Orthogonal to `status`,
+    // which captures commitment lifecycle. EXHIBITOR = takes booth space;
+    // SPONSOR_ONLY = logo/program presence, no booth; SPONSOR_AND_EXHIBITOR
+    // = both. Public event pages split this into Exhibitors + Sponsors
+    // sections; JSON-LD emits SPONSOR_ONLY/SPONSOR_AND_EXHIBITOR in the
+    // schema.org `sponsor` array, EXHIBITOR/SPONSOR_AND_EXHIBITOR in
+    // `performer`.
+    participationType: text("participation_type", {
+      enum: ["EXHIBITOR", "SPONSOR_ONLY", "SPONSOR_AND_EXHIBITOR"],
+    })
+      .default("EXHIBITOR")
+      .notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },

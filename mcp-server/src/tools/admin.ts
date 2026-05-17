@@ -29,6 +29,7 @@ import {
   EVENT_STATUS_ENUM,
   VENDOR_STATUS_ENUM,
   PAYMENT_STATUS_ENUM,
+  PARTICIPATION_TYPE_ENUM,
   computePublicDates,
   publicUrlFor,
   triggerIndexNow,
@@ -1468,12 +1469,18 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── update_vendor_status ───────────────────────────────────────
   server.tool(
     "update_vendor_status",
-    "Change a vendor's application status or payment status on an event. If no vendor-event link exists, creates one (upsert). Admin only.",
+    "Change a vendor's application status, payment status, or participation_type on an event. If no vendor-event link exists, creates one (upsert). Admin only.",
     {
       event_id: z.string().describe("Event ID"),
       vendor_id: z.string().describe("Vendor ID"),
       status: z.enum(VENDOR_STATUS_ENUM).optional().describe("New vendor application status"),
       payment_status: z.enum(PAYMENT_STATUS_ENUM).optional().describe("New payment status"),
+      participation_type: z
+        .enum(PARTICIPATION_TYPE_ENUM)
+        .optional()
+        .describe(
+          "New participation mode. EXHIBITOR / SPONSOR_ONLY / SPONSOR_AND_EXHIBITOR. Public event page splits the vendor list by this field."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -1483,10 +1490,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         ),
     },
     async (params) => {
-      if (!params.status && !params.payment_status) {
+      if (!params.status && !params.payment_status && !params.participation_type) {
         return {
           content: [
-            { type: "text", text: "Provide at least one of status or payment_status to update." },
+            {
+              type: "text",
+              text: "Provide at least one of status, payment_status, or participation_type to update.",
+            },
           ],
           isError: true,
         };
@@ -1508,6 +1518,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           id: eventVendors.id,
           status: eventVendors.status,
           paymentStatus: eventVendors.paymentStatus,
+          participationType: eventVendors.participationType,
         })
         .from(eventVendors)
         .where(
@@ -1542,12 +1553,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
         const newStatus = params.status ?? "INVITED";
         const newPaymentStatus = params.payment_status ?? "NOT_REQUIRED";
+        const newParticipationType = params.participation_type ?? "EXHIBITOR";
 
         await db.insert(eventVendors).values({
           eventId: params.event_id,
           vendorId: params.vendor_id,
           status: newStatus,
           paymentStatus: newPaymentStatus,
+          participationType: newParticipationType,
         });
 
         // Audit — UPSERT path (new event_vendors link)
@@ -1622,6 +1635,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         updates.paymentStatus = params.payment_status;
         result.previousPaymentStatus = record.paymentStatus;
         result.newPaymentStatus = params.payment_status;
+      }
+
+      // Participation type — also no transition validation; admin sets freely
+      // since this is a description of the relationship, not a workflow stage.
+      if (params.participation_type) {
+        updates.participationType = params.participation_type;
+        result.previousParticipationType = record.participationType;
+        result.newParticipationType = params.participation_type;
       }
 
       await db.update(eventVendors).set(updates).where(eq(eventVendors.id, record.id));

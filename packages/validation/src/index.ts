@@ -11,6 +11,7 @@ import {
   VENUE_STATUS,
   EVENT_VENDOR_STATUS,
   PAYMENT_STATUS,
+  PARTICIPATION_TYPE,
   BLOG_POST_STATUS,
   INDOOR_OUTDOOR,
   EVENT_SCALE,
@@ -386,6 +387,13 @@ const paymentStatusEnum = z.enum([
   PAYMENT_STATUS.OVERDUE,
 ]);
 
+// Participation mode (drizzle/0071, 2026-05-16). Orthogonal to status.
+const participationTypeEnum = z.enum([
+  PARTICIPATION_TYPE.EXHIBITOR,
+  PARTICIPATION_TYPE.SPONSOR_ONLY,
+  PARTICIPATION_TYPE.SPONSOR_AND_EXHIBITOR,
+]);
+
 // Event vendor schemas
 export const eventVendorCreateSchema = z.object({
   eventId: z.string().uuid(),
@@ -393,6 +401,7 @@ export const eventVendorCreateSchema = z.object({
   boothInfo: z.string().max(500).optional().nullable(),
   status: eventVendorStatusEnum.optional().default(EVENT_VENDOR_STATUS.APPLIED),
   paymentStatus: paymentStatusEnum.optional().default(PAYMENT_STATUS.NOT_REQUIRED),
+  participationType: participationTypeEnum.optional().default(PARTICIPATION_TYPE.EXHIBITOR),
 });
 
 // Schema for adding vendor to event (eventId comes from URL params)
@@ -401,6 +410,7 @@ export const eventVendorAddSchema = z.object({
   boothInfo: z.string().max(500).optional().nullable(),
   status: eventVendorStatusEnum.optional().default(EVENT_VENDOR_STATUS.CONFIRMED),
   paymentStatus: paymentStatusEnum.optional().default(PAYMENT_STATUS.NOT_REQUIRED),
+  participationType: participationTypeEnum.optional().default(PARTICIPATION_TYPE.EXHIBITOR),
 });
 
 export const eventVendorUpdateSchema = z.object({
@@ -408,6 +418,7 @@ export const eventVendorUpdateSchema = z.object({
   boothInfo: z.string().max(500).optional().nullable(),
   status: eventVendorStatusEnum.optional(),
   paymentStatus: paymentStatusEnum.optional(),
+  participationType: participationTypeEnum.optional(),
 });
 
 // User schemas

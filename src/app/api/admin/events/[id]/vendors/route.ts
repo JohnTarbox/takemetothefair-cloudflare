@@ -97,6 +97,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       status: data.status,
       boothInfo: data.boothInfo,
       paymentStatus: data.paymentStatus,
+      participationType: data.participationType,
     });
 
     const [newEventVendor] = await db
@@ -146,6 +147,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const updateData: Record<string, unknown> = {};
     if (data.boothInfo !== undefined) updateData.boothInfo = data.boothInfo;
     if (data.paymentStatus !== undefined) updateData.paymentStatus = data.paymentStatus;
+    if (data.participationType !== undefined) updateData.participationType = data.participationType;
 
     // Validate status transition if changing status
     if (data.status) {

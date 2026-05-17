@@ -16,6 +16,9 @@ interface EventDay {
 interface EventVendor {
   name: string;
   url: string;
+  /** Optional — drives schema.org performer-vs-sponsor placement (drizzle/0071,
+   *  2026-05-16). Omit for legacy callers; treated as EXHIBITOR. */
+  participationType?: "EXHIBITOR" | "SPONSOR_ONLY" | "SPONSOR_AND_EXHIBITOR" | null;
 }
 
 interface EventSchemaProps {
@@ -270,14 +273,34 @@ export function EventSchema({
     location,
     subEvent: subEvents,
     organizer: organizerBlock,
-    performer:
-      vendors && vendors.length > 0
-        ? vendors.map((v) => ({
-            "@type": "Organization",
-            name: v.name,
-            url: v.url,
-          }))
-        : undefined,
+    // Split vendor lineup into schema.org `performer` + `sponsor` per the
+    // 2026-05-16 spec. EXHIBITOR / SPONSOR_AND_EXHIBITOR vendors go in
+    // performer; SPONSOR_ONLY / SPONSOR_AND_EXHIBITOR vendors go in sponsor.
+    // SPONSOR_AND_EXHIBITOR appears in BOTH arrays (honest signal that the
+    // org is funding the event AND has a booth on the floor). Legacy
+    // vendors without participationType set default to EXHIBITOR.
+    performer: (() => {
+      if (!vendors || vendors.length === 0) return undefined;
+      const exhibitors = vendors.filter(
+        (v) =>
+          v.participationType == null ||
+          v.participationType === "EXHIBITOR" ||
+          v.participationType === "SPONSOR_AND_EXHIBITOR"
+      );
+      return exhibitors.length > 0
+        ? exhibitors.map((v) => ({ "@type": "Organization", name: v.name, url: v.url }))
+        : undefined;
+    })(),
+    sponsor: (() => {
+      if (!vendors || vendors.length === 0) return undefined;
+      const sponsors = vendors.filter(
+        (v) =>
+          v.participationType === "SPONSOR_ONLY" || v.participationType === "SPONSOR_AND_EXHIBITOR"
+      );
+      return sponsors.length > 0
+        ? sponsors.map((v) => ({ "@type": "Organization", name: v.name, url: v.url }))
+        : undefined;
+    })(),
     offers,
   };
 
