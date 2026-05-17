@@ -33,6 +33,8 @@ import { competitorUrlContaminationRule } from "./competitor-url-contamination";
 import { longSnoozedItemsRule } from "./long-snoozed-items";
 import { confirmPastEventOccurrenceRule } from "./confirm-past-event-occurrence";
 import { eventDateDriftRule } from "./event-date-drift";
+import { eventsPendingReviewRule } from "./events-pending-review";
+import { eventsLegacyGateCandidatesRule } from "./events-legacy-gate-candidates";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -69,4 +71,10 @@ export const ALL_RULES: RuleDefinition[] = [
   // Lights up when the cron detects > 1 day drift between stored start_date
   // and the canonical source URL.
   eventDateDriftRule,
+  // Pre-ingest gate triage queue (analyst backlog #1 follow-up, 2026-05-17).
+  // PENDING events flagged by evaluateGates() that admin hasn't yet reviewed.
+  eventsPendingReviewRule,
+  // Retroactive scanner — APPROVED events that pre-date the 2026-05-16 gate
+  // rollout (or have drifted since) and would now route to PENDING_REVIEW.
+  eventsLegacyGateCandidatesRule,
 ];

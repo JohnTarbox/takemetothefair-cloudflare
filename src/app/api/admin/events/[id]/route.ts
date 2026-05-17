@@ -206,7 +206,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.featured !== undefined) updateData.featured = data.featured;
     if (data.commercialVendorsAllowed !== undefined)
       updateData.commercialVendorsAllowed = data.commercialVendorsAllowed;
-    if (data.status) updateData.status = data.status;
+    if (data.status) {
+      updateData.status = data.status;
+      // Clear gate_flags when admin transitions away from PENDING. The flag
+      // represents "needs review before approval"; admin explicitly choosing
+      // a non-PENDING status IS the review action. Leaving the flag in place
+      // pollutes the /admin/events "Flagged only" filter and the
+      // events_pending_review recommendation rule's match set forever after.
+      if (data.status !== "PENDING") {
+        updateData.gateFlags = null;
+      }
+    }
     if (data.vendorFeeMin !== undefined) updateData.vendorFeeMin = data.vendorFeeMin;
     if (data.vendorFeeMax !== undefined) updateData.vendorFeeMax = data.vendorFeeMax;
     if (data.vendorFeeNotes !== undefined) updateData.vendorFeeNotes = data.vendorFeeNotes;

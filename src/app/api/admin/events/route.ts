@@ -18,6 +18,7 @@ import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { parseDateOnly } from "@/lib/datetime";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { evaluateGates } from "@/lib/event-date-gates";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -148,6 +149,29 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = venueRow[0]?.state ?? null;
     }
 
+    const applicationDeadline = data.applicationDeadline
+      ? new Date(data.applicationDeadline)
+      : null;
+
+    // Pre-ingest gate evaluation. Admin POST is typically Tier 1 (human-typed),
+    // but admin can paste a Tier 3 source URL into the form — and Tier 1 still
+    // runs the date-plausibility checks (start_equals_deadline, multi-day vs
+    // single-day storage, etc.). Mirrors the call pattern in /admin/import-url
+    // and /admin/import. Failures override the admin-chosen status to PENDING
+    // and record reasons in gate_flags so the events_pending_review rule
+    // surfaces the row for re-review.
+    const gateResult = evaluateGates({
+      name: data.name,
+      sourceUrl: data.sourceUrl ?? null,
+      sourceName: data.sourceName ?? null,
+      startDate,
+      endDate,
+      applicationDeadline,
+      description: data.description ?? null,
+    });
+    const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : data.status;
+    const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+
     await db.insert(events).values({
       id: eventId,
       name: data.name,
@@ -171,7 +195,8 @@ export async function POST(request: NextRequest) {
       imageUrl: data.imageUrl,
       featured: data.featured,
       commercialVendorsAllowed: data.commercialVendorsAllowed,
-      status: data.status,
+      status: finalStatus,
+      gateFlags: gateFlagsJson,
       sourceName: data.sourceName,
       sourceUrl: data.sourceUrl,
       sourceId: data.sourceId,
@@ -181,7 +206,7 @@ export async function POST(request: NextRequest) {
       indoorOutdoor: data.indoorOutdoor,
       estimatedAttendance: data.estimatedAttendance,
       eventScale: data.eventScale,
-      applicationDeadline: data.applicationDeadline ? new Date(data.applicationDeadline) : null,
+      applicationDeadline,
       applicationUrl: data.applicationUrl,
       applicationInstructions: data.applicationInstructions,
       walkInsAllowed: data.walkInsAllowed,
