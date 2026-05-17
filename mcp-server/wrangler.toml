@@ -1,7 +1,12 @@
 name = "meetmeatthefair-mcp"
 main = "src/index.ts"
 workers_dev = true
-compatibility_date = "2025-04-01"
+# Bumped from 2025-04-01 to 2026-04-21 for the Email Service Sending public
+# beta, which requires this compat date or newer for the unrestricted
+# `send_email` binding (no `destination_address`) to behave as the new
+# outbound-anywhere binding rather than the old verified-destinations-only
+# one. See CHANGELOG note 2026-04-16 (Email Sending public beta).
+compatibility_date = "2026-04-21"
 compatibility_flags = ["nodejs_compat"]
 
 # Smart Placement: same rationale as the main app — most MCP tools are
@@ -66,6 +71,18 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # "0 * * * *"     → hourly: drain pending_search_pings older than 1 hour
 #                   (safety net for forgotten flushes after deferred-ingest runs)
 crons = ["0 6 * * *", "*/10 * * * *", "0 * * * *"]
+
+# Cloudflare Email Service — outbound sending binding (public beta).
+# Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without
+# `destination_address` / `allowed_destination_addresses` this binding
+# can send to any external address (new beta behavior). Pair this with
+# the Email Sending domain onboarding step in Compute → Email Service
+# → Email Sending → Onboard Domain (adds cf-bounce.* DNS records).
+#
+# To restrict outbound from-addresses later, add e.g.:
+#   allowed_sender_addresses = ["notify@meetmeatthefair.com"]
+[[send_email]]
+name = "EMAIL"
 
 # Queue producers — also wired here so MCP tools can enqueue (e.g., MCP's
 # create_event triggers an IndexNow ping; same code path as the main app).

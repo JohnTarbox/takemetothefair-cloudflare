@@ -33,9 +33,10 @@ interface Env {
   // MCP tools can enqueue work to the same consumer (this Worker, below).
   EMAIL_JOBS?: Queue;
   INDEXNOW_PINGS?: Queue;
-  // Resend API key — consumer needs it to actually send emails. Set via
-  // `wrangler secret put RESEND_API_KEY`.
-  RESEND_API_KEY?: string;
+  // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
+  // consumer uses this to send transactional/auto-reply mail. Bound via
+  // `[[send_email]]` in wrangler.toml — no API key needed.
+  EMAIL?: SendEmail;
   // IndexNow API key — same pattern, for the queue consumer to call
   // api.indexnow.org directly without going through the main app.
   INDEXNOW_KEY?: string;

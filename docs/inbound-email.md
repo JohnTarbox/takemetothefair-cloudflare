@@ -18,7 +18,9 @@ sender ──email──> Cloudflare Email Routing
                        ├──> POST /api/admin/import-url/extract (X-Internal-Key)
                        ├──> POST /api/suggest-event/submit     (X-Internal-Key,
                        │                                        source: "email")
-                       └──> EMAIL_JOBS queue ──> Resend (auto-reply)
+                       └──> EMAIL_JOBS queue ──> env.EMAIL.send (auto-reply
+                                                  via Cloudflare Email Sending,
+                                                  public beta)
 ```
 
 Failures (parse error, no URL, extract failure, submit failure) forward
@@ -26,15 +28,16 @@ the raw message to `SUBMIT_ADMIN_FORWARD` so nothing is silently dropped.
 
 ## One-time dashboard setup
 
-The current `CLOUDFLARE_API_TOKEN` does not have Email Routing scope, so
-these steps run in the Cloudflare dashboard (or via a token minted with
-`Zone: Email Routing: Edit` + `Account: Email Addresses: Edit`).
+Routing and Sending are **two separate onboarding flows** in Cloudflare
+Email Service — even though they share the same product page in the
+dashboard. Both must be onboarded for end-to-end inbound + auto-reply to
+work.
+
+### A. Email Routing (inbound)
 
 1. **Enable Email Routing** for `meetmeatthefair.com`
-   - Dashboard → Email → Email Routing → Get Started.
-   - Cloudflare automatically adds the MX records and the Email Routing
-     SPF include. The zone currently has no MX records, so there's no
-     conflict.
+   - Dashboard → **Compute** → **Email Service** → **Email Routing** → Get Started.
+   - Cloudflare automatically adds MX records on the apex + an SPF include.
 
 2. **Verify a destination address** (must match `SUBMIT_ADMIN_FORWARD` in
    `mcp-server/wrangler.toml`)
@@ -44,18 +47,31 @@ these steps run in the Cloudflare dashboard (or via a token minted with
      inbox to verify.
 
 3. **Create the route** `submit@meetmeatthefair.com → Worker`
-   - Dashboard → Email → Email Routing → Routes → Create address.
+   - Dashboard → Email Service → Email Routing → Routes → Create address.
    - Custom address: `submit`
    - Action: **Send to a Worker** → select `meetmeatthefair-mcp`.
    - The Worker must already be deployed with the `email()` handler
-     (added in this PR) before this dropdown will accept the binding.
+     before this dropdown will accept the binding.
 
 4. **(Optional) Catch-all** → forward unmatched addresses to the admin
    inbox so misdirected mail isn't bounced.
 
-5. **(Optional) DMARC record** — recommended even though we only
-   _receive_ at this domain. A `p=none` policy at `_dmarc.meetmeatthefair.com`
-   surfaces spoofing attempts to Cloudflare without affecting deliverability.
+### B. Email Sending (outbound auto-reply)
+
+5. **Onboard the domain for sending**
+   - Dashboard → **Compute** → **Email Service** → **Email Sending** → **Onboard Domain**.
+   - Pick `meetmeatthefair.com` → **Add records and onboard**.
+   - This adds a **separate** set of DNS records under `cf-bounce.meetmeatthefair.com`:
+     `cf-bounce.*` MX, SPF, DKIM, plus `_dmarc.meetmeatthefair.com`.
+   - These records are distinct from the Email Routing records under the
+     apex. Both sets coexist because bounce-handling sits on a subdomain.
+   - Wait for "Locked" status on all four records (5–15 min typically).
+
+Skipping step 5 means the `env.EMAIL.send()` call in the queue consumer
+will fail (no verified sender domain), and senders won't receive
+auto-replies. Inbound still works without sending onboarded, but the UX
+degrades — failure cases would still forward to admin Gmail, but the
+sender gets nothing back.
 
 ## Deploy order
 
@@ -89,12 +105,19 @@ Emails are treated as **community-tier untrusted** input:
 
 ## Auto-reply
 
-Goes through the existing `EMAIL_JOBS` queue → Resend pipeline, not the
-new Cloudflare Email Sending beta. Rationale: don't compound two
-experimental things on a prod feature. Revisit once Email Sending is GA.
+Goes through the `EMAIL_JOBS` queue and out via the **Cloudflare Email
+Sending** binding (`env.EMAIL.send()` in `mcp-server/src/queue-consumers.ts`).
 
-Replies are intentionally not sent to **rate-limited** senders, to avoid
-creating a reflective spam vector.
+- From-address: `Meet Me at the Fair <notify@meetmeatthefair.com>`
+- Public-beta status: the API may change before GA. Watch the
+  [Email Service changelog](https://developers.cloudflare.com/email-service/)
+  for stability updates.
+- Rate-limited senders are intentionally **not** auto-replied to, to
+  avoid creating a reflective spam vector.
+
+The main app (`src/lib/email/send.ts`) still uses Resend for its
+password-reset / verification flows — that's a separate code path, not
+affected by this consumer.
 
 ## What's deferred (Phase 2)
 
@@ -110,7 +133,7 @@ creating a reflective spam vector.
 
 ## Verifying inbound is live
 
-After dashboard steps 1–4 are complete and the Worker is deployed:
+After dashboard steps 1–5 are complete and the Worker is deployed:
 
 1. From a personal account, send an email to `submit@meetmeatthefair.com`
    with a single URL in the body (a fair website works well, e.g.
