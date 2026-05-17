@@ -36,37 +36,31 @@ type IndexNowMessage = {
 
 type ConsumerEnv = {
   DB: D1Database;
-  RESEND_API_KEY?: string;
+  /** Cloudflare Email Service outbound binding (public beta).
+   *  Bound via `[[send_email]]` in wrangler.toml. Optional only because
+   *  TypeScript can't distinguish dev (where the binding may be absent)
+   *  from prod — at runtime in prod it is always present. */
+  EMAIL?: SendEmail;
   INDEXNOW_KEY?: string;
 };
 
 // ─── Email consumer ─────────────────────────────────────────────────────
 
-async function sendEmailViaResend(
+const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
+
+async function sendViaCfEmail(
   msg: EmailJobMessage,
-  apiKey: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const from = msg.from ?? "Meet Me at the Fair <support@meetmeatthefair.com>";
+  binding: SendEmail
+): Promise<{ ok: true; messageId: string } | { ok: false; error: string }> {
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: msg.to,
-        subject: msg.subject,
-        html: msg.html,
-        text: msg.text,
-      }),
+    const res = await binding.send({
+      from: msg.from ?? DEFAULT_FROM,
+      to: msg.to,
+      subject: msg.subject,
+      html: msg.html,
+      text: msg.text,
     });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "<empty>");
-      return { ok: false, error: `Resend ${res.status}: ${body.slice(0, 500)}` };
-    }
-    return { ok: true };
+    return { ok: true, messageId: res.messageId };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -76,21 +70,23 @@ export async function handleEmailBatch(
   batch: MessageBatch<EmailJobMessage>,
   env: ConsumerEnv
 ): Promise<void> {
-  if (!env.RESEND_API_KEY) {
-    // No Resend key — skip silently. Each message ack so they don't pile up
-    // in the queue waiting for a key that may never arrive.
+  if (!env.EMAIL) {
+    // No binding — skip silently. Each message ack so they don't pile up
+    // in the queue waiting for infrastructure that may never arrive. The
+    // binding is configured in wrangler.toml so absence here means a
+    // misconfigured environment (e.g., local dev without remote bindings).
     console.warn(
-      `[queue:email] RESEND_API_KEY missing — acking ${batch.messages.length} messages without sending`
+      `[queue:email] EMAIL binding missing — acking ${batch.messages.length} messages without sending`
     );
     for (const m of batch.messages) m.ack();
     return;
   }
 
   for (const m of batch.messages) {
-    const result = await sendEmailViaResend(m.body, env.RESEND_API_KEY);
+    const result = await sendViaCfEmail(m.body, env.EMAIL);
     if (result.ok) {
       m.ack();
-      console.warn(`[queue:email] sent ${m.body.source} → ${m.body.to}`);
+      console.warn(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
     } else {
       // Retry: queue config has max_retries=3, then DLQ. Don't ack.
       console.error(`[queue:email] failed ${m.body.source} → ${m.body.to}: ${result.error}`);
