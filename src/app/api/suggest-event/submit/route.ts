@@ -73,14 +73,29 @@ const submitEventSchema = z.object({
   turnstileToken: z.string().optional(), // Turnstile verification token
   eventDays: z.array(eventDaySchema).optional(), // Per-day schedule
   submittedByUserId: z.string().optional(), // User who submitted (auto-filled for authenticated users)
-  source: z.enum(["community", "vendor"]).optional(), // Submission source
+  source: z.enum(["community", "vendor", "email"]).optional(), // Submission source
 });
 
 export async function POST(request: NextRequest) {
-  // Rate limiting check
-  const rateLimitResult = await checkRateLimit(request, "suggest-event-submit");
-  if (!rateLimitResult.allowed) {
-    return rateLimitResponse(rateLimitResult);
+  // Internal callers (MCP Worker email handler, future cross-service hooks)
+  // present `X-Internal-Key` matching INTERNAL_API_KEY. They've already done
+  // their own gating (per-sender rate limit, CF Email Routing spam filter),
+  // so we skip IP rate limit + Turnstile. Same pattern as the admin routes
+  // that accept MCP-server writes (see admin/vendors/[id]/route.ts).
+  const internalKey = request.headers.get("x-internal-key");
+  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const isInternal = !!(
+    internalKey &&
+    cfEnv.INTERNAL_API_KEY &&
+    internalKey === cfEnv.INTERNAL_API_KEY
+  );
+
+  let rateLimitResult: Awaited<ReturnType<typeof checkRateLimit>> | null = null;
+  if (!isInternal) {
+    rateLimitResult = await checkRateLimit(request, "suggest-event-submit");
+    if (!rateLimitResult.allowed) {
+      return rateLimitResponse(rateLimitResult);
+    }
   }
 
   const db = getCloudflareDb();
@@ -104,8 +119,8 @@ export async function POST(request: NextRequest) {
       data.submittedByUserId = session.user.id;
     }
 
-    // Verify Turnstile token for anonymous users
-    if (!rateLimitResult.isAuthenticated) {
+    // Verify Turnstile token for anonymous, non-internal callers.
+    if (!isInternal && rateLimitResult && !rateLimitResult.isAuthenticated) {
       const turnstileResult = await verifyTurnstileToken(data.turnstileToken || "", request);
       if (!turnstileResult.success) {
         return NextResponse.json(
@@ -183,21 +198,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Determine status: vendor submissions get TENTATIVE (publicly visible), others get PENDING.
-    // Lifecycle pairs with editorial: vendor submissions are TENTATIVE-lifecycle (dates
-    // unconfirmed at submission time); all others default to SCHEDULED.
+    // Determine status: vendor submissions get TENTATIVE (publicly visible),
+    // community + email submissions get PENDING (hidden until admin approves).
+    // Lifecycle pairs with editorial: vendor submissions are TENTATIVE-lifecycle
+    // (dates unconfirmed at submission time); all others default to SCHEDULED.
     const baseEventStatus = data.source === "vendor" ? "TENTATIVE" : "PENDING";
     const eventLifecycle: "TENTATIVE" | "SCHEDULED" =
       data.source === "vendor" ? "TENTATIVE" : "SCHEDULED";
+    const sourceName =
+      data.source === "vendor"
+        ? "vendor-submission"
+        : data.source === "email"
+          ? "email-submission"
+          : "community-suggestion";
 
-    // Pre-ingest date-quality gates. Community/vendor submissions can include
+    // Pre-ingest date-quality gates. Community/vendor/email submissions can include
     // arbitrary source URLs, so evaluateGates may downgrade TENTATIVE-vendor
     // submissions to PENDING if a name/date pattern fires. (PENDING submissions
     // already hit PENDING — gate just adds the trace flags.)
     const gateResult = evaluateGates({
       name: data.name,
       sourceUrl: data.sourceUrl ?? null,
-      sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
+      sourceName,
       startDate,
       endDate,
       applicationDeadline: null,
@@ -205,10 +227,12 @@ export async function POST(request: NextRequest) {
     });
     const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
-    const tagList =
+    const tagList: string[] =
       data.source === "vendor"
         ? ["community-suggestion", "vendor-submission"]
-        : ["community-suggestion"];
+        : data.source === "email"
+          ? ["community-suggestion", "email-submission"]
+          : ["community-suggestion"];
 
     // Gate URLs against the domain classification table — community/vendor
     // submissions can include arbitrary URLs, so we filter aggregator domains
@@ -258,7 +282,7 @@ export async function POST(request: NextRequest) {
       status: eventStatus,
       gateFlags: gateFlagsJson,
       lifecycleStatus: eventLifecycle,
-      sourceName: data.source === "vendor" ? "vendor-submission" : "community-suggestion",
+      sourceName,
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,
       syncEnabled: false,
