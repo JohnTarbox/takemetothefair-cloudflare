@@ -14,6 +14,7 @@
 
 import { getDb } from "./db.js";
 import { indexnowSubmissions } from "./schema.js";
+import { logError } from "./logger.js";
 
 const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
@@ -70,14 +71,22 @@ export async function handleEmailBatch(
   batch: MessageBatch<EmailJobMessage>,
   env: ConsumerEnv
 ): Promise<void> {
+  // Single sessionId per batch — lets admin trace which messages were
+  // siblings in the same Worker invocation.
+  const sessionId = crypto.randomUUID();
+
   if (!env.EMAIL) {
     // No binding — skip silently. Each message ack so they don't pile up
     // in the queue waiting for infrastructure that may never arrive. The
     // binding is configured in wrangler.toml so absence here means a
     // misconfigured environment (e.g., local dev without remote bindings).
-    console.warn(
-      `[queue:email] EMAIL binding missing — acking ${batch.messages.length} messages without sending`
-    );
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:email-queue",
+      message: "EMAIL binding missing; acking batch without sending",
+      sessionId,
+      context: { batchSize: batch.messages.length },
+    });
     for (const m of batch.messages) m.ack();
     return;
   }
@@ -86,10 +95,21 @@ export async function handleEmailBatch(
     const result = await sendViaCfEmail(m.body, env.EMAIL);
     if (result.ok) {
       m.ack();
-      console.warn(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
+      console.log(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
     } else {
       // Retry: queue config has max_retries=3, then DLQ. Don't ack.
-      console.error(`[queue:email] failed ${m.body.source} → ${m.body.to}: ${result.error}`);
+      await logError(env.DB, {
+        source: "mcp:email-queue",
+        message: "env.EMAIL.send failed; will retry via queue (max_retries=3)",
+        sessionId,
+        context: {
+          to: m.body.to,
+          subject: m.body.subject,
+          messageSource: m.body.source,
+          attempts: m.attempts,
+          error: result.error,
+        },
+      });
       m.retry();
     }
   }
@@ -123,9 +143,12 @@ export async function handleIndexNowBatch(
   }
 
   if (!env.INDEXNOW_KEY) {
-    console.warn(
-      `[queue:indexnow] INDEXNOW_KEY missing — acking ${messages.length} messages, ${allUrls.size} URLs unsubmitted`
-    );
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:indexnow-queue",
+      message: "INDEXNOW_KEY missing; acking batch without submitting",
+      context: { batchSize: messages.length, urlCount: allUrls.size },
+    });
     // Still record audit rows so the admin can see what would have been pinged.
     await recordAudit(env.DB, sources, "no_key", null, null);
     for (const m of messages) m.ack();
@@ -152,19 +175,34 @@ export async function handleIndexNowBatch(
 
     if (res.ok) {
       for (const m of messages) m.ack();
-      console.warn(
+      console.log(
         `[queue:indexnow] submitted ${urlList.length} URLs across ${messages.length} messages`
       );
     } else {
       // Bing returned non-2xx — retry the whole batch (Cloudflare will
       // re-deliver). 4xx errors will burn through retries → DLQ.
-      console.error(`[queue:indexnow] Bing returned ${res.status}, retrying batch`);
+      const bodyExcerpt = await res.text().catch(() => "<unreadable>");
+      await logError(env.DB, {
+        source: "mcp:indexnow-queue",
+        message: "Bing IndexNow API returned non-2xx; will retry batch",
+        statusCode: res.status,
+        context: {
+          batchSize: messages.length,
+          urlCount: urlList.length,
+          bodyExcerpt: bodyExcerpt.slice(0, 500),
+        },
+      });
       for (const m of messages) m.retry();
     }
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[queue:indexnow] network error: ${errMsg}`);
-    await recordAudit(env.DB, sources, "failure", null, errMsg);
+    const errStr = error instanceof Error ? error.message : String(error);
+    await logError(env.DB, {
+      source: "mcp:indexnow-queue",
+      message: "network error calling Bing IndexNow; will retry batch",
+      error,
+      context: { batchSize: messages.length, urlCount: allUrls.size },
+    });
+    await recordAudit(env.DB, sources, "failure", null, errStr);
     for (const m of messages) m.retry();
   }
 }
@@ -193,7 +231,12 @@ async function recordAudit(
         errorMessage,
       });
     } catch (err) {
-      console.error("[queue:indexnow] audit insert failed:", err);
+      await logError(database, {
+        source: "mcp:indexnow-queue",
+        message: "indexnow_submissions audit insert failed",
+        error: err,
+        context: { source, urlCount: urls.length, status },
+      });
     }
   }
 }

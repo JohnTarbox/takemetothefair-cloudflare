@@ -13,6 +13,7 @@ import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
+import { logError } from "./logger.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -385,19 +386,32 @@ async function runMainAppSweep(
       "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
     },
   };
+  const sessionId = crypto.randomUUID();
   try {
     const response = env.MAIN_APP
       ? await env.MAIN_APP.fetch(new Request(url, init))
       : await fetch(url, init);
     if (!response.ok) {
       const text = (await response.text()).slice(0, 300);
-      console.error(`[cron] ${label} ${response.status}: ${text}`);
+      await logError(env.DB, {
+        source: `mcp:schedule:${label.replace(/\s+/g, "-")}`,
+        message: `cron task '${label}' returned non-2xx`,
+        statusCode: response.status,
+        sessionId,
+        context: { path, status: response.status, bodyExcerpt: text },
+      });
       return;
     }
     const result = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    console.warn(`[cron] ${label} ok — ${format(result)}`);
+    console.log(`[cron] ${label} ok — ${format(result)}`);
   } catch (error) {
-    console.error(`[cron] ${label} threw:`, error);
+    await logError(env.DB, {
+      source: `mcp:schedule:${label.replace(/\s+/g, "-")}`,
+      message: `cron task '${label}' threw unhandled exception`,
+      error,
+      sessionId,
+      context: { path },
+    });
   }
 }
 
@@ -407,6 +421,8 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
   // rules; loop with ?cursor=N until { more: false } to cover ALL_RULES.
   // Hard ceiling of 50 chunks defends against a runaway server bug.
   const MAX_CHUNKS = 50;
+  const SOURCE = "mcp:schedule:recommendations-scan";
+  const sessionId = crypto.randomUUID();
   let cursor = 0;
   let chunks = 0;
   const totals = { scannedRules: 0, inserted: 0, resolved: 0, failedRules: 0 };
@@ -426,7 +442,13 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
         : await fetch(url, init);
       if (!response.ok) {
         const text = (await response.text()).slice(0, 300);
-        console.error(`[cron] recommendations scan chunk@${cursor} ${response.status}: ${text}`);
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "recommendations scan chunk returned non-2xx",
+          statusCode: response.status,
+          sessionId,
+          context: { cursor, chunk: chunks, status: response.status, bodyExcerpt: text },
+        });
         return;
       }
       const body = (await response.json().catch(() => ({}))) as {
@@ -442,7 +464,12 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
       };
       const d = body.data;
       if (!d) {
-        console.error(`[cron] recommendations scan chunk@${cursor} returned no data`);
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "recommendations scan chunk returned no data field",
+          sessionId,
+          context: { cursor, chunk: chunks, body },
+        });
         return;
       }
       totals.scannedRules += d.scannedRules ?? 0;
@@ -452,11 +479,17 @@ async function runScheduledRecommendationsScan(env: Env): Promise<void> {
       cursor = d.nextCursor ?? cursor;
       if (!d.more) break;
     } catch (error) {
-      console.error(`[cron] recommendations scan chunk@${cursor} threw:`, error);
+      await logError(env.DB, {
+        source: SOURCE,
+        message: "recommendations scan chunk threw",
+        error,
+        sessionId,
+        context: { cursor, chunk: chunks },
+      });
       return;
     }
   }
-  console.warn(
+  console.log(
     `[cron] recommendations scan ok — scanned=${totals.scannedRules} resolved=${totals.resolved} failed=${totals.failedRules} chunks=${chunks}`
   );
 }
@@ -517,6 +550,8 @@ async function runScheduledTimeToIndexSweep(env: Env): Promise<void> {
  */
 async function runScheduledEventDateDrift(env: Env): Promise<void> {
   const MAX_CHUNKS = 50;
+  const SOURCE = "mcp:schedule:event-date-drift";
+  const sessionId = crypto.randomUUID();
   let cursor = 0;
   let chunks = 0;
   const totals = { scanned: 0, drift_recorded: 0, fetch_failed: 0 };
@@ -536,7 +571,13 @@ async function runScheduledEventDateDrift(env: Env): Promise<void> {
         : await fetch(url, init);
       if (!response.ok) {
         const text = (await response.text()).slice(0, 300);
-        console.error(`[cron] event-date-drift sweep chunk@${cursor} ${response.status}: ${text}`);
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "event-date-drift sweep chunk returned non-2xx",
+          statusCode: response.status,
+          sessionId,
+          context: { cursor, chunk: chunks, status: response.status, bodyExcerpt: text },
+        });
         return;
       }
       const body = (await response.json().catch(() => ({}))) as {
@@ -552,11 +593,17 @@ async function runScheduledEventDateDrift(env: Env): Promise<void> {
       if (body.next_cursor == null) break;
       cursor = body.next_cursor;
     } catch (error) {
-      console.error(`[cron] event-date-drift sweep chunk@${cursor} threw:`, error);
+      await logError(env.DB, {
+        source: SOURCE,
+        message: "event-date-drift sweep chunk threw",
+        error,
+        sessionId,
+        context: { cursor, chunk: chunks },
+      });
       return;
     }
   }
-  console.warn(
+  console.log(
     `[cron] event-date-drift sweep ok — scanned=${totals.scanned} drift=${totals.drift_recorded} fetch_failed=${totals.fetch_failed} chunks=${chunks}`
   );
 }
@@ -589,6 +636,8 @@ async function runScheduledGa4LivenessCheck(env: Env): Promise<void> {
  * least an hour — leaving fresh bulk-run drains to the explicit flush call.
  */
 async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
+  const SOURCE = "mcp:schedule:pending-pings-flush";
+  const sessionId = crypto.randomUUID();
   try {
     const { getDb } = await import("./db.js");
     const { claimAndFlush } = await import("./pending-pings.js");
@@ -598,11 +647,16 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
       maxAgeSeconds: 3600,
       source: "cron-flush",
     });
-    console.warn(
+    console.log(
       `[cron] pending-pings flush ok — flushed=${result.flushedCount} batch=${result.batchId} indexnow=${result.indexnowResponse}`
     );
   } catch (error) {
-    console.error("[cron] pending-pings flush threw:", error);
+    await logError(env.DB, {
+      source: SOURCE,
+      message: "pending-pings flush threw",
+      error,
+      sessionId,
+    });
   }
 }
 
@@ -644,7 +698,14 @@ export default {
       await handleIndexNowBatch(batch as MessageBatch<IndexNowMessage>, env);
       return;
     }
-    console.warn(`[queue] unknown queue '${batch.queue}' — acking without action`);
+    // Unknown queue — log to D1 so it's queryable later (silent acking
+    // of an unexpected queue would mask configuration drift).
+    await logError(env.DB, {
+      level: "warn",
+      source: "mcp:queue",
+      message: "received batch from unknown queue; acking without action",
+      context: { queue: batch.queue, batchSize: batch.messages.length },
+    });
     for (const m of batch.messages) m.ack();
   },
 
@@ -652,8 +713,24 @@ export default {
   // target this Worker. Routes are configured in the Email Routing
   // dashboard (or via API), NOT in wrangler.toml. Today only submit@ is
   // wired; the handler validates and routes internally.
+  //
+  // The handler itself has its own top-level try/catch that logs to
+  // error_logs and forwards the raw message to admin Gmail. This outer
+  // try/catch is a second line of defense — if the inner one throws
+  // (which it shouldn't), we still capture something. Re-throwing
+  // surfaces the failure in CF's own metrics.
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
-    await handleInboundEmail(message, env, ctx);
+    try {
+      await handleInboundEmail(message, env, ctx);
+    } catch (err) {
+      await logError(env.DB, {
+        source: "mcp:email-entrypoint",
+        message: "handleInboundEmail re-threw to entrypoint (outer catch)",
+        error: err,
+        context: { from: message.from, to: message.to, rawSize: message.rawSize },
+      }).catch(() => {});
+      throw err;
+    }
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

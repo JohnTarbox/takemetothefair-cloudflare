@@ -131,6 +131,48 @@ affected by this consumer.
 - **Per-sender user-account matching.** Promote `From:` → `vendor` source
   when the address belongs to a registered vendor.
 
+## Debugging a failed submission
+
+Every step of the inbound pipeline writes to the main app's `error_logs`
+D1 table via the MCP-side `logError` helper (`mcp-server/src/logger.ts`).
+Rows are visible at **`/admin/logs`** in the existing admin UI.
+
+### Trace one specific email
+
+Each inbound message gets a `sessionId` (UUID) at the top of
+`handleInboundEmail()`. That UUID is stamped into the `context` JSON of
+every log row the handler writes — including helper calls into the
+URL-import fetch/extract endpoints and the auto-reply enqueue.
+
+To reconstruct one email's full trace:
+
+1. Open `/admin/logs?source=mcp:email-handler`.
+2. Find a row of interest. Expand it; the `context` JSON shows the
+   `sessionId`.
+3. Paste that sessionId substring into the search box (`q=` filter).
+   Every log row from the same email shows up in chronological order.
+
+### Common failure signatures
+
+| Symptom                              | Source filter               | What the log row says                                                                                              |
+| ------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Sender hit rate limit (silent drop)  | `mcp:email-handler`         | "rate-limited sender; dropped without reply" (level=warn)                                                          |
+| No URL in body                       | `mcp:email-handler`         | "no URL in body; sending no-url auto-reply" (level=info)                                                           |
+| Workers AI extract timeout           | `mcp:email-handler:extract` | "import-url/extract reported failure" with `context.upstreamError` containing the verbatim Workers AI error string |
+| URL fetched but extracted 0 events   | `mcp:email-handler:extract` | "import-url/extract returned zero events"                                                                          |
+| Submit endpoint validation rejection | `mcp:email-handler`         | "submit endpoint rejected event" with `context.submitError`                                                        |
+| PostalMime parse failure             | `mcp:email-handler`         | "PostalMime parse failed" with the original error in stackTrace                                                    |
+| Auto-reply queue enqueue failed      | `mcp:email-handler`         | "EMAIL_JOBS.send (auto-reply enqueue) failed"                                                                      |
+| Auto-reply send via env.EMAIL failed | `mcp:email-queue`           | "env.EMAIL.send failed; will retry via queue" with `context.error`                                                 |
+
+### Other MCP areas using the same logger
+
+Cron tasks, OAuth login failures, IndexNow helpers, and the
+schema-org-sync Workflow all write to `error_logs` under the
+`mcp:schedule:*`, `mcp:oauth`, `mcp:indexnow`, and `mcp:workflow:*`
+source prefixes. Filter `source LIKE 'mcp:%'` to see all MCP-Worker
+activity at a glance.
+
 ## Verifying inbound is live
 
 After dashboard steps 1–5 are complete and the Worker is deployed:

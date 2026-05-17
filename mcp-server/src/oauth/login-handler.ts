@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { getDb } from "../db.js";
+import { logError } from "../logger.js";
 import { lookupUser, verifyPassword, resolveUserProps } from "./utils.js";
 
 interface Env {
@@ -28,9 +29,21 @@ app.get("/", async (c) => {
 app.get("/authorize", async (c) => {
   console.log("[LOGIN] GET /authorize", c.req.url);
   const oauthReqInfo = await c.env.OAUTH_PROVIDER.parseAuthRequest(c.req.raw);
-  console.log("[LOGIN] Parsed auth request:", JSON.stringify({ clientId: oauthReqInfo.clientId, redirectUri: oauthReqInfo.redirectUri, scope: oauthReqInfo.scope }));
+  console.log(
+    "[LOGIN] Parsed auth request:",
+    JSON.stringify({
+      clientId: oauthReqInfo.clientId,
+      redirectUri: oauthReqInfo.redirectUri,
+      scope: oauthReqInfo.scope,
+    })
+  );
   if (!oauthReqInfo.clientId) {
-    console.log("[LOGIN] No client_id in auth request");
+    await logError(c.env.DB, {
+      level: "warn",
+      source: "mcp:oauth",
+      message: "GET /authorize missing client_id",
+      context: { url: c.req.url },
+    });
     return c.text("Invalid authorization request", 400);
   }
 
@@ -54,18 +67,29 @@ app.post("/authorize", async (c) => {
   const cookies = c.req.raw.headers.get("Cookie") || "";
   const match = cookies.match(/__Host-CSRF=([^;]+)/);
   if (!match || match[1] !== csrfToken) {
+    await logError(c.env.DB, {
+      source: "mcp:oauth",
+      message: "POST /authorize CSRF validation failed",
+      context: { hadCookieMatch: !!match, hadFormToken: !!csrfToken },
+    });
     return c.text("CSRF validation failed. Please go back and try again.", 403);
   }
 
-  const email = (formData.get("email") as string || "").trim().toLowerCase();
-  const password = formData.get("password") as string || "";
-  const stateData = formData.get("state") as string || "";
+  const email = ((formData.get("email") as string) || "").trim().toLowerCase();
+  const password = (formData.get("password") as string) || "";
+  const stateData = (formData.get("state") as string) || "";
 
   // Decode the original OAuth request
   let oauthReqInfo;
   try {
     oauthReqInfo = JSON.parse(atob(stateData));
-  } catch {
+  } catch (err) {
+    await logError(c.env.DB, {
+      source: "mcp:oauth",
+      message: "POST /authorize state parameter failed to decode/parse",
+      error: err,
+      context: { stateLen: stateData.length },
+    });
     return c.text("Invalid authorization state. Please start the connection again.", 400);
   }
 
@@ -74,11 +98,23 @@ app.post("/authorize", async (c) => {
   const user = await lookupUser(db, email);
 
   if (!user || !user.passwordHash) {
+    await logError(c.env.DB, {
+      level: "warn",
+      source: "mcp:oauth",
+      message: "POST /authorize unknown email or missing passwordHash",
+      context: { email },
+    });
     return loginError(c, stateData, "Invalid email or password.");
   }
 
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) {
+    await logError(c.env.DB, {
+      level: "warn",
+      source: "mcp:oauth",
+      message: "POST /authorize password verification failed",
+      context: { email, userId: user.id },
+    });
     return loginError(c, stateData, "Invalid email or password.");
   }
 
@@ -117,11 +153,7 @@ function loginError(c: any, stateData: string, message: string) {
   });
 }
 
-function renderLoginPage(
-  csrfToken: string,
-  stateData: string,
-  error: string | null,
-): string {
+function renderLoginPage(csrfToken: string, stateData: string, error: string | null): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
