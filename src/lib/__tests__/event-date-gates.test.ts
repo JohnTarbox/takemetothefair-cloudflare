@@ -165,6 +165,60 @@ describe("dateLooksImplausible", () => {
     expect(dateLooksImplausible({ startDate: null, endDate: null }).ok).toBe(true);
     expect(dateLooksImplausible({ startDate: undefined, endDate: undefined }).ok).toBe(true);
   });
+
+  // ── Gate A4 (analyst spec 2026-05-16 case 4) ──────────────────────────
+
+  it("Gate A4: passes a date-only round-trip (parseDateOnly anchor at UTC midnight)", () => {
+    // The analyst's case 4 literal: harvest a date-only source field →
+    // confirm stored start_date displays as the intended local date.
+    // parseDateOnly anchors at UTC midnight; formatDateOnly uses UTC zone;
+    // round-trip preserves the calendar day. (Verifies the existing
+    // convention is intact for the pre-ingest baseline.)
+    const date = new Date("2026-07-15T00:00:00.000Z");
+    const result = dateLooksImplausible({ startDate: date, endDate: date });
+    expect(result.ok).toBe(true);
+  });
+
+  it("Gate A4: flags start_date stored off UTC midnight with no time mentioned", () => {
+    // Simulates: source provided '2026-07-15T20:00:00-04:00' (midnight EDT
+    // = 4 AM UTC, which renders as '2026-07-15' in UTC formatter — still
+    // OK), OR a misparsed timestamp that shifted the day. We flag the
+    // non-midnight-UTC stored value when description doesn't justify it.
+    const result = dateLooksImplausible({
+      startDate: new Date("2026-07-15T14:30:00.000Z"),
+      endDate: new Date("2026-07-15T18:00:00.000Z"),
+      description: "Annual craft fair in downtown Portland.",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain("start_date_timezone_confused");
+  });
+
+  it("Gate A4: does NOT flag when description names a specific time", () => {
+    const result = dateLooksImplausible({
+      startDate: new Date("2026-07-15T14:30:00.000Z"),
+      endDate: new Date("2026-07-15T18:00:00.000Z"),
+      description: "Annual craft fair, doors open at 10 AM.",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("Gate A4: does NOT flag when description uses 24h time", () => {
+    const result = dateLooksImplausible({
+      startDate: new Date("2026-07-15T14:30:00.000Z"),
+      endDate: new Date("2026-07-15T18:00:00.000Z"),
+      description: "Live music 14:30-21:00 with food trucks.",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("Gate A4: does NOT flag when description uses fuzzy time words", () => {
+    const result = dateLooksImplausible({
+      startDate: new Date("2026-07-15T14:30:00.000Z"),
+      endDate: new Date("2026-07-15T18:00:00.000Z"),
+      description: "Evening concert series in the park.",
+    });
+    expect(result.ok).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

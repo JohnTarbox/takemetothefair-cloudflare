@@ -178,9 +178,52 @@ function sameDay(a: Date, b: Date): boolean {
   return Math.abs(a.getTime() - b.getTime()) < SAME_DAY_TOLERANCE_MS;
 }
 
+/** Pattern that catches mentions of a specific time-of-day in a description.
+ *  When present, a non-midnight-UTC start_date is legitimately preserving the
+ *  source's intended time; when absent, it's a likely timezone-confused parse
+ *  of a date-only source field. Matches "2 PM", "14:30", "noon", "morning"
+ *  (the latter signals intentional time semantics even if non-numeric). */
+const DESCRIPTION_HAS_TIME_PATTERNS = [
+  /\b\d{1,2}\s*(?::\d{2})?\s*(?:am|pm)\b/i,
+  /\b\d{1,2}:\d{2}\b/,
+  /\b(?:noon|midnight|morning|afternoon|evening|night)\b/i,
+];
+
+/** Gate A4 (analyst spec 2026-05-16): catches the date-only-misparsed-as-
+ *  timestamp bug. When a source provides a date-only ISO ("2026-07-15") or
+ *  a date with an explicit non-UTC zone ("2026-07-15T20:00:00-04:00") and
+ *  the ingest path doesn't normalize through parseDateOnly, the stored
+ *  start_date can end up on a different UTC calendar day than the source
+ *  intended. We can't see the original string here, but we CAN detect the
+ *  shape: stored start_date with non-zero UTC h/m/s AND no time-of-day
+ *  mention in the description (which would justify a non-midnight value). */
+function dateLooksTimezoneConfused(input: DateGateInput): boolean {
+  if (!input.startDate) return false;
+  const offUtcMidnight =
+    input.startDate.getUTCHours() !== 0 ||
+    input.startDate.getUTCMinutes() !== 0 ||
+    input.startDate.getUTCSeconds() !== 0;
+  if (!offUtcMidnight) return false;
+  if (input.description) {
+    const decoded = decodeHtmlEntities(input.description);
+    if (DESCRIPTION_HAS_TIME_PATTERNS.some((p) => p.test(decoded))) {
+      // Description names a specific time — non-midnight-UTC is legitimate.
+      return false;
+    }
+  }
+  return true;
+}
+
 export function dateLooksImplausible(input: DateGateInput): DateGateResult {
   const reasons: string[] = [];
   const now = new Date();
+
+  if (dateLooksTimezoneConfused(input)) {
+    // Gate A4: start_date stored off UTC-midnight, description has no time
+    // mention. Likely a misparsed date-only source or a timestamp with a
+    // non-UTC offset that wasn't normalized through parseDateOnly.
+    reasons.push("start_date_timezone_confused");
+  }
 
   if (
     input.startDate &&
