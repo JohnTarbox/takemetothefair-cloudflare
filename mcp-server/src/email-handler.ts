@@ -12,33 +12,44 @@
  *        (/api/admin/import-url/fetch then /extract) with X-Internal-Key.
  *      - If not found: forward the raw email to the admin Gmail and tell
  *        the sender to include a link. V1 doesn't attempt free-text AI
- *        extraction; revisit when CF Email Sending GA's and we have a
- *        real volume signal.
+ *        extraction; revisit when we have a real volume signal.
  *   4. POST the extracted event payload to /api/suggest-event/submit
  *      with source: "email" — lands as PENDING for admin review.
- *   5. Queue an auto-reply (via the existing EMAIL_JOBS → Resend path)
- *      confirming receipt or explaining the failure.
+ *   5. Queue an auto-reply (via EMAIL_JOBS → env.EMAIL.send) confirming
+ *      receipt or explaining the failure.
  *
- * Failure modes:
- *   - PostalMime parse failure → forward raw to admin, no auto-reply
- *     (sender may not even be parseable).
- *   - No URL in body → forward to admin, auto-reply asks for a link.
- *   - URL fetch / AI extract failure → forward to admin, auto-reply.
- *   - /submit endpoint failure → forward to admin, auto-reply.
+ * Diagnostics:
+ *   Every handler invocation generates a `sessionId` (UUID) that's
+ *   stamped into the `context` field of every log row written via
+ *   `logError`. To trace a single email end-to-end from /admin/logs,
+ *   filter `source LIKE 'mcp:email-handler%'` and search for the
+ *   sessionId substring. The internal API's `{success:false,error}`
+ *   payloads are read and surfaced — the real Workers AI timeout
+ *   message lands in the log instead of being collapsed to "extract failed".
+ *
+ * Failure modes (all logged + forwarded to admin Gmail):
+ *   - PostalMime parse failure
+ *   - No URL in body
+ *   - URL fetch failure (network or non-2xx)
+ *   - AI extract failure (with the real upstream error string)
+ *   - /submit endpoint failure
  *
  * What we don't do (deferred):
- *   - Attachment processing (PDFs, images). The auto-reply notes this.
- *   - HMAC-signed reply routing — only useful when we expect replies.
+ *   - Attachment processing (PDFs, images).
+ *   - HMAC-signed reply routing.
  *   - DMARC/SPF check beyond what CF Email Routing already does.
  *   - Free-text AI extraction when no URL is present.
  */
 
 import PostalMime, { type Email } from "postal-mime";
+import { logError } from "./logger.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
 // ---------------------------------------------------------------------------
 export interface EmailHandlerEnv {
+  /** D1 binding — used by `logError` to persist diagnostics to `error_logs`. */
+  DB: D1Database;
   /** OAuth KV is reused with an "email-submit:" prefix for per-sender
    *  rate limiting. Intentional cross-use — saves a binding. */
   OAUTH_KV: KVNamespace;
@@ -51,6 +62,13 @@ export interface EmailHandlerEnv {
   /** Where unparseable / failed-extraction emails are forwarded for manual review.
    *  Must be a verified destination address in Cloudflare Email Routing. */
   SUBMIT_ADMIN_FORWARD?: string;
+}
+
+/** Threaded into every helper so they can log with the same sessionId
+ *  and against the same D1 binding without bloating every signature. */
+interface LogCtx {
+  db: D1Database;
+  sessionId: string;
 }
 
 // Outbound EmailJobMessage shape (mirror of queue-consumers.ts).
@@ -72,6 +90,7 @@ const SUBMIT_ADDRESS = "submit@meetmeatthefair.com";
 const PER_SENDER_LIMIT = 5;
 const PER_SENDER_WINDOW_SEC = 86_400;
 const MAX_BODY_LEN = 50_000; // characters fed into AI extractor
+const SOURCE = "mcp:email-handler";
 
 // ---------------------------------------------------------------------------
 // Entry point — wired from src/index.ts default export
@@ -81,102 +100,195 @@ export async function handleInboundEmail(
   env: EmailHandlerEnv,
   ctx: ExecutionContext
 ): Promise<void> {
-  const toAddr = message.to.toLowerCase().trim();
+  // Single sessionId per inbound email — stamped into every log row's
+  // context.sessionId. The /admin/logs search box does substring match,
+  // so admins can paste this UUID to reconstruct one email's full trace.
+  const sessionId = crypto.randomUUID();
+  const logCtx: LogCtx = { db: env.DB, sessionId };
 
-  // Anything not routed to submit@ falls through to admin forwarding. CF
-  // Email Routing should only deliver matching routes here, but defense
-  // in depth — if someone adds a future route pointing at this Worker
-  // and we don't have a branch for it, the admin still sees it.
-  if (toAddr !== SUBMIT_ADDRESS) {
-    await forwardToAdmin(message, env, `unroutable: to=${toAddr}`);
-    return;
-  }
-
-  // Parse MIME. PostalMime accepts a ReadableStream.
-  let parsed: Email;
+  // Top-level try/catch — anything unhandled below (PostalMime crashes,
+  // unexpected runtime errors) gets a row in error_logs and admin forward
+  // before re-throwing. CF won't retry email dispatch, so re-throwing is
+  // mostly for surfacing in CF's own metrics rather than retry behavior.
   try {
-    parsed = await PostalMime.parse(message.raw);
-  } catch (err) {
-    console.error("[email:submit] PostalMime parse failed", err);
-    await forwardToAdmin(message, env, `parse-failed: ${errMsg(err)}`);
-    return;
-  }
+    const toAddr = message.to.toLowerCase().trim();
 
-  const fromAddr = (parsed.from?.address || message.from || "").toLowerCase().trim();
-  const subject = (parsed.subject || "").slice(0, 200);
-  const bodyText = (parsed.text || "").slice(0, MAX_BODY_LEN);
-  const bodyHtml = parsed.html || "";
-  const hasAttachments = (parsed.attachments?.length ?? 0) > 0;
+    // Anything not routed to submit@ falls through to admin forwarding. CF
+    // Email Routing should only deliver matching routes here, but defense
+    // in depth — if someone adds a future route pointing at this Worker
+    // and we don't have a branch for it, the admin still sees it.
+    if (toAddr !== SUBMIT_ADDRESS) {
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "inbound message addressed to non-submit@ recipient",
+        sessionId,
+        context: { from: message.from, to: toAddr, rawSize: message.rawSize },
+      });
+      await forwardToAdmin(message, env, logCtx, `unroutable: to=${toAddr}`);
+      return;
+    }
 
-  if (!fromAddr) {
-    console.warn("[email:submit] missing from-address; forwarding");
-    await forwardToAdmin(message, env, "missing-from");
-    return;
-  }
+    // Parse MIME. PostalMime accepts a ReadableStream.
+    let parsed: Email;
+    try {
+      parsed = await PostalMime.parse(message.raw);
+    } catch (err) {
+      await logError(env.DB, {
+        source: SOURCE,
+        message: "PostalMime parse failed",
+        error: err,
+        sessionId,
+        context: { from: message.from, to: toAddr, rawSize: message.rawSize },
+      });
+      await forwardToAdmin(message, env, logCtx, `parse-failed: ${errMsg(err)}`);
+      return;
+    }
 
-  // Per-sender rate limit.
-  const allowed = await checkSenderRateLimit(env.OAUTH_KV, fromAddr);
-  if (!allowed) {
-    console.warn(`[email:submit] rate-limited: from=${fromAddr}`);
-    // Silently drop. Replying to a rate-limited sender creates a
-    // reflective spam vector. The dashboard log is the audit trail.
-    return;
-  }
+    const fromAddr = (parsed.from?.address || message.from || "").toLowerCase().trim();
+    const subject = (parsed.subject || "").slice(0, 200);
+    const bodyText = (parsed.text || "").slice(0, MAX_BODY_LEN);
+    const bodyHtml = parsed.html || "";
+    const hasAttachments = (parsed.attachments?.length ?? 0) > 0;
 
-  // Find a primary URL to feed the importer. Prefer the first http(s)
-  // URL in the text body; fall back to scanning HTML hrefs.
-  const url = pickPrimaryUrl(bodyText, bodyHtml);
+    if (!fromAddr) {
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "missing from-address; forwarding to admin",
+        sessionId,
+        context: { to: toAddr, subject, rawSize: message.rawSize },
+      });
+      await forwardToAdmin(message, env, logCtx, "missing-from");
+      return;
+    }
 
-  if (!url) {
-    console.warn(`[email:submit] no URL in body from=${fromAddr} subject="${subject}"`);
-    await forwardToAdmin(message, env, "no-url");
+    // Per-sender rate limit.
+    const allowed = await checkSenderRateLimit(env.OAUTH_KV, fromAddr);
+    if (!allowed) {
+      // Silently drop (no auto-reply — would create a reflective spam vector)
+      // but log so admins can see when senders are hitting the limit.
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "rate-limited sender; dropped without reply",
+        sessionId,
+        context: {
+          from: fromAddr,
+          subject,
+          limit: PER_SENDER_LIMIT,
+          windowSec: PER_SENDER_WINDOW_SEC,
+        },
+      });
+      return;
+    }
+
+    // Find a primary URL to feed the importer. Prefer the first http(s)
+    // URL in the text body; fall back to scanning HTML hrefs.
+    const url = pickPrimaryUrl(bodyText, bodyHtml);
+
+    if (!url) {
+      await logError(env.DB, {
+        level: "info",
+        source: SOURCE,
+        message: "no URL in body; sending no-url auto-reply",
+        sessionId,
+        context: {
+          from: fromAddr,
+          subject,
+          hasAttachments,
+          textLen: bodyText.length,
+          htmlLen: bodyHtml.length,
+        },
+      });
+      await forwardToAdmin(message, env, logCtx, "no-url");
+      ctx.waitUntil(
+        queueAutoReply(env, logCtx, { to: fromAddr, kind: "no-url", subject, hasAttachments })
+      );
+      return;
+    }
+
+    // Fetch + AI-extract via the main app's URL-import pipeline.
+    const extracted = await extractEventFromUrl(env, logCtx, url, fromAddr, subject);
+    if (!extracted) {
+      // extractEventFromUrl already logged the specific failure with the
+      // upstream error string. Just log the user-visible outcome here.
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "extract failed; sending extract-failed auto-reply",
+        sessionId,
+        context: { from: fromAddr, subject, url },
+      });
+      await forwardToAdmin(message, env, logCtx, `extract-failed: ${url}`);
+      ctx.waitUntil(
+        queueAutoReply(env, logCtx, { to: fromAddr, kind: "extract-failed", subject, url })
+      );
+      return;
+    }
+
+    // Submit. The main app's /api/suggest-event/submit will land this as
+    // PENDING since source="email", and runs all the date-quality + URL
+    // classification gates.
+    const submitted = await submitEvent(env, {
+      ...extracted,
+      source: "email",
+      sourceUrl: url,
+      suggesterEmail: fromAddr,
+    });
+
+    if (!submitted.ok) {
+      await logError(env.DB, {
+        source: SOURCE,
+        message: "submit endpoint rejected event",
+        sessionId,
+        context: {
+          from: fromAddr,
+          subject,
+          url,
+          submitError: submitted.error,
+          extractedName: extracted.name,
+          extractedStartDate: extracted.startDate ?? null,
+        },
+      });
+      await forwardToAdmin(message, env, logCtx, `submit-failed: ${submitted.error}`);
+      ctx.waitUntil(queueAutoReply(env, logCtx, { to: fromAddr, kind: "submit-failed", subject }));
+      return;
+    }
+
+    await logError(env.DB, {
+      level: "info",
+      source: SOURCE,
+      message: "event created from email submission",
+      sessionId,
+      context: { from: fromAddr, subject, url, slug: submitted.slug, eventName: extracted.name },
+    });
     ctx.waitUntil(
-      queueAutoReply(env, {
+      queueAutoReply(env, logCtx, {
         to: fromAddr,
-        kind: "no-url",
+        kind: "ok",
         subject,
+        eventName: extracted.name,
         hasAttachments,
       })
     );
-    return;
+  } catch (err) {
+    // Unhandled exception — surface in error_logs with all the context we
+    // have, then forward the raw message to admin so it's not lost.
+    await logError(env.DB, {
+      source: SOURCE,
+      message: "unhandled exception in handleInboundEmail",
+      error: err,
+      sessionId,
+      context: { from: message.from, to: message.to, rawSize: message.rawSize },
+    }).catch(() => {
+      /* logger is already best-effort — swallow secondary failure */
+    });
+    await forwardToAdmin(message, env, logCtx, `unhandled-exception: ${errMsg(err)}`).catch(() => {
+      /* forwarding failed too — admin will need to debug from logs */
+    });
+    throw err;
   }
-
-  // Fetch + AI-extract via the main app's URL-import pipeline.
-  const extracted = await extractEventFromUrl(env, url);
-  if (!extracted) {
-    console.warn(`[email:submit] extract failed from=${fromAddr} url=${url}`);
-    await forwardToAdmin(message, env, `extract-failed: ${url}`);
-    ctx.waitUntil(queueAutoReply(env, { to: fromAddr, kind: "extract-failed", subject, url }));
-    return;
-  }
-
-  // Submit. The main app's /api/suggest-event/submit will land this as
-  // PENDING since source="email", and runs all the date-quality + URL
-  // classification gates.
-  const submitted = await submitEvent(env, {
-    ...extracted,
-    source: "email",
-    sourceUrl: url,
-    suggesterEmail: fromAddr,
-  });
-
-  if (!submitted.ok) {
-    console.error(`[email:submit] submit failed from=${fromAddr}: ${submitted.error}`);
-    await forwardToAdmin(message, env, `submit-failed: ${submitted.error}`);
-    ctx.waitUntil(queueAutoReply(env, { to: fromAddr, kind: "submit-failed", subject }));
-    return;
-  }
-
-  console.log(`[email:submit] created event ${submitted.slug} from=${fromAddr}`);
-  ctx.waitUntil(
-    queueAutoReply(env, {
-      to: fromAddr,
-      kind: "ok",
-      subject,
-      eventName: extracted.name,
-      hasAttachments,
-    })
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -235,21 +347,42 @@ interface ExtractedEvent {
 
 async function extractEventFromUrl(
   env: EmailHandlerEnv,
-  url: string
+  logCtx: LogCtx,
+  url: string,
+  fromAddr: string,
+  subject: string
 ): Promise<ExtractedEvent | null> {
-  // 1. Fetch + parse the URL.
+  // 1. Fetch + parse the URL via the main app's import-url/fetch endpoint.
+  //    SSRF guards, timeout, and User-Agent live on that endpoint, not here.
   const fetchUrl = `${env.MAIN_APP_URL}/api/admin/import-url/fetch?url=${encodeURIComponent(url)}`;
   let fetchRes: Response;
   try {
-    fetchRes = await fetch(fetchUrl, {
-      headers: { "x-internal-key": env.INTERNAL_API_KEY },
-    });
+    fetchRes = await fetch(fetchUrl, { headers: { "x-internal-key": env.INTERNAL_API_KEY } });
   } catch (err) {
-    console.error("[email:submit] fetch endpoint network error", err);
+    await logError(logCtx.db, {
+      source: `${SOURCE}:fetch`,
+      message: "network error calling /api/admin/import-url/fetch",
+      error: err,
+      sessionId: logCtx.sessionId,
+      context: { url, from: fromAddr, subject },
+    });
     return null;
   }
-  if (!fetchRes.ok) return null;
-  const fetched = (await fetchRes.json().catch(() => null)) as
+  if (!fetchRes.ok) {
+    const body = await fetchRes.text().catch(() => "<unreadable>");
+    await logError(logCtx.db, {
+      source: `${SOURCE}:fetch`,
+      message: "import-url/fetch returned non-2xx",
+      statusCode: fetchRes.status,
+      sessionId: logCtx.sessionId,
+      context: { url, status: fetchRes.status, bodyExcerpt: body.slice(0, 500) },
+    });
+    return null;
+  }
+  const fetched = (await fetchRes.json().catch((err) => {
+    // Catch the parse error so we can log it with context.
+    return { __parseError: err };
+  })) as
     | {
         success: true;
         content: string;
@@ -259,36 +392,128 @@ async function extractEventFromUrl(
         jsonLd?: unknown;
       }
     | { success: false; error: string }
+    | { __parseError: unknown }
     | null;
-  if (!fetched || !fetched.success) return null;
 
-  // 2. AI-extract.
-  const extractRes = await fetch(`${env.MAIN_APP_URL}/api/admin/import-url/extract`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-internal-key": env.INTERNAL_API_KEY,
-    },
-    body: JSON.stringify({
-      content: fetched.content,
-      url,
-      metadata: {
-        title: fetched.title ?? null,
-        description: fetched.description ?? null,
-        ogImage: fetched.ogImage ?? null,
-        jsonLd: fetched.jsonLd ?? null,
-      },
-    }),
-  }).catch((err) => {
-    console.error("[email:submit] extract endpoint network error", err);
+  if (!fetched) {
+    await logError(logCtx.db, {
+      source: `${SOURCE}:fetch`,
+      message: "import-url/fetch returned empty/null body",
+      sessionId: logCtx.sessionId,
+      context: { url },
+    });
     return null;
-  });
-  if (!extractRes || !extractRes.ok) return null;
-  const extracted = (await extractRes.json().catch(() => null)) as
+  }
+  if ("__parseError" in fetched) {
+    await logError(logCtx.db, {
+      source: `${SOURCE}:fetch`,
+      message: "failed to parse import-url/fetch response as JSON",
+      error: fetched.__parseError,
+      sessionId: logCtx.sessionId,
+      context: { url },
+    });
+    return null;
+  }
+  if (!fetched.success) {
+    // Surface the actual error string the upstream endpoint returned
+    // (e.g., "Page took too long to load", "Could not access page (403 Forbidden)").
+    await logError(logCtx.db, {
+      level: "warn",
+      source: `${SOURCE}:fetch`,
+      message: "import-url/fetch reported failure",
+      sessionId: logCtx.sessionId,
+      context: { url, upstreamError: fetched.error },
+    });
+    return null;
+  }
+
+  // 2. AI-extract via the main app's import-url/extract endpoint.
+  let extractRes: Response | null;
+  try {
+    extractRes = await fetch(`${env.MAIN_APP_URL}/api/admin/import-url/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
+      body: JSON.stringify({
+        content: fetched.content,
+        url,
+        metadata: {
+          title: fetched.title ?? null,
+          description: fetched.description ?? null,
+          ogImage: fetched.ogImage ?? null,
+          jsonLd: fetched.jsonLd ?? null,
+        },
+      }),
+    });
+  } catch (err) {
+    await logError(logCtx.db, {
+      source: `${SOURCE}:extract`,
+      message: "network error calling /api/admin/import-url/extract",
+      error: err,
+      sessionId: logCtx.sessionId,
+      context: { url, contentLen: fetched.content.length },
+    });
+    return null;
+  }
+  if (!extractRes.ok) {
+    const body = await extractRes.text().catch(() => "<unreadable>");
+    await logError(logCtx.db, {
+      source: `${SOURCE}:extract`,
+      message: "import-url/extract returned non-2xx",
+      statusCode: extractRes.status,
+      sessionId: logCtx.sessionId,
+      context: { url, status: extractRes.status, bodyExcerpt: body.slice(0, 500) },
+    });
+    return null;
+  }
+  const extracted = (await extractRes.json().catch((err) => ({ __parseError: err }))) as
     | { success: true; events: ExtractedEvent[]; count: number }
     | { success: false; error: string }
+    | { __parseError: unknown }
     | null;
-  if (!extracted || !extracted.success || extracted.events.length === 0) return null;
+
+  if (!extracted) {
+    await logError(logCtx.db, {
+      source: `${SOURCE}:extract`,
+      message: "import-url/extract returned empty/null body",
+      sessionId: logCtx.sessionId,
+      context: { url },
+    });
+    return null;
+  }
+  if ("__parseError" in extracted) {
+    await logError(logCtx.db, {
+      source: `${SOURCE}:extract`,
+      message: "failed to parse import-url/extract response as JSON",
+      error: extracted.__parseError,
+      sessionId: logCtx.sessionId,
+      context: { url },
+    });
+    return null;
+  }
+  if (!extracted.success) {
+    // The single most important diagnostic: when /extract returns
+    // `{success:false, error:"Workers AI multi-event extraction timed out
+    // after 20000ms"}`, *that* is the message admins need to see — not
+    // the generic "extract failed" we used to log.
+    await logError(logCtx.db, {
+      level: "warn",
+      source: `${SOURCE}:extract`,
+      message: "import-url/extract reported failure",
+      sessionId: logCtx.sessionId,
+      context: { url, upstreamError: extracted.error },
+    });
+    return null;
+  }
+  if (extracted.events.length === 0) {
+    await logError(logCtx.db, {
+      level: "warn",
+      source: `${SOURCE}:extract`,
+      message: "import-url/extract returned zero events",
+      sessionId: logCtx.sessionId,
+      context: { url },
+    });
+    return null;
+  }
 
   // Take the first event. URL-import frequently returns multiple when a
   // promoter page lists several; for V1 we surface the first and let
@@ -310,10 +535,7 @@ async function submitEvent(
   try {
     res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-key": env.INTERNAL_API_KEY,
-      },
+      headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
       body: JSON.stringify(payload),
     });
   } catch (err) {
@@ -349,22 +571,39 @@ export async function checkSenderRateLimit(kv: KVNamespace, fromAddr: string): P
 async function forwardToAdmin(
   message: ForwardableEmailMessage,
   env: EmailHandlerEnv,
+  logCtx: LogCtx,
   reason: string
 ): Promise<void> {
   if (!env.SUBMIT_ADMIN_FORWARD) {
-    console.warn(`[email:submit] no SUBMIT_ADMIN_FORWARD set; dropping (reason=${reason})`);
+    await logError(logCtx.db, {
+      level: "warn",
+      source: SOURCE,
+      message: "SUBMIT_ADMIN_FORWARD env not set; dropping forward attempt",
+      sessionId: logCtx.sessionId,
+      context: { reason, from: message.from, to: message.to },
+    });
     return;
   }
   try {
     await message.forward(env.SUBMIT_ADMIN_FORWARD);
-    console.log(`[email:submit] forwarded to admin reason=${reason}`);
   } catch (err) {
-    console.error(`[email:submit] admin forward failed reason=${reason}`, err);
+    await logError(logCtx.db, {
+      source: SOURCE,
+      message: "message.forward to admin failed",
+      error: err,
+      sessionId: logCtx.sessionId,
+      context: {
+        reason,
+        destination: env.SUBMIT_ADMIN_FORWARD,
+        from: message.from,
+        to: message.to,
+      },
+    });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Auto-reply (enqueued to EMAIL_JOBS; queue consumer sends via Resend)
+// Auto-reply (enqueued to EMAIL_JOBS; queue consumer sends via env.EMAIL)
 // ---------------------------------------------------------------------------
 
 type ReplyContext =
@@ -373,15 +612,33 @@ type ReplyContext =
   | { to: string; kind: "extract-failed"; subject: string; url: string }
   | { to: string; kind: "submit-failed"; subject: string };
 
-async function queueAutoReply(env: EmailHandlerEnv, ctx: ReplyContext): Promise<void> {
+async function queueAutoReply(
+  env: EmailHandlerEnv,
+  logCtx: LogCtx,
+  replyCtx: ReplyContext
+): Promise<void> {
   if (!env.EMAIL_JOBS) {
-    console.warn("[email:submit] EMAIL_JOBS unbound; skipping auto-reply");
+    await logError(logCtx.db, {
+      level: "warn",
+      source: SOURCE,
+      message: "EMAIL_JOBS queue unbound; auto-reply skipped",
+      sessionId: logCtx.sessionId,
+      context: { kind: replyCtx.kind, to: replyCtx.to },
+    });
     return;
   }
-  const msg = buildReply(ctx);
-  await env.EMAIL_JOBS.send(msg).catch((err) => {
-    console.error("[email:submit] queue send failed", err);
-  });
+  const msg = buildReply(replyCtx);
+  try {
+    await env.EMAIL_JOBS.send(msg);
+  } catch (err) {
+    await logError(logCtx.db, {
+      source: SOURCE,
+      message: "EMAIL_JOBS.send (auto-reply enqueue) failed",
+      error: err,
+      sessionId: logCtx.sessionId,
+      context: { kind: replyCtx.kind, to: replyCtx.to, subject: msg.subject },
+    });
+  }
 }
 
 export function buildReply(ctx: ReplyContext): EmailJobMessage {

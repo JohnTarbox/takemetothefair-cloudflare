@@ -21,6 +21,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db.js";
+import { logError } from "../logger.js";
 import { eventSchemaOrg } from "../schema.js";
 
 /** Per-instance params handed in at `WORKFLOW.create({ params: {...} })`. */
@@ -122,8 +123,14 @@ export class SchemaOrgSyncWorkflow extends WorkflowEntrypoint<Env, SchemaOrgSync
           return { status: result.status };
         });
       } catch (err) {
-        // Step exhausted retries — log and continue with the next event.
-        console.error(`[workflow:schema-org-sync] event ${eventId} failed:`, err);
+        // Step exhausted retries — log to error_logs and continue.
+        await logError(this.env.DB, {
+          source: "mcp:workflow:schema-org-sync",
+          message: "step exhausted retries for event",
+          error: err,
+          sessionId: event.instanceId,
+          context: { eventId, totalEvents: ids.length },
+        });
         failure++;
       }
 
@@ -139,9 +146,7 @@ export class SchemaOrgSyncWorkflow extends WorkflowEntrypoint<Env, SchemaOrgSync
  *  src/lib/schema-org/fetcher.ts handles JSON-LD parsing, redirects, and
  *  the actual normalization. Hoist that into a shared package when this
  *  workflow becomes the canonical sync path. */
-async function fetchSchemaOrgMinimal(
-  url: string
-): Promise<{
+async function fetchSchemaOrgMinimal(url: string): Promise<{
   status: "available" | "not_found" | "invalid" | "error";
   data?: { name?: string; description?: string };
 }> {

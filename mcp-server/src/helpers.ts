@@ -234,6 +234,7 @@ export function publicUrlFor(
 export async function triggerIndexNow(
   urls: string | string[],
   env: {
+    DB?: D1Database;
     MAIN_APP?: { fetch: typeof fetch };
     MAIN_APP_URL?: string;
     INTERNAL_API_KEY?: string;
@@ -252,6 +253,8 @@ export async function triggerIndexNow(
 ): Promise<void> {
   const list = Array.isArray(urls) ? urls : [urls];
   if (list.length === 0) return;
+  const { logError } = await import("./logger.js");
+  const LOG_SRC = "mcp:indexnow";
 
   // Deferred path: write an outbox row instead of firing the ping. Requires
   // db + entity metadata; if either is missing, fall through to inline.
@@ -266,7 +269,13 @@ export async function triggerIndexNow(
       });
       return;
     } catch (err) {
-      console.error("[MCP/IndexNow defer] enqueue failed, falling through:", err);
+      await logError(env.DB ?? null, {
+        level: "warn",
+        source: `${LOG_SRC}:defer`,
+        message: "pending-ping enqueue failed; falling through to inline",
+        error: err,
+        context: { entity: opts.entity, urlCount: list.length, source },
+      });
       // Don't return — let it fire inline as a degraded but-correct fallback.
     }
   }
@@ -296,18 +305,33 @@ export async function triggerIndexNow(
       );
       if (!response.ok) {
         const text = (await response.text()).slice(0, 200);
-        console.error(`[MCP/IndexNow service-binding] ${response.status} ${text}`);
+        await logError(env.DB ?? null, {
+          source: `${LOG_SRC}:service-binding`,
+          message: "internal/indexnow returned non-2xx via service binding",
+          statusCode: response.status,
+          context: { urlCount: list.length, source, bodyExcerpt: text },
+        });
       }
       return;
     } catch (error) {
-      console.error("[MCP/IndexNow service-binding] error:", error);
+      await logError(env.DB ?? null, {
+        source: `${LOG_SRC}:service-binding`,
+        message: "service-binding fetch threw; falling through to public-fetch",
+        error,
+        context: { urlCount: list.length, source },
+      });
       // Fall through to public-fetch path on transient binding error.
     }
   }
 
   // Public-fetch fallback (local dev or service binding unavailable).
   if (!env.MAIN_APP_URL || !env.INTERNAL_API_KEY) {
-    console.warn("[MCP/IndexNow] MAIN_APP_URL or INTERNAL_API_KEY missing — skipping ping");
+    await logError(env.DB ?? null, {
+      level: "warn",
+      source: LOG_SRC,
+      message: "MAIN_APP_URL or INTERNAL_API_KEY missing; skipping ping",
+      context: { urlCount: list.length, source },
+    });
     return;
   }
   try {
@@ -321,10 +345,20 @@ export async function triggerIndexNow(
     });
     if (!response.ok) {
       const text = (await response.text()).slice(0, 200);
-      console.error(`[MCP/IndexNow] ${response.status} ${text}`);
+      await logError(env.DB ?? null, {
+        source: LOG_SRC,
+        message: "internal/indexnow returned non-2xx via public fetch",
+        statusCode: response.status,
+        context: { urlCount: list.length, source, bodyExcerpt: text },
+      });
     }
   } catch (error) {
-    console.error("[MCP/IndexNow] network error:", error);
+    await logError(env.DB ?? null, {
+      source: LOG_SRC,
+      message: "internal/indexnow public fetch threw",
+      error,
+      context: { urlCount: list.length, source },
+    });
   }
 }
 

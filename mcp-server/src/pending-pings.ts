@@ -24,6 +24,7 @@ import { and, asc, eq, isNull, lt, sql } from "drizzle-orm";
 import { pendingSearchPings } from "./schema.js";
 import type { Db } from "./db.js";
 import { publicUrlFor } from "./helpers.js";
+import { logError } from "./logger.js";
 
 export type EntityType = "vendor" | "venue" | "event" | "promoter" | "blog";
 export type PingAction = "create" | "update" | "status_change";
@@ -56,6 +57,7 @@ export async function enqueuePendingPing(db: Db, args: EnqueueArgs): Promise<voi
 }
 
 interface FlushEnv {
+  DB?: D1Database;
   MAIN_APP?: { fetch: typeof fetch };
   MAIN_APP_URL?: string;
   INTERNAL_API_KEY?: string;
@@ -189,10 +191,24 @@ export async function claimAndFlush(
       const submitted = await submitIndexNowBatch(env, chunk, opts.source ?? "flush-pending");
       if (!submitted.ok) {
         response = submitted.error ?? `HTTP ${submitted.status}`;
+        await logError(env.DB ?? null, {
+          source: "mcp:pending-pings:flush",
+          message: "submitIndexNowBatch returned non-ok",
+          statusCode: submitted.status,
+          sessionId: batchId,
+          context: { chunkStart: i, chunkSize: chunk.length, error: submitted.error },
+        });
         break;
       }
     } catch (err) {
       response = err instanceof Error ? err.message : String(err);
+      await logError(env.DB ?? null, {
+        source: "mcp:pending-pings:flush",
+        message: "submitIndexNowBatch threw",
+        error: err,
+        sessionId: batchId,
+        context: { chunkStart: i, chunkSize: chunk.length },
+      });
       break;
     }
   }
