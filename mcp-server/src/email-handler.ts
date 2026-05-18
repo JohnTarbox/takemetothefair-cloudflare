@@ -36,7 +36,7 @@ import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { getDb } from "./db.js";
 import { inboundEmails } from "./schema.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { resolveIntent, shouldForwardToAdmin, type EmailIntent } from "./email-intents.js";
 
 // ---------------------------------------------------------------------------
@@ -168,9 +168,15 @@ export async function handleInboundEmail(
 
     // 6. INSERT inbound_emails row, deduping on message_id.
     //    onConflictDoNothing pairs with the partial UNIQUE index added
-    //    in drizzle/0073. .returning() lets us detect the duplicate
-    //    case — an empty array means another delivery of this same
-    //    message already landed and is being processed by its workflow.
+    //    in drizzle/0073. SQLite requires that an ON CONFLICT target
+    //    matching a PARTIAL unique index repeat the partial index's
+    //    WHERE clause verbatim — otherwise it errors with "ON CONFLICT
+    //    clause does not match any PRIMARY KEY or UNIQUE constraint".
+    //    Hit in prod 2026-05-18 15:50 (silently dropped one inbound
+    //    email; rescued manually). Fix: add the same WHERE.
+    //    .returning() lets us detect the duplicate case — an empty
+    //    array means another delivery of this same message already
+    //    landed and is being processed by its workflow.
     const rowId = crypto.randomUUID();
     const now = new Date();
     let inserted: { id: string }[];
@@ -195,7 +201,10 @@ export async function handleInboundEmail(
           messageId,
           createdAt: now,
         })
-        .onConflictDoNothing({ target: inboundEmails.messageId })
+        .onConflictDoNothing({
+          target: inboundEmails.messageId,
+          where: sql`${inboundEmails.messageId} IS NOT NULL`,
+        })
         .returning({ id: inboundEmails.id });
     } catch (err) {
       await logError(env.DB, {
