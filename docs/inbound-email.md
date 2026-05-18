@@ -1,30 +1,58 @@
-# Inbound Email — `submit@meetmeatthefair.com`
+# Inbound Email
 
-Receives event submissions via email and turns them into community events
-in the database (PENDING status; admin reviews before publication).
+Receives mail at several `@meetmeatthefair.com` addresses, routes by
+intent (event submission / correction / support / press / unsubscribe /
+catch-all), and dispatches the per-message work into a durable
+Cloudflare Workflow.
+
+## Intent vocabulary
+
+| Address              | Intent        | What happens                                                                                                          | Auto-reply                                                                                                                  |
+| -------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `submit@`            | `submit`      | URL-import pipeline → `events` row PENDING (existing behavior)                                                        | "Your submission is being reviewed…" or "Please include a link" / "Couldn't extract" / "Couldn't save" depending on outcome |
+| `corrections@`       | `correction`  | `admin_actions` row with `action: "email.correction_request"` for the admin queue. Original forwarded to admin Gmail. | "Thanks, our team will review your correction"                                                                              |
+| `support@`, `hello@` | `support`     | No DB writes. Original forwarded to admin Gmail.                                                                      | "We've received your message and our team will get back to you"                                                             |
+| `press@`             | `press`       | No DB writes. Original forwarded to admin Gmail.                                                                      | "A team member will follow up with media materials"                                                                         |
+| `unsubscribe@`       | `unsubscribe` | `UPDATE newsletter_subscribers SET unsubscribed=true WHERE email=…`. Idempotent. Forwarded to admin Gmail.            | "You've been unsubscribed"                                                                                                  |
+| anything else        | `unknown`     | No DB writes. Original forwarded to admin Gmail.                                                                      | **None** — silent forward (anti-reflective-spam)                                                                            |
+
+The intent → handler dispatch is documented at `mcp-server/src/email-intents.ts`; the per-intent handler files live in `mcp-server/src/email-handlers/`.
 
 ## Architecture
 
 ```
 sender ──email──> Cloudflare Email Routing
                        │
-                       ▼ (route: submit@ → Worker)
+                       ▼ (route: <intent>@ → Worker)
               meetmeatthefair-mcp (Worker)
                        │
-                       ▼ email() handler
-              mcp-server/src/email-handler.ts
+                       ▼ email() entrypoint
+              mcp-server/src/email-handler.ts (~250 LOC)
+                       │  parse + rate-limit + resolveIntent
+                       │  message.forward() if intent !== "submit"
+                       │  INSERT inbound_emails row (status=received)
+                       │  env.INBOUND_EMAIL.create({messageRowId, intent})
                        │
-                       ├──> POST /api/admin/import-url/fetch   (X-Internal-Key)
-                       ├──> POST /api/admin/import-url/extract (X-Internal-Key)
-                       ├──> POST /api/suggest-event/submit     (X-Internal-Key,
-                       │                                        source: "email")
-                       └──> EMAIL_JOBS queue ──> env.EMAIL.send (auto-reply
-                                                  via Cloudflare Email Sending,
-                                                  public beta)
+                       ▼
+              InboundEmailWorkflow (durable; per message instance)
+                       ├ step 1: mark-processing  (UPDATE inbound_emails)
+                       ├ step 2: dispatch          (email-handlers/<intent>.ts)
+                       │                            ↳ submit → /api/admin/import-url/fetch
+                       │                                       /api/admin/import-url/extract
+                       │                                       /api/suggest-event/submit
+                       │                            ↳ correction → INSERT admin_actions
+                       │                            ↳ unsubscribe → UPDATE newsletter_subscribers
+                       │                            ↳ others → noop
+                       ├ step 3: send-reply        (EMAIL_JOBS queue → env.EMAIL.send)
+                       └ step 4: mark-done         (UPDATE inbound_emails)
 ```
 
-Failures (parse error, no URL, extract failure, submit failure) forward
-the raw message to `SUBMIT_ADMIN_FORWARD` so nothing is silently dropped.
+Every message gets a row in `inbound_emails` regardless of intent —
+that's the queryable inbox for the future admin UI (PR #2) and the
+source of truth for the workflow's state machine. Each step's
+`event.instanceId` is used as the `sessionId` in `error_logs`, so
+filtering `/admin/logs?source=mcp:workflow:inbound-email` and pasting
+an instance UUID reconstructs one email's full timeline.
 
 ## One-time dashboard setup
 
@@ -78,9 +106,21 @@ sender gets nothing back.
 The route at step 3 references the Worker by name. To avoid a transient
 period where mail arrives at a Worker without an `email()` handler:
 
-1. Merge this PR.
-2. Deploy the Worker (`cd mcp-server && npm run deploy`).
-3. Then create the dashboard route.
+1. **Apply the migration**: `npm run db:migrate:prod` from `main` (after
+   merge) — applies `0072_create_inbound_emails.sql`. Additive-only, but
+   the Worker deploy below references the table so this must run first.
+   Per `feedback_db_migrate_prod_picks_up_unmerged_files.md`: only run
+   from `main`, not the feature branch.
+2. **Deploy the Worker**: `cd mcp-server && npm run deploy`.
+3. **Add CF Email Routing rules** in the dashboard for each new address
+   (Email Routing → Routes → Create address). One rule per address →
+   "Send to a Worker" → `meetmeatthefair-mcp`:
+   - `corrections@meetmeatthefair.com`
+   - `support@meetmeatthefair.com`
+   - `hello@meetmeatthefair.com`
+   - `press@meetmeatthefair.com`
+   - `unsubscribe@meetmeatthefair.com`
+   - **Catch-all** (Email Routing → Catch-all address → "Send to a Worker")
 
 ## Configuration knobs
 

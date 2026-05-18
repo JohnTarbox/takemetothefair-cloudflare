@@ -1,17 +1,14 @@
 /**
- * Unit tests for the inbound-email handler's pure helpers.
- *
- * We test the parts we can without mocking the full Cloudflare environment:
- *   - pickPrimaryUrl: text + HTML URL extraction
- *   - checkSenderRateLimit: KV-backed counter
- *   - buildReply: outbound auto-reply templating
+ * Unit tests for the inbound-email entrypoint's pure helpers
+ * (pickPrimaryUrl, checkSenderRateLimit). Auto-reply templating moved
+ * to email-reply-builder.test.ts after the multi-intent refactor.
  *
  * The end-to-end handleInboundEmail flow is left for an integration test —
- * it requires mocking PostalMime + fetch + ForwardableEmailMessage, which
- * is more setup than the value justifies for a public-beta V1.
+ * it requires mocking PostalMime + fetch + ForwardableEmailMessage +
+ * the workflow binding, which is more setup than the value justifies.
  */
 import { describe, expect, it, vi } from "vitest";
-import { pickPrimaryUrl, checkSenderRateLimit, buildReply } from "../src/email-handler.js";
+import { pickPrimaryUrl, checkSenderRateLimit } from "../src/email-handler.js";
 
 describe("pickPrimaryUrl — happy path", () => {
   it("extracts the first http(s) URL from a text body", () => {
@@ -110,85 +107,6 @@ describe("checkSenderRateLimit — KV-backed counter", () => {
   });
 });
 
-describe("buildReply — auto-reply templating", () => {
-  it("subject is prefixed with Re: and clamped to 200 chars", () => {
-    const long = "x".repeat(300);
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "ok",
-      subject: long,
-      eventName: "Fryeburg Fair",
-      hasAttachments: false,
-    });
-    expect(msg.subject.startsWith("Re: ")).toBe(true);
-    expect(msg.subject.length).toBeLessThanOrEqual(200);
-  });
-
-  it("ok reply includes the event name and queue source tag", () => {
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "ok",
-      subject: "Fryeburg",
-      eventName: "Fryeburg Fair 2026",
-      hasAttachments: false,
-    });
-    expect(msg.text).toContain("Fryeburg Fair 2026");
-    expect(msg.source).toBe("email:submit-reply");
-    expect(msg.to).toBe("alice@example.com");
-  });
-
-  it("ok reply with attachments warns we don't process them", () => {
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "ok",
-      subject: "",
-      eventName: "Some Event",
-      hasAttachments: true,
-    });
-    expect(msg.text).toMatch(/don't process attachments/i);
-  });
-
-  it("ok reply without attachments doesn't mention them", () => {
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "ok",
-      subject: "",
-      eventName: "Some Event",
-      hasAttachments: false,
-    });
-    expect(msg.text).not.toMatch(/attachment/i);
-  });
-
-  it("no-url reply asks the sender to include a link", () => {
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "no-url",
-      subject: "event idea",
-      hasAttachments: false,
-    });
-    expect(msg.text).toMatch(/URL|link/);
-  });
-
-  it("extract-failed reply mentions the URL that failed", () => {
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "extract-failed",
-      subject: "fair",
-      url: "https://broken.example.com/page",
-    });
-    expect(msg.text).toContain("https://broken.example.com/page");
-  });
-
-  it("HTML body is escaped (no raw < or > from user content)", () => {
-    const msg = buildReply({
-      to: "alice@example.com",
-      kind: "ok",
-      subject: "<script>alert(1)</script>",
-      eventName: "<b>Boldface Fair</b>",
-      hasAttachments: false,
-    });
-    // The event name appears in text body too; ensure HTML body has it escaped.
-    expect(msg.html).not.toContain("<b>Boldface");
-    expect(msg.html).toContain("&lt;b&gt;Boldface");
-  });
-});
+// buildReply tests moved to __tests__/email-reply-builder.test.ts after
+// the multi-intent refactor — that file owns the templates now and the
+// signature changed from (ctx) to (kind, to, params).
