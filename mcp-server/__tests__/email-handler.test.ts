@@ -8,7 +8,7 @@
  * the workflow binding, which is more setup than the value justifies.
  */
 import { describe, expect, it, vi } from "vitest";
-import { pickPrimaryUrl, checkSenderRateLimit } from "../src/email-handler.js";
+import { pickPrimaryUrl, checkSenderRateLimit, computeRateLimit } from "../src/email-handler.js";
 
 describe("pickPrimaryUrl — happy path", () => {
   it("extracts the first http(s) URL from a text body", () => {
@@ -104,6 +104,55 @@ describe("checkSenderRateLimit — KV-backed counter", () => {
     const ok = await checkSenderRateLimit(kv, "weird@example.com");
     expect(ok).toBe(true);
     expect(puts[0].value).toBe("1");
+  });
+
+  it("respects the explicit limit argument (admin tier = 100/day)", async () => {
+    // Counter at 50 with admin's 100 limit → still allowed
+    const { kv } = mockKv({ "email-submit:admin@example.com": "50" });
+    expect(await checkSenderRateLimit(kv, "admin@example.com", 100)).toBe(true);
+  });
+
+  it("rejects when count meets the explicit limit, even above the 5 floor", async () => {
+    // Counter at 100 with admin's 100 limit → blocked
+    const { kv, puts } = mockKv({ "email-submit:admin@example.com": "100" });
+    const ok = await checkSenderRateLimit(kv, "admin@example.com", 100);
+    expect(ok).toBe(false);
+    // Don't write back the counter on rejection (same invariant as the
+    // default-limit case): preserves the lockout window without extending it.
+    expect(puts).toEqual([]);
+  });
+});
+
+describe("computeRateLimit — per-sender tier policy", () => {
+  it("returns the anonymous floor (5) when no user row exists", () => {
+    expect(computeRateLimit(null)).toBe(5);
+  });
+
+  it("returns the anonymous floor for an unverified user, regardless of role", () => {
+    // Critical: prevents a "create user with role=ADMIN, never verify,
+    // send spam at admin allowance" exploit.
+    expect(computeRateLimit({ role: "ADMIN", emailVerified: null })).toBe(5);
+    expect(computeRateLimit({ role: "PROMOTER", emailVerified: null })).toBe(5);
+  });
+
+  it("returns 10 for a verified USER", () => {
+    expect(computeRateLimit({ role: "USER", emailVerified: new Date() })).toBe(10);
+  });
+
+  it("returns 20 for a verified VENDOR", () => {
+    expect(computeRateLimit({ role: "VENDOR", emailVerified: new Date() })).toBe(20);
+  });
+
+  it("returns 30 for a verified PROMOTER", () => {
+    expect(computeRateLimit({ role: "PROMOTER", emailVerified: new Date() })).toBe(30);
+  });
+
+  it("returns 100 for a verified ADMIN", () => {
+    expect(computeRateLimit({ role: "ADMIN", emailVerified: new Date() })).toBe(100);
+  });
+
+  it("returns the anonymous floor for an unrecognized role (defense against schema drift)", () => {
+    expect(computeRateLimit({ role: "WHATEVER", emailVerified: new Date() })).toBe(5);
   });
 });
 

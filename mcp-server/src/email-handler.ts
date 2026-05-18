@@ -35,8 +35,8 @@
 import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { getDb } from "./db.js";
-import { inboundEmails } from "./schema.js";
-import { eq } from "drizzle-orm";
+import { inboundEmails, users } from "./schema.js";
+import { eq, sql } from "drizzle-orm";
 import { resolveIntent, shouldForwardToAdmin, type EmailIntent } from "./email-intents.js";
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,19 @@ export interface EmailHandlerEnv {
 // ForwardableEmailMessage is global per @cloudflare/workers-types.
 export type { ForwardableEmailMessage } from "@cloudflare/workers-types";
 
-const PER_SENDER_LIMIT = 5;
+// Per-sender rate-limit tiers. Daily quota varies by sender's account
+// state. The anonymous floor preserves anti-reflection behavior for
+// senders who don't have a user row (random forged addresses, spammers).
+// Verified users get more capacity scaled to their typical legitimate
+// usage. Operators (ADMIN) effectively get unlimited for normal use.
+// See resolveRateLimitForSender below for the lookup logic.
+const ANONYMOUS_LIMIT = 5;
+const ROLE_LIMITS: Record<string, number> = {
+  USER: 10, // established verified consumer
+  VENDOR: 20, // submits applications regularly
+  PROMOTER: 30, // actively manages events
+  ADMIN: 100, // operator; effectively unlimited for normal use
+};
 const PER_SENDER_WINDOW_SEC = 86_400;
 const MAX_BODY_LEN = 50_000; // chars of body retained for URL extraction
 const BODY_EXCERPT_LEN = 500; // chars stored for admin preview
@@ -128,7 +140,11 @@ export async function handleInboundEmail(
     }
 
     // 2. Rate limit (silent drop on hit — anti-reflection)
-    const allowed = await checkSenderRateLimit(env.OAUTH_KV, fromAddr);
+    // Tiered: ADMIN/PROMOTER/VENDOR/USER verified senders get higher
+    // daily allowances than the anonymous floor. See ROLE_LIMITS and
+    // resolveRateLimitForSender for the lookup logic.
+    const senderLimit = await resolveRateLimitForSender(env.DB, fromAddr);
+    const allowed = await checkSenderRateLimit(env.OAUTH_KV, fromAddr, senderLimit);
     if (!allowed) {
       await logError(env.DB, {
         level: "warn",
@@ -139,7 +155,7 @@ export async function handleInboundEmail(
           from: fromAddr,
           subject,
           to: toAddr,
-          limit: PER_SENDER_LIMIT,
+          limit: senderLimit,
           windowSec: PER_SENDER_WINDOW_SEC,
         },
       });
@@ -321,11 +337,65 @@ export function pickPrimaryUrl(text: string, html: string): string | null {
 // Per-sender rate limit (KV-backed)
 // ---------------------------------------------------------------------------
 
-export async function checkSenderRateLimit(kv: KVNamespace, fromAddr: string): Promise<boolean> {
+/**
+ * Pure policy function: given a sender's lookup result (or null for
+ * anonymous), return the per-day rate limit. Exported for unit tests.
+ *
+ * Unverified senders get the anonymous floor regardless of role.
+ * Prevents a "create user with role=ADMIN, never verify, send spam at
+ * admin allowance" exploit if user creation ever becomes self-serve
+ * at scale.
+ */
+export function computeRateLimit(
+  lookup: { role: string; emailVerified: Date | null } | null
+): number {
+  if (!lookup) return ANONYMOUS_LIMIT;
+  if (!lookup.emailVerified) return ANONYMOUS_LIMIT;
+  return ROLE_LIMITS[lookup.role] ?? ANONYMOUS_LIMIT;
+}
+
+/**
+ * Resolve the per-day rate limit for a sender based on their user record.
+ * Anonymous (no user row) and unverified senders get the ANONYMOUS_LIMIT
+ * floor. Verified users get the limit for their role.
+ *
+ * Fail-safe: on any DB error, returns the anonymous floor rather than
+ * granting capacity we can't verify. The send still proceeds (subject
+ * to the floor); we just don't unlock the tiered allowance.
+ *
+ * The KV counter itself (`email-submit:<addr>`) is unchanged and remains
+ * keyed by from-address, not by user — so the same anti-reflection
+ * protection works whether or not the sender has an account.
+ */
+export async function resolveRateLimitForSender(db: D1Database, fromAddr: string): Promise<number> {
+  try {
+    const drizzleDb = getDb(db);
+    const rows = await drizzleDb
+      .select({ role: users.role, emailVerified: users.emailVerified })
+      .from(users)
+      .where(sql`LOWER(${users.email}) = LOWER(${fromAddr})`)
+      .limit(1);
+    return computeRateLimit(rows[0] ?? null);
+  } catch {
+    return ANONYMOUS_LIMIT;
+  }
+}
+
+/**
+ * Increment-and-check the KV-backed per-sender counter. The `limit`
+ * parameter defaults to ANONYMOUS_LIMIT so callers can omit it for the
+ * anti-reflection-only case; the email entrypoint passes a per-sender
+ * limit resolved via resolveRateLimitForSender.
+ */
+export async function checkSenderRateLimit(
+  kv: KVNamespace,
+  fromAddr: string,
+  limit: number = ANONYMOUS_LIMIT
+): Promise<boolean> {
   const key = `email-submit:${fromAddr}`;
   const raw = await kv.get(key);
   const count = raw ? Number.parseInt(raw, 10) || 0 : 0;
-  if (count >= PER_SENDER_LIMIT) return false;
+  if (count >= limit) return false;
   await kv.put(key, String(count + 1), { expirationTtl: PER_SENDER_WINDOW_SEC });
   return true;
 }
