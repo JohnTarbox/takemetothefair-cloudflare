@@ -49,6 +49,32 @@ const statusBadge: Record<string, "success" | "info" | "warning" | "danger" | "d
 
 type DecisionAction = "applied" | "rejected" | "needs-more-info";
 
+interface SenderRow {
+  fromAddress: string;
+  total: number;
+  replied: number;
+  failed: number;
+  eventsCreated: number;
+  approved: number;
+  pending: number;
+  rejected: number;
+  approvalRate: number | null;
+  noEventOk: number;
+  topState: string | null;
+  outOfArea: boolean;
+  firstSeen: string;
+  lastSeen: string;
+  trustStatus: string;
+  notes: string | null;
+}
+
+const trustBadge: Record<string, "success" | "warning" | "danger" | "default"> = {
+  trusted: "success",
+  watchlist: "warning",
+  blocked: "danger",
+  unknown: "default",
+};
+
 const INTENTS = ["", "submit", "correction", "support", "press", "unsubscribe", "unknown"];
 const WINDOWS = [
   { hours: 24, label: "24h" },
@@ -58,6 +84,7 @@ const WINDOWS = [
 
 export default function AdminInboundEmailsPage() {
   const [rows, setRows] = useState<InboundEmailRow[]>([]);
+  const [senders, setSenders] = useState<SenderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [intentFilter, setIntentFilter] = useState<string>("");
@@ -67,6 +94,22 @@ export default function AdminInboundEmailsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
+  const [sendersOpen, setSendersOpen] = useState(false);
+
+  const fetchSenders = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/inbound-emails/senders?limit=50");
+      if (!res.ok) return;
+      const data = (await res.json()) as { senders: SenderRow[] };
+      setSenders(data.senders);
+    } catch (err) {
+      console.error("Failed to fetch senders:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSenders();
+  }, [fetchSenders]);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -154,6 +197,83 @@ export default function AdminInboundEmailsPage() {
           stuck or failed rows.
         </p>
       </div>
+
+      {/* Sender-quality summary panel — collapsed by default. Shows per-
+          sender aggregates (volume, approval rate, top state, out-of-area
+          flag, operator trust annotation) so admins can spot real-event
+          submitters vs out-of-area or bogus senders without manually
+          scanning the row list. Trust annotation read-only here; write
+          via the set_email_sender_trust MCP tool. */}
+      <Card className="mb-6">
+        <CardHeader className="cursor-pointer" onClick={() => setSendersOpen((v) => !v)}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">
+                Sender summary ({senders.length})
+              </h2>
+              <p className="text-sm text-gray-500">
+                Top submitters by volume, with outcome breakdown and trust annotation.
+              </p>
+            </div>
+            <span className="text-sm text-gray-500">{sendersOpen ? "▾" : "▸"}</span>
+          </div>
+        </CardHeader>
+        {sendersOpen && (
+          <CardContent className="p-0">
+            {senders.length === 0 ? (
+              <p className="px-3 py-4 text-sm text-gray-500">No submit-intent senders yet.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Sender</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-700">Inbound</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-700">Events</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-700">Approved</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-700">Rejected</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-700">Approval %</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Top state</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Trust</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-700">Last seen</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {senders.map((s) => (
+                    <tr key={s.fromAddress} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 break-all">{s.fromAddress}</td>
+                      <td className="px-3 py-2 text-right">{s.total}</td>
+                      <td className="px-3 py-2 text-right">{s.eventsCreated}</td>
+                      <td className="px-3 py-2 text-right">{s.approved}</td>
+                      <td className="px-3 py-2 text-right">{s.rejected}</td>
+                      <td className="px-3 py-2 text-right text-gray-600">
+                        {s.approvalRate === null ? "—" : `${Math.round(s.approvalRate * 100)}%`}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {s.topState ? (
+                          <span className={s.outOfArea ? "text-red-600 font-medium" : ""}>
+                            {s.topState}
+                            {s.outOfArea && " ⚠"}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <Badge variant={trustBadge[s.trustStatus] ?? "default"}>
+                          {s.trustStatus}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                        {new Date(s.lastSeen).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </CardContent>
+        )}
+      </Card>
 
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="flex gap-1">

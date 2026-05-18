@@ -48,6 +48,7 @@ import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-searc
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
+import { registerEmailSenderTools } from "./admin-email-senders.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -73,6 +74,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Outbox drainer for the defer_search_ping flag — fires one batched
   // IndexNow call instead of N inline pings after a bulk ingestion run.
   registerFlushPendingSearchPingsTool(server, db, auth, env);
+
+  // Sender-quality + trust annotation for inbound email submissions
+  // (drizzle/0075). Adds get_email_submitter_quality (read) and
+  // set_email_sender_trust (write).
+  registerEmailSenderTools(server, db, auth);
 
   // event_data_citations provenance tooling (drizzle/0064). Adds
   // create_event_citation, list_event_citations, update_event_citation,

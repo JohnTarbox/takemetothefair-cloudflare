@@ -1279,3 +1279,21 @@ export type EnrichmentLog = typeof enrichmentLog.$inferSelect;
 export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
 export type CompetitorDomain = typeof competitorDomains.$inferSelect;
 export type InboundEmail = typeof inboundEmails.$inferSelect;
+
+// Operator-set trust annotation for email senders. Read-side surfaces on
+// /admin/inbound-emails sender summary panel; write via the
+// set_email_sender_trust MCP tool. trust_status values: unknown (default),
+// trusted, watchlist, blocked. See drizzle/0075 for status semantics.
+export const inboundEmailSenders = sqliteTable(
+  "inbound_email_senders",
+  {
+    email: text("email").primaryKey(),
+    trustStatus: text("trust_status").notNull().default("unknown"),
+    notes: text("notes"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_inbound_senders_trust").on(t.trustStatus)]
+);
+
+export type InboundEmailSender = typeof inboundEmailSenders.$inferSelect;
