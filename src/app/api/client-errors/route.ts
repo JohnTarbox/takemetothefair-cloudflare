@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { isKnownClientNoise } from "@/lib/client-error-filter";
 
 export const runtime = "edge";
 
@@ -72,6 +73,13 @@ export async function POST(request: Request) {
     } catch {
       // Non-absolute URL; leave pathname undefined
     }
+  }
+
+  // Drop React streaming/hydration noise before it reaches error_logs.
+  // See src/lib/client-error-filter.ts for the rationale and what
+  // exactly is filtered. Return 204 so the client doesn't retry.
+  if (isKnownClientNoise(stack)) {
+    return new NextResponse(null, { status: 204 });
   }
 
   const db = getCloudflareDb();
