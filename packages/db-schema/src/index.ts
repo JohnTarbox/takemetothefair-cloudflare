@@ -1207,6 +1207,40 @@ export const ga4LivenessLog = sqliteTable(
   (t) => [index("idx_ga4_liveness_log_checked_at").on(t.checkedAt)]
 );
 
+// Inbound email persistence — drizzle/0072. Every message received by
+// the MCP Worker's email() entrypoint gets a row here, driving the
+// InboundEmailWorkflow's status state machine and providing an
+// admin-queryable inbox. See docs/inbound-email.md for intent vocab.
+export const inboundEmails = sqliteTable(
+  "inbound_emails",
+  {
+    id: text("id").primaryKey(),
+    receivedAt: integer("received_at", { mode: "timestamp" }).notNull(),
+    fromAddress: text("from_address").notNull(),
+    toAddress: text("to_address").notNull(),
+    subject: text("subject"),
+    /** submit | correction | support | press | unsubscribe | unknown */
+    intent: text("intent").notNull(),
+    /** received | processing | replied | forwarded | failed */
+    status: text("status").notNull().default("received"),
+    workflowInstanceId: text("workflow_instance_id"),
+    bodyTextExcerpt: text("body_text_excerpt"),
+    /** URL extracted from the body by pickPrimaryUrl in the entrypoint —
+     *  the submit handler reads this rather than re-parsing the excerpt. */
+    parsedUrl: text("parsed_url"),
+    attachmentCount: integer("attachment_count").notNull().default(0),
+    rawSize: integer("raw_size"),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_inbound_emails_received_at").on(t.receivedAt),
+    index("idx_inbound_emails_intent").on(t.intent),
+    index("idx_inbound_emails_status").on(t.status),
+    index("idx_inbound_emails_from").on(t.fromAddress),
+  ]
+);
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type Venue = typeof venues.$inferSelect;
@@ -1233,3 +1267,4 @@ export type RecommendationItem = typeof recommendationItems.$inferSelect;
 export type EnrichmentLog = typeof enrichmentLog.$inferSelect;
 export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
 export type CompetitorDomain = typeof competitorDomains.$inferSelect;
+export type InboundEmail = typeof inboundEmails.$inferSelect;

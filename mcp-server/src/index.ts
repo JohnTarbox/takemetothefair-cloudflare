@@ -17,6 +17,7 @@ import { logError } from "./logger.js";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
 import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
+import type { InboundEmailParams } from "./workflows/inbound-email.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -56,6 +57,9 @@ interface Env {
   SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
   RECOMMENDATIONS_SCAN: Workflow<RecommendationsScanParams>;
   EVENT_DATE_DRIFT: Workflow<EventDateDriftParams>;
+  /** Inbound email orchestrator. Created from email() entrypoint, one
+   *  instance per received message. See workflows/inbound-email.ts. */
+  INBOUND_EMAIL: Workflow<InboundEmailParams>;
   // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
   // Empty in local dev; populated in production so `whoami` can answer
   // "which bundle is the server running?" without a client round-trip.
@@ -566,6 +570,7 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
 export { SchemaOrgSyncWorkflow } from "./workflows/schema-org-sync.js";
 export { RecommendationsScanWorkflow } from "./workflows/recommendations-scan.js";
 export { EventDateDriftWorkflow } from "./workflows/event-date-drift.js";
+export { InboundEmailWorkflow } from "./workflows/inbound-email.js";
 
 // ---------------------------------------------------------------------------
 // Workflow trigger endpoints (HTTP escape hatch for Pages)
@@ -643,6 +648,75 @@ async function handleWorkflowEndpoints(
         },
         404
       );
+    }
+  }
+
+  // GET /api/admin/workflows/inbound-email/status/:id
+  // Inbound-email workflows are normally created from the email()
+  // entrypoint, not from outside. This route exists for the future
+  // admin inbox UI (PR #2) to poll status of a specific inbound message.
+  const inboundStatusMatch = url.pathname.match(
+    /^\/api\/admin\/workflows\/inbound-email\/status\/([A-Za-z0-9_-]+)$/
+  );
+  if (inboundStatusMatch && request.method === "GET") {
+    const id = inboundStatusMatch[1];
+    try {
+      const instance = await env.INBOUND_EMAIL.get(id);
+      const state = await instance.status();
+      return jsonResponse({ workflowId: id, ...state });
+    } catch (err) {
+      return jsonResponse(
+        { error: "workflow_not_found", message: err instanceof Error ? err.message : "unknown" },
+        404
+      );
+    }
+  }
+
+  // POST /api/admin/workflows/inbound-email/start
+  // Admin "retry this inbound email" trigger. Takes { messageRowId,
+  // intent } — the inbound_emails row must already exist (the entrypoint
+  // creates it before calling .create() normally). Useful for re-running
+  // a workflow that errored out or for testing intent changes.
+  if (url.pathname === "/api/admin/workflows/inbound-email/start" && request.method === "POST") {
+    let body: { messageRowId?: unknown; intent?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    if (typeof body.messageRowId !== "string" || body.messageRowId.length === 0) {
+      return jsonResponse({ error: "messageRowId required (non-empty string)" }, 400);
+    }
+    if (typeof body.intent !== "string") {
+      return jsonResponse({ error: "intent required" }, 400);
+    }
+    const validIntents = new Set([
+      "submit",
+      "correction",
+      "support",
+      "press",
+      "unsubscribe",
+      "unknown",
+    ]);
+    if (!validIntents.has(body.intent)) {
+      return jsonResponse({ error: "intent must be one of: " + [...validIntents].join(", ") }, 400);
+    }
+    try {
+      const instance = await env.INBOUND_EMAIL.create({
+        params: {
+          messageRowId: body.messageRowId,
+          intent: body.intent as InboundEmailParams["intent"],
+        },
+      });
+      return jsonResponse({ workflowId: instance.id, messageRowId: body.messageRowId });
+    } catch (err) {
+      await logError(env.DB, {
+        source: "mcp:workflows-api",
+        message: "Failed to create inbound-email workflow instance",
+        error: err,
+        context: { messageRowId: body.messageRowId, intent: body.intent },
+      });
+      return jsonResponse({ error: "workflow_create_failed" }, 500);
     }
   }
 

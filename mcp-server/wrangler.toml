@@ -140,3 +140,10 @@ class_name = "RecommendationsScanWorkflow"
 name = "event-date-drift"
 binding = "EVENT_DATE_DRIFT"
 class_name = "EventDateDriftWorkflow"
+
+# Inbound email orchestrator. Fired by the email() entrypoint, one
+# instance per received message. See workflows/inbound-email.ts.
+[[workflows]]
+name = "inbound-email"
+binding = "INBOUND_EMAIL"
+class_name = "InboundEmailWorkflow"
