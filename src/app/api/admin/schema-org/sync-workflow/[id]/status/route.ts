@@ -15,39 +15,37 @@ interface Params {
   params: Promise<{ id: string }>;
 }
 
-type WorkflowInstance = {
-  status: () => Promise<{
-    status: "queued" | "running" | "paused" | "complete" | "errored" | "terminated" | "waiting";
-    output?: unknown;
-    error?: { message: string; name: string } | null;
-  }>;
-};
-
 export async function GET(request: NextRequest, { params }: Params) {
   const fail = await requireAdminAuth(request);
   if (fail) return fail;
 
   const { id } = await params;
 
-  const env = getCloudflareEnv() as unknown as {
-    SCHEMA_ORG_SYNC?: { get: (id: string) => Promise<WorkflowInstance> };
-  };
-
-  if (!env.SCHEMA_ORG_SYNC) {
-    return NextResponse.json({ error: "workflow_unbound" }, { status: 503 });
+  // Pages can't bind the workflow class — proxy through the MCP Worker,
+  // which has the binding and an X-Internal-Key-gated status endpoint.
+  // See /api/admin/schema-org/sync-workflow/start for the same pattern.
+  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  if (!cfEnv.INTERNAL_API_KEY) {
+    return NextResponse.json(
+      { error: "internal_misconfigured", message: "INTERNAL_API_KEY missing on Pages env" },
+      { status: 503 }
+    );
   }
 
   try {
-    const instance = await env.SCHEMA_ORG_SYNC.get(id);
-    const state = await instance.status();
-    return NextResponse.json({ workflowId: id, ...state });
+    const upstream = await fetch(
+      `https://mcp.meetmeatthefair.com/api/admin/workflows/schema-org-sync/status/${encodeURIComponent(id)}`,
+      { headers: { "x-internal-key": cfEnv.INTERNAL_API_KEY } }
+    );
+    const body = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+    return NextResponse.json(body, { status: upstream.status });
   } catch (error) {
     return NextResponse.json(
       {
-        error: "workflow_not_found",
+        error: "workflow_proxy_failed",
         message: error instanceof Error ? error.message : "unknown",
       },
-      { status: 404 }
+      { status: 500 }
     );
   }
 }

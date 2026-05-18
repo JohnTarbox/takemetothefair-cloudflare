@@ -115,33 +115,51 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const env = getCloudflareEnv() as unknown as {
-    SCHEMA_ORG_SYNC?: { create: (opts: { params: unknown }) => Promise<{ id: string }> };
-  };
-
-  if (!env.SCHEMA_ORG_SYNC) {
+  // Pages can't bind workflow classes directly (Cloudflare limitation —
+  // see comment in wrangler.toml + docs at
+  // https://developers.cloudflare.com/workflows/build/call-workflows-from-pages/).
+  // We HTTP-fetch the MCP Worker, which has the binding and exposes a
+  // matching endpoint at /api/admin/workflows/schema-org-sync/start.
+  // Same X-Internal-Key auth pattern the cron sweeps + email handler use.
+  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  if (!cfEnv.INTERNAL_API_KEY) {
     return NextResponse.json(
-      {
-        error: "workflow_unbound",
-        message: "SCHEMA_ORG_SYNC binding missing — local dev or misconfigured",
-      },
+      { error: "internal_misconfigured", message: "INTERNAL_API_KEY missing on Pages env" },
       { status: 503 }
     );
   }
 
   try {
-    const instance = await env.SCHEMA_ORG_SYNC.create({
-      params: delayMs !== undefined ? { eventIds, delayMs } : { eventIds },
-    });
-    return NextResponse.json({ workflowId: instance.id, eventCount: eventIds.length });
+    const upstream = await fetch(
+      "https://mcp.meetmeatthefair.com/api/admin/workflows/schema-org-sync/start",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-key": cfEnv.INTERNAL_API_KEY,
+        },
+        body: JSON.stringify(delayMs !== undefined ? { eventIds, delayMs } : { eventIds }),
+      }
+    );
+    const upstreamBody = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!upstream.ok) {
+      await logError(db, {
+        message: "MCP Worker returned non-2xx for workflow start",
+        source: "api/admin/schema-org/sync-workflow/start",
+        request,
+        context: { status: upstream.status, body: upstreamBody, eventCount: eventIds.length },
+      });
+      return NextResponse.json(upstreamBody, { status: upstream.status });
+    }
+    return NextResponse.json(upstreamBody);
   } catch (error) {
     await logError(db, {
-      message: "Failed to start schema-org-sync workflow",
+      message: "Failed to proxy workflow start to MCP Worker",
       error,
       source: "api/admin/schema-org/sync-workflow/start",
       request,
       context: { eventCount: eventIds.length },
     });
-    return NextResponse.json({ error: "workflow_create_failed" }, { status: 500 });
+    return NextResponse.json({ error: "workflow_proxy_failed" }, { status: 500 });
   }
 }
