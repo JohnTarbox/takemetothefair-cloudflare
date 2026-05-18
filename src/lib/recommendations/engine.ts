@@ -380,9 +380,15 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
         isNull(recommendationItems.actedAt),
         or(
           isNull(recommendationItems.dismissedUntil),
-          // Date comparison via .getTime() ms. The "snooze forever" sentinel below uses
-          // a far-future Date so this check still cleanly filters it out.
-          sql`${recommendationItems.dismissedUntil} < ${now.getTime()}`
+          // dismissed_until is seconds-epoch (Drizzle mode:"timestamp" stores
+          // Math.floor(date.getTime()/1000) — see
+          // reference_drizzle_timestamp_mode_is_seconds memory). Compare in
+          // the same unit. Earlier this used now.getTime() (ms) and the
+          // filter `seconds < ms` was always true, which silently masked any
+          // active snooze when no acted_at was also set. The "snooze
+          // forever" sentinel uses a far-future Date so this check still
+          // cleanly filters it out.
+          sql`${recommendationItems.dismissedUntil} < ${Math.floor(now.getTime() / 1000)}`
         ),
         eq(recommendationRules.enabled, true)
       )

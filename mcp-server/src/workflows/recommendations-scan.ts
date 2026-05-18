@@ -83,7 +83,17 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
             timeout: "5 minutes",
           },
           async (): Promise<ChunkResponse> => {
-            const url = `${this.env.MAIN_APP_URL}/api/admin/recommendations/scan?cursor=${cursorForLog}`;
+            // chunk=4 halves the endpoint's default of 8 rules per chunk.
+            // The default sized chunks have been hitting Cloudflare's
+            // ~100s Worker→Pages edge timeout (HTTP 524) on heavy rules
+            // — observed daily at cursor 8 in production through
+            // mid-May 2026. Halving the rules-per-chunk roughly halves
+            // wall-clock per chunk (each rule is awaited sequentially
+            // in engine.ts's evaluateRules loop), buying ~44s headroom
+            // instead of ~22s. More total chunks needed but each is
+            // safely under budget; MAX_CHUNKS=50 still covers all 23
+            // rules with room to spare.
+            const url = `${this.env.MAIN_APP_URL}/api/admin/recommendations/scan?cursor=${cursorForLog}&chunk=4`;
             const init: RequestInit = {
               method: "POST",
               headers: {

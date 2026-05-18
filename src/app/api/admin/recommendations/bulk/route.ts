@@ -64,13 +64,15 @@ export async function POST(request: Request) {
 
   // Active-set predicate — must match getActiveItems' filter to avoid the
   // bulk action touching items the admin doesn't see in the UI.
+  // dismissed_until is seconds-epoch; compare in seconds (was previously
+  // now.getTime() ms, which made the filter `seconds < ms` trivially true).
   const activePredicate = and(
     eq(recommendationItems.ruleId, parsed.data.ruleId),
     gte(recommendationItems.lastSeenAt, cutoff),
     isNull(recommendationItems.actedAt),
     or(
       isNull(recommendationItems.dismissedUntil),
-      sql`${recommendationItems.dismissedUntil} < ${now.getTime()}`
+      sql`${recommendationItems.dismissedUntil} < ${Math.floor(now.getTime() / 1000)}`
     )
   );
 
