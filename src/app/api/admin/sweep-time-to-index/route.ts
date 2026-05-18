@@ -33,47 +33,53 @@ export async function POST(request: Request) {
   const now = new Date();
 
   try {
-    // Pull every unresolved seed (firstCrawlAt IS NULL).
-    const unresolved = await db
+    // Single JOIN — replaces the previous N+1 (one SELECT per unresolved
+    // row against gsc_inspection_state) that hit Cloudflare's ~100s edge
+    // timeout once the unresolved set exceeded a few thousand rows. The
+    // 06:02 UTC 2026-05-18 524 fired on 4,453 unresolved × ~5ms/query =
+    // ~22s minimum, plus per-row overhead pushing into the timeout band.
+    // After this: one query returns only rows that need updating.
+    const matches = await db
       .select({
         id: timeToIndexLog.id,
-        url: timeToIndexLog.url,
         indexnowSubmittedAt: timeToIndexLog.indexnowSubmittedAt,
+        lastInspectedAt: gscInspectionState.lastInspectedAt,
       })
+      .from(timeToIndexLog)
+      .innerJoin(gscInspectionState, eq(gscInspectionState.url, timeToIndexLog.url))
+      .where(
+        and(
+          isNull(timeToIndexLog.firstCrawlAt),
+          eq(gscInspectionState.lastVerdict, "PASS"),
+          gt(gscInspectionState.lastInspectedAt, timeToIndexLog.indexnowSubmittedAt)
+        )
+      );
+
+    // Separate count of unresolved rows for the response's `scanned` field.
+    // Cheap (indexed isNull check); preserves the observability metric the
+    // cron handler logs after each run.
+    const [{ scanned }] = await db
+      .select({ scanned: sql<number>`COUNT(*)` })
       .from(timeToIndexLog)
       .where(isNull(timeToIndexLog.firstCrawlAt));
 
-    if (unresolved.length === 0) {
-      return NextResponse.json({ success: true, reconciled: 0, scanned: 0 });
+    if (matches.length === 0) {
+      return NextResponse.json({ success: true, reconciled: 0, scanned });
     }
 
     let reconciled = 0;
-    for (const row of unresolved) {
-      const [match] = await db
-        .select({ lastInspectedAt: gscInspectionState.lastInspectedAt })
-        .from(gscInspectionState)
-        .where(
-          and(
-            eq(gscInspectionState.url, row.url),
-            eq(gscInspectionState.lastVerdict, "PASS"),
-            gt(gscInspectionState.lastInspectedAt, row.indexnowSubmittedAt)
-          )
-        )
-        .limit(1);
-      if (!match) continue;
-
+    for (const m of matches) {
       const lagSeconds = Math.floor(
-        (match.lastInspectedAt.getTime() - row.indexnowSubmittedAt.getTime()) / 1000
+        (m.lastInspectedAt.getTime() - m.indexnowSubmittedAt.getTime()) / 1000
       );
-
       await db
         .update(timeToIndexLog)
         .set({
-          firstCrawlAt: match.lastInspectedAt,
+          firstCrawlAt: m.lastInspectedAt,
           lagSeconds,
           computedAt: now,
         })
-        .where(eq(timeToIndexLog.id, row.id));
+        .where(eq(timeToIndexLog.id, m.id));
       reconciled++;
     }
 
@@ -89,7 +95,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      scanned: unresolved.length,
+      scanned,
       reconciled,
       total_resolved: stats?.n ?? 0,
       avg_lag_seconds: stats?.avg ?? null,
