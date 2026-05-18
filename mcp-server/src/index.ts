@@ -14,6 +14,7 @@ import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
 import { logError } from "./logger.js";
+import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -46,6 +47,10 @@ interface Env {
   // destination address in Cloudflare Email Routing. Set via
   // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
   SUBMIT_ADMIN_FORWARD?: string;
+  // Cloudflare Workflows binding. Used by the cron scheduled() handler
+  // and by the HTTP endpoints at /api/admin/workflows/schema-org-sync/*
+  // (which Pages calls into — Pages can't bind workflows directly).
+  SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
   // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
   // Empty in local dev; populated in production so `whoami` can answer
   // "which bundle is the server running?" without a client round-trip.
@@ -670,6 +675,96 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
 export { SchemaOrgSyncWorkflow } from "./workflows/schema-org-sync.js";
 
 // ---------------------------------------------------------------------------
+// Workflow trigger endpoints (HTTP escape hatch for Pages)
+// ---------------------------------------------------------------------------
+//
+// Pages can't bind workflow classes directly via [[workflows]] in its
+// wrangler.toml (see comment in main app's wrangler.toml). So Pages-side
+// endpoints that need to start / poll workflows fetch these HTTP routes
+// instead. Auth: X-Internal-Key, same pattern used by cron sweeps + email
+// handler. Returns null if the path doesn't match — caller falls through
+// to the OAuth provider.
+async function handleWorkflowEndpoints(
+  request: Request,
+  env: Env,
+  url: URL
+): Promise<Response | null> {
+  // X-Internal-Key gate.
+  const internalKey = request.headers.get("x-internal-key");
+  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // POST /api/admin/workflows/schema-org-sync/start
+  if (url.pathname === "/api/admin/workflows/schema-org-sync/start" && request.method === "POST") {
+    let body: { eventIds?: unknown; delayMs?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    if (!Array.isArray(body.eventIds) || body.eventIds.length === 0) {
+      return jsonResponse({ error: "eventIds required (non-empty array)" }, 400);
+    }
+    const eventIds = body.eventIds.filter(
+      (s): s is string => typeof s === "string" && s.length > 0
+    );
+    if (eventIds.length === 0) {
+      return jsonResponse({ error: "eventIds contained no valid strings" }, 400);
+    }
+    const delayMs = typeof body.delayMs === "number" ? body.delayMs : undefined;
+    try {
+      const instance = await env.SCHEMA_ORG_SYNC.create({
+        params: delayMs !== undefined ? { eventIds, delayMs } : { eventIds },
+      });
+      return jsonResponse({ workflowId: instance.id, eventCount: eventIds.length });
+    } catch (err) {
+      await logError(env.DB, {
+        source: "mcp:workflows-api",
+        message: "Failed to create schema-org-sync workflow instance",
+        error: err,
+        context: { eventCount: eventIds.length },
+      });
+      return jsonResponse({ error: "workflow_create_failed" }, 500);
+    }
+  }
+
+  // GET /api/admin/workflows/schema-org-sync/status/:id
+  const statusMatch = url.pathname.match(
+    /^\/api\/admin\/workflows\/schema-org-sync\/status\/([A-Za-z0-9_-]+)$/
+  );
+  if (statusMatch && request.method === "GET") {
+    const id = statusMatch[1];
+    try {
+      const instance = await env.SCHEMA_ORG_SYNC.get(id);
+      const state = await instance.status();
+      return jsonResponse({ workflowId: id, ...state });
+    } catch (err) {
+      return jsonResponse(
+        {
+          error: "workflow_not_found",
+          message: err instanceof Error ? err.message : "unknown",
+        },
+        404
+      );
+    }
+  }
+
+  // Unknown sub-path under /api/admin/workflows/ — let it fall through.
+  return null;
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Queue consumer
 // ---------------------------------------------------------------------------
 //
@@ -794,6 +889,15 @@ export default {
     // Legacy mmatf_ tokens bypass OAuth and use the stateless handler
     if (url.pathname === "/mcp" && authHeader?.includes("mmatf_")) {
       return handleLegacyMcpRequest(request, env);
+    }
+
+    // Internal endpoints — Pages (which can't bind workflows directly per
+    // wrangler.toml comment) calls these to start / poll Workflow instances.
+    // Auth via X-Internal-Key, matching the existing internal-call pattern
+    // used by the cron sweeps + email handler.
+    if (url.pathname.startsWith("/api/admin/workflows/")) {
+      const response = await handleWorkflowEndpoints(request, env, url);
+      if (response) return response;
     }
 
     // Everything else goes through the OAuth provider
