@@ -78,8 +78,7 @@ export default function RootLayout({
           </main>
           <Footer />
         </Providers>
-      </body>
-      {/*
+        {/*
         GA4 install — plain <script> elements, NOT next/script's <Script>.
         Next.js App Router puts <Script strategy="afterInteractive"> content
         into the RSC payload (escaped string) and injects it client-side,
@@ -91,38 +90,51 @@ export default function RootLayout({
         the CF Insights beacon below has used since day one). `async` lets
         the browser parse the rest of the document while gtag.js loads.
 
+        IMPORTANT — script placement: these <script> tags must live INSIDE
+        <body>. Previously placed as direct children of <html> (between
+        </body> and </html>), they caused a site-wide React #418 hydration
+        error: SSR emitted them at end-of-document while React 19's client
+        reconciler clustered inline scripts near OrganizationSchema's
+        JSON-LD at the top of <body>. The position mismatch then triggered
+        secondary "Cannot read properties of null (reading 'parentNode')"
+        TypeErrors as React's recovery code tried to swap orphaned
+        streaming markers. Root-caused via playwright browser repro
+        2026-05-18 (SSR-vs-hydrated DOM diff at byte 893). Keep these
+        inside <body>.
+
         XSS-safety: the inline init's content is built from
         process.env.NEXT_PUBLIC_GA_ID, a build-time env var sourced from a
         GitHub Actions secret. It is NOT user-controllable runtime input —
         no sanitizer needed. The G- value is also a public, low-entropy
         identifier (it ships to every browser anyway).
       */}
-      {process.env.NEXT_PUBLIC_GA_ID && (
-        <>
-          <script
-            async
-            src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
-          />
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `window.dataLayer = window.dataLayer || [];
+        {process.env.NEXT_PUBLIC_GA_ID && (
+          <>
+            <script
+              async
+              src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
+            />
+            <script
+              dangerouslySetInnerHTML={{
+                __html: `window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
 if (!window.__ga4Inited) {
   window.__ga4Inited = true;
   gtag('js', new Date());
   gtag('config', '${process.env.NEXT_PUBLIC_GA_ID}');
 }`,
-            }}
+              }}
+            />
+          </>
+        )}
+        {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
+          <script
+            defer
+            src="https://static.cloudflareinsights.com/beacon.min.js"
+            data-cf-beacon={`{"token": "${process.env.NEXT_PUBLIC_CF_BEACON_TOKEN}"}`}
           />
-        </>
-      )}
-      {process.env.NEXT_PUBLIC_CF_BEACON_TOKEN && (
-        <script
-          defer
-          src="https://static.cloudflareinsights.com/beacon.min.js"
-          data-cf-beacon={`{"token": "${process.env.NEXT_PUBLIC_CF_BEACON_TOKEN}"}`}
-        />
-      )}
+        )}
+      </body>
     </html>
   );
 }
