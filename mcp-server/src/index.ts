@@ -14,6 +14,8 @@ import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
 import { logError } from "./logger.js";
+import { inboundEmails } from "./schema.js";
+import { eq } from "drizzle-orm";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
 import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
 import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
@@ -617,6 +619,7 @@ async function handleWorkflowEndpoints(
     try {
       const instance = await env.SCHEMA_ORG_SYNC.create({
         params: delayMs !== undefined ? { eventIds, delayMs } : { eventIds },
+        retention: { successRetention: "7 days", errorRetention: "7 days" },
       });
       return jsonResponse({ workflowId: instance.id, eventCount: eventIds.length });
     } catch (err) {
@@ -707,6 +710,7 @@ async function handleWorkflowEndpoints(
           messageRowId: body.messageRowId,
           intent: body.intent as InboundEmailParams["intent"],
         },
+        retention: { successRetention: "7 days", errorRetention: "7 days" },
       });
       return jsonResponse({ workflowId: instance.id, messageRowId: body.messageRowId });
     } catch (err) {
@@ -721,6 +725,105 @@ async function handleWorkflowEndpoints(
   }
 
   // Unknown sub-path under /api/admin/workflows/ — let it fall through.
+  return null;
+}
+
+/**
+ * Inbound-email admin endpoints — separate from /api/admin/workflows/
+ * because they target the inbound_emails row (and its workflow instance
+ * transitively), not the workflow binding directly. Currently:
+ *   POST /api/admin/inbound-emails/:rowId/decide  — sends the
+ *        admin-decision event to the in-flight InboundEmailWorkflow
+ *        instance for correction/press intents.
+ *
+ * Auth: same X-Internal-Key gate as handleWorkflowEndpoints. Pages
+ * proxies admin POSTs through to this route via the main app endpoint.
+ */
+async function handleInboundEmailsApi(
+  request: Request,
+  env: Env,
+  url: URL
+): Promise<Response | null> {
+  const internalKey = request.headers.get("x-internal-key");
+  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // POST /api/admin/inbound-emails/:rowId/decide
+  const decideMatch = url.pathname.match(
+    /^\/api\/admin\/inbound-emails\/([A-Za-z0-9_-]+)\/decide$/
+  );
+  if (decideMatch && request.method === "POST") {
+    const rowId = decideMatch[1];
+    let body: { action?: unknown; note?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    const validActions = new Set(["applied", "rejected", "needs-more-info"]);
+    if (typeof body.action !== "string" || !validActions.has(body.action)) {
+      return jsonResponse(
+        { error: "action must be one of: applied, rejected, needs-more-info" },
+        400
+      );
+    }
+    const note =
+      typeof body.note === "string" && body.note.length > 0 ? body.note.slice(0, 500) : undefined;
+
+    // Look up workflow_instance_id from the row. We require status='waiting'
+    // because the workflow has only one waitForEvent in its run() — sending
+    // an event when the instance is past that point silently no-ops, which
+    // would be a confusing UX. Reject early instead.
+    const db = getDb(env.DB);
+    const rows = await db
+      .select({
+        workflowInstanceId: inboundEmails.workflowInstanceId,
+        status: inboundEmails.status,
+        intent: inboundEmails.intent,
+      })
+      .from(inboundEmails)
+      .where(eq(inboundEmails.id, rowId))
+      .limit(1);
+    if (rows.length === 0) {
+      return jsonResponse({ error: "row not found" }, 404);
+    }
+    const { workflowInstanceId, status: rowStatus, intent } = rows[0];
+    if (rowStatus !== "waiting") {
+      return jsonResponse({ error: `row not awaiting admin decision; status=${rowStatus}` }, 409);
+    }
+    if (intent !== "correction" && intent !== "press") {
+      return jsonResponse(
+        { error: `decide endpoint only supports correction/press intents; intent=${intent}` },
+        400
+      );
+    }
+    if (!workflowInstanceId) {
+      return jsonResponse({ error: "row has no workflow_instance_id" }, 500);
+    }
+
+    try {
+      const instance = await env.INBOUND_EMAIL.get(workflowInstanceId);
+      await instance.sendEvent({
+        type: "admin-decision",
+        payload: { action: body.action, note },
+      });
+    } catch (err) {
+      await logError(env.DB, {
+        source: "mcp:inbound-emails-api",
+        message: "Failed to send admin-decision event to workflow",
+        error: err,
+        context: { rowId, workflowInstanceId, action: body.action },
+      });
+      return jsonResponse({ error: "send_event_failed" }, 500);
+    }
+
+    return jsonResponse({ ok: true, rowId, action: body.action });
+  }
+
   return null;
 }
 
@@ -821,11 +924,19 @@ export default {
     // docs/cloudflare-workflows-audit.md, left as-is).
     ctx.waitUntil(
       Promise.all([
-        createWorkflowOrLog(env, "recommendations-scan", () => env.RECOMMENDATIONS_SCAN.create({})),
+        createWorkflowOrLog(env, "recommendations-scan", () =>
+          env.RECOMMENDATIONS_SCAN.create({
+            retention: { successRetention: "7 days", errorRetention: "7 days" },
+          })
+        ),
         runScheduledGscSweep(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),
-        createWorkflowOrLog(env, "event-date-drift", () => env.EVENT_DATE_DRIFT.create({})),
+        createWorkflowOrLog(env, "event-date-drift", () =>
+          env.EVENT_DATE_DRIFT.create({
+            retention: { successRetention: "7 days", errorRetention: "7 days" },
+          })
+        ),
       ]).then(() => undefined)
     );
   },
@@ -870,6 +981,11 @@ export default {
     // used by the cron sweeps + email handler.
     if (url.pathname.startsWith("/api/admin/workflows/")) {
       const response = await handleWorkflowEndpoints(request, env, url);
+      if (response) return response;
+    }
+
+    if (url.pathname.startsWith("/api/admin/inbound-emails/")) {
+      const response = await handleInboundEmailsApi(request, env, url);
       if (response) return response;
     }
 

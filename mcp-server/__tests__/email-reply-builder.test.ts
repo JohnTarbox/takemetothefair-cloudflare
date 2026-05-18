@@ -97,3 +97,49 @@ describe("buildReply — new intent acks", () => {
     expect(msg.text).toMatch(/unsubscribed|removed/i);
   });
 });
+
+describe("buildReply — admin-decision-tailored kinds (waitForEvent flow)", () => {
+  it("correction-applied confirms the change went live", () => {
+    const msg = buildReply("correction-applied", "a@x.com", { subject: "wrong dates" });
+    expect(msg.text).toMatch(/applied|visible on the site/i);
+  });
+
+  it("correction-applied includes admin note when provided", () => {
+    const msg = buildReply("correction-applied", "a@x.com", {
+      subject: "wrong dates",
+      note: "Updated end date to Sunday Oct 12.",
+    });
+    expect(msg.text).toContain("Updated end date to Sunday Oct 12.");
+  });
+
+  it("correction-rejected explains the rejection (uses note if given)", () => {
+    const msg = buildReply("correction-rejected", "a@x.com", {
+      subject: "x",
+      note: "We need a source for the new dates.",
+    });
+    expect(msg.text).toContain("We need a source for the new dates.");
+  });
+
+  it("correction-rejected falls back to a help-text suggestion when no note", () => {
+    const msg = buildReply("correction-rejected", "a@x.com", { subject: "x" });
+    expect(msg.text).toMatch(/source link|official announcement/i);
+  });
+
+  it("correction-needs-info uses the note as the request prompt", () => {
+    const msg = buildReply("correction-needs-info", "a@x.com", {
+      subject: "x",
+      note: "Please send the new date range.",
+    });
+    expect(msg.text).toContain("Please send the new date range.");
+  });
+
+  it("press-handled prompts the sender to check for a direct follow-up", () => {
+    const msg = buildReply("press-handled", "press@nyt.com", { subject: "media inquiry" });
+    expect(msg.text).toMatch(/followed up directly|haven't heard from us/i);
+  });
+
+  it("press-needs-info requests outlet/deadline/angle", () => {
+    const msg = buildReply("press-needs-info", "press@nyt.com", { subject: "media inquiry" });
+    expect(msg.text).toMatch(/outlet|deadline|angle/i);
+  });
+});

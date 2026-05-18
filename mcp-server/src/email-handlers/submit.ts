@@ -1,31 +1,69 @@
 /**
- * `submit@` handler — the original event-submission flow, now repackaged
- * as a step body inside InboundEmailWorkflow.
+ * `submit@` legs — orchestrated by InboundEmailWorkflow as three
+ * separate `step.do` calls so each external API failure is checkpointed
+ * independently.
  *
- * Pipeline:
- *   1. Require row.parsedUrl (extracted by entrypoint via pickPrimaryUrl).
- *      If missing → "no-url" auto-reply, no submission attempted.
- *   2. HTTP POST main-app /api/admin/import-url/fetch?url=...
- *      (with X-Internal-Key)
- *   3. HTTP POST main-app /api/admin/import-url/extract
- *      (with the fetched content + JSON-LD metadata; Workers AI extracts)
- *   4. HTTP POST main-app /api/suggest-event/submit
- *      (with source: "email" → lands as PENDING for admin review)
+ * Why split: the previous single `step.do("dispatch")` re-ran fetch +
+ * AI extract on every retry of the submit step. With Workers AI at the
+ * 20s end of the latency distribution, repeating that work on a transient
+ * submit-endpoint blip costs real money. After this split:
  *
- * Failure paths each return a distinct ReplyKind so buildReply can
- * tailor the sender-visible auto-reply. The original /extract endpoint
- * surfaces upstream errors (e.g., Workers AI timeouts) via its
- * `{success:false,error}` shape — we read those and stamp them into
- * the workflow's error context for /admin/logs visibility (mirrors the
- * PR #176 fix that surfaced the real upstream messages).
+ *   submit/fetch-url   → fetched content (cached on retry)
+ *   submit/ai-extract  → extracted event JSON (cached on retry)
+ *   submit/submit-event → POST /api/suggest-event/submit
+ *
+ * Failure semantics (the workflow's run() catches and maps to reply kinds):
+ *   - 4xx fetch / extract / submit          → NonRetryableError prefixed
+ *                                             "fetch-", "extract-", "submit-"
+ *   - 5xx / network on fetch / submit       → plain Error, step retries
+ *   - AI extract failure (any cause)        → NonRetryableError — audit
+ *                                             showed Workers AI load
+ *                                             timeouts don't recover on
+ *                                             tight retries; one shot only
+ *
+ * The missing-URL case is handled in the workflow BEFORE calling
+ * submitFetch (no throw, just early return with replyKind: "no-url").
  */
 
-import { logError } from "../logger.js";
-import type { HandlerFn, HandlerResult } from "./types.js";
+import { NonRetryableError } from "cloudflare:workflows";
+import type { HandlerEnv } from "./types.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
 const SOURCE_SUBMIT = "mcp:email-handler:submit";
+
+/** Cap the fetched content stored as step output. CF Workflows allows
+ *  1 MiB per step output but smaller is better — and the AI prompt
+ *  already caps below this. 100 KB is well under both. */
+const MAX_FETCH_CONTENT_LEN = 100_000;
+
+/**
+ * Step output shape. The workflow's `Serializable<T>` constraint trips
+ * on `unknown` and recursive JsonValue types (TS2589: type instantiation
+ * excessively deep), so JSON-LD is forwarded as a serialized string and
+ * parsed back in submitExtract. Round-trip is cheap; the alternative was
+ * keeping the field out of the step boundary entirely, but the AI prompt
+ * benefits from it for higher-accuracy extraction.
+ */
+export interface SubmitFetchResult {
+  url: string;
+  content: string;
+  title: string | null;
+  description: string | null;
+  ogImage: string | null;
+  /** JSON-stringified `jsonLd`, or null if the page had none. */
+  jsonLdSerialized: string | null;
+}
+
+export interface SubmitExtractResult {
+  url: string;
+  event: ExtractedEvent;
+}
+
+export interface SubmitEventResult {
+  slug: string;
+  eventName: string;
+}
 
 interface ExtractedEvent {
   name: string;
@@ -41,57 +79,33 @@ interface ExtractedEvent {
   categories?: string[] | null;
 }
 
-export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> => {
-  if (!row.parsedUrl) {
-    return {
-      replyKind: "no-url",
-      replyParams: { subject: row.subject ?? "", hasAttachments: row.attachmentCount > 0 },
-      status: "replied",
-    };
-  }
-
-  const url = row.parsedUrl;
-  const fromAddr = row.fromAddress;
-  const subject = row.subject ?? "";
-
-  // Step A: fetch URL via main-app /api/admin/import-url/fetch
-  let fetchRes: Response;
+/**
+ * Step A: fetch URL via main-app /api/admin/import-url/fetch.
+ *
+ * Errors:
+ *   - 4xx response → NonRetryableError "fetch-${status}"
+ *   - upstream {success:false}  → NonRetryableError with upstream message
+ *   - 5xx response or network   → plain Error, workflow retries
+ */
+export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitFetchResult> {
+  let res: Response;
   try {
-    fetchRes = await fetch(
+    res = await fetch(
       `${env.MAIN_APP_URL}/api/admin/import-url/fetch?url=${encodeURIComponent(url)}`,
       { headers: { "x-internal-key": env.INTERNAL_API_KEY } }
     );
   } catch (err) {
-    await logError(env.DB, {
-      source: SOURCE_FETCH,
-      message: "network error calling /api/admin/import-url/fetch",
-      error: err,
-      sessionId: ctx.sessionId,
-      context: { url, from: fromAddr, subject },
-    });
-    return {
-      replyKind: "extract-failed",
-      replyParams: { subject, url },
-      status: "failed",
-      error: err instanceof Error ? err.message : String(err),
-    };
+    // Network error — retryable
+    throw new Error(`fetch-network: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (!fetchRes.ok) {
-    await logError(env.DB, {
-      source: SOURCE_FETCH,
-      message: "import-url/fetch returned non-2xx",
-      statusCode: fetchRes.status,
-      sessionId: ctx.sessionId,
-      context: { url, status: fetchRes.status },
-    });
-    return {
-      replyKind: "extract-failed",
-      replyParams: { subject, url },
-      status: "failed",
-      error: `fetch ${fetchRes.status}`,
-    };
+  if (!res.ok) {
+    const msg = `fetch-${res.status}`;
+    if (res.status >= 400 && res.status < 500) {
+      throw new NonRetryableError(msg);
+    }
+    throw new Error(msg);
   }
-  const fetched = (await fetchRes.json().catch(() => null)) as
+  const body = (await res.json().catch(() => null)) as
     | {
         success: true;
         content: string;
@@ -102,145 +116,114 @@ export const handle: HandlerFn = async (env, ctx, row): Promise<HandlerResult> =
       }
     | { success: false; error: string }
     | null;
-  if (!fetched || !fetched.success) {
-    await logError(env.DB, {
-      level: "warn",
-      source: SOURCE_FETCH,
-      message: "import-url/fetch reported failure",
-      sessionId: ctx.sessionId,
-      context: { url, upstreamError: fetched && "error" in fetched ? fetched.error : "no-body" },
-    });
-    return {
-      replyKind: "extract-failed",
-      replyParams: { subject, url },
-      status: "failed",
-      error: fetched && "error" in fetched ? fetched.error : "fetch-empty-body",
-    };
+  if (!body || !body.success) {
+    const upstream = body && "error" in body ? body.error : "no-body";
+    throw new NonRetryableError(`fetch-upstream: ${upstream}`);
   }
+  return {
+    url,
+    content: body.content.slice(0, MAX_FETCH_CONTENT_LEN),
+    title: body.title ?? null,
+    description: body.description ?? null,
+    ogImage: body.ogImage ?? null,
+    jsonLdSerialized:
+      body.jsonLd === undefined || body.jsonLd === null ? null : JSON.stringify(body.jsonLd),
+  };
+}
 
-  // Step B: AI-extract via main-app /api/admin/import-url/extract
-  let extractRes: Response;
+/**
+ * Step B: AI extract via main-app /api/admin/import-url/extract.
+ *
+ * Errors:
+ *   - any failure mode → NonRetryableError. Audit doc finding: Workers
+ *     AI load-timeouts don't recover on tight retries (same colo, same
+ *     overloaded model). One shot, surface the upstream error to the
+ *     workflow's catch.
+ */
+export async function submitExtract(
+  env: HandlerEnv,
+  fetched: SubmitFetchResult
+): Promise<SubmitExtractResult> {
+  let res: Response;
   try {
-    extractRes = await fetch(`${env.MAIN_APP_URL}/api/admin/import-url/extract`, {
+    res = await fetch(`${env.MAIN_APP_URL}/api/admin/import-url/extract`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
       body: JSON.stringify({
         content: fetched.content,
-        url,
+        url: fetched.url,
         metadata: {
-          title: fetched.title ?? null,
-          description: fetched.description ?? null,
-          ogImage: fetched.ogImage ?? null,
-          jsonLd: fetched.jsonLd ?? null,
+          title: fetched.title,
+          description: fetched.description,
+          ogImage: fetched.ogImage,
+          jsonLd: fetched.jsonLdSerialized ? JSON.parse(fetched.jsonLdSerialized) : null,
         },
       }),
     });
   } catch (err) {
-    await logError(env.DB, {
-      source: SOURCE_EXTRACT,
-      message: "network error calling /api/admin/import-url/extract",
-      error: err,
-      sessionId: ctx.sessionId,
-      context: { url, contentLen: fetched.content.length },
-    });
-    return {
-      replyKind: "extract-failed",
-      replyParams: { subject, url },
-      status: "failed",
-      error: err instanceof Error ? err.message : String(err),
-    };
+    throw new NonRetryableError(
+      `extract-network: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
-  if (!extractRes.ok) {
-    await logError(env.DB, {
-      source: SOURCE_EXTRACT,
-      message: "import-url/extract returned non-2xx",
-      statusCode: extractRes.status,
-      sessionId: ctx.sessionId,
-      context: { url, status: extractRes.status },
-    });
-    return {
-      replyKind: "extract-failed",
-      replyParams: { subject, url },
-      status: "failed",
-      error: `extract ${extractRes.status}`,
-    };
+  if (!res.ok) {
+    throw new NonRetryableError(`extract-${res.status}`);
   }
-  const extracted = (await extractRes.json().catch(() => null)) as
+  const body = (await res.json().catch(() => null)) as
     | { success: true; events: ExtractedEvent[]; count: number }
     | { success: false; error: string }
     | null;
-  if (!extracted || !extracted.success || extracted.events.length === 0) {
-    const upstreamError =
-      extracted && "error" in extracted
-        ? extracted.error
-        : extracted && extracted.success
-          ? "zero events"
-          : "no body";
-    await logError(env.DB, {
-      level: "warn",
-      source: SOURCE_EXTRACT,
-      message: "import-url/extract reported failure or zero events",
-      sessionId: ctx.sessionId,
-      context: { url, upstreamError },
-    });
-    return {
-      replyKind: "extract-failed",
-      replyParams: { subject, url },
-      status: "failed",
-      error: upstreamError,
-    };
+  if (!body || !body.success || body.events.length === 0) {
+    const upstream =
+      body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
+    throw new NonRetryableError(`extract-upstream: ${upstream}`);
   }
-  const first = extracted.events[0];
+  return { url: fetched.url, event: body.events[0] };
+}
 
-  // Step C: submit
-  let submitRes: Response;
+/**
+ * Step C: submit via main-app /api/suggest-event/submit.
+ *
+ * Errors:
+ *   - 4xx response → NonRetryableError "submit-${status}"
+ *   - 5xx response or network → plain Error, workflow retries
+ */
+export async function submitEvent(
+  env: HandlerEnv,
+  extracted: SubmitExtractResult,
+  fromAddress: string
+): Promise<SubmitEventResult> {
+  let res: Response;
   try {
-    submitRes = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
+    res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
       body: JSON.stringify({
-        ...first,
+        ...extracted.event,
         source: "email",
-        sourceUrl: url,
-        suggesterEmail: fromAddr,
+        sourceUrl: extracted.url,
+        suggesterEmail: fromAddress,
       }),
     });
   } catch (err) {
-    return {
-      replyKind: "submit-failed",
-      replyParams: { subject },
-      status: "failed",
-      error: err instanceof Error ? err.message : String(err),
-    };
+    throw new Error(`submit-network: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const submitBody = (await submitRes.json().catch(() => null)) as
+  const body = (await res.json().catch(() => null)) as
     | { success: true; event: { slug: string } }
     | { success: false; error: string }
     | null;
-  if (!submitRes.ok || !submitBody || !submitBody.success) {
-    const submitErr =
-      submitBody && "error" in submitBody ? submitBody.error : `submit ${submitRes.status}`;
-    await logError(env.DB, {
-      source: SOURCE_SUBMIT,
-      message: "submit endpoint rejected event",
-      sessionId: ctx.sessionId,
-      context: { from: fromAddr, subject, url, submitError: submitErr, extractedName: first.name },
-    });
-    return {
-      replyKind: "submit-failed",
-      replyParams: { subject },
-      status: "failed",
-      error: submitErr,
-    };
+  if (!res.ok || !body || !body.success) {
+    const upstream = body && "error" in body ? body.error : `submit-${res.status}`;
+    if (res.status >= 400 && res.status < 500) {
+      throw new NonRetryableError(`submit-${res.status}: ${upstream}`);
+    }
+    throw new Error(`submit-${res.status}: ${upstream}`);
   }
+  return { slug: body.event.slug, eventName: extracted.event.name };
+}
 
-  return {
-    replyKind: "ok",
-    replyParams: {
-      subject,
-      eventName: first.name,
-      hasAttachments: row.attachmentCount > 0,
-    },
-    status: "replied",
-  };
-};
+// SOURCE_* constants exported for the workflow's error-log calls.
+export const SUBMIT_SOURCES = {
+  fetch: SOURCE_FETCH,
+  extract: SOURCE_EXTRACT,
+  submit: SOURCE_SUBMIT,
+} as const;

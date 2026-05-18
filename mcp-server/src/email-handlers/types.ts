@@ -6,13 +6,21 @@
  * `InboundEmailWorkflow`'s `dispatch` step calls the handler matching
  * the email's resolved intent (see ../email-intents.ts).
  *
- * Handlers should be:
- *   - Idempotent (the `dispatch` step may retry up to 2x)
- *   - Pure of side effects beyond what they declare via HandlerResult
- *     (DB writes are allowed; mutating shared module state is not)
- *   - Tolerant of partial data — `bodyTextExcerpt` is only 500 chars;
- *     handlers needing full body should re-read raw from D1 if we ever
- *     store it (today we don't — body_text_excerpt is the most we keep)
+ * Failure contract (post-PR May 2026):
+ *   - Handlers MUST throw on failure. Plain `Error` triggers the workflow
+ *     step's retry budget; `NonRetryableError` (from `cloudflare:workflows`)
+ *     short-circuits retries for permanent failures (4xx, validation).
+ *   - Handlers MAY swallow errors and still return a success-shaped result
+ *     ONLY when the user's intent was satisfied another way (e.g., the
+ *     entrypoint forwarded the message to admin's Gmail, so even if our
+ *     internal logging/tracking failed, the human admin still sees it).
+ *     This is the exception, not the default.
+ *
+ * The `submit` intent is special — it's not in this HandlerFn table
+ * because the workflow orchestrates its 3 sub-steps (fetch / extract /
+ * submit) directly, each as its own `step.do`. See workflows/inbound-email.ts
+ * and email-handlers/submit.ts (which now exports 3 leg functions, not a
+ * combined handle).
  */
 
 import type { InboundEmail } from "@takemetothefair/db-schema";
@@ -20,19 +28,27 @@ import type { InboundEmail } from "@takemetothefair/db-schema";
 /** Discriminated tag matched by buildReply in email-reply-builder.ts.
  *  null means "send no auto-reply" (used by `unknown` catch-all). */
 export type ReplyKind =
-  // Original submit-intent kinds (preserved from PR #174)
+  // Submit-intent reply kinds (workflow-orchestrated; not a handler)
   | "ok"
   | "no-url"
   | "extract-failed"
   | "submit-failed"
-  // New per-intent acknowledgment kinds (PR for multi-intent rework)
+  // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"
   | "press-ack"
-  | "unsubscribe-ack";
+  | "unsubscribe-ack"
+  // Admin-decision-tailored kinds (PR-D, waitForEvent flow)
+  | "correction-applied"
+  | "correction-rejected"
+  | "correction-needs-info"
+  | "press-handled"
+  | "press-needs-info";
 
-/** Status to write back to inbound_emails.status when the workflow ends. */
-export type FinalStatus = "replied" | "forwarded" | "failed";
+/** Status to write back to inbound_emails.status when the workflow ends.
+ *  Failed paths no longer return this — they throw, and the workflow's
+ *  outer catch records status='failed' from the caught error. */
+export type FinalStatus = "replied" | "forwarded";
 
 /**
  * Values that can appear in `HandlerResult.replyParams`. Restricted to
@@ -45,7 +61,7 @@ export type ReplyParamValue = string | number | boolean | null;
 export type ReplyParams = Record<string, ReplyParamValue>;
 
 /**
- * What a per-intent handler returns to the workflow.
+ * What a per-intent handler returns to the workflow on success.
  *
  * - `replyKind: null` skips the send-reply step entirely (e.g., unknown
  *   catch-all where we forwarded to admin but don't auto-ack the sender).
@@ -57,7 +73,6 @@ export interface HandlerResult {
   replyKind: ReplyKind | null;
   replyParams?: ReplyParams;
   status: FinalStatus;
-  error?: string;
 }
 
 /**
@@ -81,7 +96,9 @@ export interface HandlerCtx {
   sessionId: string;
 }
 
-/** Standardized signature for every handler. */
+/** Standardized signature for every handler. Throws on failure;
+ *  the workflow's outer try/catch records the error and maps it
+ *  to inbound_emails.status='failed'. */
 export type HandlerFn = (
   env: HandlerEnv,
   ctx: HandlerCtx,

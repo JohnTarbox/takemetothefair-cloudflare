@@ -59,12 +59,10 @@ export interface EmailHandlerEnv {
   /** Where the entrypoint forwards messages for non-`submit` intents.
    *  Must be a verified destination in Cloudflare Email Routing. */
   SUBMIT_ADMIN_FORWARD?: string;
-  /** The InboundEmailWorkflow binding (typed in index.ts's Env). */
-  INBOUND_EMAIL: {
-    create: (opts: { params: { messageRowId: string; intent: EmailIntent } }) => Promise<{
-      id: string;
-    }>;
-  };
+  /** The InboundEmailWorkflow binding. Uses the global Workflow type
+   *  from @cloudflare/workers-types so the retention / id options on
+   *  .create() stay in sync with the platform's actual signature. */
+  INBOUND_EMAIL: Workflow<{ messageRowId: string; intent: EmailIntent }>;
 }
 
 // ForwardableEmailMessage is global per @cloudflare/workers-types.
@@ -162,27 +160,43 @@ export async function handleInboundEmail(
     //    unconditionally so the row is self-contained for future intents).
     const parsedUrl = pickPrimaryUrl(bodyText, bodyHtml);
 
-    // 6. INSERT inbound_emails row
+    // 5b. Capture Message-ID for dedup. RFC 5322 §3.6.4 guarantees a
+    //     globally unique value when present; absence is a real signal
+    //     (automated senders sometimes omit it) — those messages skip
+    //     dedup and proceed with the legacy "always insert" behavior.
+    const messageId = (parsed.messageId || "").trim() || null;
+
+    // 6. INSERT inbound_emails row, deduping on message_id.
+    //    onConflictDoNothing pairs with the partial UNIQUE index added
+    //    in drizzle/0073. .returning() lets us detect the duplicate
+    //    case — an empty array means another delivery of this same
+    //    message already landed and is being processed by its workflow.
     const rowId = crypto.randomUUID();
     const now = new Date();
+    let inserted: { id: string }[];
     try {
       const db = getDb(env.DB);
-      await db.insert(inboundEmails).values({
-        id: rowId,
-        receivedAt: now,
-        fromAddress: fromAddr,
-        toAddress: toAddr,
-        subject: subject || null,
-        intent,
-        status: "received",
-        workflowInstanceId: null,
-        bodyTextExcerpt: bodyTextExcerpt || null,
-        parsedUrl,
-        attachmentCount,
-        rawSize: message.rawSize,
-        error: null,
-        createdAt: now,
-      });
+      inserted = await db
+        .insert(inboundEmails)
+        .values({
+          id: rowId,
+          receivedAt: now,
+          fromAddress: fromAddr,
+          toAddress: toAddr,
+          subject: subject || null,
+          intent,
+          status: "received",
+          workflowInstanceId: null,
+          bodyTextExcerpt: bodyTextExcerpt || null,
+          parsedUrl,
+          attachmentCount,
+          rawSize: message.rawSize,
+          error: null,
+          messageId,
+          createdAt: now,
+        })
+        .onConflictDoNothing({ target: inboundEmails.messageId })
+        .returning({ id: inboundEmails.id });
     } catch (err) {
       await logError(env.DB, {
         source: SOURCE,
@@ -194,12 +208,29 @@ export async function handleInboundEmail(
       return;
     }
 
+    if (inserted.length === 0) {
+      // Duplicate delivery — message_id matched an existing row. Skip
+      // workflow create; the original delivery's workflow is handling it.
+      await logError(env.DB, {
+        level: "warn",
+        source: SOURCE,
+        message: "duplicate inbound delivery; skipping workflow create",
+        sessionId,
+        context: { from: fromAddr, to: toAddr, subject, intent, messageId },
+      });
+      return;
+    }
+
     // 7. Create workflow instance + record its id back on the row.
     //    ctx.waitUntil — UPDATE doesn't need to block message ack.
     let workflowInstanceId: string;
     try {
       const instance = await env.INBOUND_EMAIL.create({
         params: { messageRowId: rowId, intent },
+        // 7-day retention keeps instance state visible long enough to
+        // debug a failure cluster while keeping storage flat as volume
+        // grows. See workflows/inbound-email.ts header.
+        retention: { successRetention: "7 days", errorRetention: "7 days" },
       });
       workflowInstanceId = instance.id;
     } catch (err) {

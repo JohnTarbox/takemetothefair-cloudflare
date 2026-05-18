@@ -7,7 +7,7 @@ import {
   uniqueIndex,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import type { Slug } from "@takemetothefair/utils";
 
 // Users table
@@ -1231,6 +1231,11 @@ export const inboundEmails = sqliteTable(
     attachmentCount: integer("attachment_count").notNull().default(0),
     rawSize: integer("raw_size"),
     error: text("error"),
+    /** RFC 5322 Message-ID extracted by PostalMime. Used to dedup
+     *  re-delivered inbound mail (the entrypoint INSERTs with
+     *  onConflictDoNothing keyed on this column). Nullable because not
+     *  every sender includes a Message-ID — those messages skip dedup. */
+    messageId: text("message_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -1238,6 +1243,12 @@ export const inboundEmails = sqliteTable(
     index("idx_inbound_emails_intent").on(t.intent),
     index("idx_inbound_emails_status").on(t.status),
     index("idx_inbound_emails_from").on(t.fromAddress),
+    // Partial-unique on message_id (NULLs are exempt — SQLite already
+    // treats them as distinct, but spelled explicitly via WHERE for
+    // clarity). Added 0073 for inbound idempotency.
+    uniqueIndex("uq_inbound_emails_message_id")
+      .on(t.messageId)
+      .where(sql`${t.messageId} IS NOT NULL`),
   ]
 );
 

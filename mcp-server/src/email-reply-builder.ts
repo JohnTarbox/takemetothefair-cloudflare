@@ -129,6 +129,59 @@ Your email address has been removed from our newsletter. You won't receive furth
 
 ${SIGN_OFF}`;
     }
+    case "correction-applied": {
+      const note = (params.note as string | undefined) ?? "";
+      const noteBlock = note ? `\n\nAdmin note: ${note}\n` : "";
+      return `Thanks for the correction!
+
+We've applied your update. The change should be visible on the site within a few minutes.${noteBlock}
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    case "correction-rejected": {
+      const note = (params.note as string | undefined) ?? "";
+      const noteBlock = note
+        ? `\n\nAdmin note: ${note}\n`
+        : "\n\nIf you have additional details (a source link, official announcement, etc.), please reply with them and we'll take another look.\n";
+      return `Thanks for reaching out about a correction.
+
+After reviewing, we weren't able to apply this change as-is.${noteBlock}
+
+${SIGN_OFF}`;
+    }
+    case "correction-needs-info": {
+      const note = (params.note as string | undefined) ?? "";
+      const noteBlock = note
+        ? `\n\nWhat we need: ${note}\n`
+        : "\n\nCould you reply with a source (official announcement, fair website, etc.)?\n";
+      return `Thanks for reaching out about a correction.
+
+We need a bit more information before we can apply the change.${noteBlock}
+
+${SIGN_OFF}`;
+    }
+    case "press-handled": {
+      const note = (params.note as string | undefined) ?? "";
+      const noteBlock = note ? `\n\n${note}\n` : "";
+      return `Thanks for your interest in Meet Me at the Fair!
+
+Our team has reviewed your inquiry and a member should have followed up directly. If you haven't heard from us within a business day, please reply to this thread.${noteBlock}
+
+${SIGN_OFF}`;
+    }
+    case "press-needs-info": {
+      const note = (params.note as string | undefined) ?? "";
+      const noteBlock = note
+        ? `\n\nWhat we need: ${note}\n`
+        : "\n\nCould you share your outlet, deadline, and the angle you're working on?\n";
+      return `Thanks for your interest in Meet Me at the Fair!
+
+We'd love to help with your story. To match you with the right materials, we need a bit more context.${noteBlock}
+
+${SIGN_OFF}`;
+    }
   }
 }
 
