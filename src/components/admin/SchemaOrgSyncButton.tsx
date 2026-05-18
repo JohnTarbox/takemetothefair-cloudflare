@@ -1,7 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { RefreshCw, Database, CheckCircle, AlertCircle, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import {
+  RefreshCw,
+  Database,
+  CheckCircle,
+  AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+} from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -14,57 +22,51 @@ interface SyncStats {
 
 interface SyncResultItem {
   eventId: string;
-  eventName: string;
+  eventName?: string;
   success: boolean;
   status: string;
-  error?: string;
+  error?: string | null;
 }
 
-interface SyncResponse {
-  success: boolean;
-  message: string;
-  results: SyncResultItem[];
-  stats: {
-    total: number;
-    success: number;
-    failed: number;
-    notFound: number;
-  };
-  error?: string;
-}
-
-interface AggregatedStats {
-  total: number;
+interface WorkflowOutput {
   processed: number;
   success: number;
-  failed: number;
+  failure: number;
   notFound: number;
-  successfulEvents: SyncResultItem[];
-  failedEvents: SyncResultItem[];
+  capped: boolean;
+  results: SyncResultItem[];
 }
 
-const BATCH_SIZE = 10;
+interface WorkflowStatus {
+  workflowId: string;
+  status: "queued" | "running" | "paused" | "complete" | "errored" | "terminated" | "waiting";
+  output?: WorkflowOutput;
+  error?: { message: string; name: string } | null;
+}
+
+type SyncMode = "missing" | "existing" | "all";
+
+const POLL_INTERVAL_MS = 3000;
+const TERMINAL_STATUSES = new Set(["complete", "errored", "terminated"]);
 
 export function SchemaOrgSyncButton() {
   const [stats, setStats] = useState<SyncStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [progress, setProgress] = useState<AggregatedStats | null>(null);
-  const [result, setResult] = useState<AggregatedStats | null>(null);
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus["status"] | null>(null);
+  const [eventCount, setEventCount] = useState<number>(0);
+  const [result, setResult] = useState<WorkflowOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSuccessTable, setShowSuccessTable] = useState(false);
   const [showFailedTable, setShowFailedTable] = useState(false);
   const [selectedFailed, setSelectedFailed] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/schema-org/sync");
+      const res = await fetch("/api/admin/schema-org/stats");
       if (res.ok) {
-        const data = await res.json() as SyncStats;
+        const data = (await res.json()) as SyncStats;
         setStats(data);
       }
     } catch {
@@ -72,99 +74,94 @@ export function SchemaOrgSyncButton() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  type SyncMode = "missing" | "existing" | "all";
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  // Poll the Workflow status while a sync is in flight.
+  useEffect(() => {
+    if (!workflowId || !syncing) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/admin/schema-org/sync-workflow/${workflowId}/status`);
+        if (!res.ok) {
+          if (!cancelled) {
+            setError("Failed to read workflow status.");
+            setSyncing(false);
+          }
+          return;
+        }
+        const data = (await res.json()) as WorkflowStatus;
+        if (cancelled) return;
+
+        setWorkflowStatus(data.status);
+
+        if (TERMINAL_STATUSES.has(data.status)) {
+          setSyncing(false);
+          if (data.status === "complete" && data.output) {
+            setResult(data.output);
+          } else if (data.status === "errored") {
+            setError(`Workflow failed: ${data.error?.message ?? "unknown"}`);
+          } else if (data.status === "terminated") {
+            setError("Workflow was terminated before completion.");
+          }
+          // Refresh stats after terminal state.
+          await fetchStats();
+        }
+      } catch {
+        if (!cancelled) {
+          setError("Failed to read workflow status.");
+          setSyncing(false);
+        }
+      }
+    };
+
+    // Run once immediately, then on interval.
+    void tick();
+    const handle = setInterval(() => void tick(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [workflowId, syncing, fetchStats]);
 
   const handleSync = async (mode: SyncMode, eventIds?: string[]) => {
     setSyncing(true);
     setError(null);
     setResult(null);
+    setWorkflowId(null);
+    setWorkflowStatus(null);
     setShowSuccessTable(false);
     setShowFailedTable(false);
     setSelectedFailed(new Set());
 
-    let totalToSync: number;
-    if (eventIds && eventIds.length > 0) {
-      totalToSync = eventIds.length;
-    } else if (mode === "missing") {
-      totalToSync = (stats?.eventsWithTicketUrl || 0) - (stats?.eventsWithSchemaOrg || 0);
-    } else if (mode === "existing") {
-      totalToSync = stats?.eventsWithSchemaOrg || 0;
-    } else {
-      totalToSync = stats?.eventsWithTicketUrl || 0;
-    }
-
-    const aggregated: AggregatedStats = {
-      total: totalToSync,
-      processed: 0,
-      success: 0,
-      failed: 0,
-      notFound: 0,
-      successfulEvents: [],
-      failedEvents: [],
-    };
-
-    setProgress(aggregated);
-
     try {
-      let hasMore = true;
-      let offset = 0;
-
-      while (hasMore) {
-        const res = await fetch("/api/admin/schema-org/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            eventIds: eventIds,
-            onlyMissing: !eventIds && mode === "missing",
-            onlyExisting: !eventIds && mode === "existing",
-            limit: BATCH_SIZE,
-            offset,
-          }),
-        });
-
-        const data = await res.json() as SyncResponse;
-
-        if (!data.success || data.stats.total === 0) {
-          hasMore = false;
-        } else {
-          // Update aggregated stats
-          aggregated.processed += data.stats.total;
-          aggregated.success += data.stats.success;
-          aggregated.failed += data.stats.failed;
-          aggregated.notFound += data.stats.notFound;
-
-          // Track successful and failed events
-          for (const item of data.results) {
-            if (item.status === "available") {
-              aggregated.successfulEvents.push(item);
-            } else if (item.status === "error") {
-              aggregated.failedEvents.push(item);
-            }
-          }
-
-          setProgress({ ...aggregated });
-
-          // Increment offset for next batch
-          offset += data.stats.total;
-
-          // If we got fewer than batch size, we're done
-          if (data.stats.total < BATCH_SIZE) {
-            hasMore = false;
-          }
-        }
+      const body = eventIds && eventIds.length > 0 ? { eventIds } : { mode };
+      const res = await fetch("/api/admin/schema-org/sync-workflow/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json()) as {
+        workflowId?: string;
+        eventCount?: number;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok || !data.workflowId) {
+        setError(data.message ?? data.error ?? "Failed to start sync workflow.");
+        setSyncing(false);
+        return;
       }
-
-      setResult(aggregated);
-      setProgress(null);
-
-      // Refresh stats after sync
-      await fetchStats();
+      setWorkflowId(data.workflowId);
+      setEventCount(data.eventCount ?? 0);
+      setWorkflowStatus("queued");
     } catch {
-      setError("Failed to sync. Please try again.");
-      setProgress(null);
-    } finally {
+      setError("Failed to start sync workflow.");
       setSyncing(false);
     }
   };
@@ -173,13 +170,14 @@ export function SchemaOrgSyncButton() {
     ? Math.round((stats.eventsWithSchemaOrg / Math.max(stats.eventsWithTicketUrl, 1)) * 100)
     : 0;
 
-  const missing = stats
-    ? stats.eventsWithTicketUrl - stats.eventsWithSchemaOrg
-    : 0;
+  const missing = stats ? stats.eventsWithTicketUrl - stats.eventsWithSchemaOrg : 0;
 
-  const progressPercent = progress
-    ? Math.round((progress.processed / Math.max(progress.total, 1)) * 100)
-    : 0;
+  // Build per-event tables from the workflow's results array.
+  const successfulEvents = result?.results.filter((r) => r.status === "available") ?? [];
+  const failedEvents =
+    result?.results.filter(
+      (r) => !r.success && r.status !== "available" && r.status !== "not_found"
+    ) ?? [];
 
   return (
     <Card>
@@ -200,10 +198,12 @@ export function SchemaOrgSyncButton() {
             {/* Stats */}
             <div className="text-sm text-gray-600 space-y-1">
               <p>
-                <span className="font-medium">{stats?.eventsWithTicketUrl || 0}</span> events have ticket URLs
+                <span className="font-medium">{stats?.eventsWithTicketUrl || 0}</span> events have
+                ticket URLs
               </p>
               <p>
-                <span className="font-medium">{stats?.eventsWithSchemaOrg || 0}</span> have schema.org data ({coverage}% coverage)
+                <span className="font-medium">{stats?.eventsWithSchemaOrg || 0}</span> have
+                schema.org data ({coverage}% coverage)
               </p>
               {missing > 0 && !syncing && (
                 <p className="text-yellow-600">
@@ -212,38 +212,34 @@ export function SchemaOrgSyncButton() {
               )}
             </div>
 
-            {/* Progress indicator */}
-            {syncing && progress && (
+            {/* Workflow in-progress indicator. Cloudflare's status() API
+                only exposes coarse state (queued/running/complete/...); we
+                don't get a live per-event count. Show the queued count + a
+                spinner. */}
+            {syncing && (
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-600">
-                    Processing {progress.processed} of {progress.total} events...
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>
+                    Workflow {workflowStatus ?? "starting"} — processing {eventCount} event
+                    {eventCount === 1 ? "" : "s"}…
                   </span>
-                  <span className="font-medium text-gray-900">{progressPercent}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-                  <div
-                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-                <div className="flex gap-4 text-xs text-gray-500">
-                  <span className="text-green-600">{progress.success} succeeded</span>
-                  <span className="text-gray-500">{progress.notFound} not found</span>
-                  {progress.failed > 0 && (
-                    <span className="text-red-600">{progress.failed} failed</span>
-                  )}
-                </div>
+                {workflowId && <p className="text-xs text-gray-400">workflow id: {workflowId}</p>}
               </div>
             )}
 
             {/* Result message */}
             {result && !syncing && (
               <div className="space-y-3">
-                <div className={`p-3 rounded-md text-sm flex items-start gap-2 ${
-                  result.failed > 0 ? "bg-yellow-50 text-yellow-800" : "bg-green-50 text-green-800"
-                }`}>
-                  {result.failed > 0 ? (
+                <div
+                  className={`p-3 rounded-md text-sm flex items-start gap-2 ${
+                    result.failure > 0
+                      ? "bg-yellow-50 text-yellow-800"
+                      : "bg-green-50 text-green-800"
+                  }`}
+                >
+                  {result.failure > 0 ? (
                     <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   ) : (
                     <CheckCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
@@ -251,13 +247,15 @@ export function SchemaOrgSyncButton() {
                   <div>
                     <p className="font-medium">Sync complete</p>
                     <p>
-                      {result.success} succeeded, {result.notFound} not found, {result.failed} failed
+                      {result.success} succeeded, {result.notFound} not found, {result.failure}{" "}
+                      failed
+                      {result.capped && " (capped at 1000 events)"}
                     </p>
                   </div>
                 </div>
 
                 {/* Successful events table */}
-                {result.successfulEvents.length > 0 && (
+                {successfulEvents.length > 0 && (
                   <div className="border rounded-md overflow-hidden">
                     <button
                       type="button"
@@ -269,21 +267,27 @@ export function SchemaOrgSyncButton() {
                       ) : (
                         <ChevronRight className="w-4 h-4" />
                       )}
-                      {result.successfulEvents.length} events with schema.org data
+                      {successfulEvents.length} events with schema.org data
                     </button>
                     {showSuccessTable && (
                       <div className="max-h-48 overflow-y-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-gray-50 sticky top-0">
                             <tr>
-                              <th className="text-left px-3 py-2 font-medium text-gray-700">Event</th>
-                              <th className="text-right px-3 py-2 font-medium text-gray-700 w-20">Actions</th>
+                              <th className="text-left px-3 py-2 font-medium text-gray-700">
+                                Event
+                              </th>
+                              <th className="text-right px-3 py-2 font-medium text-gray-700 w-20">
+                                Actions
+                              </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
-                            {result.successfulEvents.map((event) => (
+                            {successfulEvents.map((event) => (
                               <tr key={event.eventId} className="hover:bg-gray-50">
-                                <td className="px-3 py-2 text-gray-900">{event.eventName}</td>
+                                <td className="px-3 py-2 text-gray-900">
+                                  {event.eventName ?? event.eventId}
+                                </td>
                                 <td className="px-3 py-2 text-right">
                                   <Link
                                     href={`/admin/events/${event.eventId}/edit`}
@@ -302,7 +306,7 @@ export function SchemaOrgSyncButton() {
                 )}
 
                 {/* Failed events table */}
-                {result.failedEvents.length > 0 && (
+                {failedEvents.length > 0 && (
                   <div className="border border-red-200 rounded-md overflow-hidden">
                     <button
                       type="button"
@@ -314,7 +318,7 @@ export function SchemaOrgSyncButton() {
                       ) : (
                         <ChevronRight className="w-4 h-4" />
                       )}
-                      {result.failedEvents.length} events failed
+                      {failedEvents.length} events failed
                     </button>
                     {showFailedTable && (
                       <>
@@ -325,10 +329,15 @@ export function SchemaOrgSyncButton() {
                                 <th className="px-3 py-2 w-8">
                                   <input
                                     type="checkbox"
-                                    checked={selectedFailed.size === result.failedEvents.length && result.failedEvents.length > 0}
+                                    checked={
+                                      selectedFailed.size === failedEvents.length &&
+                                      failedEvents.length > 0
+                                    }
                                     onChange={(e) => {
                                       if (e.target.checked) {
-                                        setSelectedFailed(new Set(result.failedEvents.map(ev => ev.eventId)));
+                                        setSelectedFailed(
+                                          new Set(failedEvents.map((ev) => ev.eventId))
+                                        );
                                       } else {
                                         setSelectedFailed(new Set());
                                       }
@@ -336,12 +345,16 @@ export function SchemaOrgSyncButton() {
                                     className="rounded border-gray-300"
                                   />
                                 </th>
-                                <th className="text-left px-3 py-2 font-medium text-gray-700">Event</th>
-                                <th className="text-left px-3 py-2 font-medium text-gray-700">Error</th>
+                                <th className="text-left px-3 py-2 font-medium text-gray-700">
+                                  Event
+                                </th>
+                                <th className="text-left px-3 py-2 font-medium text-gray-700">
+                                  Error
+                                </th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                              {result.failedEvents.map((event) => (
+                              {failedEvents.map((event) => (
                                 <tr key={event.eventId} className="hover:bg-gray-50">
                                   <td className="px-3 py-2">
                                     <input
@@ -359,8 +372,12 @@ export function SchemaOrgSyncButton() {
                                       className="rounded border-gray-300"
                                     />
                                   </td>
-                                  <td className="px-3 py-2 text-gray-900">{event.eventName}</td>
-                                  <td className="px-3 py-2 text-red-600 text-xs">{event.error || "Unknown error"}</td>
+                                  <td className="px-3 py-2 text-gray-900">
+                                    {event.eventName ?? event.eventId}
+                                  </td>
+                                  <td className="px-3 py-2 text-red-600 text-xs">
+                                    {event.error || event.status || "Unknown error"}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
@@ -375,7 +392,9 @@ export function SchemaOrgSyncButton() {
                               onClick={() => handleSync("all", Array.from(selectedFailed))}
                               disabled={syncing}
                             >
-                              <RefreshCw className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+                              <RefreshCw
+                                className={`w-4 h-4 mr-1 ${syncing ? "animate-spin" : ""}`}
+                              />
                               Retry {selectedFailed.size} Selected
                             </Button>
                           </div>
@@ -387,11 +406,7 @@ export function SchemaOrgSyncButton() {
               </div>
             )}
 
-            {error && (
-              <div className="p-3 bg-red-50 text-red-600 rounded-md text-sm">
-                {error}
-              </div>
-            )}
+            {error && <div className="p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>}
 
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
@@ -431,7 +446,8 @@ export function SchemaOrgSyncButton() {
             </div>
 
             <p className="text-xs text-gray-400">
-              Fetches schema.org Event markup from ticket URLs to keep event data in sync.
+              Fetches schema.org Event markup from ticket URLs to keep event data in sync. Runs as a
+              Cloudflare Workflow — durable per-event retry, no 30s response cap.
             </p>
           </div>
         )}
