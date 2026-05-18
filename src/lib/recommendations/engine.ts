@@ -35,7 +35,38 @@
 import { and, eq, gte, isNull, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import { recommendationItems, recommendationRules } from "@/lib/db/schema";
+import { errorLogs, recommendationItems, recommendationRules } from "@/lib/db/schema";
+import { buildCanonicalPathChecker, type CanonicalPathChecker } from "./canonical-paths";
+
+// GSC-derived rules whose payload.topPagePath can point at a renamed slug.
+// Other rules (cannibalization included — its hubPath is always a hub URL by
+// construction, and its entityPath is derived from a live entity.slug) don't
+// need the filter.
+const PATH_FILTERED_RULES = new Set(["low_ctr_pages", "seo_position_11_20"]);
+
+type StalePathDrops = Map<string, { count: number; samplePaths: string[] }>;
+
+function filterStalePathMatches(
+  ruleKey: string,
+  matches: ItemMatch[],
+  checker: CanonicalPathChecker,
+  acc: StalePathDrops
+): ItemMatch[] {
+  if (!PATH_FILTERED_RULES.has(ruleKey)) return matches;
+  const kept: ItemMatch[] = [];
+  for (const m of matches) {
+    const path = typeof m.payload?.topPagePath === "string" ? m.payload.topPagePath : null;
+    if (path && checker.classifyPath(path) === "stale") {
+      const entry = acc.get(ruleKey) ?? { count: 0, samplePaths: [] };
+      entry.count++;
+      if (entry.samplePaths.length < 5) entry.samplePaths.push(path);
+      acc.set(ruleKey, entry);
+      continue;
+    }
+    kept.push(m);
+  }
+  return kept;
+}
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -154,6 +185,9 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
   const enabledKeys = new Set(enabled.map((r) => r.ruleKey));
   const now = new Date();
 
+  const pathChecker = await buildCanonicalPathChecker(db);
+  const stalePathDrops: StalePathDrops = new Map();
+
   let totalInserted = 0;
   let totalRefreshed = 0;
   let totalResolved = 0;
@@ -170,7 +204,12 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     // ~21 rules of work because a single failing rule mid-list threw out
     // of the loop (incident 2026-05-13 — see commit message).
     try {
-      const matches = await def.run(db);
+      const matches = filterStalePathMatches(
+        def.ruleKey,
+        await def.run(db),
+        pathChecker,
+        stalePathDrops
+      );
       let inserted = 0;
       let refreshed = 0;
       let resolved = 0;
@@ -282,6 +321,23 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
       });
       failedRules++;
     }
+  }
+
+  if (stalePathDrops.size > 0) {
+    let totalFiltered = 0;
+    const byRule: Record<string, { count: number; samplePaths: string[] }> = {};
+    for (const [k, v] of stalePathDrops) {
+      byRule[k] = v;
+      totalFiltered += v.count;
+    }
+    await db.insert(errorLogs).values({
+      id: crypto.randomUUID(),
+      timestamp: now,
+      level: "info",
+      source: "gsc-recommendations:stale-slug",
+      message: `Filtered ${totalFiltered} stale topPagePath items from recommendations scan`,
+      context: JSON.stringify({ totalFiltered, byRule }),
+    });
   }
 
   return {
