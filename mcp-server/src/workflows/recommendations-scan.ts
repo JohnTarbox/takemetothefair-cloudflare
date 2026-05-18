@@ -74,8 +74,14 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
         const result = await step.do(
           `scan-chunk-${chunkNum}`,
           {
-            retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
-            timeout: "45 seconds",
+            // 5-minute timeout: per-chunk work varies a lot because each
+            // recommendation rule has its own scan cost (one rule matched
+            // 260 items in a real run). Empirically 22s for light chunks,
+            // can exceed 45s for heavier ones. 5 min is generous but still
+            // bounded — at limit:2 retries that caps worst-case per-chunk
+            // wall-clock at 15 min.
+            retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+            timeout: "5 minutes",
           },
           async (): Promise<ChunkResponse> => {
             const url = `${this.env.MAIN_APP_URL}/api/admin/recommendations/scan?cursor=${cursorForLog}`;

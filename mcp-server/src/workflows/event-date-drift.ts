@@ -56,8 +56,11 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
         const result = await step.do(
           `drift-chunk-${chunkNum}`,
           {
-            retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
-            timeout: "45 seconds",
+            // 5-minute timeout: each chunk refetches up to 200 source URLs
+            // with their own per-URL timeout. Observed 45s+ in initial
+            // production runs. 5 min is generous but still bounded.
+            retries: { limit: 2, delay: "10 seconds", backoff: "exponential" },
+            timeout: "5 minutes",
           },
           async (): Promise<ChunkResponse> => {
             const url = `${this.env.MAIN_APP_URL}/api/admin/event-date-drift/sweep?cursor=${cursorForLog}`;
