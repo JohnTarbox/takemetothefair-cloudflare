@@ -62,6 +62,9 @@ export interface SubmitExtractResult {
 }
 
 export interface SubmitEventResult {
+  /** ID of the newly-created event. Workflow writes this to
+   *  inbound_emails.resulting_event_id at mark-done. */
+  id: string;
   slug: string;
   eventName: string;
 }
@@ -72,6 +75,10 @@ export interface SubmitCheckDuplicateResult {
    *  Empty when isDuplicate is false. Used by the workflow to pick the right
    *  reply phrasing. */
   matchType?: string;
+  /** Existing event's id — workflow persists this as
+   *  inbound_emails.resulting_event_id so /admin/inbound-emails can show
+   *  "matched against" link without needing a name+date JOIN. */
+  existingEventId?: string;
   /** Existing event's display name. Empty when isDuplicate is false. */
   existingEventName?: string;
   /** Existing event's slug — used to build the public URL in the reply. */
@@ -236,7 +243,7 @@ export async function submitCheckDuplicate(
         success: true;
         isDuplicate: boolean;
         matchType?: string;
-        existingEvent?: { name?: string; slug?: string };
+        existingEvent?: { id?: string; name?: string; slug?: string };
       }
     | { success: false; error: string }
     | null;
@@ -246,6 +253,7 @@ export async function submitCheckDuplicate(
   return {
     isDuplicate: true,
     matchType: data.matchType,
+    existingEventId: data.existingEvent?.id,
     existingEventName: data.existingEvent?.name,
     existingEventSlug: data.existingEvent?.slug,
   };
@@ -279,7 +287,7 @@ export async function submitEvent(
     throw new Error(`submit-network: ${err instanceof Error ? err.message : String(err)}`);
   }
   const body = (await res.json().catch(() => null)) as
-    | { success: true; event: { slug: string } }
+    | { success: true; event: { id: string; slug: string } }
     | { success: false; error: string }
     | null;
   if (!res.ok || !body || !body.success) {
@@ -289,7 +297,7 @@ export async function submitEvent(
     }
     throw new Error(`submit-${res.status}: ${upstream}`);
   }
-  return { slug: body.event.slug, eventName: extracted.event.name };
+  return { id: body.event.id, slug: body.event.slug, eventName: extracted.event.name };
 }
 
 // SOURCE_* constants exported for the workflow's error-log calls.

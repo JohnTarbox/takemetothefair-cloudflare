@@ -71,25 +71,52 @@ export async function GET(request: NextRequest) {
       parsedUrl: inboundEmails.parsedUrl,
       attachmentCount: inboundEmails.attachmentCount,
       messageId: inboundEmails.messageId,
+      replyKind: inboundEmails.replyKind,
+      resultingEventId: inboundEmails.resultingEventId,
     })
     .from(inboundEmails)
     .where(and(...conditions))
     .orderBy(desc(inboundEmails.receivedAt))
     .limit(limit);
 
-  // Resulting-event lookup: for each inbound row that has a parsed URL,
-  // find the event (if any) that the workflow created from this submission.
-  // Match on events.source_url AND a time window around received_at —
-  // protects against false matches when admin manually re-imports the same
-  // URL months later. One batch query covers all rows; JS post-process maps.
-  const urlsToLookup = Array.from(
-    new Set(rows.map((r) => r.parsedUrl).filter((u): u is string => typeof u === "string"))
+  // Resulting-event lookup. Two paths:
+  // (a) Rows with resulting_event_id populated (post-drizzle/0076) — direct
+  //     foreign-key-style lookup. Works for both 'ok' (new event) and
+  //     'already-exists' (matched existing event) replyKinds.
+  // (b) Historical rows pre-0076 with parsedUrl set — fall back to the
+  //     source_url + 10-min-window heuristic. Imperfect for the dedup case
+  //     (the matched existing event is OLDER than received_at and falls
+  //     outside the window), but right for the 'ok' case which is the
+  //     dominant historical path.
+  const directEventIds = Array.from(
+    new Set(
+      rows.map((r) => r.resultingEventId).filter((id): id is string => typeof id === "string")
+    )
+  );
+  const eventById = new Map<string, { id: string; slug: string; name: string }>();
+  if (directEventIds.length > 0) {
+    const directEvents = await db
+      .select({ id: events.id, slug: events.slug, name: events.name })
+      .from(events)
+      .where(inArray(events.id, directEventIds));
+    for (const e of directEvents) eventById.set(e.id, e);
+  }
+
+  // Fallback JOIN for historical rows. Only run if any row lacks
+  // resultingEventId — saves a query on fresh prod traffic.
+  const fallbackUrls = Array.from(
+    new Set(
+      rows
+        .filter((r) => !r.resultingEventId)
+        .map((r) => r.parsedUrl)
+        .filter((u): u is string => typeof u === "string")
+    )
   );
   const eventsBySourceUrl = new Map<
     string,
     { id: string; slug: string; name: string; createdAt: Date }[]
   >();
-  if (urlsToLookup.length > 0) {
+  if (fallbackUrls.length > 0) {
     const eventRows = await db
       .select({
         id: events.id,
@@ -99,7 +126,7 @@ export async function GET(request: NextRequest) {
         createdAt: events.createdAt,
       })
       .from(events)
-      .where(inArray(events.sourceUrl, urlsToLookup));
+      .where(inArray(events.sourceUrl, fallbackUrls));
     for (const e of eventRows) {
       if (!e.sourceUrl || !e.createdAt) continue;
       const list = eventsBySourceUrl.get(e.sourceUrl) ?? [];
@@ -110,19 +137,27 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json(
     rows.map((r) => {
-      const receivedTs = r.receivedAt instanceof Date ? r.receivedAt.getTime() / 1000 : 0;
-      const candidates = r.parsedUrl ? (eventsBySourceUrl.get(r.parsedUrl) ?? []) : [];
-      const match =
-        candidates
-          .filter((e) => {
-            const eTs = e.createdAt.getTime() / 1000;
-            return eTs >= receivedTs && eTs <= receivedTs + EVENT_LOOKUP_WINDOW_SECONDS;
-          })
-          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0] ?? null;
+      let resultingEvent: { id: string; slug: string; name: string } | null = null;
+      if (r.resultingEventId) {
+        const e = eventById.get(r.resultingEventId);
+        if (e) resultingEvent = e;
+      } else if (r.parsedUrl) {
+        // Historical fallback path (see comment above).
+        const receivedTs = r.receivedAt instanceof Date ? r.receivedAt.getTime() / 1000 : 0;
+        const candidates = eventsBySourceUrl.get(r.parsedUrl) ?? [];
+        const match =
+          candidates
+            .filter((e) => {
+              const eTs = e.createdAt.getTime() / 1000;
+              return eTs >= receivedTs && eTs <= receivedTs + EVENT_LOOKUP_WINDOW_SECONDS;
+            })
+            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0] ?? null;
+        if (match) resultingEvent = { id: match.id, slug: match.slug, name: match.name };
+      }
       return {
         ...r,
         receivedAt: r.receivedAt instanceof Date ? r.receivedAt.toISOString() : r.receivedAt,
-        resultingEvent: match ? { id: match.id, slug: match.slug, name: match.name } : null,
+        resultingEvent,
       };
     })
   );

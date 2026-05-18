@@ -74,6 +74,11 @@ export interface HandlerResult {
   replyKind: ReplyKind | null;
   replyParams?: ReplyParams;
   status: FinalStatus;
+  /** Event this submission resolved against. Dual-purpose, keyed by
+   *  replyKind: 'ok' → new event id; 'already-exists' → matched existing
+   *  event id; anything else → null. Workflow writes this to
+   *  inbound_emails.resulting_event_id at mark-done. */
+  resultingEventId?: string | null;
 }
 
 /**

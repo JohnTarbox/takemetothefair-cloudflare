@@ -35,6 +35,7 @@ interface InboundEmailRow {
   parsedUrl: string | null;
   attachmentCount: number;
   messageId: string | null;
+  replyKind: string | null;
   resultingEvent: { id: string; slug: string; name: string } | null;
 }
 
@@ -496,9 +497,27 @@ export default function AdminInboundEmailsPage() {
                                 <span className="font-medium">Attachments:</span>{" "}
                                 {row.attachmentCount}
                               </div>
+                              {row.replyKind && (
+                                <div>
+                                  <span className="font-medium">Reply kind:</span>{" "}
+                                  <span
+                                    className={
+                                      row.replyKind === "already-exists"
+                                        ? "font-mono text-blue-700"
+                                        : "font-mono text-gray-700"
+                                    }
+                                  >
+                                    {row.replyKind}
+                                  </span>
+                                </div>
+                              )}
                               {row.resultingEvent && (
                                 <div>
-                                  <span className="font-medium">Resulting event:</span>{" "}
+                                  <span className="font-medium">
+                                    {row.replyKind === "already-exists"
+                                      ? "Matched against:"
+                                      : "Resulting event:"}
+                                  </span>{" "}
                                   <a
                                     href={`/admin/events/${row.resultingEvent.id}`}
                                     className="text-blue-600 hover:underline"

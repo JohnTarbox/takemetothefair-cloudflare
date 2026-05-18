@@ -38,6 +38,13 @@ interface SenderSummary {
   pending: number;
   rejected: number;
   approvalRate: number | null;
+  // Reply-kind attribution (post-drizzle/0076). Historical rows
+  // (replyKind NULL) contribute 0 to these and only show up in
+  // noEventOk.
+  dedupHits: number;
+  noUrl: number;
+  extractFailed: number;
+  submitFailed: number;
   noEventOk: number;
   topState: string | null;
   outOfArea: boolean;
@@ -60,6 +67,10 @@ async function computeSenderSummaries(db: Db, limit: number): Promise<SenderSumm
       total: sql<number>`COUNT(*)`,
       replied: sql<number>`SUM(CASE WHEN ${inboundEmails.status} = 'replied' THEN 1 ELSE 0 END)`,
       failed: sql<number>`SUM(CASE WHEN ${inboundEmails.status} = 'failed' THEN 1 ELSE 0 END)`,
+      dedupHits: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'already-exists' THEN 1 ELSE 0 END)`,
+      noUrl: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'no-url' THEN 1 ELSE 0 END)`,
+      extractFailed: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'extract-failed' THEN 1 ELSE 0 END)`,
+      submitFailed: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'submit-failed' THEN 1 ELSE 0 END)`,
       firstSeen: sql<number>`MIN(${inboundEmails.receivedAt})`,
       lastSeen: sql<number>`MAX(${inboundEmails.receivedAt})`,
     })
@@ -130,6 +141,10 @@ async function computeSenderSummaries(db: Db, limit: number): Promise<SenderSumm
         pending: e?.pending ?? 0,
         rejected: e?.rejected ?? 0,
         approvalRate: eventsCreated > 0 ? approved / eventsCreated : null,
+        dedupHits: i.dedupHits,
+        noUrl: i.noUrl,
+        extractFailed: i.extractFailed,
+        submitFailed: i.submitFailed,
         noEventOk: i.replied - eventsCreated,
         topState,
         outOfArea,

@@ -40,13 +40,21 @@ export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
 
   // Inbound aggregates per sender (only submit intent — other intents
-  // aren't "submitters" in the sense this report measures).
+  // aren't "submitters" in the sense this report measures). The
+  // reply_kind columns (drizzle/0076) let us distinguish dedup hits
+  // from no-URL fallbacks and extract/submit failures — historical rows
+  // pre-0076 have reply_kind = NULL and contribute only to `total`/
+  // `replied`/`failed`.
   const inboundRows = await db
     .select({
       fromAddress: inboundEmails.fromAddress,
       total: sql<number>`COUNT(*)`,
       replied: sql<number>`SUM(CASE WHEN ${inboundEmails.status} = 'replied' THEN 1 ELSE 0 END)`,
       failed: sql<number>`SUM(CASE WHEN ${inboundEmails.status} = 'failed' THEN 1 ELSE 0 END)`,
+      dedupHits: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'already-exists' THEN 1 ELSE 0 END)`,
+      noUrl: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'no-url' THEN 1 ELSE 0 END)`,
+      extractFailed: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'extract-failed' THEN 1 ELSE 0 END)`,
+      submitFailed: sql<number>`SUM(CASE WHEN ${inboundEmails.replyKind} = 'submit-failed' THEN 1 ELSE 0 END)`,
       firstSeen: sql<number>`MIN(${inboundEmails.receivedAt})`,
       lastSeen: sql<number>`MAX(${inboundEmails.receivedAt})`,
     })
@@ -114,9 +122,10 @@ export async function GET(request: NextRequest) {
       const eventsCreated = e?.eventsCreated ?? 0;
       const approved = e?.approved ?? 0;
       const trust = trustByEmail.get(i.fromAddress);
-      // Dedup-hit estimate: inbound submissions that didn't produce an
-      // event AND weren't `failed` are likely dedup hits or no-URL replies.
-      // Imperfect but useful as a first-order signal.
+      // Pre-0076 fallback: rows without reply_kind contribute to
+      // `replied`-minus-`eventsCreated` but can't be attributed. The
+      // explicit dedupHits/noUrl/extractFailed/submitFailed counts are
+      // the post-0076 truth.
       const noEventOk = i.replied - eventsCreated;
       return {
         fromAddress: i.fromAddress,
@@ -128,6 +137,13 @@ export async function GET(request: NextRequest) {
         pending: e?.pending ?? 0,
         rejected: e?.rejected ?? 0,
         approvalRate: eventsCreated > 0 ? approved / eventsCreated : null,
+        // Reply-kind attribution (post-drizzle/0076; null-replykind
+        // historical rows show 0 across these and contribute only to
+        // noEventOk).
+        dedupHits: i.dedupHits,
+        noUrl: i.noUrl,
+        extractFailed: i.extractFailed,
+        submitFailed: i.submitFailed,
         noEventOk,
         topState,
         outOfArea,

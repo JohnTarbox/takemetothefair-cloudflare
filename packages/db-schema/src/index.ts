@@ -1236,6 +1236,17 @@ export const inboundEmails = sqliteTable(
      *  onConflictDoNothing keyed on this column). Nullable because not
      *  every sender includes a Message-ID — those messages skip dedup. */
     messageId: text("message_id"),
+    /** ReplyKind that the send-reply step used. Distinguishes dedup
+     *  hits (`already-exists`) from no-URL fallbacks, extract failures,
+     *  and successful submissions. NULL on rows from before
+     *  drizzle/0076. See ReplyKind union in
+     *  mcp-server/src/email-handlers/types.ts for the full value list. */
+    replyKind: text("reply_kind"),
+    /** Event this inbound resolved against. Dual-purpose:
+     *  - `reply_kind = 'ok'` → the NEW event we created
+     *  - `reply_kind = 'already-exists'` → the EXISTING event matched
+     *  NULL when no event is involved (no-url, extract-failed, etc.). */
+    resultingEventId: text("resulting_event_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -1249,6 +1260,11 @@ export const inboundEmails = sqliteTable(
     uniqueIndex("uq_inbound_emails_message_id")
       .on(t.messageId)
       .where(sql`${t.messageId} IS NOT NULL`),
+    // Partial index on reply_kind for "show only dedup hits" filters.
+    // Added drizzle/0076.
+    index("idx_inbound_emails_reply_kind")
+      .on(t.replyKind)
+      .where(sql`${t.replyKind} IS NOT NULL`),
   ]
 );
 

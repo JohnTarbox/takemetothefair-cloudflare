@@ -313,12 +313,17 @@ const SCHEMA_SQL = `
     raw_size INTEGER,
     error TEXT,
     message_id TEXT,
+    reply_kind TEXT,
+    resulting_event_id TEXT,
     created_at INTEGER NOT NULL
   );
 
   CREATE UNIQUE INDEX uq_inbound_emails_message_id
     ON inbound_emails(message_id)
     WHERE message_id IS NOT NULL;
+  CREATE INDEX idx_inbound_emails_reply_kind
+    ON inbound_emails(reply_kind)
+    WHERE reply_kind IS NOT NULL;
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {

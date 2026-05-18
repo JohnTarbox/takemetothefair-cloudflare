@@ -145,13 +145,16 @@ describe("submitExtract — retry contract", () => {
 });
 
 describe("submitEvent — retry contract", () => {
-  it("returns slug on 2xx success", async () => {
-    mockFetch(() => Response.json({ success: true, event: { slug: "my-fair-2026" } }));
+  it("returns id + slug + eventName on 2xx success", async () => {
+    mockFetch(() =>
+      Response.json({ success: true, event: { id: "e-abc-123", slug: "my-fair-2026" } })
+    );
     const result = await submitEvent(
       ENV,
       { url: "https://x", event: { name: "My Fair" } },
       "alice@example.com"
     );
+    expect(result.id).toBe("e-abc-123");
     expect(result.slug).toBe("my-fair-2026");
     expect(result.eventName).toBe("My Fair");
   });
@@ -215,6 +218,7 @@ describe("submitCheckDuplicate — pre-submit dedup leg", () => {
     const r = await submitCheckDuplicate(ENV, EXTRACTED);
     expect(r.isDuplicate).toBe(true);
     expect(r.matchType).toBe("exact_url");
+    expect(r.existingEventId).toBe("e-123");
     expect(r.existingEventName).toBe("Test Fair 2026");
     expect(r.existingEventSlug).toBe("test-fair-2026");
   });

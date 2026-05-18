@@ -312,6 +312,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
 
     // ───── Step 4: mark-done ────────────────────────────────────────
+    // Persist final status + reply attribution (reply_kind +
+    // resulting_event_id, drizzle/0076) so /admin/inbound-emails and
+    // the sender-quality summary can attribute dedup hits separately
+    // from no-URL fallbacks and extract failures.
     await step.do(
       "mark-done",
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
@@ -322,6 +326,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           .set({
             status: caughtError ? "failed" : result.status,
             error: caughtError ?? null,
+            replyKind: result.replyKind ?? null,
+            resultingEventId: result.resultingEventId ?? null,
           })
           .where(eq(inboundEmails.id, messageRowId));
       }
@@ -420,6 +426,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           matchType: dedup.matchType ?? "exact_url",
         },
         status: "replied",
+        // Persist the matched existing event id so /admin/inbound-emails
+        // can render a "matched against X" link without a JOIN.
+        resultingEventId: dedup.existingEventId ?? null,
       };
     }
 
@@ -437,6 +446,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         hasAttachments: rowSnapshot.attachmentCount > 0,
       },
       status: "replied",
+      // Persist the newly-created event id for the same admin-UI link.
+      resultingEventId: submitted.id,
     };
   }
 }
