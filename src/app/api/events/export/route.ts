@@ -42,10 +42,7 @@ export async function GET(request: Request) {
     if (query) {
       const safeQuery = sanitizeLikeInput(query);
       conditions.push(
-        or(
-          like(events.name, `%${safeQuery}%`),
-          like(events.description, `%${safeQuery}%`)
-        )!
+        or(like(events.name, `%${safeQuery}%`), like(events.description, `%${safeQuery}%`))!
       );
     }
 
@@ -86,6 +83,7 @@ export async function GET(request: Request) {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
+        timeZone: "UTC",
       });
     };
 
@@ -121,7 +119,12 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    await logError(db, { message: "Error exporting events", error, source: "api/events/export", request });
+    await logError(db, {
+      message: "Error exporting events",
+      error,
+      source: "api/events/export",
+      request,
+    });
     return NextResponse.json({ error: "Failed to export events" }, { status: 500 });
   }
 }

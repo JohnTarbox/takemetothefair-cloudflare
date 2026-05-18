@@ -989,7 +989,10 @@ export default async function EventDetailPage({ params }: Props) {
                       <p
                         className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-red-600" : "text-gray-900"}`}
                       >
-                        Deadline: {new Date(event.applicationDeadline).toLocaleDateString()}
+                        Deadline:{" "}
+                        {new Date(event.applicationDeadline).toLocaleDateString(undefined, {
+                          timeZone: "UTC",
+                        })}
                         {new Date(event.applicationDeadline) < new Date() && " (Passed)"}
                       </p>
                     )}

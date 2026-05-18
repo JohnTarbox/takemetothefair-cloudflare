@@ -69,6 +69,7 @@ function formatDate(dateVal: unknown): string {
       month: "short",
       day: "numeric",
       year: "numeric",
+      timeZone: "UTC",
     });
   } catch {
     return "TBD";

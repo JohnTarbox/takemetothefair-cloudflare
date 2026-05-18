@@ -234,7 +234,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               {deadlineChipText && (
                 <Badge
                   className="bg-amber-light text-amber-dark"
-                  title={`Vendor applications close ${new Date(event.applicationDeadline!).toLocaleDateString()}`}
+                  title={`Vendor applications close ${new Date(event.applicationDeadline!).toLocaleDateString(undefined, { timeZone: "UTC" })}`}
                 >
                   {deadlineChipText}
                 </Badge>
