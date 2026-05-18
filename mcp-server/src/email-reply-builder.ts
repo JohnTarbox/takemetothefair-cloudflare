@@ -99,6 +99,23 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "submission-approved": {
+      // Fires when admin transitions a submitter-attributed event from
+      // PENDING/TENTATIVE → APPROVED. Generic phrasing about edits ("some
+      // details may have been adjusted during review") covers the common
+      // case where admin fixed dates/venue before approving, without
+      // committing to specifics.
+      const eventName = (params.eventName as string | undefined) ?? "your event";
+      const eventUrl = (params.eventUrl as string | undefined) ?? null;
+      const urlLine = eventUrl ? `\n\nSee the live listing: ${eventUrl}\n` : "";
+      return `Good news — ${eventName} has been approved and is now live on Meet Me at the Fair.${urlLine}
+
+We've reviewed and approved your submission. Some details may have been adjusted during review; please check the listing and reply to this thread if anything needs correction.
+
+Thanks for helping us keep the directory current.
+
+${SIGN_OFF}`;
+    }
     case "already-exists": {
       // The dedup endpoint can match by exact source_url OR by name+date
       // similarity ≥0.85 within ±7 days. Reply is the same either way —

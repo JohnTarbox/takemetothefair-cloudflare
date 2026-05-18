@@ -43,6 +43,7 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { dollarsToCents } from "../helpers.js";
+import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
@@ -61,6 +62,10 @@ const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 interface Env {
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  /** EMAIL_JOBS queue producer for the approval-notification hook on
+   *  PENDING/TENTATIVE → APPROVED transitions in update_event_status.
+   *  Optional so dev / unconfigured environments degrade gracefully. */
+  EMAIL_JOBS?: Queue<unknown>;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -352,6 +357,32 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             db,
             entity: { type: "event", id: event.id, slug: event.slug, action: "status_change" },
           });
+        }
+      }
+
+      // Approval-notification hook — fires on non-APPROVED → APPROVED
+      // transitions for submitter-attributed events. Helper gates on
+      // suggester_email present + approval_notified_at NULL, so admin-
+      // created events (no submitter) and re-approvals are correctly
+      // skipped. Non-blocking on failure: log + continue rather than
+      // failing the admin tool call.
+      if (previousStatus !== "APPROVED" && params.status === "APPROVED") {
+        try {
+          const result = await notifyApprovalIfNeeded(
+            db,
+            { EMAIL_JOBS: env?.EMAIL_JOBS },
+            event.id
+          );
+          if (result.outcome.startsWith("error:")) {
+            console.warn(
+              `[MCP/update_event_status] approval notify ${result.outcome} for ${event.id}`
+            );
+          }
+        } catch (notifyError) {
+          console.error(
+            `[MCP/update_event_status] approval notify failed for ${event.id}:`,
+            notifyError
+          );
         }
       }
 

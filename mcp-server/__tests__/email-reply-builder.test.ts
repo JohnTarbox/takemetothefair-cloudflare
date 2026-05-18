@@ -167,3 +167,54 @@ describe("buildReply — admin-decision-tailored kinds (waitForEvent flow)", () 
     expect(msg.text).toMatch(/outlet|deadline|angle/i);
   });
 });
+
+describe("buildReply — submission-approved (post-review notification)", () => {
+  it("source tag is email:submission-approved (used for reply-attribution rollups)", () => {
+    const msg = buildReply("submission-approved", "alice@example.com", {
+      subject: "Hamfest",
+      eventName: "ARRL Maine Hamfest",
+    });
+    expect(msg.source).toBe("email:submission-approved");
+  });
+
+  it("includes the event name in the body", () => {
+    const msg = buildReply("submission-approved", "alice@example.com", {
+      subject: "Hamfest",
+      eventName: "ARRL Maine State Convention & Hamfest",
+      eventUrl: "https://meetmeatthefair.com/events/arrl-maine-hamfest",
+    });
+    expect(msg.text).toContain("ARRL Maine State Convention & Hamfest");
+  });
+
+  it("includes the live-listing URL when provided", () => {
+    const msg = buildReply("submission-approved", "alice@example.com", {
+      subject: "x",
+      eventName: "Fryeburg Fair 2026",
+      eventUrl: "https://meetmeatthefair.com/events/fryeburg-fair-2026",
+    });
+    expect(msg.text).toContain("https://meetmeatthefair.com/events/fryeburg-fair-2026");
+  });
+
+  it("uses generic phrasing about edits during review (covers the common 'admin fixed dates' case)", () => {
+    // The whole point of this template is that we don't commit to "nothing
+    // was changed" — admins routinely adjust dates/venue/categories before
+    // approving. Sender must be invited to check the listing and reply
+    // with corrections.
+    const msg = buildReply("submission-approved", "alice@example.com", {
+      subject: "x",
+      eventName: "Fryeburg",
+      eventUrl: "https://meetmeatthefair.com/events/fryeburg",
+    });
+    expect(msg.text).toMatch(/some details may have been adjusted|check the listing/i);
+    expect(msg.text).toMatch(/reply to this thread|correction/i);
+  });
+
+  it("falls back gracefully when eventName/eventUrl are absent", () => {
+    // Defensive — if a future call site forgets to pass params, the reply
+    // must still be readable rather than 'has been approved and is now live'
+    // with no subject.
+    const msg = buildReply("submission-approved", "alice@example.com", { subject: "x" });
+    expect(msg.text).toContain("your event");
+    expect(msg.text).not.toContain("undefined");
+  });
+});

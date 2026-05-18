@@ -18,6 +18,7 @@ import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { parseTimestamp, parseDateOnly } from "@/lib/datetime";
+import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
 
 export const runtime = "edge";
 
@@ -345,6 +346,26 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       const slug = (updateData.slug as string | undefined) ?? currentEvent.slug;
       const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
       await pingIndexNow(db, indexNowUrlFor("events", slug), env, indexNowSource);
+    }
+
+    // Approval-notification hook. Fires only on non-APPROVED → APPROVED
+    // transitions; the helper's own gates (suggester_email present,
+    // approval_notified_at NULL) prevent double-sends and notifications
+    // for admin-created events. Non-blocking on failure: log + continue
+    // so a queue-bound issue doesn't fail the admin's PATCH.
+    if (currentEvent.status !== "APPROVED" && newStatus === "APPROVED") {
+      try {
+        const cfEnv = getCloudflareEnv() as unknown as { EMAIL_JOBS?: Queue<unknown> };
+        await notifyApprovalIfNeeded(db, { EMAIL_JOBS: cfEnv.EMAIL_JOBS }, id);
+      } catch (notifyError) {
+        await logError(db, {
+          message: "Failed to enqueue approval notification (non-blocking)",
+          error: notifyError,
+          source: "api/admin/events/[id]",
+          request,
+          context: { eventId: id },
+        });
+      }
     }
 
     return NextResponse.json(updatedEvent);

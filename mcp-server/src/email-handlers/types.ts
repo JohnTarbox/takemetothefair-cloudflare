@@ -34,6 +34,12 @@ export type ReplyKind =
   | "extract-failed"
   | "submit-failed"
   | "already-exists"
+  // Post-review notification: fires when admin transitions a
+  // submitter-attributed event from PENDING/TENTATIVE → APPROVED.
+  // Not a handler reply — pushed onto EMAIL_JOBS by the approval-
+  // notification helper, drained by queue-consumers.ts. See
+  // src/lib/approval-notification.ts.
+  | "submission-approved"
   // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"

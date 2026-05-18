@@ -161,6 +161,11 @@ export const events = sqliteTable(
     submittedByUserId: text("submitted_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    // Idempotency marker for the "your submission was approved" email
+    // (drizzle/0077). NULL = never notified; the notification helper
+    // only fires when this is NULL AND status='APPROVED' AND
+    // suggester_email IS NOT NULL. See src/lib/approval-notification.ts.
+    approvalNotifiedAt: integer("approval_notified_at", { mode: "timestamp" }),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
