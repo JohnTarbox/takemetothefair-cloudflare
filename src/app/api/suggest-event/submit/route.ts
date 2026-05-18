@@ -223,6 +223,7 @@ export async function POST(request: NextRequest) {
       endDate,
       applicationDeadline: null,
       description,
+      eventScale: data.eventScale ?? null,
     });
     const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;

@@ -46,6 +46,9 @@ export const eventsLegacyGateCandidatesRule: RuleDefinition = {
         endDate: events.endDate,
         applicationDeadline: events.applicationDeadline,
         description: events.description,
+        // Pull eventScale so MAJOR-tagged multi-week events (state fairs)
+        // don't falsely trip the new duration_too_long_for_scale gate.
+        eventScale: events.eventScale,
       })
       .from(events)
       .where(and(eq(events.status, "APPROVED"), isNotNull(events.startDate)));
@@ -60,6 +63,7 @@ export const eventsLegacyGateCandidatesRule: RuleDefinition = {
         endDate: r.endDate,
         applicationDeadline: r.applicationDeadline,
         description: r.description,
+        eventScale: r.eventScale,
       });
       if (result.route !== "PENDING_REVIEW") continue;
       matches.push({

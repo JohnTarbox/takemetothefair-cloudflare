@@ -417,3 +417,114 @@ describe("evaluateGates", () => {
     expect(r.reasons).toContain("start_equals_end_but_description_multi_day");
   });
 });
+
+describe("evaluateGates — PR-3 additions (2026-05-18 analyst spec)", () => {
+  // -------------- Sub-venue / component name pattern --------------
+  it("flags 'sub-venue' in the event name as name_subvenue_component", () => {
+    const r = evaluateGates({
+      name: "Concord Arts Festival Sub-Venue: Children's Tent",
+      startDate: new Date("2026-07-15T12:00:00Z"),
+      endDate: new Date("2026-07-15T12:00:00Z"),
+    });
+    expect(r.route).toBe("PENDING_REVIEW");
+    expect(r.reasons).toContain("name_subvenue_component");
+  });
+
+  it("flags 'subvenue' (no hyphen) the same way", () => {
+    const r = evaluateGates({
+      name: "Lakes Region Arts Subvenue B",
+      startDate: new Date("2026-07-15T12:00:00Z"),
+      endDate: new Date("2026-07-15T12:00:00Z"),
+    });
+    expect(r.reasons).toContain("name_subvenue_component");
+  });
+
+  it("flags 'component' as a sub-component marker", () => {
+    const r = evaluateGates({
+      name: "Children Component of the Spring Fair",
+      startDate: new Date("2026-07-15T12:00:00Z"),
+      endDate: new Date("2026-07-15T12:00:00Z"),
+    });
+    expect(r.reasons).toContain("name_subvenue_component");
+  });
+
+  it("does NOT flag normal event names that don't mention sub-venue/component", () => {
+    const r = evaluateGates({
+      name: "Brattleboro Spring Festival",
+      startDate: new Date("2026-07-15T12:00:00Z"),
+      endDate: new Date("2026-07-15T12:00:00Z"),
+    });
+    expect(r.reasons).not.toContain("name_subvenue_component");
+  });
+
+  // -------------- Duration-too-long-for-scale --------------
+  it("flags 15-day duration with no eventScale tag (recurring-series suspect)", () => {
+    const r = evaluateGates({
+      name: "Saturday Farmers Market",
+      startDate: new Date("2026-05-02T12:00:00Z"),
+      endDate: new Date("2026-05-17T12:00:00Z"), // 15 days
+    });
+    expect(r.reasons).toContain("duration_too_long_for_scale");
+  });
+
+  it("flags 30-day SMALL-scale event the same way", () => {
+    const r = evaluateGates({
+      name: "Summer Series",
+      startDate: new Date("2026-06-01T12:00:00Z"),
+      endDate: new Date("2026-07-01T12:00:00Z"),
+      eventScale: "SMALL",
+    });
+    expect(r.reasons).toContain("duration_too_long_for_scale");
+  });
+
+  it("does NOT flag MAJOR-scale multi-week events (state fair etc.)", () => {
+    const r = evaluateGates({
+      name: "Topsfield Fair",
+      startDate: new Date("2026-10-02T12:00:00Z"),
+      endDate: new Date("2026-10-18T12:00:00Z"), // 16 days, legitimate
+      eventScale: "MAJOR",
+    });
+    expect(r.reasons).not.toContain("duration_too_long_for_scale");
+  });
+
+  it("does NOT flag events ≤14 days even without a scale tag", () => {
+    const r = evaluateGates({
+      name: "Two-Week Festival",
+      startDate: new Date("2026-06-01T12:00:00Z"),
+      endDate: new Date("2026-06-14T12:00:00Z"), // 13 days
+    });
+    expect(r.reasons).not.toContain("duration_too_long_for_scale");
+  });
+
+  // -------------- Multi-row PDF flag --------------
+  it("flags multi-row PDFs from concordnh.gov", () => {
+    const r = evaluateGates({
+      name: "Antiques & Book Show",
+      sourceUrl: "https://concordnh.gov/DocumentCenter/View/1050/Spring--Summer-Shows.pdf",
+      startDate: new Date("2026-06-07T12:00:00Z"),
+      endDate: new Date("2026-06-07T12:00:00Z"),
+    });
+    expect(r.reasons).toContain("source_tabular_multirow_pdf");
+    expect(r.route).toBe("PENDING_REVIEW");
+  });
+
+  it("does NOT flag non-PDF pages on the same multi-row host", () => {
+    const r = evaluateGates({
+      name: "Event Detail Page",
+      sourceUrl: "https://concordnh.gov/events/123",
+      startDate: new Date("2026-06-07T12:00:00Z"),
+      endDate: new Date("2026-06-07T12:00:00Z"),
+    });
+    expect(r.reasons).not.toContain("source_tabular_multirow_pdf");
+  });
+
+  it("does NOT flag PDFs from non-multirow hosts (organizer's own PDF program)", () => {
+    const r = evaluateGates({
+      name: "Annual Report",
+      sourceUrl: "https://near-fest.com/2026-program.pdf",
+      startDate: new Date("2026-10-02T12:00:00Z"),
+      endDate: new Date("2026-10-04T12:00:00Z"),
+    });
+    expect(r.reasons).not.toContain("source_tabular_multirow_pdf");
+  });
+});

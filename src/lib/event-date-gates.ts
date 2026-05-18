@@ -12,6 +12,7 @@ export {
   nameMatchesAdminFlag,
   dateLooksImplausible,
   sourceCredibilityTier,
+  sourceLooksLikeMultirowPdf,
   type IngestEvaluationInput,
   type IngestEvaluationResult,
   type NameFlagResult,

@@ -84,6 +84,36 @@ const TIER_2_SOURCE_NAMES = new Set<string>([
   // Add to packages/scrapers when registering a new one.
 ]);
 
+// Known hosts that serve multi-row event-calendar PDFs (city civic
+// venues, town schedules). Events ingested from these sources benefit
+// from per-row admin review because AI extraction has been observed to
+// carry organizer/name context across rows. Expand as new sources are
+// discovered. The PDF extension check below caps the false-positive
+// rate — non-PDF pages on the same host (event detail pages) aren't
+// flagged.
+const MULTIROW_PDF_HOSTS = new Set<string>([
+  // Concord NH Everett Arena 2026 spring/summer schedule PDF caused the
+  // NHAC Gun Collectors Show false-attribution case (an Antiques & Book
+  // Show row at the same venue got the prior row's organizer carried
+  // forward by the AI extractor).
+  "concordnh.gov",
+]);
+
+/** Detect a multi-row-PDF source URL. Match = host in MULTIROW_PDF_HOSTS
+ *  AND the URL path ends in .pdf (case-insensitive). Non-PDF pages on
+ *  the same host pass through unflagged. */
+export function sourceLooksLikeMultirowPdf(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, "").toLowerCase();
+    if (!MULTIROW_PDF_HOSTS.has(host)) return false;
+    return /\.pdf$/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve a credibility tier for an event's source. Accepts either a
  *  bare hostname, a URL, or the project's `sourceName` string. */
 export function sourceCredibilityTier(source: string | null | undefined): 1 | 2 | 3 {
@@ -132,6 +162,14 @@ const NAME_PATTERNS: NamePattern[] = [
   // "Apply Today", "Vendor Applications Open" — distinct from "apply" inside
   // a longer word like "application". \b on both sides.
   { reason: "name_apply_pattern", match: /\bapply\b/i },
+  // Sub-venue / sub-component markers — "Arts Alley Sub-Venue", "Component:
+  // Children's Tent". A real top-level event wouldn't include the word
+  // sub-venue or component in its own name. Catches the Lakes Region Arts
+  // Festival "Field B" type case from a different angle than the em-dash
+  // rule (em-dash rule covers "X — Field B"; this catches "X subvenue Y"
+  // or "Children Component" type names). `sub.?venue` covers "subvenue",
+  // "sub-venue", "sub venue".
+  { reason: "name_subvenue_component", match: /\b(?:sub.?venue|component)\b/i },
   // Em-dash sub-venue suffix: "Concord Arts Festival — Arts Alley" indicates
   // a sub-component, not a top-level event. Hyphen and en-dash are NOT
   // flagged (those appear in normal names like "rock-n-roll"). The 2026-05-17
@@ -197,12 +235,25 @@ export interface DateGateInput {
   /** Description text used to detect multi-day language. Pass the raw
    *  description; helper handles case + decoding. */
   description?: string | null | undefined;
+  /** Optional event_scale (SMALL/MEDIUM/LARGE/MAJOR). Used by the long-
+   *  duration plausibility check below — multi-week events with no
+   *  MAJOR scale tag are almost always a recurring-series row that
+   *  got ingested as if it were a single event. Omit to skip that
+   *  check (preserves backwards compat for callers that don't yet
+   *  pass scale). */
+  eventScale?: string | null | undefined;
 }
 
 export type DateGateResult = { ok: true } | { ok: false; reasons: string[] };
 
 const SAME_DAY_TOLERANCE_MS = 12 * 60 * 60 * 1000; // 12h — covers TZ jitter
 const MAX_FUTURE_MS = 18 * 30 * 86400 * 1000; // ~18 months
+// Duration plausibility: events lasting more than this without a MAJOR
+// scale tag are almost certainly a recurring-series row (e.g., a farmers
+// market that runs every Saturday for 6 months, ingested as if it were
+// one event from start to end). True multi-week events at MMATF scale
+// (state fairs, major expos) tag eventScale=MAJOR and bypass this check.
+const MAX_DURATION_MS_NON_MAJOR = 14 * 86400 * 1000; // 14 days
 // Multi-day terms in descriptions that contradict a single-day start==end.
 const MULTI_DAY_PATTERNS = [
   /\b(?:2|3|4|5|6|7|two|three|four|five|six|seven)[-\s]day\b/i,
@@ -301,6 +352,21 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
     reasons.push("end_date_in_past");
   }
 
+  if (
+    input.startDate &&
+    input.endDate &&
+    input.endDate.getTime() - input.startDate.getTime() > MAX_DURATION_MS_NON_MAJOR &&
+    input.eventScale !== "MAJOR"
+  ) {
+    // Multi-week storage of an event with no MAJOR scale tag. Most often
+    // this is a recurring weekly market or seasonal series row that got
+    // ingested as a single event with start=first occurrence and end=
+    // last occurrence (Rhododendron Festival 11-day case, "open every
+    // Saturday May–October" pattern). True multi-week single events
+    // (e.g., state fairs) tag MAJOR and bypass this check.
+    reasons.push("duration_too_long_for_scale");
+  }
+
   return reasons.length > 0 ? { ok: false, reasons } : { ok: true };
 }
 
@@ -316,6 +382,11 @@ export interface IngestEvaluationInput {
   endDate: Date | null | undefined;
   applicationDeadline?: Date | null | undefined;
   description?: string | null | undefined;
+  /** Optional event_scale tag. When set to MAJOR, the duration-too-long
+   *  plausibility check is bypassed (legitimately multi-week events
+   *  like state fairs tag MAJOR). Omit for backwards compat with
+   *  callers that don't yet pass scale. */
+  eventScale?: string | null | undefined;
 }
 
 export interface IngestEvaluationResult {
@@ -352,8 +423,22 @@ export function evaluateGates(input: IngestEvaluationInput): IngestEvaluationRes
     endDate: input.endDate,
     applicationDeadline: input.applicationDeadline,
     description: input.description,
+    eventScale: input.eventScale,
   });
   if (!dateCheck.ok) reasons.push(...dateCheck.reasons);
+
+  // Multi-row PDF flag — a city/civic venue calendar PDF lists many
+  // events at the same venue across different organizers. AI extraction
+  // can carry the previous row's organizer (or other context) forward
+  // into the next row by mistake. We can't reliably detect this from
+  // the extracted event alone; the most-tractable signal is the source
+  // URL pattern. When a PDF on a known multi-row host is the source,
+  // route to PENDING_REVIEW so admin verifies organizer + name +
+  // dates row-by-row before approving. See feedback note on the NHAC
+  // false-attribution case from the Concord NH Everett Arena PDF.
+  if (input.sourceUrl && sourceLooksLikeMultirowPdf(input.sourceUrl)) {
+    reasons.push("source_tabular_multirow_pdf");
+  }
 
   return {
     route: reasons.length > 0 ? "PENDING_REVIEW" : "APPROVED",
