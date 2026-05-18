@@ -36,7 +36,7 @@ import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { getDb } from "./db.js";
 import { inboundEmails } from "./schema.js";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { resolveIntent, shouldForwardToAdmin, type EmailIntent } from "./email-intents.js";
 
 // ---------------------------------------------------------------------------
@@ -168,12 +168,18 @@ export async function handleInboundEmail(
 
     // 6. INSERT inbound_emails row, deduping on message_id.
     //    onConflictDoNothing pairs with the partial UNIQUE index added
-    //    in drizzle/0073. SQLite requires that an ON CONFLICT target
-    //    matching a PARTIAL unique index repeat the partial index's
-    //    WHERE clause verbatim — otherwise it errors with "ON CONFLICT
-    //    clause does not match any PRIMARY KEY or UNIQUE constraint".
-    //    Hit in prod 2026-05-18 15:50 (silently dropped one inbound
-    //    email; rescued manually). Fix: add the same WHERE.
+    //    in drizzle/0073. We pass NO target — bare `ON CONFLICT DO
+    //    NOTHING` matches any unique-constraint violation on the table,
+    //    which in practice means only the partial message_id index
+    //    (the PK is randomUUID and never collides; no other UNIQUEs).
+    //    Why not pass `target: messageId`: SQLite requires partial-
+    //    index conflict targets to repeat the partial WHERE in the
+    //    conflict clause, AND Drizzle's `onConflictDoNothing` only
+    //    accepts a `where` field that gets emitted AFTER `DO NOTHING`
+    //    (invalid syntax) — there's no API path to emit the WHERE
+    //    BEFORE `DO NOTHING` where SQLite actually wants it. Bare
+    //    no-target form sidesteps the whole issue. Hit twice in prod
+    //    2026-05-18; this is the third (and verified) attempt.
     //    .returning() lets us detect the duplicate case — an empty
     //    array means another delivery of this same message already
     //    landed and is being processed by its workflow.
@@ -201,10 +207,7 @@ export async function handleInboundEmail(
           messageId,
           createdAt: now,
         })
-        .onConflictDoNothing({
-          target: inboundEmails.messageId,
-          where: sql`${inboundEmails.messageId} IS NOT NULL`,
-        })
+        .onConflictDoNothing()
         .returning({ id: inboundEmails.id });
     } catch (err) {
       await logError(env.DB, {

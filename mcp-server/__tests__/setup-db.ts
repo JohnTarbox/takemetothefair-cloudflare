@@ -297,6 +297,28 @@ const SCHEMA_SQL = `
   CREATE INDEX idx_citations_event_field ON event_data_citations (event_id, field_name);
   CREATE INDEX idx_citations_event_state ON event_data_citations (event_id, state);
   CREATE INDEX idx_citations_state ON event_data_citations (state);
+
+  CREATE TABLE inbound_emails (
+    id TEXT PRIMARY KEY,
+    received_at INTEGER NOT NULL,
+    from_address TEXT NOT NULL,
+    to_address TEXT NOT NULL,
+    subject TEXT,
+    intent TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'received',
+    workflow_instance_id TEXT,
+    body_text_excerpt TEXT,
+    parsed_url TEXT,
+    attachment_count INTEGER NOT NULL DEFAULT 0,
+    raw_size INTEGER,
+    error TEXT,
+    message_id TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE UNIQUE INDEX uq_inbound_emails_message_id
+    ON inbound_emails(message_id)
+    WHERE message_id IS NOT NULL;
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
