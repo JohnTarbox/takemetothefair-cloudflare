@@ -15,6 +15,8 @@ import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
 import { logError } from "./logger.js";
 import type { SchemaOrgSyncParams } from "./workflows/schema-org-sync.js";
+import type { RecommendationsScanParams } from "./workflows/recommendations-scan.js";
+import type { EventDateDriftParams } from "./workflows/event-date-drift.js";
 import type { AuthContext } from "./auth.js";
 import type { UserProps } from "./oauth/utils.js";
 
@@ -47,10 +49,13 @@ interface Env {
   // destination address in Cloudflare Email Routing. Set via
   // `wrangler secret put SUBMIT_ADMIN_FORWARD` (or as a [vars] entry).
   SUBMIT_ADMIN_FORWARD?: string;
-  // Cloudflare Workflows binding. Used by the cron scheduled() handler
-  // and by the HTTP endpoints at /api/admin/workflows/schema-org-sync/*
-  // (which Pages calls into — Pages can't bind workflows directly).
+  // Cloudflare Workflows bindings. SCHEMA_ORG_SYNC is also reachable
+  // from Pages via the HTTP escape hatch at
+  // /api/admin/workflows/schema-org-sync/*. The other two are
+  // cron-only (fired from scheduled() below).
   SCHEMA_ORG_SYNC: Workflow<SchemaOrgSyncParams>;
+  RECOMMENDATIONS_SCAN: Workflow<RecommendationsScanParams>;
+  EVENT_DATE_DRIFT: Workflow<EventDateDriftParams>;
   // Build fingerprint — injected by `wrangler deploy --var` at deploy time.
   // Empty in local dev; populated in production so `whoami` can answer
   // "which bundle is the server running?" without a client round-trip.
@@ -420,83 +425,33 @@ async function runMainAppSweep(
   }
 }
 
-async function runScheduledRecommendationsScan(env: Env): Promise<void> {
-  // The /api/admin/recommendations/scan endpoint is chunked to fit Cloudflare's
-  // 30s per-request budget (PR #153). Single POST only scans the first 8
-  // rules; loop with ?cursor=N until { more: false } to cover ALL_RULES.
-  // Hard ceiling of 50 chunks defends against a runaway server bug.
-  const MAX_CHUNKS = 50;
-  const SOURCE = "mcp:schedule:recommendations-scan";
-  const sessionId = crypto.randomUUID();
-  let cursor = 0;
-  let chunks = 0;
-  const totals = { scannedRules: 0, inserted: 0, resolved: 0, failedRules: 0 };
-  while (chunks < MAX_CHUNKS) {
-    chunks++;
-    const url = `https://meetmeatthefair.com/api/admin/recommendations/scan?cursor=${cursor}`;
-    const init: RequestInit = {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
-      },
-    };
-    try {
-      const response = env.MAIN_APP
-        ? await env.MAIN_APP.fetch(new Request(url, init))
-        : await fetch(url, init);
-      if (!response.ok) {
-        const text = (await response.text()).slice(0, 300);
-        await logError(env.DB, {
-          source: SOURCE,
-          message: "recommendations scan chunk returned non-2xx",
-          statusCode: response.status,
-          sessionId,
-          context: { cursor, chunk: chunks, status: response.status, bodyExcerpt: text },
-        });
-        return;
-      }
-      const body = (await response.json().catch(() => ({}))) as {
-        success?: boolean;
-        data?: {
-          scannedRules?: number;
-          inserted?: number;
-          resolved?: number;
-          failedRules?: number;
-          nextCursor?: number;
-          more?: boolean;
-        };
-      };
-      const d = body.data;
-      if (!d) {
-        await logError(env.DB, {
-          source: SOURCE,
-          message: "recommendations scan chunk returned no data field",
-          sessionId,
-          context: { cursor, chunk: chunks, body },
-        });
-        return;
-      }
-      totals.scannedRules += d.scannedRules ?? 0;
-      totals.inserted += d.inserted ?? 0;
-      totals.resolved += d.resolved ?? 0;
-      totals.failedRules += d.failedRules ?? 0;
-      cursor = d.nextCursor ?? cursor;
-      if (!d.more) break;
-    } catch (error) {
-      await logError(env.DB, {
-        source: SOURCE,
-        message: "recommendations scan chunk threw",
-        error,
-        sessionId,
-        context: { cursor, chunk: chunks },
-      });
-      return;
-    }
+// runScheduledRecommendationsScan was deleted in the Phase 2 Workflows
+// migration. The chunked HTTP cursor loop is now durable per-chunk via
+// RecommendationsScanWorkflow (mcp-server/src/workflows/recommendations-scan.ts),
+// fired from the scheduled() handler below via
+// env.RECOMMENDATIONS_SCAN.create({}).
+
+/**
+ * Fire a workflow create() from the cron handler. Catches binding/quota
+ * failures so a single workflow's create error doesn't break the whole
+ * cron Promise.all. The workflow's own internal errors are logged
+ * inside the workflow class via logError to mcp:workflow:<name>.
+ */
+async function createWorkflowOrLog(
+  env: Env,
+  label: string,
+  createFn: () => Promise<{ id: string }>
+): Promise<void> {
+  try {
+    const instance = await createFn();
+    console.log(`[cron] workflow '${label}' created — instance ${instance.id}`);
+  } catch (error) {
+    await logError(env.DB, {
+      source: `mcp:schedule:${label}`,
+      message: `failed to create workflow instance for cron task '${label}'`,
+      error,
+    });
   }
-  console.log(
-    `[cron] recommendations scan ok — scanned=${totals.scannedRules} resolved=${totals.resolved} failed=${totals.failedRules} chunks=${chunks}`
-  );
 }
 
 /**
@@ -543,75 +498,11 @@ async function runScheduledTimeToIndexSweep(env: Env): Promise<void> {
   );
 }
 
-/**
- * Periodic re-verification sweep for event start_date drift. Reads APPROVED
- * events with start_date 30-90 days out, refetches the canonical source URL,
- * and records drift > 1 day in event_date_drift_findings. The
- * event_date_drift recommendation rule surfaces drift to admin triage.
- *
- * Sweep is chunked (200 events / call) and may iterate via next_cursor if a
- * single chunk doesn't cover the active window. Hard ceiling 50 chunks to
- * guard against a runaway server bug.
- */
-async function runScheduledEventDateDrift(env: Env): Promise<void> {
-  const MAX_CHUNKS = 50;
-  const SOURCE = "mcp:schedule:event-date-drift";
-  const sessionId = crypto.randomUUID();
-  let cursor = 0;
-  let chunks = 0;
-  const totals = { scanned: 0, drift_recorded: 0, fetch_failed: 0 };
-  while (chunks < MAX_CHUNKS) {
-    chunks++;
-    const url = `https://meetmeatthefair.com/api/admin/event-date-drift/sweep?cursor=${cursor}`;
-    const init: RequestInit = {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Internal-Key": env.INTERNAL_API_KEY ?? "",
-      },
-    };
-    try {
-      const response = env.MAIN_APP
-        ? await env.MAIN_APP.fetch(new Request(url, init))
-        : await fetch(url, init);
-      if (!response.ok) {
-        const text = (await response.text()).slice(0, 300);
-        await logError(env.DB, {
-          source: SOURCE,
-          message: "event-date-drift sweep chunk returned non-2xx",
-          statusCode: response.status,
-          sessionId,
-          context: { cursor, chunk: chunks, status: response.status, bodyExcerpt: text },
-        });
-        return;
-      }
-      const body = (await response.json().catch(() => ({}))) as {
-        success?: boolean;
-        scanned?: number;
-        drift_recorded?: number;
-        fetch_failed?: number;
-        next_cursor?: number | null;
-      };
-      totals.scanned += body.scanned ?? 0;
-      totals.drift_recorded += body.drift_recorded ?? 0;
-      totals.fetch_failed += body.fetch_failed ?? 0;
-      if (body.next_cursor == null) break;
-      cursor = body.next_cursor;
-    } catch (error) {
-      await logError(env.DB, {
-        source: SOURCE,
-        message: "event-date-drift sweep chunk threw",
-        error,
-        sessionId,
-        context: { cursor, chunk: chunks },
-      });
-      return;
-    }
-  }
-  console.log(
-    `[cron] event-date-drift sweep ok — scanned=${totals.scanned} drift=${totals.drift_recorded} fetch_failed=${totals.fetch_failed} chunks=${chunks}`
-  );
-}
+// runScheduledEventDateDrift was deleted in the Phase 2 Workflows
+// migration. The chunked HTTP cursor loop is now durable per-chunk via
+// EventDateDriftWorkflow (mcp-server/src/workflows/event-date-drift.ts),
+// fired from the scheduled() handler below via
+// env.EVENT_DATE_DRIFT.create({}).
 
 /**
  * §6.3 Phase 2 GA4 liveness check — daily belt-and-suspenders detection
@@ -673,6 +564,8 @@ async function runScheduledPendingPingsFlush(env: Env): Promise<void> {
 // from the Worker entry module. The wrangler.toml [[workflows]] binding
 // matches by `class_name`. See mcp-server/src/workflows/ for the impls.
 export { SchemaOrgSyncWorkflow } from "./workflows/schema-org-sync.js";
+export { RecommendationsScanWorkflow } from "./workflows/recommendations-scan.js";
+export { EventDateDriftWorkflow } from "./workflows/event-date-drift.js";
 
 // ---------------------------------------------------------------------------
 // Workflow trigger endpoints (HTTP escape hatch for Pages)
@@ -846,13 +739,19 @@ export default {
       return;
     }
     // Default daily branch (covers "0 6 * * *" and any future daily crons).
+    // Two of the sweeps are now Workflows (recommendations-scan,
+    // event-date-drift) — we fire them via .create() and the workflow
+    // runs durably in the background, surviving Worker restarts and
+    // recovering per-chunk failures via step.do retry. The remaining
+    // three are single-call sweeps via runMainAppSweep (low score in
+    // docs/cloudflare-workflows-audit.md, left as-is).
     ctx.waitUntil(
       Promise.all([
-        runScheduledRecommendationsScan(env),
+        createWorkflowOrLog(env, "recommendations-scan", () => env.RECOMMENDATIONS_SCAN.create({})),
         runScheduledGscSweep(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),
-        runScheduledEventDateDrift(env),
+        createWorkflowOrLog(env, "event-date-drift", () => env.EVENT_DATE_DRIFT.create({})),
       ]).then(() => undefined)
     );
   },
