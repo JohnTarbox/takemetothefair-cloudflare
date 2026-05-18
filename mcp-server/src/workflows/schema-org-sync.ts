@@ -1,42 +1,58 @@
 /**
- * Schema-org sync Workflow — proof-of-pattern.
+ * Canonical schema-org sync — driven by Cloudflare Workflows.
  *
- * The existing `/api/admin/schema-org/sync` runs as a single HTTP request
- * with `limit=50` to stay under Cloudflare's 30s response cap. Works fine
- * for current usage but can't process the whole catalog in one go.
+ * Each input event becomes a `step.do` with per-step retry. The step body
+ * HTTP-calls the main app's `/api/admin/schema-org/sync-one` endpoint with
+ * X-Internal-Key — same pattern as the cron sweeps in `index.ts`. Keeping
+ * the actual fetch + DB write in the main app means we don't have to
+ * hoist `fetchSchemaOrg` into a shared workspace package, and the
+ * Workflow stays a pure orchestrator.
  *
- * This Workflow demonstrates the pattern for **truly long-running jobs**:
- *   - One `step.do()` per event → durable retry on per-step failure
- *   - Process arbitrary number of events without the 30s cap
- *   - Survives Worker restarts mid-run
+ * Replaced the older `/api/admin/schema-org/sync` chunked POST endpoint,
+ * which was capped at 50 events per call to fit Cloudflare's 30s response
+ * budget. This path handles arbitrarily many events durably.
  *
- * Today this is exposed alongside (not replacing) the existing sync
- * endpoint. Once a use case requires processing 500+ events at once, the
- * old endpoint can be retired in favour of `start-workflow` + status poll.
+ * Triggered via `POST /api/admin/schema-org/sync-workflow/start`
+ * (accepts explicit `eventIds[]` or `mode: "missing" | "existing" | "all"`).
+ * Status polled via `GET /api/admin/schema-org/sync-workflow/[id]/status`.
  *
- * Runs in the MCP Worker (Pages projects can't host WorkflowEntrypoints).
- * Triggered via the SCHEMA_ORG_SYNC binding from either main app or MCP.
+ * Per-step retry policy is intentionally tight: `limit: 2, delay: 5s,
+ * constant backoff, timeout: 30s`. Schema-org sync failures are usually
+ * page-content issues (no JSON-LD on the page) or origin 4xx — retrying
+ * many times against the same URL doesn't help, and we'd rather move on
+ * to the next event than block the whole workflow on one stubborn URL.
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { eq, sql } from "drizzle-orm";
-import { getDb } from "../db.js";
 import { logError } from "../logger.js";
-import { eventSchemaOrg } from "../schema.js";
 
-/** Per-instance params handed in at `WORKFLOW.create({ params: {...} })`. */
 export type SchemaOrgSyncParams = {
-  /** Event IDs to process. Caller is responsible for assembling this list
-   *  (e.g. via the existing admin/schema-org/sync GET endpoint that lists
-   *  unsynced events). Cap at 1000 to keep workflow runtime reasonable. */
+  /** Event IDs to process. Caller resolves the list (either explicit user
+   *  selection or by querying the events table via the start endpoint's
+   *  `mode` parameter). Cap at 1000 per instance. */
   eventIds: string[];
-  /** Per-event delay between fetch calls. 500ms matches the existing sync
-   *  rate limit (avoid hammering aggregator origin servers). */
+  /** Per-event delay between calls. 500ms default matches the original
+   *  /sync endpoint's rate-limit safeguard against hammering origins. */
   delayMs?: number;
 };
 
 type Env = {
   DB: D1Database;
+  MAIN_APP_URL: string;
+  INTERNAL_API_KEY: string;
+  /** Optional Pages service binding — not used today (Pages binding is
+   *  disabled in wrangler.toml), kept for forward-compat. */
+  MAIN_APP?: { fetch: typeof fetch };
+};
+
+/** Response from /api/admin/schema-org/sync-one — mirrors the per-event
+ *  result the old endpoint's loop emitted. */
+type SyncOneResponse = {
+  success: boolean;
+  eventId: string;
+  eventName?: string;
+  status: string;
+  error?: string | null;
 };
 
 export class SchemaOrgSyncWorkflow extends WorkflowEntrypoint<Env, SchemaOrgSyncParams> {
@@ -48,131 +64,91 @@ export class SchemaOrgSyncWorkflow extends WorkflowEntrypoint<Env, SchemaOrgSync
     let success = 0;
     let failure = 0;
     let notFound = 0;
+    // Per-event results — admin UI displays these as success/fail tables
+    // and uses the failed list for the "retry selected" button. Capped
+    // at 1000 events × ~200 bytes ≈ 200KB, well under the 1MB output limit.
+    const results: SyncOneResponse[] = [];
 
     for (const eventId of ids) {
-      // Each event is its own step — Cloudflare retries the step on
-      // transient errors (network blips, 5xx from origin) before failing
-      // the whole workflow. Step name includes the event ID so retries
-      // are deduplicated correctly.
       try {
-        await step.do(`fetch-${eventId}`, async () => {
-          const db = getDb(this.env.DB);
+        const result = await step.do(
+          `sync-${eventId}`,
+          {
+            retries: { limit: 2, delay: "5 seconds", backoff: "constant" },
+            timeout: "30 seconds",
+          },
+          async () => {
+            // Each step is one HTTP POST to the main app, which owns the
+            // canonical fetchSchemaOrg + the schema-org-row upsert logic.
+            // Service binding fallback in case we ever wire it up; today
+            // we always go through public HTTPS.
+            const url = `${this.env.MAIN_APP_URL}/api/admin/schema-org/sync-one`;
+            const init: RequestInit = {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-internal-key": this.env.INTERNAL_API_KEY,
+              },
+              body: JSON.stringify({ eventId }),
+            };
 
-          // Look up the event's ticketUrl via raw SQL since we don't have
-          // the events table object imported here. Could add later.
-          const rows = await this.env.DB.prepare(
-            "SELECT ticket_url FROM events WHERE id = ? LIMIT 1"
-          )
-            .bind(eventId)
-            .all<{ ticket_url: string | null }>();
-          const ticketUrl = rows.results[0]?.ticket_url ?? null;
-          if (!ticketUrl) {
-            notFound++;
-            return { status: "no_ticket_url" };
-          }
+            const response = this.env.MAIN_APP
+              ? await this.env.MAIN_APP.fetch(new Request(url, init))
+              : await fetch(url, init);
 
-          // Fetch the schema-org JSON-LD. The existing fetchSchemaOrg
-          // helper is in the main app; for the proof-of-pattern we duplicate
-          // a minimal version here. Long-term, hoist into a shared package.
-          const result = await fetchSchemaOrgMinimal(ticketUrl);
-          const now = new Date();
-
-          if (result.status === "available" && result.data) {
-            // Upsert the eventSchemaOrg row. Same shape as the inline sync
-            // endpoint, just without the per-field detail (proof-of-pattern).
-            const existing = await db
-              .select({ id: eventSchemaOrg.id, fetchCount: eventSchemaOrg.fetchCount })
-              .from(eventSchemaOrg)
-              .where(eq(eventSchemaOrg.eventId, eventId))
-              .limit(1);
-
-            if (existing.length > 0) {
-              await db
-                .update(eventSchemaOrg)
-                .set({
-                  ticketUrl,
-                  schemaName: result.data.name ?? null,
-                  schemaDescription: result.data.description ?? null,
-                  status: result.status,
-                  lastFetchedAt: now,
-                  lastError: null,
-                  updatedAt: now,
-                  fetchCount: sql`${eventSchemaOrg.fetchCount} + 1`,
-                })
-                .where(eq(eventSchemaOrg.eventId, eventId));
-            } else {
-              await db.insert(eventSchemaOrg).values({
-                id: crypto.randomUUID(),
-                eventId,
-                ticketUrl,
-                schemaName: result.data.name ?? null,
-                schemaDescription: result.data.description ?? null,
-                status: result.status,
-                lastFetchedAt: now,
-                lastError: null,
-                fetchCount: 1,
-                createdAt: now,
-                updatedAt: now,
-              });
+            // 5xx → throw so step.do retries. 4xx + 2xx → return the body
+            // for accumulation. The sync-one endpoint returns 200 for
+            // "fetched but no JSON-LD on the page" (status=not_found),
+            // and 404 for "event row doesn't exist" — both are terminal
+            // for this event but not workflow-fatal.
+            if (response.status >= 500) {
+              const text = await response.text().catch(() => "<unreadable>");
+              throw new Error(`sync-one 5xx for ${eventId}: ${text.slice(0, 200)}`);
             }
-            success++;
-            return { status: "ok" };
+            return (await response.json()) as SyncOneResponse;
           }
+        );
 
+        results.push(result);
+        if (result.success) {
+          success++;
+        } else if (result.status === "not_found" || result.status === "event_not_found") {
+          notFound++;
+        } else {
           failure++;
-          return { status: result.status };
-        });
+        }
       } catch (err) {
-        // Step exhausted retries — log to error_logs and continue.
+        // Step exhausted retries (2 attempts × 30s timeout each) — log
+        // and continue. One stubborn event shouldn't block the whole
+        // workflow.
         await logError(this.env.DB, {
           source: "mcp:workflow:schema-org-sync",
-          message: "step exhausted retries for event",
+          message: "step exhausted retries; continuing with next event",
           error: err,
           sessionId: event.instanceId,
           context: { eventId, totalEvents: ids.length },
         });
         failure++;
+        results.push({
+          success: false,
+          eventId,
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
 
-      // Throttle between events. Workflow's step.sleep accepts numeric ms.
+      // Throttle between events. `step.sleep` is durable — survives
+      // Worker restarts and doesn't count against the step limit.
       if (delayMs > 0) await step.sleep(`delay-${eventId}`, delayMs);
     }
 
-    return { processed: ids.length, success, failure, notFound, capped: eventIds.length > cap };
-  }
-}
-
-/** Minimal schema-org fetcher — proof-of-pattern only. The full helper at
- *  src/lib/schema-org/fetcher.ts handles JSON-LD parsing, redirects, and
- *  the actual normalization. Hoist that into a shared package when this
- *  workflow becomes the canonical sync path. */
-async function fetchSchemaOrgMinimal(url: string): Promise<{
-  status: "available" | "not_found" | "invalid" | "error";
-  data?: { name?: string; description?: string };
-}> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": "MMATF-SchemaOrgSync/1.0" },
-      redirect: "follow",
-    });
-    if (!res.ok) return { status: res.status === 404 ? "not_found" : "error" };
-    const html = await res.text();
-    const m = html.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/i);
-    if (!m) return { status: "not_found" };
-    try {
-      const json = JSON.parse(m[1]);
-      const candidate = Array.isArray(json) ? json[0] : json;
-      if (candidate?.["@type"] === "Event") {
-        return {
-          status: "available",
-          data: { name: candidate.name, description: candidate.description },
-        };
-      }
-      return { status: "invalid" };
-    } catch {
-      return { status: "invalid" };
-    }
-  } catch {
-    return { status: "error" };
+    return {
+      processed: ids.length,
+      success,
+      failure,
+      notFound,
+      capped: eventIds.length > cap,
+      results,
+    };
   }
 }
