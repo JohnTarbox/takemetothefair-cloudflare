@@ -14,8 +14,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { inboundEmails } from "@/lib/db/schema";
+import { inboundEmails, events } from "@/lib/db/schema";
 import { desc, eq, gte, inArray, and, type SQL } from "drizzle-orm";
+
+/** Window after received_at within which a resulting event is considered
+ *  to have come from this inbound. Workflow typically completes in <30s
+ *  for submit-intent emails; 10 min is generous enough to cover retries. */
+const EVENT_LOOKUP_WINDOW_SECONDS = 600;
 
 export const runtime = "edge";
 
@@ -65,16 +70,60 @@ export async function GET(request: NextRequest) {
       error: inboundEmails.error,
       parsedUrl: inboundEmails.parsedUrl,
       attachmentCount: inboundEmails.attachmentCount,
+      messageId: inboundEmails.messageId,
     })
     .from(inboundEmails)
     .where(and(...conditions))
     .orderBy(desc(inboundEmails.receivedAt))
     .limit(limit);
 
+  // Resulting-event lookup: for each inbound row that has a parsed URL,
+  // find the event (if any) that the workflow created from this submission.
+  // Match on events.source_url AND a time window around received_at —
+  // protects against false matches when admin manually re-imports the same
+  // URL months later. One batch query covers all rows; JS post-process maps.
+  const urlsToLookup = Array.from(
+    new Set(rows.map((r) => r.parsedUrl).filter((u): u is string => typeof u === "string"))
+  );
+  const eventsBySourceUrl = new Map<
+    string,
+    { id: string; slug: string; name: string; createdAt: Date }[]
+  >();
+  if (urlsToLookup.length > 0) {
+    const eventRows = await db
+      .select({
+        id: events.id,
+        slug: events.slug,
+        name: events.name,
+        sourceUrl: events.sourceUrl,
+        createdAt: events.createdAt,
+      })
+      .from(events)
+      .where(inArray(events.sourceUrl, urlsToLookup));
+    for (const e of eventRows) {
+      if (!e.sourceUrl || !e.createdAt) continue;
+      const list = eventsBySourceUrl.get(e.sourceUrl) ?? [];
+      list.push({ id: e.id, slug: e.slug, name: e.name, createdAt: e.createdAt });
+      eventsBySourceUrl.set(e.sourceUrl, list);
+    }
+  }
+
   return NextResponse.json(
-    rows.map((r) => ({
-      ...r,
-      receivedAt: r.receivedAt instanceof Date ? r.receivedAt.toISOString() : r.receivedAt,
-    }))
+    rows.map((r) => {
+      const receivedTs = r.receivedAt instanceof Date ? r.receivedAt.getTime() / 1000 : 0;
+      const candidates = r.parsedUrl ? (eventsBySourceUrl.get(r.parsedUrl) ?? []) : [];
+      const match =
+        candidates
+          .filter((e) => {
+            const eTs = e.createdAt.getTime() / 1000;
+            return eTs >= receivedTs && eTs <= receivedTs + EVENT_LOOKUP_WINDOW_SECONDS;
+          })
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0] ?? null;
+      return {
+        ...r,
+        receivedAt: r.receivedAt instanceof Date ? r.receivedAt.toISOString() : r.receivedAt,
+        resultingEvent: match ? { id: match.id, slug: match.slug, name: match.name } : null,
+      };
+    })
   );
 }

@@ -34,6 +34,8 @@ interface InboundEmailRow {
   error: string | null;
   parsedUrl: string | null;
   attachmentCount: number;
+  messageId: string | null;
+  resultingEvent: { id: string; slug: string; name: string } | null;
 }
 
 const statusBadge: Record<string, "success" | "info" | "warning" | "danger" | "default"> = {
@@ -374,10 +376,34 @@ export default function AdminInboundEmailsPage() {
                                 <span className="font-medium">Attachments:</span>{" "}
                                 {row.attachmentCount}
                               </div>
+                              {row.resultingEvent && (
+                                <div>
+                                  <span className="font-medium">Resulting event:</span>{" "}
+                                  <a
+                                    href={`/admin/events/${row.resultingEvent.id}`}
+                                    className="text-blue-600 hover:underline"
+                                  >
+                                    {row.resultingEvent.name}
+                                  </a>{" "}
+                                  <a
+                                    href={`/events/${row.resultingEvent.slug}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-gray-500 hover:underline"
+                                  >
+                                    (public)
+                                  </a>
+                                </div>
+                              )}
                               {row.error && (
                                 <div>
                                   <span className="font-medium text-red-600">Error:</span>{" "}
                                   <span className="text-red-700 font-mono">{row.error}</span>
+                                </div>
+                              )}
+                              {row.messageId && (
+                                <div className="font-mono text-gray-500 break-all">
+                                  Message-ID: {row.messageId}
                                 </div>
                               )}
                               {row.workflowInstanceId && (

@@ -32,7 +32,7 @@
  *   - dismissed_until IS NULL OR dismissed_until < now (snooze expired)
  */
 
-import { and, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { errorLogs, recommendationItems, recommendationRules } from "@/lib/db/schema";
@@ -66,6 +66,75 @@ function filterStalePathMatches(
     kept.push(m);
   }
   return kept;
+}
+
+/**
+ * One-pass sweep of existing active recommendation_items whose
+ * payload.topPagePath now points at a stale slug. Marks them acted so
+ * they drop out of the active queue, same as autoResolve would have
+ * done if the rules supported it.
+ *
+ * Why this is needed in addition to filterStalePathMatches: the GSC-
+ * derived rules (low_ctr_pages, seo_position_11_20) deliberately omit
+ * `autoResolve: true` so a transient GSC API failure returning []
+ * doesn't clobber the active list. That same omission means items
+ * inserted before the path-filter shipped (or before a slug rename)
+ * sit in the active queue forever, since no future scan re-inserts
+ * them (the filter blocks the re-insert) and nothing resolves them.
+ *
+ * The sweep runs once per scanAll and is bounded by the number of
+ * active items for path-filtered rules (low tens to low hundreds in
+ * practice). One UPDATE per rule via inArray; cheap.
+ */
+/**
+ * Pure helper: pull the `topPagePath` field out of a stored payload JSON
+ * string, returning null on any failure mode (missing, malformed, wrong
+ * type). Exported for unit testing — exercised by the sweep below.
+ */
+export function extractTopPagePath(payloadJson: string | null): string | null {
+  if (!payloadJson) return null;
+  try {
+    const parsed = JSON.parse(payloadJson) as { topPagePath?: unknown };
+    return typeof parsed.topPagePath === "string" ? parsed.topPagePath : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sweepExistingStalePathItems(
+  db: Db,
+  checker: CanonicalPathChecker,
+  ruleIdsByKey: Map<string, string>,
+  now: Date,
+  acc: StalePathDrops
+): Promise<void> {
+  for (const ruleKey of PATH_FILTERED_RULES) {
+    const ruleId = ruleIdsByKey.get(ruleKey);
+    if (!ruleId) continue;
+    const existing = await db
+      .select({
+        id: recommendationItems.id,
+        payloadJson: recommendationItems.payloadJson,
+      })
+      .from(recommendationItems)
+      .where(and(eq(recommendationItems.ruleId, ruleId), isNull(recommendationItems.actedAt)));
+    const staleIds: string[] = [];
+    for (const row of existing) {
+      const path = extractTopPagePath(row.payloadJson);
+      if (!path) continue;
+      if (checker.classifyPath(path) !== "stale") continue;
+      staleIds.push(row.id);
+      const entry = acc.get(ruleKey) ?? { count: 0, samplePaths: [] };
+      entry.count++;
+      if (entry.samplePaths.length < 5) entry.samplePaths.push(path);
+      acc.set(ruleKey, entry);
+    }
+    if (staleIds.length === 0) continue;
+    await db
+      .update(recommendationItems)
+      .set({ actedAt: now })
+      .where(inArray(recommendationItems.id, staleIds));
+  }
 }
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -186,7 +255,8 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
   const now = new Date();
 
   const pathChecker = await buildCanonicalPathChecker(db);
-  const stalePathDrops: StalePathDrops = new Map();
+  const stalePathDrops: StalePathDrops = new Map(); // new matches blocked at filter
+  const staleSweepDrops: StalePathDrops = new Map(); // existing items resolved by sweep
 
   let totalInserted = 0;
   let totalRefreshed = 0;
@@ -323,6 +393,16 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     }
   }
 
+  // Sweep existing active items whose topPagePath is now stale. Targets
+  // the gap that filterStalePathMatches doesn't cover: items inserted
+  // before the filter shipped (or before a slug rename) that linger
+  // because the GSC-derived rules don't autoResolve. Adds resolved count
+  // to totalResolved so the scan-result tally reflects the cleanup.
+  await sweepExistingStalePathItems(db, pathChecker, ruleIds, now, staleSweepDrops);
+  let sweptTotal = 0;
+  for (const v of staleSweepDrops.values()) sweptTotal += v.count;
+  totalResolved += sweptTotal;
+
   if (stalePathDrops.size > 0) {
     let totalFiltered = 0;
     const byRule: Record<string, { count: number; samplePaths: string[] }> = {};
@@ -337,6 +417,19 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
       source: "gsc-recommendations:stale-slug",
       message: `Filtered ${totalFiltered} stale topPagePath items from recommendations scan`,
       context: JSON.stringify({ totalFiltered, byRule }),
+    });
+  }
+
+  if (staleSweepDrops.size > 0) {
+    const byRule: Record<string, { count: number; samplePaths: string[] }> = {};
+    for (const [k, v] of staleSweepDrops) byRule[k] = v;
+    await db.insert(errorLogs).values({
+      id: crypto.randomUUID(),
+      timestamp: now,
+      level: "info",
+      source: "gsc-recommendations:stale-slug",
+      message: `Swept ${sweptTotal} existing stale-path items from active queue`,
+      context: JSON.stringify({ totalSwept: sweptTotal, byRule }),
     });
   }
 
