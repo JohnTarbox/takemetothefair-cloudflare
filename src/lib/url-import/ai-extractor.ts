@@ -22,9 +22,11 @@ const buildMultiEventPrompt = (
   contextInfo: string
 ) => `Extract ALL events from this webpage. The page may contain one event or multiple events. Return a JSON array of events.
 
-${contextInfo}
-WEBPAGE CONTENT:
+WEBPAGE CONTENT (authoritative — prefer this over meta tags below if they disagree):
 ${content}
+
+PAGE METADATA (may be stale — many sites' SEO meta tags lag the current page body by months or years; treat as a hint, not ground truth):
+${contextInfo}
 
 ---
 Return a JSON array where each event has these fields (use null for fields not found):
@@ -86,9 +88,11 @@ const buildUserPrompt = (
   contextInfo: string
 ) => `Extract event details from this webpage content. Return ONLY a JSON object.
 
-${contextInfo}
-WEBPAGE CONTENT:
+WEBPAGE CONTENT (authoritative — prefer this over meta tags below if they disagree):
 ${content}
+
+PAGE METADATA (may be stale — many sites' SEO meta tags lag the current page body by months or years; treat as a hint, not ground truth):
+${contextInfo}
 
 ---
 Find and extract these fields. Use null for any field not found:

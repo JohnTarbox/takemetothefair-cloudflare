@@ -22,6 +22,8 @@ import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
+import { normalizeEventDate } from "@/lib/event-dates";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -171,19 +173,16 @@ export async function POST(request: NextRequest) {
       finalEventSlug = appendSlugSegment(eventSlug, slugSuffix);
     }
 
-    // Parse dates
-    let startDate: Date | null = null;
-    let endDate: Date | null = null;
-
-    if (data.startDate) {
-      startDate = new Date(data.startDate);
-      if (isNaN(startDate.getTime())) startDate = null;
-    }
-
-    if (data.endDate) {
-      endDate = new Date(data.endDate);
-      if (isNaN(endDate.getTime())) endDate = null;
-    }
+    // Parse dates. Normalize bare YYYY-MM-DD (and YYYY-MM-DDT00:00:00Z) to
+    // noon UTC — midnight-UTC dates render as the PREVIOUS calendar day in
+    // every US timezone (midnight UTC = 8pm EDT/EST yesterday, 4pm PDT
+    // yesterday). Noon UTC = 8am EDT / 5am PST → same calendar day site-
+    // wide. AI extraction returns YYYY-MM-DD which `new Date()` parses as
+    // midnight UTC by default; this normalization shifts that to noon
+    // before insert. See drizzle/0074_event_dates_noon_utc.sql for the
+    // matching backfill against ~751 pre-existing midnight-UTC rows.
+    const startDate = normalizeEventDate(data.startDate ?? null);
+    const endDate = normalizeEventDate(data.endDate ?? null);
 
     // Build description with location info if provided
     let description = data.description || `${data.name} - suggested by the community`;
@@ -249,6 +248,36 @@ export async function POST(request: NextRequest) {
       urlClassifications
     );
 
+    // Venue auto-link: if the caller provided a venue NAME but no
+    // venue_id (the common case for email/community submissions where
+    // AI extraction returned a venue string), try to resolve it
+    // against the venues table. Conservative — only auto-links on
+    // exact normalized-name match (with optional state agreement) or
+    // address-corroborated near-match. Ambiguous and no-match cases
+    // leave venue_id NULL for admin review. See src/lib/venue-matching.ts.
+    let resolvedVenueId: string | null = data.venueId || null;
+    let resolvedStateCode: string | null = data.venueState
+      ? data.venueState.trim().toUpperCase()
+      : null;
+    if (!resolvedVenueId && data.venueName) {
+      const result = await autoLinkVenue(db, {
+        venueName: data.venueName,
+        venueAddress: data.venueAddress ?? null,
+        venueCity: data.venueCity ?? null,
+        venueState: data.venueState ?? null,
+      });
+      resolvedVenueId = result.venueId;
+      // Inherit state from matched venue when present; fall through to
+      // any state we already had (extracted/AI) when no venue matched.
+      resolvedStateCode = result.stateCode ?? resolvedStateCode;
+    }
+    // Last resort: if we still don't have a state, scan the description
+    // for a single NE-state mention. One unique state → use it. Multiple
+    // (or none) → keep null and let admin fill in.
+    if (!resolvedStateCode) {
+      resolvedStateCode = deriveStateFromText(description);
+    }
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -257,7 +286,8 @@ export async function POST(request: NextRequest) {
       slug: finalEventSlug,
       description,
       promoterId: COMMUNITY_PROMOTER_ID,
-      venueId: data.venueId || null, // Link to confirmed venue if provided
+      venueId: resolvedVenueId,
+      stateCode: resolvedStateCode,
       startDate,
       endDate,
       publicStartDate:
