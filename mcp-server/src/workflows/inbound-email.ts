@@ -65,7 +65,12 @@ import { handle as handleSupport } from "../email-handlers/support.js";
 import { handle as handlePress } from "../email-handlers/press.js";
 import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
-import { submitFetch, submitExtract, submitEvent } from "../email-handlers/submit.js";
+import {
+  submitFetch,
+  submitExtract,
+  submitCheckDuplicate,
+  submitEvent,
+} from "../email-handlers/submit.js";
 import { buildReply } from "../email-reply-builder.js";
 
 export type InboundEmailParams = {
@@ -391,6 +396,32 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
       () => submitExtract(this.env, fetched)
     );
+
+    // Duplicate-check before insert. Two-stage (exact source_url, then
+    // name+date similarity ≥0.85 within ±7d) — sender of an already-
+    // listed event gets the tailored "already-exists" reply pointing at
+    // our existing listing instead of producing a redundant PENDING row.
+    // Fails open: on transient dedup-endpoint failures the step retries
+    // twice then falls through to submit (same risk profile as the
+    // pre-2026-05-18 behavior).
+    const dedup = await step.do(
+      "submit/check-duplicate",
+      { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      () => submitCheckDuplicate(this.env, extracted)
+    );
+
+    if (dedup.isDuplicate && dedup.existingEventSlug) {
+      return {
+        replyKind: "already-exists",
+        replyParams: {
+          subject,
+          eventName: dedup.existingEventName ?? extracted.event.name,
+          eventUrl: `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`,
+          matchType: dedup.matchType ?? "exact_url",
+        },
+        status: "replied",
+      };
+    }
 
     const submitted = await step.do(
       "submit/submit-event",

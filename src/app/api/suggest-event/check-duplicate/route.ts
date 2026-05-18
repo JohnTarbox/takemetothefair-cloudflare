@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq, and, gte, lte } from "drizzle-orm";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
@@ -55,10 +55,23 @@ function similarity(s1: string, s2: string): number {
 }
 
 export async function POST(request: NextRequest) {
-  // Rate limiting check
-  const rateLimitResult = await checkRateLimit(request, "suggest-event-check-duplicate");
-  if (!rateLimitResult.allowed) {
-    return rateLimitResponse(rateLimitResult);
+  // Internal callers (MCP Worker email pipeline, future cross-service hooks)
+  // present `X-Internal-Key` matching INTERNAL_API_KEY. They've already gated
+  // on their own per-sender / per-tier limits, so skip the IP-based rate limit
+  // here. Same pattern as /api/suggest-event/submit's internal-key bypass.
+  const internalKey = request.headers.get("x-internal-key");
+  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const isInternal = !!(
+    internalKey &&
+    cfEnv.INTERNAL_API_KEY &&
+    internalKey === cfEnv.INTERNAL_API_KEY
+  );
+
+  if (!isInternal) {
+    const rateLimitResult = await checkRateLimit(request, "suggest-event-check-duplicate");
+    if (!rateLimitResult.allowed) {
+      return rateLimitResponse(rateLimitResult);
+    }
   }
 
   try {

@@ -33,6 +33,7 @@ export type ReplyKind =
   | "no-url"
   | "extract-failed"
   | "submit-failed"
+  | "already-exists"
   // Generic per-intent acks (initial / timeout fallback)
   | "correction-ack"
   | "support-ack"

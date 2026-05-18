@@ -73,6 +73,30 @@ describe("buildReply — submit-intent kinds (legacy)", () => {
     const msg = buildReply("submit-failed", "a@x.com", { subject: "fair" });
     expect(msg.text).toMatch(/team has been notified|saving it/i);
   });
+
+  it("already-exists points the sender at our existing listing", () => {
+    const msg = buildReply("already-exists", "alice@example.com", {
+      subject: "Hamfest",
+      eventName: "ARRL Maine State Convention & Hamfest",
+      eventUrl: "https://meetmeatthefair.com/events/arrl-maine-state-convention-and-hamfest",
+    });
+    expect(msg.text).toContain("ARRL Maine State Convention & Hamfest");
+    expect(msg.text).toContain(
+      "https://meetmeatthefair.com/events/arrl-maine-state-convention-and-hamfest"
+    );
+    // Reply must invite the sender to flag corrections — that's the only
+    // useful UX path when "we already have this" might still be wrong.
+    expect(msg.text).toMatch(/missing or out of date|reply to this thread/i);
+  });
+
+  it("already-exists falls back gracefully when no eventName/eventUrl provided", () => {
+    // Defensive — if the workflow ever fires this kind without params,
+    // the reply must still be readable, not "Good news — we already have
+    // undefined in our directory."
+    const msg = buildReply("already-exists", "alice@example.com", { subject: "x" });
+    expect(msg.text).toContain("this event");
+    expect(msg.text).not.toContain("undefined");
+  });
 });
 
 describe("buildReply — new intent acks", () => {

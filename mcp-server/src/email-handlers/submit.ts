@@ -30,6 +30,7 @@ import type { HandlerEnv } from "./types.js";
 
 const SOURCE_FETCH = "mcp:email-handler:extract:fetch";
 const SOURCE_EXTRACT = "mcp:email-handler:extract:ai";
+const SOURCE_DEDUP = "mcp:email-handler:check-duplicate";
 const SOURCE_SUBMIT = "mcp:email-handler:submit";
 
 /** Cap the fetched content stored as step output. CF Workflows allows
@@ -63,6 +64,18 @@ export interface SubmitExtractResult {
 export interface SubmitEventResult {
   slug: string;
   eventName: string;
+}
+
+export interface SubmitCheckDuplicateResult {
+  isDuplicate: boolean;
+  /** Match type when isDuplicate is true: "exact_url" or "similar_name_date".
+   *  Empty when isDuplicate is false. Used by the workflow to pick the right
+   *  reply phrasing. */
+  matchType?: string;
+  /** Existing event's display name. Empty when isDuplicate is false. */
+  existingEventName?: string;
+  /** Existing event's slug — used to build the public URL in the reply. */
+  existingEventSlug?: string;
 }
 
 interface ExtractedEvent {
@@ -181,6 +194,64 @@ export async function submitExtract(
 }
 
 /**
+ * Step C-pre: duplicate check via main-app /api/suggest-event/submit/
+ * check-duplicate. Two-stage detection runs server-side (exact source_url
+ * match, then name+date Levenshtein); we just relay the result. Fails
+ * OPEN — if the dedup call errors out, we proceed to submit (same risk
+ * profile as the pre-2026-05-18 behavior where no dedup ran at all).
+ * Failing closed would block all emails while dedup is down.
+ *
+ * On true duplicate: returns isDuplicate=true with the existing event's
+ * slug + name. The workflow short-circuits before submit-event and
+ * sends an "already-exists" auto-reply pointing to the existing event.
+ */
+export async function submitCheckDuplicate(
+  env: HandlerEnv,
+  extracted: SubmitExtractResult
+): Promise<SubmitCheckDuplicateResult> {
+  const body: { sourceUrl?: string; name?: string; startDate?: string } = {
+    sourceUrl: extracted.url,
+  };
+  if (extracted.event.name) body.name = extracted.event.name;
+  if (extracted.event.startDate) body.startDate = extracted.event.startDate;
+
+  let res: Response;
+  try {
+    res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/check-duplicate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-key": env.INTERNAL_API_KEY,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { isDuplicate: false };
+  }
+  if (!res.ok) {
+    return { isDuplicate: false };
+  }
+  const data = (await res.json().catch(() => null)) as
+    | {
+        success: true;
+        isDuplicate: boolean;
+        matchType?: string;
+        existingEvent?: { name?: string; slug?: string };
+      }
+    | { success: false; error: string }
+    | null;
+  if (!data || !data.success || !data.isDuplicate) {
+    return { isDuplicate: false };
+  }
+  return {
+    isDuplicate: true,
+    matchType: data.matchType,
+    existingEventName: data.existingEvent?.name,
+    existingEventSlug: data.existingEvent?.slug,
+  };
+}
+
+/**
  * Step C: submit via main-app /api/suggest-event/submit.
  *
  * Errors:
@@ -225,5 +296,6 @@ export async function submitEvent(
 export const SUBMIT_SOURCES = {
   fetch: SOURCE_FETCH,
   extract: SOURCE_EXTRACT,
+  dedup: SOURCE_DEDUP,
   submit: SOURCE_SUBMIT,
 } as const;

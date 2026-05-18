@@ -11,8 +11,10 @@ import { NonRetryableError } from "cloudflare:workflows";
 import {
   submitFetch,
   submitExtract,
+  submitCheckDuplicate,
   submitEvent,
   type SubmitFetchResult,
+  type SubmitExtractResult,
 } from "../src/email-handlers/submit.js";
 import type { HandlerEnv } from "../src/email-handlers/types.js";
 
@@ -180,5 +182,94 @@ describe("submitEvent — retry contract", () => {
     );
     expect(err).toBeInstanceOf(Error);
     expect(err).not.toBeInstanceOf(NonRetryableError);
+  });
+});
+
+describe("submitCheckDuplicate — pre-submit dedup leg", () => {
+  const EXTRACTED: SubmitExtractResult = {
+    url: "https://example.org/event-page",
+    event: { name: "Test Fair 2026", startDate: "2026-07-15" },
+  };
+
+  it("returns isDuplicate=false on a clean response", async () => {
+    mockFetch(() => Response.json({ success: true, isDuplicate: false }));
+    const r = await submitCheckDuplicate(ENV, EXTRACTED);
+    expect(r.isDuplicate).toBe(false);
+  });
+
+  it("returns isDuplicate=true with existing event info on exact_url match", async () => {
+    mockFetch(() =>
+      Response.json({
+        success: true,
+        isDuplicate: true,
+        matchType: "exact_url",
+        existingEvent: {
+          id: "e-123",
+          slug: "test-fair-2026",
+          name: "Test Fair 2026",
+          startDate: "2026-07-15T12:00:00Z",
+          status: "APPROVED",
+        },
+      })
+    );
+    const r = await submitCheckDuplicate(ENV, EXTRACTED);
+    expect(r.isDuplicate).toBe(true);
+    expect(r.matchType).toBe("exact_url");
+    expect(r.existingEventName).toBe("Test Fair 2026");
+    expect(r.existingEventSlug).toBe("test-fair-2026");
+  });
+
+  it("returns isDuplicate=true with the similar_name_date match type", async () => {
+    mockFetch(() =>
+      Response.json({
+        success: true,
+        isDuplicate: true,
+        matchType: "similar_name_date",
+        similarity: 92,
+        existingEvent: { id: "e-456", slug: "near-fest-xxxix", name: "NEAR-Fest XXXIX" },
+      })
+    );
+    const r = await submitCheckDuplicate(ENV, EXTRACTED);
+    expect(r.matchType).toBe("similar_name_date");
+  });
+
+  it("fails open (isDuplicate=false) on dedup endpoint 5xx", async () => {
+    mockFetch(() => new Response("internal error", { status: 500 }));
+    const r = await submitCheckDuplicate(ENV, EXTRACTED);
+    expect(r.isDuplicate).toBe(false);
+  });
+
+  it("fails open on network error (transient dedup downtime)", async () => {
+    mockFetch(() => Promise.reject(new TypeError("fetch failed")));
+    const r = await submitCheckDuplicate(ENV, EXTRACTED);
+    expect(r.isDuplicate).toBe(false);
+  });
+
+  it("fails open on malformed JSON body", async () => {
+    mockFetch(() => new Response("not json"));
+    const r = await submitCheckDuplicate(ENV, EXTRACTED);
+    expect(r.isDuplicate).toBe(false);
+  });
+
+  it("omits name/startDate from the request body when extraction returned nulls", async () => {
+    let captured: { sourceUrl?: string; name?: string; startDate?: string } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        captured =
+          init && typeof init.body === "string"
+            ? (JSON.parse(init.body) as { sourceUrl?: string; name?: string; startDate?: string })
+            : null;
+        return Response.json({ success: true, isDuplicate: false });
+      })
+    );
+    await submitCheckDuplicate(ENV, {
+      url: "https://example.org/event-page",
+      event: { name: "" },
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.sourceUrl).toBe("https://example.org/event-page");
+    expect(captured!.name).toBeUndefined();
+    expect(captured!.startDate).toBeUndefined();
   });
 });

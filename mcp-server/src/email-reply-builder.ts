@@ -99,6 +99,22 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "already-exists": {
+      // The dedup endpoint can match by exact source_url OR by name+date
+      // similarity ≥0.85 within ±7 days. Reply is the same either way —
+      // sender sees the existing event's name + public URL, with a clear
+      // path to flag a correction if they noticed something missing/wrong.
+      const eventName = (params.eventName as string | undefined) ?? "this event";
+      const eventUrl = (params.eventUrl as string | undefined) ?? null;
+      const urlLine = eventUrl ? `\n\nYou can see our listing here: ${eventUrl}\n` : "";
+      return `Thanks for emailing Meet Me at the Fair!
+
+Good news — we already have ${eventName} in our directory.${urlLine}
+
+If you noticed something missing or out of date on the page, please reply to this thread with the correction and our team will take a look.
+
+${SIGN_OFF}`;
+    }
     case "correction-ack": {
       return `Thanks for letting us know!
 
