@@ -93,13 +93,25 @@ Decision actions map to reply kinds in `decisionToReplyKind`:
 The optional `note` from the admin is included verbatim in the
 sender-visible reply text for the applied/rejected/needs-info kinds.
 
+## Sweep-workflow contract (May 2026)
+
+All four workflows now share the same failure contract:
+
+- **5xx / network** inside a step body → plain `Error` → step.do retries
+  per its configured budget (`limit: 2` for sweeps, varies for email legs).
+- **4xx** inside a step body → `NonRetryableError` → step skips retries.
+- **Logging lives in the OUTER catch**, not inside the step body. Per CF
+  Workflows rules-of-workflows (side effects repeat on restart), logging
+  from inside a step body that's about to be retried produces duplicate
+  log entries. Moving `logError` to the outer catch guarantees one log
+  per terminal failure.
+- For sweeps (chunked), the outer catch logs + breaks the loop. For
+  schema-org-sync's per-event mode, it logs + continues to the next event.
+  One bad chunk doesn't kill the next day's cron — tomorrow's run starts
+  from cursor=0 again.
+
 ## Open follow-ups
 
-- Migrate the other 3 workflows (schema-org-sync, recommendations-scan,
-  event-date-drift) to the new throw-on-failure / NonRetryableError
-  contract. They currently use try/catch + error_logs fallthrough,
-  which doesn't exercise the per-step retry budget for the same
-  reasons the email pipeline didn't pre-PR.
 - Bounce/complaint inbound handling — would be a new `bounce@` intent.
 - Removing `EMAIL_JOBS` queue + consumer entirely is deferred — kept
   for future batched-outbound use cases.

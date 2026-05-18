@@ -11,10 +11,17 @@
  * is its own durable step with retry. Triggered from the daily
  * `0 6 * * *` cron via `env.EVENT_DATE_DRIFT.create({})`.
  *
- * Audit doc: docs/cloudflare-workflows-audit.md (Phase 2 candidate).
+ * Failure contract (post-PR May 2026):
+ *   - 5xx / network          → plain Error, step retries (limit:2, exp backoff).
+ *   - 4xx                    → NonRetryableError, step skips retries; loop breaks.
+ *   - Logging lives in the outer catch so retries don't produce duplicate
+ *     log entries (CF Workflows rules-of-workflows side-effect caveat).
+ *
+ * Audit doc: docs/cloudflare-workflows-audit.md.
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import { logError } from "../logger.js";
 
 export type EventDateDriftParams = {
@@ -52,8 +59,9 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
       const chunkNum = chunks;
       const cursorForLog = cursor;
 
+      let result: ChunkResponse;
       try {
-        const result = await step.do(
+        result = await step.do(
           `drift-chunk-${chunkNum}`,
           {
             // 5-minute timeout: each chunk refetches up to 200 source URLs
@@ -82,39 +90,46 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
               ? await this.env.MAIN_APP.fetch(new Request(url, init))
               : await fetch(url, init);
             if (response.status >= 500) {
+              // Transient — step retries.
               const text = await response.text().catch(() => "<unreadable>");
               throw new Error(`event-date-drift 5xx@${cursorForLog}: ${text.slice(0, 200)}`);
             }
             if (!response.ok) {
+              // Permanent — outer catch logs once and breaks the loop.
               const text = await response.text().catch(() => "<unreadable>");
-              await logError(this.env.DB, {
-                source: SOURCE,
-                message: "chunk returned non-2xx (non-retryable)",
-                statusCode: response.status,
-                sessionId: event.instanceId,
-                context: { cursor: cursorForLog, chunk: chunkNum, bodyExcerpt: text.slice(0, 500) },
-              });
-              return {} as ChunkResponse;
+              throw new NonRetryableError(
+                `event-date-drift ${response.status}@${cursorForLog}: ${text.slice(0, 200)}`
+              );
             }
             return (await response.json()) as ChunkResponse;
           }
         );
-
-        totals.scanned += result.scanned ?? 0;
-        totals.drift_recorded += result.drift_recorded ?? 0;
-        totals.fetch_failed += result.fetch_failed ?? 0;
-        if (result.next_cursor == null) break;
-        cursor = result.next_cursor;
       } catch (err) {
+        // Either step exhausted retries (5xx after limit:2) OR threw
+        // NonRetryableError (4xx). Both cases: log once + break.
+        const isNonRetryable = err instanceof NonRetryableError;
         await logError(this.env.DB, {
           source: SOURCE,
-          message: "step exhausted retries; aborting sweep",
+          message: isNonRetryable
+            ? "chunk threw NonRetryableError (4xx); aborting sweep"
+            : "chunk exhausted retries (5xx / transient); aborting sweep",
           error: err,
           sessionId: event.instanceId,
-          context: { cursor: cursorForLog, chunk: chunkNum, totals },
+          context: {
+            cursor: cursorForLog,
+            chunk: chunkNum,
+            totals,
+            nonRetryable: isNonRetryable,
+          },
         });
         break;
       }
+
+      totals.scanned += result.scanned ?? 0;
+      totals.drift_recorded += result.drift_recorded ?? 0;
+      totals.fetch_failed += result.fetch_failed ?? 0;
+      if (result.next_cursor == null) break;
+      cursor = result.next_cursor;
     }
 
     return {

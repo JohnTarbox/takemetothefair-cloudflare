@@ -11,19 +11,17 @@
  * Triggered from the daily `0 6 * * *` cron in the MCP Worker's
  * scheduled() handler via `env.RECOMMENDATIONS_SCAN.create({})`.
  *
- * Why Workflow:
- *   - Per-chunk retry (default 3 attempts with exponential backoff) —
- *     transient 5xx from main app gets recovered without a full re-run.
- *   - No 30s per-invocation cap — each chunk is its own step with its
- *     own timeout budget.
- *   - Durable: a Worker restart mid-sweep doesn't restart the whole
- *     scan; Workflows resumes from the last completed step.
+ * Failure contract (post-PR May 2026):
+ *   - 5xx / network          → plain Error, step retries (limit:2, exp backoff).
+ *   - 4xx                    → NonRetryableError, step skips retries; loop breaks.
+ *   - Logging lives in the outer catch so retries don't produce duplicate
+ *     log entries (CF Workflows rules-of-workflows side-effect caveat).
  *
- * Audit doc: docs/cloudflare-workflows-audit.md (this is Phase 2,
- * candidate scored 9/12 — strongest migration fit after schema-org-sync).
+ * Audit doc: docs/cloudflare-workflows-audit.md.
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import { logError } from "../logger.js";
 
 /** No instance params — cron-triggered with empty payload. Defined for
@@ -70,8 +68,9 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
       const chunkNum = chunks;
       const cursorForLog = cursor;
 
+      let result: ChunkResponse;
       try {
-        const result = await step.do(
+        result = await step.do(
           `scan-chunk-${chunkNum}`,
           {
             // 5-minute timeout: per-chunk work varies a lot because each
@@ -95,54 +94,59 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
             const response = this.env.MAIN_APP
               ? await this.env.MAIN_APP.fetch(new Request(url, init))
               : await fetch(url, init);
-            // 5xx → throw so step.do retries. 4xx → fail terminally for this
-            // step; the catch below logs and breaks the loop.
             if (response.status >= 500) {
+              // Transient — step retries.
               const text = await response.text().catch(() => "<unreadable>");
               throw new Error(`recommendations-scan 5xx@${cursorForLog}: ${text.slice(0, 200)}`);
             }
             if (!response.ok) {
+              // Permanent — outer catch logs once and breaks the loop.
               const text = await response.text().catch(() => "<unreadable>");
-              await logError(this.env.DB, {
-                source: SOURCE,
-                message: "chunk returned non-2xx (non-retryable)",
-                statusCode: response.status,
-                sessionId: event.instanceId,
-                context: { cursor: cursorForLog, chunk: chunkNum, bodyExcerpt: text.slice(0, 500) },
-              });
-              return {} as ChunkResponse; // signals empty data → loop breaks
+              throw new NonRetryableError(
+                `recommendations-scan ${response.status}@${cursorForLog}: ${text.slice(0, 200)}`
+              );
             }
             return (await response.json()) as ChunkResponse;
           }
         );
-
-        const d = result.data;
-        if (!d) {
-          await logError(this.env.DB, {
-            source: SOURCE,
-            message: "chunk returned no data field",
-            sessionId: event.instanceId,
-            context: { cursor: cursorForLog, chunk: chunkNum },
-          });
-          break;
-        }
-        totals.scannedRules += d.scannedRules ?? 0;
-        totals.inserted += d.inserted ?? 0;
-        totals.resolved += d.resolved ?? 0;
-        totals.failedRules += d.failedRules ?? 0;
-        cursor = d.nextCursor ?? cursor;
-        if (!d.more) break;
       } catch (err) {
-        // step exhausted retries — log + break.
+        // Either step exhausted retries (5xx after limit:2) OR threw
+        // NonRetryableError (4xx). Both cases: log once + break the
+        // sweep. Tomorrow's cron will retry from cursor=0.
+        const isNonRetryable = err instanceof NonRetryableError;
         await logError(this.env.DB, {
           source: SOURCE,
-          message: "step exhausted retries; aborting sweep",
+          message: isNonRetryable
+            ? "chunk threw NonRetryableError (4xx); aborting sweep"
+            : "chunk exhausted retries (5xx / transient); aborting sweep",
           error: err,
           sessionId: event.instanceId,
-          context: { cursor: cursorForLog, chunk: chunkNum, totals },
+          context: {
+            cursor: cursorForLog,
+            chunk: chunkNum,
+            totals,
+            nonRetryable: isNonRetryable,
+          },
         });
         break;
       }
+
+      const d = result.data;
+      if (!d) {
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "chunk returned no data field",
+          sessionId: event.instanceId,
+          context: { cursor: cursorForLog, chunk: chunkNum },
+        });
+        break;
+      }
+      totals.scannedRules += d.scannedRules ?? 0;
+      totals.inserted += d.inserted ?? 0;
+      totals.resolved += d.resolved ?? 0;
+      totals.failedRules += d.failedRules ?? 0;
+      cursor = d.nextCursor ?? cursor;
+      if (!d.more) break;
     }
 
     return {
