@@ -63,7 +63,14 @@ export class EventDateDriftWorkflow extends WorkflowEntrypoint<Env, EventDateDri
             timeout: "5 minutes",
           },
           async (): Promise<ChunkResponse> => {
-            const url = `${this.env.MAIN_APP_URL}/api/admin/event-date-drift/sweep?cursor=${cursorForLog}`;
+            // chunk=50 keeps each sweep call under Cloudflare's ~100s
+            // Worker→Pages edge timeout (HTTP 524). Default endpoint
+            // chunk size is 200; that produced ~2-minute per-chunk runs
+            // which exceed the edge budget. 50 events × per-URL fetch
+            // ≈ 30-45s, comfortably under 100s. More chunks needed
+            // total but cap is still MAX_CHUNKS=50 so we cover up to
+            // 2500 events per workflow run.
+            const url = `${this.env.MAIN_APP_URL}/api/admin/event-date-drift/sweep?cursor=${cursorForLog}&chunk=50`;
             const init: RequestInit = {
               method: "POST",
               headers: {
