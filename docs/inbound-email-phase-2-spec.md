@@ -5,10 +5,10 @@
 **To:** John Tarbox <jtarboxme@gmail.com>
 
 **Owner:** John
-**Drafted by:** Claude (Cowork session 2026-05-17, refreshed 2026-05-18 after Phase 2A ship, **revised 2026-05-19 after codebase audit + JSON-LD coverage audit**)
-**Status:** PARTIAL SHIPPED — Phase 2A (Part A bug fixes + B5 dedup + B6 sender trust) live in production 2026-05-18. Codebase audit 2026-05-19 found A2 venue matcher is more fully shipped than the 2026-05-18 refresh implied, and A4 JSON-LD parsing/plumbing is already live (only the AI-bypass decision branch is missing). JSON-LD coverage audit (n=30 representative organizer URLs) measured Event-schema coverage at **3.3%**, well below the ≥15% threshold the spec set for prioritizing A4 — so A5 (Browser Rendering) moves ahead of A4 in the rollout order.
-**Priority:** HIGH (remaining items unlock ~30–40% of currently-failing submission patterns — revised down from 70–80% after audit showed many "failed" rows are dead URLs, not extraction bugs)
-**Estimated effort remaining:** ~2.5–3 developer days (was 3–4 total; ~1 day shipped + 2 new high-leverage items added)
+**Drafted by:** Claude (Cowork session 2026-05-17, refreshed 2026-05-18 after Phase 2A ship, revised 2026-05-19 morning after codebase audit + JSON-LD coverage audit, **revised again 2026-05-19 evening after A5 ship + durability incident fix**)
+**Status:** PHASE 2A + 2A.5 SHIPPED. Phase 2A (Part A bug fixes + B5 dedup + B6 sender trust) live since 2026-05-18. A5 Browser Rendering fallback live as of 2026-05-19 evening (commits `7b8135b` + `dc9581a`), verified end-to-end against both ham-con.org (cheap-path browser-UA fix) and near-fest.com (actual Browser Rendering escalation). Durability hardening for the workflow's `mark-processing` step + a stale-row sweep shipped same evening (commit `10f0e2e`) after the A5 verification test uncovered a latent fragility unrelated to A5. Phase 2B (B1–B4) queued; A4 AI-bypass branch deprioritized after the JSON-LD coverage audit found 3.3% Event coverage (below the 15% threshold).
+**Priority:** HIGH for Phase 2B (remaining items unlock ~30–40% of currently-failing submission patterns — revised down from 70–80% after audit showed many "failed" rows are dead URLs, not extraction bugs)
+**Estimated effort remaining:** ~2 developer days for Phase 2B/2C (Phase 2A.5's ~half day actual is done)
 **Related:** `inbound-email.md` (current architecture), `Dev-Email-2026-05-18-Bug-Fix-Recap.md` (the email that drove the Phase 2A ship), `MMATF-Spec-Event-Date-Quality-Gates.md` (overlapping timezone normalization)
 
 ## TL;DR
@@ -16,6 +16,8 @@
 The inbound email pipeline went live 2026-05-17 (PR #183). The first end-to-end test (NEAR-Fest XXXIX) exposed three bugs in AI extraction; this spec consolidated those fixes (Part A) and proposed the Phase 2 feature set (Part B). The developer shipped a large chunk of it on 2026-05-18: all three Part A bug fixes, B5 dedup, B6 sender trust + 2 new MCP tools, plus four bonus items the original spec didn't ask for (automatic approval-notification emails, graceful fetch/extract failure handling, retroactive audit rules, the new `inbound_email_senders` table). The system now runs a complete 3-email feedback loop with the submitter (receipt → approval → corrections invitation).
 
 **2026-05-19 audit revisions.** A codebase audit confirmed the shipped checklist but corrected two items: (1) the A2 venue matcher (`src/lib/venue-matching.ts:autoLinkVenue`) is fully shipped with all of the spec's pseudocode (exact + state-agreement + address-corroborated tiers, `Lane`→`lane` normalization, ambiguity handling); the Starling Hall residual case is more likely an AI-extraction issue (wrong venue name passed in) than a matcher bug. (2) A4 JSON-LD parsing and plumbing into the AI prompt is already live (`html-parser.ts` extracts JSON-LD, `submit.ts` forwards it, `ai-extractor.ts` injects it as "Structured data" context); what's NOT shipped is the AI-bypass decision branch the spec proposed. A separate JSON-LD coverage audit (n=30 representative NE organizer URLs) measured Event-schema coverage at 3.3% — well below the spec's ≥15% threshold for prioritizing A4. **Rollout reordered:** A5 (Browser Rendering) ships before A4 finish, because measured fetch-failure rate is 15–30% on live URLs (vs the spec's earlier 5–15% estimate) while JSON-LD Event coverage is functionally rare.
+
+**2026-05-19 evening: A5 shipped + durability fix.** A5 Browser Rendering fallback shipped to production (commits `7b8135b` + `dc9581a`) and verified end-to-end with two test submissions: `ham-con.org` resolved via the new real-browser UA at the cheap tier (no Browser Rendering escalation needed), and `near-fest.com` resolved via Browser Rendering escalation as designed. Both produced clean B5 dedup matches against existing events instead of duplicate PENDING rows. The first verification test also exposed a pre-existing durability gap unrelated to A5: the workflow's `mark-processing` step could fail-hard on a D1 transient, killing the whole workflow before the submitter received any auto-reply. Fix (commit `10f0e2e`) made `mark-processing` fail-soft + relaxed its retry budget + added a defense-in-depth stale-row sweep on the every-10-minutes cron. Stuck row from the original incident (`c6992b79`) was automatically recovered by the sweep on its first firing post-deploy. See the "Durability incident + fix" section below for the full post-mortem.
 
 This refresh marks shipped items, flags one partial-shipped item that needs a follow-up, adds two new Part A items that emerged from this week's submissions (JSON-LD priority extraction and Browser Rendering fallback), and reorders the rollout plan around the remaining work. Phase 2B (B1 multi-URL, B2 free-text, B3 confidence tiers, B4 pre-filled form) is unchanged and still queued. Phase 3 (B7 attachment OCR) gains a new regression case: multi-row PDF table conflation, traced to the NHAC June 7 phantom event.
 
@@ -57,23 +59,25 @@ These were not in the original 2026-05-17 spec but the developer shipped them an
 - **Graceful fetch/extract failure handling.** Fetch 403/timeout/etc → clean `NonRetryableError: fetch-upstream` with user-facing message. Extract failure on fetched content → `NonRetryableError: extract-upstream` with "Try pasting the content manually" message. Both surface in `inbound_emails.error` for admin review, with corresponding user-facing auto-replies.
 - **Retroactive audit rules.** New recommendation rules `events_legacy_gate_candidates` (477 matches) and `stale_year_events` (245 matches) catch events that would now trip the pre-ingest gates but predate them.
 - **`inbound_email_senders` table.** Backing store for B6's per-sender stats and trust state.
+- **Durability hardening (added 2026-05-19 evening, commit `10f0e2e`).** The workflow's `mark-processing` step is now fail-soft (logs a warning and continues instead of failing the whole workflow on a D1 transient) and has a more forgiving retry budget (3 retries with exponential backoff + 10s timeout, up from 1 retry + 5s timeout). A defense-in-depth sweep `runInboundEmailStaleSweep` fires every 10 minutes on the existing cron + is exposed at `POST /api/admin/workflows/inbound-email/sweep` for manual triggering. Together these mean a transient D1 hiccup can no longer silently drop a submission. See the "Durability incident + fix" section below for the post-mortem that drove this.
 
 ### What's still queued (Phase 2B / 2C / 3)
 
 Order revised 2026-05-19 after audit. A5 promoted to first ship; A4 demoted to optional / parking-lot since the high-leverage portion (JSON-LD plumbing into the AI prompt) is already live.
 
-| Item                                                                  | Status                    | Effort                    |
-| --------------------------------------------------------------------- | ------------------------- | ------------------------- |
-| A5 (NEW) — Browser Rendering fallback for 403/blocked fetches         | Queued — **ship next**    | ~half day                 |
-| A2 follow-up — investigate Starling Hall extraction (not matcher)     | Queued — single row check | ~30 min                   |
-| A4 (NEW) — JSON-LD AI-bypass decision branch (parsing/prompt is live) | Optional / low-leverage   | ~2 hours if pursued       |
-| B1 — Multiple URLs per email                                          | Queued                    | ~3 hours                  |
-| B2 — Free-text AI extraction (no URL)                                 | Queued                    | ~half day                 |
-| B3 — Confidence-aware auto-reply                                      | Queued                    | ~3 hours (depends on B2)  |
-| B4 — Pre-filled web form for incomplete submissions                   | Queued                    | ~half day (depends on B3) |
-| B7 — Attachment OCR                                                   | Phase 3 (deferred)        | ~1 dev day                |
+| Item                                                                  | Status                  | Effort                                                 |
+| --------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------ |
+| A5 (NEW) — Browser Rendering fallback for 403/blocked fetches         | ✅ Shipped 2026-05-19   | ~half day actual                                       |
+| Durability hardening (mark-processing fail-soft + stale-row sweep)    | ✅ Shipped 2026-05-19   | ~half day actual                                       |
+| A2 follow-up — Starling Hall extraction (not matcher)                 | ✅ Resolved in prod     | (matcher worked; row patched manually post-2026-05-19) |
+| A4 (NEW) — JSON-LD AI-bypass decision branch (parsing/prompt is live) | Optional / low-leverage | ~2 hours if pursued                                    |
+| B1 — Multiple URLs per email                                          | Queued                  | ~3 hours                                               |
+| B2 — Free-text AI extraction (no URL)                                 | Queued                  | ~half day                                              |
+| B3 — Confidence-aware auto-reply                                      | Queued                  | ~3 hours (depends on B2)                               |
+| B4 — Pre-filled web form for incomplete submissions                   | Queued                  | ~half day (depends on B3)                              |
+| B7 — Attachment OCR                                                   | Phase 3 (deferred)      | ~1 dev day                                             |
 
-**Total remaining:** ~2 dev days for Phase 2B/2C if A4 finish is skipped (recommended); ~2.5 dev days if A4 finish is included.
+**Total remaining:** ~2 dev days for Phase 2B/2C if A4 finish is skipped (recommended); ~2.5 dev days if A4 finish is included. Phase 2A.5 (A5 + durability hardening) is complete as of 2026-05-19 evening.
 
 ### Audit results (2026-05-19)
 
@@ -106,6 +110,55 @@ Sample: 24 random distinct-host organizer URLs drawn from `events.source_url` (e
 - **The Starling Hall WordPress plugin does NOT emit Event JSON-LD** despite the original spec's hypothesis. Its `/event/{slug}/` pages emit standard Yoast SEO markup (`WebPage` + `BreadcrumbList` + `Organization` + `ImageObject`) — no `Event` type. The spec's A4 test-case prediction for Starling Hall was wrong.
 - **Fetch failures are higher than the spec estimated.** Spec assumed 5–15% of fetches fail; actual is **40% raw, ~30% after excluding 404'd dead pages** (those wouldn't occur on real-time submissions of live events). Of the live-URL failures, ~15% are 403 bot-blocks (the cleanly-A5-fixable subset); the rest are DNS issues, TLS failures, and rate limits (A5 helps some but isn't a silver bullet).
 - **The JSON-LD plumbing already shipped is more useful than the audit number suggests.** 33% of URLs emit non-`Event` JSON-LD that nonetheless carries useful signal (Yoast `Organization` with venue address, `LocalBusiness` with name + telephone + address). The AI prompt receives this as context, lifting extraction quality on a third of sites — which is the legitimate value the spec's A4 plumbing was hoping for, just under a different category label.
+
+## Durability incident + fix (2026-05-19 evening)
+
+The A5 verification test on 2026-05-19 evening uncovered a real durability gap that was not caused by A5 but had been latent in the pipeline since launch. Documenting here as a post-mortem so the design lessons stick.
+
+### What happened
+
+Test email #1 (`https://www.ham-con.org/` → `submit@meetmeatthefair.com`) arrived at 21:20:23 UTC and created inbound row `c6992b79-4c5c-4760-828c-fd5ed65168f5`. The email() entrypoint successfully created workflow instance `da76901e-4fb7-4752-b0be-2bc76ae97893`. The workflow's first step `mark-processing` ran twice:
+
+- **Attempt 1 (21:20:28 UTC)**: `WorkflowTimeoutError: Execution timed out after 5000ms` — D1 was slow.
+- **Attempt 2 (21:20:38 UTC, on retry)**: `D1_ERROR: internal error; reference = 1kbom56adrm5hkb4debboied` — D1 was still flaky.
+
+Both attempts fell inside the same ~10-second D1 transient window. The workflow instance went to `errored` state and never proceeded to the `dispatch` → `send-reply` → `mark-done` pipeline. The inbound row stayed at `status='received'` indefinitely. **The submitter received no auto-reply** — not even the generic "we received your message but extraction failed" template that the workflow's dispatch try/catch is supposed to send for downstream failures.
+
+A second test email sent ~30 minutes later (`c91c02e2`) succeeded normally, validating that the failure mode was specifically tied to that 10-second D1 hiccup window.
+
+### Root cause — two compounding gaps
+
+1. **The `mark-processing` step's retry budget was too tight.** Original config: `retries: { limit: 1, delay: "5 seconds", backoff: "constant" }`, `timeout: "5 seconds"`. That's 2 attempts spaced 5 seconds apart — couldn't outlast a transient that lasted ~10 seconds.
+2. **The step wasn't fail-soft.** When `mark-processing`'s retries exhausted, the whole workflow errored. The `send-reply` step lives downstream of `mark-processing`, so the submitter-visible auto-reply path was never reached. The workflow had failure handling for the `dispatch` step (try/catch + synthetic error-reply mapping) but NOT for the preceding step that performs the cosmetic `status='processing'` UPDATE.
+
+The deeper design issue: the most fragile step (a single non-load-bearing D1 UPDATE that the actual work doesn't depend on) had the least retry budget AND no soft-failure path, while the actually-load-bearing steps (`fetch` / `extract` / `submit` / `send-reply`) had multiple retries each AND were wrapped in the dispatch try/catch. Risk was concentrated in exactly the wrong place.
+
+### The fix (commit `10f0e2e`)
+
+Two changes, both in `mcp-server/`:
+
+1. **`mark-processing` is now fail-soft.** Its callback wraps the D1 UPDATE in `try/catch` — on any error, it logs a warning and returns successfully. The workflow continues to the actual work regardless of whether the cosmetic status update succeeded. Retry budget also relaxed: `limit: 3`, `delay: "5 seconds"`, `backoff: "exponential"`, `timeout: "10 seconds"` (so it gets more chances before falling through to the soft-failure path).
+2. **New stale-row sweep.** `runInboundEmailStaleSweep` in `src/inbound-email-stale-sweep.ts` finds rows with `status='received' AND workflow_instance_id IS NULL` aged 10 min to 24h and re-creates the workflow for each. Wired into the existing every-10-minutes cron alongside KPI recompute, and exposed at `POST /api/admin/workflows/inbound-email/sweep` for manual triggering. 50-row-per-sweep cap to avoid Workflows quota saturation. 8 vitest cases cover selection criteria, idempotency, failure isolation, and the cap.
+
+### Verification
+
+The stuck `c6992b79` row was used as the recovery test case. After commit `10f0e2e` deployed (22:18 UTC), the \*/10 cron fired at 22:20 UTC, the sweep detected the stale row, created a fresh workflow `d62b5f63-631a-45d4-a7c2-2ad1d04019b9`, and ran it to completion. Final row state:
+
+```
+status:              replied
+fetch_method:        browser-rendering
+reply_kind:          already-exists
+resulting_event_id:  67051e05-bdd4-4fab-b822-ee79ede67596  (HAM-CON 2027)
+```
+
+The submitter received the "already-exists" auto-reply ~3 hours after the original send. Not ideal latency, but no longer silently dropped.
+
+### Lessons (memory-worthy)
+
+- **A workflow step that performs a non-load-bearing side effect should be fail-soft by default.** Cosmetic writes (status updates, audit logs, back-link UPDATEs) should never block the actual user-facing work. Wrap in try/catch inside the step body so the step always succeeds.
+- **Retry-budget asymmetry is a smell.** If the most fragile step (most likely to fail under transient infrastructure issues) has the lowest retry budget, the design is upside-down. Match retry budgets to actual fragility, not to the order of declaration in code.
+- **Durability claims require defense-in-depth, not just per-step retries.** Per-step retries handle within-workflow flakiness; a sweep that re-creates abandoned workflows handles entire-workflow loss. Both layers are needed for "we won't drop a submission" to actually hold under adversarial conditions.
+- **Latent bugs in pre-existing infrastructure surface fastest under end-to-end tests against new code.** A5's verification test exposed this 2026-05-18 latent bug specifically because the test was a real submission flowing through the whole pipeline. Unit tests on individual steps would never have found it. Treat E2E test failures of new code as opportunities to audit the surrounding infrastructure too.
 
 ## Part A — Bug fixes + new extraction items
 
@@ -219,11 +272,22 @@ Kept here for reference if a future cohort shifts toward DMO/aggregator URLs and
 
 **Bonus discovery-pipeline impact — revised:** the same JSON-LD probe logic _could_ be lifted into the batch discovery skill, but the 3.3% Event-schema coverage on the small-organizer slice suggests the existing bespoke Simpleview/TEC API harvesters are probably picking up the higher-leverage signal anyway. Out of scope for this ticket and lower priority than initially thought.
 
-### A5. Browser Rendering fallback for 403/blocked fetches 🆕 QUEUED — ship next
+### A5. Browser Rendering fallback for 403/blocked fetches ✅ SHIPPED 2026-05-19
 
-**Estimated effort:** ~half day
+**Status:** Shipped commit `7b8135b` (code) + `dc9581a` (Pages secret bake-in deploy). Verified end-to-end with two production tests on 2026-05-19 evening: `ham-con.org` (resolved via `fetch_method='standard'` — the new browser UA alone fixed it) and `near-fest.com` (resolved via `fetch_method='browser-rendering'` — the escalation actually fired). Both produced clean B5 dedup hits against existing events (HAM-CON 2027 / NEAR-Fest XXXIX) rather than duplicate PENDING rows.
 
-**Decision (locked 2026-05-18 late evening):** Implement the Cloudflare Browser Rendering REST API only. Do NOT pre-build a REST → Puppeteer cascade. Defer the Workers Puppeteer binding to a future ticket, gated on production data showing a meaningful "REST API ran but extraction still failed" cohort. Rationale captured below so future-us doesn't relitigate the choice from scratch.
+**Effort:** ~half day actual (matched estimate). Bonus item shipped alongside: the standard fetch path's User-Agent switched from `MeetMeAtTheFair/1.0` (self-identifying bot) to a real-browser Chrome UA, which alone resolved a meaningful fraction of 403s without needing Browser Rendering to escalate.
+
+**Implementation notes (for the next person who touches this code):**
+
+- Escalation lives in `src/app/api/admin/import-url/fetch/route.ts` (the main app's fetch route), NOT in the MCP Worker's `submitFetch`. Reason: the admin URL-import UI benefits from the same fallback path; the parse helpers (`extractMetadata`, `extractTextFromHtml`) already live there.
+- Decision tree in `shouldEscalate()`: escalates on `{401, 403, 429}` or timeout / network failure; does NOT escalate on 404 or non-HTML content-type.
+- Standard-fetch timeout: 15s. Browser Rendering timeout: 25s. Workflow's `submit/fetch-url` step timeout: 30s (was 20s pre-A5).
+- Pages secret `CLOUDFLARE_BROWSER_RENDERING_TOKEN` — token scoped to `Browser Rendering: Edit`, set via `wrangler pages secret put`. `CLOUDFLARE_ACCOUNT_ID` is non-secret, lives in `[vars]` in `wrangler.toml`.
+- `drizzle/0078` adds `inbound_emails.fetch_method TEXT` for hit-rate analytics. Workflow's mark-done step writes one of `'standard' | 'browser-rendering' | 'failed'` (`'failed'` is inferred from the error prefix `fetch-*` since the workflow's caughtError path can't directly carry the field).
+- Unit tests at `src/app/api/admin/import-url/fetch/__tests__/route.test.ts` (6 cases covering the escalation decision tree).
+
+**Decision (locked 2026-05-18 late evening, validated 2026-05-19):** Implement the Cloudflare Browser Rendering REST API only. Do NOT pre-build a REST → Puppeteer cascade. Defer the Workers Puppeteer binding to a future ticket, gated on production data showing a meaningful "REST API ran but extraction still failed" cohort. Rationale captured below so future-us doesn't relitigate the choice from scratch.
 
 **Revised 2026-05-19:** Promoted ahead of A4-finish in the rollout order based on the JSON-LD coverage audit (3.3% Event coverage rules out A4-as-bypass) and a measured fetch-failure rate of **15–30% on live URLs** (up from the spec's earlier 5–15% estimate).
 
@@ -569,22 +633,26 @@ GROUP BY trust_level;
 
 ## Migration / rollout
 
-### What's already deployed (Phase 2A, 2026-05-18; corrected 2026-05-19)
+### What's already deployed (Phase 2A + 2A.5; corrected 2026-05-19)
 
 - A1 (body over meta prompt) — live (`ai-extractor.ts:25`)
 - A2 (venue auto-link + state_code regex) — live (`src/lib/venue-matching.ts:autoLinkVenue` + `deriveStateFromText`). Spec-revision 2026-05-19: more fully shipped than the 2026-05-18 refresh implied.
 - A3 (timezone normalization) — live in BOTH the one-shot backfill (`drizzle/0074`, 751 rows shifted) AND INSERT-time (`suggest-event/submit/route.ts:177-183`). The 2026-05-18 refresh wrongly called the backfill "queued"; it shipped on 2026-05-18.
 - A4 partial — JSON-LD parsing + plumbing into the AI prompt is live (`html-parser.ts:110-142`, `submit.ts:149-150`, `ai-extractor.ts:175-176`). AI-bypass decision branch NOT live (deprioritized 2026-05-19 after coverage audit).
+- **A5 — Browser Rendering fallback live as of 2026-05-19 evening (commits `7b8135b` + `dc9581a`).** Verified end-to-end against ham-con.org (`fetch_method='standard'` via the new browser UA) and near-fest.com (`fetch_method='browser-rendering'` via the actual escalation). `drizzle/0078` added the `fetch_method` analytics column.
+- **Durability hardening live as of 2026-05-19 evening (commit `10f0e2e`).** `mark-processing` is now fail-soft + has a more forgiving retry budget; `runInboundEmailStaleSweep` runs every 10 minutes on the existing cron + is callable at `POST /api/admin/workflows/inbound-email/sweep`. Verified by automatic recovery of the stuck `c6992b79` row (see "Durability incident + fix" section above).
 - B5 (dedup) — live (`submit/check-duplicate` workflow step + `/api/suggest-event/check-duplicate`)
 - B6 (sender trust + 2 new MCP tools + `inbound_email_senders` table) — live
 - Bonus: automatic approval emails (`notifyApprovalIfNeeded`, 3 call sites confirmed), graceful failure handling (`NonRetryableError` with `fetch-` / `extract-` / `submit-` prefixes), retroactive audit rules (`events_legacy_gate_candidates`, `stale_year_events`)
 
-### What's still queued (rollout order revised 2026-05-19)
+### What's still queued (Phase 2B onward)
 
-1. **Phase 2A.5 (~half day):** A5 Browser Rendering fallback (~half day) + A2 residual-case investigation (~30 min, just look at the inbound_emails row for the Starling Hall extraction). **Drop A4 finish** unless future cohort data justifies it.
-2. **Phase 2B (~1.5 dev days):** B1 multi-URL + B2 free-text + B3 confidence tiers + B4 pre-filled form. These build on each other (B3 needs B2; B4 needs B3).
-3. **Phase 2C (~half day, optional):** admin extraction-quality dashboard.
-4. **Phase 3 (future):** B7 attachment OCR (with the multi-row PDF regression case from NHAC) + automatic promoter-match approval + HMAC reply threading.
+Phase 2A.5 (A5 + durability hardening) is now live. The next layer of work is Phase 2B's submission-pattern unlocks.
+
+1. **Phase 2B (~1.5 dev days):** B1 multi-URL + B2 free-text + B3 confidence tiers + B4 pre-filled form. These build on each other (B3 needs B2; B4 needs B3).
+2. **Phase 2C (~half day, optional):** admin extraction-quality dashboard.
+3. **Phase 3 (future):** B7 attachment OCR (with the multi-row PDF regression case from NHAC) + automatic promoter-match approval + HMAC reply threading.
+4. **A4 finish (optional, not recommended):** ~2 hours if pursued. Coverage audit ruled this out as low-leverage; revisit only if a future submission cohort skews toward DMO/aggregator URLs.
 
 The broader timezone-normalization audit/update for existing events was completed by `drizzle/0074_event_dates_noon_utc.sql` (751 rows) — coordinate any future audit/update with the date-quality-gates work.
 
