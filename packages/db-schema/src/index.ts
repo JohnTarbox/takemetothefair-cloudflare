@@ -1252,6 +1252,14 @@ export const inboundEmails = sqliteTable(
      *  - `reply_kind = 'already-exists'` → the EXISTING event matched
      *  NULL when no event is involved (no-url, extract-failed, etc.). */
     resultingEventId: text("resulting_event_id"),
+    /** Which fetch path produced the URL content:
+     *  - `'standard'`           — default fetch with browser UA succeeded
+     *  - `'browser-rendering'`  — standard fetch failed (403/4xx/timeout),
+     *                             Cloudflare Browser Rendering REST API
+     *                             succeeded as fallback. Added drizzle/0078.
+     *  - `'failed'`             — both paths failed; row has status='failed'
+     *  NULL on pre-A5 rows. */
+    fetchMethod: text("fetch_method"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [

@@ -313,9 +313,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     // ───── Step 4: mark-done ────────────────────────────────────────
     // Persist final status + reply attribution (reply_kind +
-    // resulting_event_id, drizzle/0076) so /admin/inbound-emails and
-    // the sender-quality summary can attribute dedup hits separately
-    // from no-URL fallbacks and extract failures.
+    // resulting_event_id, drizzle/0076) + fetch path (fetch_method,
+    // drizzle/0078) so /admin/inbound-emails and the sender-quality
+    // summary can attribute dedup hits separately from no-URL fallbacks,
+    // and so post-deploy analytics can measure Browser Rendering hit rate.
+    //
+    // fetchMethod nuance: only set when the submit pipeline reached the
+    // dedup or final-ok branches (both attach fetched.fetchMethod). When
+    // the fetch step itself failed and the outer catch fired, result
+    // doesn't carry fetchMethod — we infer 'failed' from the error
+    // prefix so the analytics query still counts the both-paths-failed
+    // cohort. Other failure modes (extract/submit) leave fetch_method
+    // NULL because we don't know which fetch path got us here.
+    const inferredFetchMethod =
+      caughtError && caughtError.startsWith("fetch-") ? "failed" : (result.fetchMethod ?? null);
     await step.do(
       "mark-done",
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
@@ -328,6 +339,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             error: caughtError ?? null,
             replyKind: result.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
+            fetchMethod: inferredFetchMethod,
           })
           .where(eq(inboundEmails.id, messageRowId));
       }
@@ -391,7 +403,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     const fetched = await step.do(
       "submit/fetch-url",
-      { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "20 seconds" },
+      // 30s timeout (was 20s before A5) — Browser Rendering's managed
+      // headless Chrome can take 5–15s on first-cold-Chrome on top of the
+      // standard fetch's own 15s budget. drizzle/0078 tracks which path won.
+      { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "30 seconds" },
       () => submitFetch(this.env, url)
     );
 
@@ -429,6 +444,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // Persist the matched existing event id so /admin/inbound-emails
         // can render a "matched against X" link without a JOIN.
         resultingEventId: dedup.existingEventId ?? null,
+        fetchMethod: fetched.fetchMethod,
       };
     }
 
@@ -448,6 +464,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       status: "replied",
       // Persist the newly-created event id for the same admin-UI link.
       resultingEventId: submitted.id,
+      fetchMethod: fetched.fetchMethod,
     };
   }
 }

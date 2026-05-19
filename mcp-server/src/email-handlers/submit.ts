@@ -54,6 +54,11 @@ export interface SubmitFetchResult {
   ogImage: string | null;
   /** JSON-stringified `jsonLd`, or null if the page had none. */
   jsonLdSerialized: string | null;
+  /** Which fetch path the main app used. `'standard'` for the cheap path,
+   *  `'browser-rendering'` for the Cloudflare Browser Rendering escalation
+   *  on 401/403/429/timeout. Forwarded to workflow's mark-done step which
+   *  persists it to inbound_emails.fetch_method (drizzle/0078). */
+  fetchMethod: "standard" | "browser-rendering";
 }
 
 export interface SubmitExtractResult {
@@ -133,8 +138,9 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
         description?: string | null;
         ogImage?: string | null;
         jsonLd?: unknown;
+        fetchMethod?: "standard" | "browser-rendering";
       }
-    | { success: false; error: string }
+    | { success: false; error: string; fetchMethod?: "failed" }
     | null;
   if (!body || !body.success) {
     const upstream = body && "error" in body ? body.error : "no-body";
@@ -148,6 +154,10 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
     ogImage: body.ogImage ?? null,
     jsonLdSerialized:
       body.jsonLd === undefined || body.jsonLd === null ? null : JSON.stringify(body.jsonLd),
+    // Default to 'standard' for the (rare) case where the main app is on an
+    // older deploy that doesn't return the field. Better to under-count
+    // browser-rendering than fail the workflow.
+    fetchMethod: body.fetchMethod ?? "standard",
   };
 }
 

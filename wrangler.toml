@@ -13,6 +13,17 @@ mode = "smart"
 [ai]
 binding = "AI"
 
+# Browser Rendering REST API config (A5 — drizzle/0078). The fetch route at
+# src/app/api/admin/import-url/fetch/route.ts escalates 401/403/429/timeout
+# failures to Cloudflare Browser Rendering, which returns rendered HTML from
+# a managed headless Chrome. account_id is non-secret; the API token lives
+# as a Pages secret CLOUDFLARE_BROWSER_RENDERING_TOKEN (must have
+# "Browser Rendering: Edit" permission). If the token isn't set, the
+# escalation logs a warning and falls back to the existing "paste content
+# manually" reply.
+[vars]
+CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "takemetothefair-db"

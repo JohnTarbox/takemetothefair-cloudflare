@@ -85,6 +85,10 @@ export interface HandlerResult {
    *  event id; anything else → null. Workflow writes this to
    *  inbound_emails.resulting_event_id at mark-done. */
   resultingEventId?: string | null;
+  /** Which fetch path produced the URL content. Only set for submit intent;
+   *  null/undefined for other intents (no fetch happens). Persisted to
+   *  inbound_emails.fetch_method at mark-done. See drizzle/0078. */
+  fetchMethod?: "standard" | "browser-rendering" | "failed" | null;
 }
 
 /**
