@@ -39,7 +39,32 @@ export const eventDateDriftRule: RuleDefinition = {
       .innerJoin(events, eq(eventDateDriftFindings.eventId, events.id))
       .where(and(isNull(eventDateDriftFindings.resolvedAt), eq(events.status, "APPROVED")));
 
-    return rows.map((r) => ({
+    // Dedupe by eventId: the daily re-verification cron can insert a new
+    // unresolved finding row each time it detects drift, so a single
+    // event may have multiple unresolved rows. The recommendation_items
+    // table has a UNIQUE constraint on (rule_id, target_id), so emitting
+    // the same eventId twice from this rule trips a D1 error and aborts
+    // the rule for this scan run (caught by scanAll's per-rule try/catch
+    // as of 2026-05-19, but still wastes the work).
+    //
+    // Pick the finding with the LARGEST driftDays per event — most severe
+    // wins, since that's the one most likely to surface a real problem in
+    // JSON-LD / GSC. Ties (same drift_days, same event_id) deterministically
+    // pick the row with the higher finding id (lexicographic) so the choice
+    // is stable across rescans.
+    const bestByEvent = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      const existing = bestByEvent.get(r.eventId);
+      if (
+        !existing ||
+        (r.driftDays ?? 0) > (existing.driftDays ?? 0) ||
+        ((r.driftDays ?? 0) === (existing.driftDays ?? 0) && r.findingId > existing.findingId)
+      ) {
+        bestByEvent.set(r.eventId, r);
+      }
+    }
+
+    return [...bestByEvent.values()].map((r) => ({
       targetType: "event",
       targetId: r.eventId,
       payload: {

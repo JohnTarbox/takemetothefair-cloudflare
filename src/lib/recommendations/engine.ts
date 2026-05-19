@@ -302,12 +302,45 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     // ~21 rules of work because a single failing rule mid-list threw out
     // of the loop (incident 2026-05-13 — see commit message).
     try {
-      const matches = filterStalePathMatches(
+      const rawMatches = filterStalePathMatches(
         def.ruleKey,
         await runWithTimeout(def.run(db), PER_RULE_TIMEOUT_MS, def.ruleKey),
         pathChecker,
         stalePathDrops
       );
+
+      // Dedupe matches by targetId before processing. A rule that emits
+      // the same targetId twice (or null-targetId twice — the engine
+      // treats null as a single global slot per rule) would trip the
+      // UNIQUE constraint on (rule_id, target_id) when we INSERT the
+      // second occurrence, killing the whole rule for this scan even
+      // though the first occurrence INSERTed fine. Defense-in-depth
+      // for the event_date_drift case (2026-05-19 incident — the rule's
+      // SELECT JOINs an event-findings table where the same event can
+      // have multiple unresolved finding rows) but also any future rule
+      // that accidentally emits duplicates. The rule-level fix is still
+      // required (it preserves which finding wins); this is the safety
+      // net so the symptom never reaches D1.
+      const seenTargetIds = new Set<string>();
+      const matches: typeof rawMatches = [];
+      let droppedDupes = 0;
+      for (const m of rawMatches) {
+        const key = m.targetId ?? "__null__";
+        if (seenTargetIds.has(key)) {
+          droppedDupes++;
+          continue;
+        }
+        seenTargetIds.add(key);
+        matches.push(m);
+      }
+      if (droppedDupes > 0) {
+        // Loud-but-non-fatal: surface in Pages logs so the responsible
+        // rule shows up in audits without breaking the scan.
+        console.warn(
+          `[recommendations.scanAll] rule "${def.ruleKey}" emitted ${droppedDupes} duplicate targetId(s); dropped before INSERT. Fix the rule's run().`
+        );
+      }
+
       let inserted = 0;
       let refreshed = 0;
       let resolved = 0;
