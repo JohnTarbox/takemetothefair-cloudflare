@@ -208,6 +208,34 @@ export type ScanResult = {
 
 const ACTIVE_WINDOW_MS = 7 * 86400 * 1000;
 
+/** Max wall-clock time a single rule's run() may take before scanAll
+ *  abandons it and continues to the next rule. Set well below the
+ *  Cloudflare edge runtime's 30s response cap so even a chunk-of-1
+ *  request can't burn the whole budget on one rule. Specifically tuned
+ *  for HTTP-fetching rules (hijacked_domain_detection,
+ *  cannibalization_detection, etc.) — they typically complete in
+ *  3-6s but occasional slow upstreams have pushed past 20s, taking
+ *  the rest of the chunk down with them. */
+const PER_RULE_TIMEOUT_MS = 12_000;
+
+/** Wraps a promise in a race against a timer. Resolves with the
+ *  promise's value if it completes in time; rejects with a Timeout
+ *  error otherwise. The wrapped promise keeps running in the
+ *  background (we can't cancel a Drizzle query mid-flight) but the
+ *  scan loop moves on. Acceptable cost: a stuck rule won't block
+ *  later rules, even if its query never returns. */
+export async function runWithTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`rule '${label}' exceeded ${ms}ms timeout`)), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function ensureRulesRegistered(db: Db, defs: RuleDefinition[]): Promise<Map<string, string>> {
   const now = new Date();
   const existing = await db.select().from(recommendationRules);
@@ -276,7 +304,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     try {
       const matches = filterStalePathMatches(
         def.ruleKey,
-        await def.run(db),
+        await runWithTimeout(def.run(db), PER_RULE_TIMEOUT_MS, def.ruleKey),
         pathChecker,
         stalePathDrops
       );

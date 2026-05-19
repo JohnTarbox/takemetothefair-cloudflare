@@ -15,10 +15,17 @@ export const runtime = "edge";
 // until `more: false`. Server slices ALL_RULES[cursor:cursor+chunk] and
 // runs scanAll on that subset — scanAll already accepts a defs array.
 //
-// Default chunk size of 8 leaves ~22s of execution headroom for the
-// slowest rules (HTTP fetches like hijacked_domain_detection). Callers
-// can lower it via ?chunk=N if a single chunk is timing out.
-const DEFAULT_CHUNK = 8;
+// Default chunk size lowered 8 → 3 on 2026-05-19 evening: 5 of the ~27
+// rules do HTTP fetches (hijacked_domain_detection, cannibalization_detection,
+// seo_position_11_20, events_missing_application_url, static_pages_short_description)
+// and when two land in the same chunk the combined wall time pushed past
+// the 30s edge cap, taking the other 6 rules in the chunk down with them.
+// chunk=3 almost guarantees at most one fetch-heavy rule per chunk.
+// Pair this with the per-rule 12s timeout in scanAll (PER_RULE_TIMEOUT_MS)
+// — together they bound chunk wall time to ~36s worst-case, well within
+// edge's 30s response budget for a chunk containing fast rules + the
+// per-rule timeout for one fetch rule.
+const DEFAULT_CHUNK = 3;
 const MAX_CHUNK = ALL_RULES.length;
 
 export async function POST(request: Request) {
