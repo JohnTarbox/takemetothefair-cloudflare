@@ -160,15 +160,42 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const sessionId = event.instanceId;
 
     // ───── Step 1: mark-processing ──────────────────────────────────
+    // Cosmetic status update + workflow_instance_id back-link. The
+    // submitter getting an auto-reply matters more than the admin UI
+    // showing 'processing' vs 'received', so this step is fail-soft:
+    // its UPDATE is wrapped in try/catch and logs a warning instead of
+    // throwing. Without this guard a transient D1 hiccup on this
+    // non-essential write kills the whole workflow and the submitter
+    // gets no response — the actual incident on 2026-05-19 (workflow
+    // da76901e-4fb7-4752-b0be-2bc76ae97893, inbound row c6992b79)
+    // that drove this change. Bumped retries 1 → 3 with exponential
+    // backoff and timeout 5s → 10s for additional resilience under
+    // longer D1 hiccups before falling through to soft-failure.
     await step.do(
       "mark-processing",
-      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
+      {
+        retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+        timeout: "10 seconds",
+      },
       async () => {
-        const db = getDb(this.env.DB);
-        await db
-          .update(inboundEmails)
-          .set({ status: "processing", workflowInstanceId: sessionId })
-          .where(eq(inboundEmails.id, messageRowId));
+        try {
+          const db = getDb(this.env.DB);
+          await db
+            .update(inboundEmails)
+            .set({ status: "processing", workflowInstanceId: sessionId })
+            .where(eq(inboundEmails.id, messageRowId));
+        } catch (err) {
+          await logError(this.env.DB, {
+            level: "warn",
+            source: SOURCE,
+            message: "mark-processing UPDATE failed; continuing workflow",
+            sessionId,
+            context: {
+              messageRowId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          }).catch(() => {});
+        }
       }
     );
 

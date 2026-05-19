@@ -316,6 +316,7 @@ const SCHEMA_SQL = `
     message_id TEXT,
     reply_kind TEXT,
     resulting_event_id TEXT,
+    fetch_method TEXT,
     created_at INTEGER NOT NULL
   );
 

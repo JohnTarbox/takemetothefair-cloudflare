@@ -13,6 +13,10 @@ import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
 import { handleInboundEmail, type ForwardableEmailMessage } from "./email-handler.js";
+import {
+  runInboundEmailStaleSweep,
+  runScheduledInboundEmailStaleSweep,
+} from "./inbound-email-stale-sweep.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import { eq } from "drizzle-orm";
@@ -724,6 +728,28 @@ async function handleWorkflowEndpoints(
     }
   }
 
+  // POST /api/admin/workflows/inbound-email/sweep
+  // Manually trigger the stale-row sweep for inbound_emails (rows in
+  // status='received' AND workflow_instance_id IS NULL older than the
+  // sweep's threshold). Useful for immediate recovery without waiting
+  // for the next */10 cron firing. Returns the SweepResult with per-row
+  // outcomes so admin can confirm exactly what was retried. No body
+  // required.
+  if (url.pathname === "/api/admin/workflows/inbound-email/sweep" && request.method === "POST") {
+    try {
+      const db = getDb(env.DB);
+      const result = await runInboundEmailStaleSweep(db, env);
+      return jsonResponse(result);
+    } catch (err) {
+      await logError(env.DB, {
+        source: "mcp:workflows-api",
+        message: "Manual inbound-email stale-sweep threw",
+        error: err,
+      });
+      return jsonResponse({ error: "sweep_failed" }, 500);
+    }
+  }
+
   // Unknown sub-path under /api/admin/workflows/ — let it fall through.
   return null;
 }
@@ -908,7 +934,18 @@ export default {
       `[cron] firing for cron='${controller.cron}' at ${new Date(controller.scheduledTime).toISOString()}`
     );
     if (controller.cron === "*/10 * * * *") {
-      ctx.waitUntil(runScheduledKpiRecompute(env));
+      // Two parallel sweeps share this cadence:
+      //   - KPI recompute (the original tenant)
+      //   - Inbound-email stale-row recovery (added 2026-05-19 after the
+      //     da76901e workflow-error incident — rows can land in
+      //     status='received' with workflow_instance_id=NULL if D1 was
+      //     transient during mark-processing, and without this sweep the
+      //     submitter never gets an auto-reply)
+      ctx.waitUntil(
+        Promise.all([runScheduledKpiRecompute(env), runScheduledInboundEmailStaleSweep(env)]).then(
+          () => undefined
+        )
+      );
       return;
     }
     if (controller.cron === "0 * * * *") {
