@@ -311,6 +311,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             .select({
               fromAddress: inboundEmails.fromAddress,
               subject: inboundEmails.subject,
+              messageId: inboundEmails.messageId,
             })
             .from(inboundEmails)
             .where(eq(inboundEmails.id, messageRowId))
@@ -327,12 +328,31 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               ? replyParams
               : { ...replyParams, subject: rows[0].subject ?? "" };
           const msg = buildReply(replyKind, rows[0].fromAddress, params);
+
+          // RFC 5322 threading headers so Gmail / Apple Mail / etc. nest the
+          // reply visually under the user's original message rather than
+          // showing it as a standalone email. Three headers:
+          //   - Message-ID: our own unique id. Always set, so the user's
+          //     reply-to-our-reply chains back to us in turn.
+          //   - In-Reply-To: the inbound message's Message-ID. Only set
+          //     when the inbound row has one (occasional senders omit it).
+          //   - References: chain of ancestor Message-IDs. Single-hop here
+          //     so it equals In-Reply-To; we don't currently track multi-
+          //     turn correction threads.
+          const ourMessageId = `<${crypto.randomUUID()}@meetmeatthefair.com>`;
+          const headers: Record<string, string> = { "Message-ID": ourMessageId };
+          if (rows[0].messageId) {
+            headers["In-Reply-To"] = rows[0].messageId;
+            headers["References"] = rows[0].messageId;
+          }
+
           await this.env.EMAIL.send({
             from: msg.from ?? DEFAULT_FROM,
             to: msg.to,
             subject: msg.subject,
             html: msg.html,
             text: msg.text,
+            headers,
           });
         }
       );
