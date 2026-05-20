@@ -22,6 +22,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { events } from "@/lib/db/schema";
+import { recordWorkflowOutcome } from "@/lib/intent-feedback";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -137,6 +138,16 @@ export async function notifyApprovalIfNeeded(
     .update(events)
     .set({ approvalNotifiedAt: new Date() })
     .where(and(eq(events.id, eventId), isNull(events.approvalNotifiedAt)));
+
+  // Phase D.2: record the implicit positive signal for the classifier
+  // that originally routed this submission. Best-effort — any error
+  // is swallowed so the approval flow stays clean (the feedback loop
+  // is observability, not user-facing).
+  try {
+    await recordWorkflowOutcome(db, { eventId, newStatus: "APPROVED" });
+  } catch {
+    // Intentional swallow — see comment above.
+  }
 
   return { outcome: "sent" };
 }

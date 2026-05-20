@@ -1379,3 +1379,40 @@ export const inboundEmailSenders = sqliteTable(
 );
 
 export type InboundEmailSender = typeof inboundEmailSenders.$inferSelect;
+
+// Phase D.1 (drizzle/0080): ground-truth feedback for classifier
+// decisions. Captures admin reclassifications, workflow-outcome
+// inference, sender click-through (Phase D.3), and active labeling.
+// Same shape will be reused for future AI-decision feedback (extraction,
+// JSON-LD, etc.) per spec §D.4.3.
+export const inboundEmailIntentFeedback = sqliteTable(
+  "inbound_email_intent_feedback",
+  {
+    id: text("id").primaryKey(),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    /** admin_reroute | admin_label | workflow_outcome | sender_feedback
+     *  | user_reply. See drizzle/0080 for semantics. */
+    feedbackSource: text("feedback_source").notNull(),
+    /** What the classifier picked. NULL for retroactive labels on pre-
+     *  classifier rows. */
+    originalIntent: text("original_intent"),
+    /** Ground-truth value per the feedback_source. */
+    correctedIntent: text("corrected_intent").notNull(),
+    /** Stamps which classifier_version produced original_intent. */
+    classifierVersion: text("classifier_version"),
+    adminNote: text("admin_note"),
+    /** Admin user_id when admin-sourced; NULL otherwise. */
+    createdBy: text("created_by"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_intent_feedback_email").on(t.inboundEmailId),
+    index("idx_intent_feedback_source").on(t.feedbackSource),
+    index("idx_intent_feedback_version")
+      .on(t.classifierVersion)
+      .where(sql`${t.classifierVersion} IS NOT NULL`),
+    index("idx_intent_feedback_created").on(t.createdAt),
+  ]
+);
+
+export type InboundEmailIntentFeedback = typeof inboundEmailIntentFeedback.$inferSelect;
