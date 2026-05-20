@@ -3,7 +3,7 @@
  * No I/O, no mocks.
  */
 import { describe, expect, it } from "vitest";
-import { resolveIntent, shouldForwardToAdmin } from "../src/email-intents.js";
+import { resolveIntent, shouldForwardToAdmin, toWorkflowIntent } from "../src/email-intents.js";
 
 describe("resolveIntent — recognized addresses", () => {
   it("submit@ → submit", () => {
@@ -71,5 +71,33 @@ describe("shouldForwardToAdmin", () => {
   });
   it("unknown forwards (catch-all goes to admin)", () => {
     expect(shouldForwardToAdmin("unknown")).toBe(true);
+  });
+});
+
+describe("toWorkflowIntent — classifier → workflow dispatch mapping", () => {
+  it("legacy values pass through unchanged", () => {
+    expect(toWorkflowIntent("submit")).toBe("submit");
+    expect(toWorkflowIntent("correction")).toBe("correction");
+    expect(toWorkflowIntent("support")).toBe("support");
+    expect(toWorkflowIntent("press")).toBe("press");
+    expect(toWorkflowIntent("unsubscribe")).toBe("unsubscribe");
+    expect(toWorkflowIntent("unknown")).toBe("unknown");
+  });
+  it("new_event collapses to submit (same pipeline)", () => {
+    expect(toWorkflowIntent("new_event")).toBe("submit");
+  });
+  it("source_suggestion routes through correction handler", () => {
+    expect(toWorkflowIntent("source_suggestion")).toBe("correction");
+  });
+  it("claim_request routes through correction handler", () => {
+    expect(toWorkflowIntent("claim_request")).toBe("correction");
+  });
+  it("vendor_inquiry routes through support handler", () => {
+    expect(toWorkflowIntent("vendor_inquiry")).toBe("support");
+  });
+  it("spam/unclear/multi route to unknown (admin triage)", () => {
+    expect(toWorkflowIntent("spam")).toBe("unknown");
+    expect(toWorkflowIntent("unclear")).toBe("unknown");
+    expect(toWorkflowIntent("multi")).toBe("unknown");
   });
 });

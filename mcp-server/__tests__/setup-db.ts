@@ -317,6 +317,16 @@ const SCHEMA_SQL = `
     reply_kind TEXT,
     resulting_event_id TEXT,
     fetch_method TEXT,
+    classified_intent TEXT,
+    classified_sub_intent TEXT,
+    classified_confidence REAL,
+    classified_rationale TEXT,
+    classified_at INTEGER,
+    classifier_version TEXT,
+    routing_source TEXT,
+    routed_to_workflow TEXT,
+    flagged_for_review INTEGER NOT NULL DEFAULT 0,
+    parent_email_id TEXT,
     created_at INTEGER NOT NULL
   );
 
