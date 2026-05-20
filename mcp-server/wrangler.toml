@@ -84,6 +84,16 @@ crons = ["0 6 * * *", "*/10 * * * *", "0 * * * *"]
 [[send_email]]
 name = "EMAIL"
 
+# Workers AI binding for the inbound-email intent classifier (Phase C.1).
+# Used by mcp-server/src/intent-classifier.ts:classifyIntent — calls
+# env.AI.run("@cf/meta/llama-3.1-8b-instruct", ...). Without this binding
+# the entrypoint's computeRouting() falls back to address-only routing
+# (routing_source='address_only'); no emails bounce, but the classifier
+# is effectively dormant. Added 2026-05-20 so the C.1 ship is actually
+# active in production.
+[ai]
+binding = "AI"
+
 # Queue producers — also wired here so MCP tools can enqueue (e.g., MCP's
 # create_event triggers an IndexNow ping; same code path as the main app).
 [[queues.producers]]
