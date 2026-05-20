@@ -586,6 +586,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     );
 
     if (dedup.isDuplicate && dedup.existingEventSlug) {
+      // Only include the public URL when the matched event is actually
+      // public. PENDING / REJECTED matches link to 404s — common case
+      // when a sender re-submits before admin review. The reply
+      // builder branches on existingEventStatus to suppress the URL
+      // line for non-public statuses (still acknowledges the dedup,
+      // just doesn't link).
       return {
         replyKind: "already-exists",
         replyParams: {
@@ -593,6 +599,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           eventName: dedup.existingEventName ?? extracted.event.name,
           eventUrl: `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`,
           matchType: dedup.matchType ?? "exact_url",
+          existingEventStatus: dedup.existingEventStatus ?? "",
         },
         status: "replied",
         // Persist the matched existing event id so /admin/inbound-emails

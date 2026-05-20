@@ -147,17 +147,27 @@ ${SIGN_OFF}`;
     }
     case "already-exists": {
       // The dedup endpoint can match by exact source_url OR by name+date
-      // similarity ≥0.85 within ±7 days. Reply is the same either way —
-      // sender sees the existing event's name + public URL, with a clear
-      // path to flag a correction if they noticed something missing/wrong.
+      // similarity ≥0.85 within ±7 days. Reply branches on the matched
+      // event's status:
+      //  - APPROVED / CONFIRMED / lifecycle-public → show the public URL
+      //  - PENDING / REJECTED / TENTATIVE / etc.  → suppress URL (it
+      //    would 404 — /events/[slug] gates on isPublicEventStatus).
+      //    Sender still gets a clear "already in our system" ack with
+      //    the same corrections invitation.
       const eventName = (params.eventName as string | undefined) ?? "this event";
       const eventUrl = (params.eventUrl as string | undefined) ?? null;
-      const urlLine = eventUrl ? `\n\nYou can see our listing here: ${eventUrl}\n` : "";
+      const existingStatus = (params.existingEventStatus as string | undefined) ?? "";
+      const isPubliclyVisible = existingStatus === "APPROVED" || existingStatus === "CONFIRMED";
+      const urlLine =
+        eventUrl && isPubliclyVisible ? `\n\nYou can see our listing here: ${eventUrl}\n` : "";
+      const reviewLine = !isPubliclyVisible
+        ? "\n\nIt's currently in review and will go live within 24 hours of approval — we'll email you again when it does.\n"
+        : "";
       return `Thanks for emailing Meet Me at the Fair!
 
-Good news — we already have ${eventName} in our directory.${urlLine}
+Good news — we already have ${eventName} in our directory.${urlLine}${reviewLine}
 
-If you noticed something missing or out of date on the page, please reply to this thread with the correction and our team will take a look.
+If you noticed something missing or out of date, please reply to this thread with the correction and our team will take a look.
 
 ${SIGN_OFF}`;
     }

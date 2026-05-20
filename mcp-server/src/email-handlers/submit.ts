@@ -88,6 +88,12 @@ export interface SubmitCheckDuplicateResult {
   existingEventName?: string;
   /** Existing event's slug — used to build the public URL in the reply. */
   existingEventSlug?: string;
+  /** Existing event's status (PENDING | APPROVED | REJECTED | ...).
+   *  The "already-exists" reply branches on this: only suggest the public
+   *  URL when the matched event is publicly visible (APPROVED). PENDING
+   *  matches just say "your submission is already in review" without
+   *  linking — the public URL 404s until approval. */
+  existingEventStatus?: string;
 }
 
 interface ExtractedEvent {
@@ -253,7 +259,7 @@ export async function submitCheckDuplicate(
         success: true;
         isDuplicate: boolean;
         matchType?: string;
-        existingEvent?: { id?: string; name?: string; slug?: string };
+        existingEvent?: { id?: string; name?: string; slug?: string; status?: string };
       }
     | { success: false; error: string }
     | null;
@@ -266,6 +272,7 @@ export async function submitCheckDuplicate(
     existingEventId: data.existingEvent?.id,
     existingEventName: data.existingEvent?.name,
     existingEventSlug: data.existingEvent?.slug,
+    existingEventStatus: data.existingEvent?.status,
   };
 }
 

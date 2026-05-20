@@ -74,11 +74,12 @@ describe("buildReply — submit-intent kinds (legacy)", () => {
     expect(msg.text).toMatch(/team has been notified|saving it/i);
   });
 
-  it("already-exists points the sender at our existing listing", () => {
+  it("already-exists with APPROVED match shows the public URL", () => {
     const msg = buildReply("already-exists", "alice@example.com", {
       subject: "Hamfest",
       eventName: "ARRL Maine State Convention & Hamfest",
       eventUrl: "https://meetmeatthefair.com/events/arrl-maine-state-convention-and-hamfest",
+      existingEventStatus: "APPROVED",
     });
     expect(msg.text).toContain("ARRL Maine State Convention & Hamfest");
     expect(msg.text).toContain(
@@ -87,6 +88,45 @@ describe("buildReply — submit-intent kinds (legacy)", () => {
     // Reply must invite the sender to flag corrections — that's the only
     // useful UX path when "we already have this" might still be wrong.
     expect(msg.text).toMatch(/missing or out of date|reply to this thread/i);
+  });
+
+  it("already-exists with PENDING match suppresses the (would-404) URL", () => {
+    // Public route /events/[slug] returns 404 for PENDING events. Linking
+    // them in the auto-reply confuses senders. The reply still ack's the
+    // dedup and offers the corrections-reply path.
+    const msg = buildReply("already-exists", "alice@example.com", {
+      subject: "Test",
+      eventName: "Chester Greenwood Day",
+      eventUrl: "https://meetmeatthefair.com/events/chester-greenwood-day",
+      existingEventStatus: "PENDING",
+    });
+    expect(msg.text).toContain("Chester Greenwood Day");
+    expect(msg.text).not.toContain("https://meetmeatthefair.com/events/");
+    expect(msg.text).toMatch(/in review|will go live|24 hours/i);
+    expect(msg.text).toMatch(/missing or out of date|reply to this thread/i);
+  });
+
+  it("already-exists with CONFIRMED match also shows the public URL", () => {
+    const msg = buildReply("already-exists", "alice@example.com", {
+      subject: "Show",
+      eventName: "Sample Confirmed Event",
+      eventUrl: "https://meetmeatthefair.com/events/sample-confirmed",
+      existingEventStatus: "CONFIRMED",
+    });
+    expect(msg.text).toContain("https://meetmeatthefair.com/events/sample-confirmed");
+  });
+
+  it("already-exists with missing existingEventStatus defaults to suppressing URL (safe fallback)", () => {
+    // Pre-fix callers pass no status; we default to non-public so we never
+    // send a 404 link. Worst case is a slightly less helpful reply on
+    // APPROVED matches where the status field wasn't plumbed through.
+    const msg = buildReply("already-exists", "alice@example.com", {
+      subject: "Test",
+      eventName: "Some Event",
+      eventUrl: "https://meetmeatthefair.com/events/some-event",
+    });
+    expect(msg.text).toContain("Some Event");
+    expect(msg.text).not.toContain("https://meetmeatthefair.com/events/some-event");
   });
 
   it("already-exists falls back gracefully when no eventName/eventUrl provided", () => {
