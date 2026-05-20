@@ -11,8 +11,9 @@
  */
 
 import { eq, and, isNull } from "drizzle-orm";
-import { events } from "./schema.js";
+import { events, inboundEmails } from "./schema.js";
 import type { Db } from "./db.js";
+import { issueToken } from "./feedback-tokens.js";
 
 interface EmailJobMessage {
   to: string;
@@ -36,20 +37,38 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function buildText(eventName: string, eventUrl: string): string {
-  return `Good news — ${eventName} has been approved and is now live on Meet Me at the Fair.
+function buildText(
+  eventName: string,
+  eventUrl: string,
+  feedback: { looksGoodUrl: string; needsFixingUrl: string } | null
+): string {
+  const base = `Good news — ${eventName} has been approved and is now live on Meet Me at the Fair.
 
 See the live listing: ${eventUrl}
 
-We've reviewed and approved your submission. Some details may have been adjusted during review; please check the listing and reply to this thread if anything needs correction.
+We've reviewed and approved your submission. Some details may have been adjusted during review; please check the listing and reply to this thread if anything needs correction.`;
+
+  const widget = feedback
+    ? `
+
+Does this listing look right?
+  ✅ Looks good: ${feedback.looksGoodUrl}
+  ✏️ Something needs fixing: ${feedback.needsFixingUrl}`
+    : "";
+
+  return `${base}${widget}
 
 Thanks for helping us keep the directory current.
 
 ${SIGN_OFF}`;
 }
 
-function buildHtml(eventName: string, eventUrl: string): string {
-  const text = buildText(eventName, eventUrl);
+function buildHtml(
+  eventName: string,
+  eventUrl: string,
+  feedback: { looksGoodUrl: string; needsFixingUrl: string } | null
+): string {
+  const text = buildText(eventName, eventUrl, feedback);
   return `<p>${escapeHtml(text).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
 }
 
@@ -97,11 +116,37 @@ export async function notifyApprovalIfNeeded(
   if (!env.EMAIL_JOBS) return { outcome: "error:queue-missing" };
 
   const eventUrl = `${PUBLIC_HOST}/events/${e.slug}`;
+
+  // Phase D.3: issue an approval-moment feedback token if there's an
+  // inbound_email this approval traces back to. Best-effort.
+  let feedback: { looksGoodUrl: string; needsFixingUrl: string } | null = null;
+  try {
+    const inboundRows = await db
+      .select({ id: inboundEmails.id })
+      .from(inboundEmails)
+      .where(eq(inboundEmails.resultingEventId, eventId))
+      .limit(1);
+    if (inboundRows.length === 1) {
+      const token = await issueToken(db, {
+        inboundEmailId: inboundRows[0].id,
+        feedbackMoment: "approval",
+        resultingEventId: eventId,
+      });
+      const base = `${PUBLIC_HOST}/feedback/${encodeURIComponent(token)}`;
+      feedback = {
+        looksGoodUrl: `${base}?v=looks_good`,
+        needsFixingUrl: `${base}?v=needs_fixing`,
+      };
+    }
+  } catch {
+    // Intentional swallow: see comment in main-app twin.
+  }
+
   const msg: EmailJobMessage = {
     to: e.suggesterEmail,
     subject: `${SUBJECT_PREFIX} ${e.name}`.slice(0, 200),
-    text: buildText(e.name, eventUrl),
-    html: buildHtml(e.name, eventUrl),
+    text: buildText(e.name, eventUrl, feedback),
+    html: buildHtml(e.name, eventUrl, feedback),
     source: "email:submission-approved",
   };
 

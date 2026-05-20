@@ -74,6 +74,7 @@ import {
   submitEvent,
 } from "../email-handlers/submit.js";
 import { buildReply } from "../email-reply-builder.js";
+import { issueToken } from "../feedback-tokens.js";
 
 export type InboundEmailParams = {
   messageRowId: string;
@@ -357,10 +358,51 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           // submit pipeline's success path); otherwise fall back to the
           // row's subject (covers the dispatch-failed synthetic-result
           // path, where the handler threw before populating params).
-          const params =
+          const paramsWithSubject =
             "subject" in replyParams
               ? replyParams
               : { ...replyParams, subject: rows[0].subject ?? "" };
+
+          // Phase D.3: issue a receipt-moment feedback token for reply
+          // kinds where "was this what you wanted?" makes sense. Skip
+          // tailored kinds (correction-applied / press-handled / etc.)
+          // — those are admin-driven and already have their own UX.
+          // Best-effort: any failure leaves the widget out of the email
+          // rather than blocking the reply.
+          const RECEIPT_WIDGET_KINDS: ReplyKind[] = [
+            "ok",
+            "no-url",
+            "already-exists",
+            "extract-failed",
+            "submit-failed",
+          ];
+          let params = paramsWithSubject;
+          if (RECEIPT_WIDGET_KINDS.includes(replyKind)) {
+            try {
+              const token = await issueToken(db, {
+                inboundEmailId: messageRowId,
+                feedbackMoment: "receipt",
+                resultingEventId: result.resultingEventId ?? null,
+              });
+              const base = `https://meetmeatthefair.com/feedback/${encodeURIComponent(token)}`;
+              params = {
+                ...paramsWithSubject,
+                feedbackCorrectUrl: `${base}?v=correct`,
+                feedbackWrongIntentUrl: `${base}?v=wrong_intent`,
+                feedbackCancelUrl: `${base}?v=cancel`,
+              };
+            } catch (err) {
+              await logError(this.env.DB, {
+                level: "warn",
+                source: SOURCE,
+                message: "failed to issue receipt feedback token; widget omitted",
+                error: err,
+                sessionId,
+                context: { messageRowId, replyKind },
+              });
+            }
+          }
+
           const msg = buildReply(replyKind, rows[0].fromAddress, params);
 
           // RFC 5322 threading headers so Gmail / Apple Mail / etc. nest the

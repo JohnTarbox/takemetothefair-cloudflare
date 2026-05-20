@@ -39,7 +39,10 @@ export function buildReply(
   const subjectIn = (params.subject as string | undefined) ?? "";
   const replySubject = `Re: ${subjectIn || "your message"}`.slice(0, 200);
 
-  const text = renderText(kind, params);
+  const baseText = renderText(kind, params);
+  // Phase D.3 widget: append a "was this what you wanted?" block when
+  // the workflow's send-reply step issued a receipt-moment token.
+  const text = appendReceiptWidget(baseText, params);
   const html = `<p>${escapeHtml(text).replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
 
   return {
@@ -49,6 +52,32 @@ export function buildReply(
     html,
     source: `email:${kind}`,
   };
+}
+
+function appendReceiptWidget(baseText: string, params: ReplyParams): string {
+  const correctUrl = params.feedbackCorrectUrl as string | undefined;
+  const wrongIntentUrl = params.feedbackWrongIntentUrl as string | undefined;
+  const cancelUrl = params.feedbackCancelUrl as string | undefined;
+  if (!correctUrl && !wrongIntentUrl && !cancelUrl) return baseText;
+
+  const widget = [
+    "",
+    "Was this what you wanted?",
+    correctUrl ? `  ✅ Yes, that's right: ${correctUrl}` : null,
+    wrongIntentUrl ? `  ✏️ I meant something else: ${wrongIntentUrl}` : null,
+    cancelUrl ? `  ❌ Cancel — don't add this: ${cancelUrl}` : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+
+  // Insert before the SIGN_OFF if present so the sign-off stays last.
+  // Splice on the last occurrence of "\n— " (the dash starting the
+  // sign-off line) — robust against future template tweaks.
+  const splitIdx = baseText.lastIndexOf("\n— ");
+  if (splitIdx === -1) {
+    return `${baseText}\n${widget}`;
+  }
+  return `${baseText.slice(0, splitIdx)}\n${widget}${baseText.slice(splitIdx)}`;
 }
 
 function renderText(kind: Exclude<ReplyKind, null>, params: ReplyParams): string {
