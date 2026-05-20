@@ -1416,3 +1416,58 @@ export const inboundEmailIntentFeedback = sqliteTable(
 );
 
 export type InboundEmailIntentFeedback = typeof inboundEmailIntentFeedback.$inferSelect;
+
+// Phase D.3 (drizzle/0081): signed-token lifecycle for sender feedback
+// widgets. Random 32-byte token stored as PK; one-time-use enforced by
+// used_at marker; 60-day expiry. Mirrors src/lib/vendor-claim-token.ts
+// pattern.
+export const inboundEmailFeedbackTokens = sqliteTable(
+  "inbound_email_feedback_tokens",
+  {
+    token: text("token").primaryKey(),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    /** 'receipt' | 'approval' | 'other' */
+    feedbackMoment: text("feedback_moment").notNull(),
+    resultingEventId: text("resulting_event_id"),
+    issuedAt: integer("issued_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    usedAt: integer("used_at", { mode: "timestamp" }),
+  },
+  (t) => [
+    index("idx_feedback_tokens_email").on(t.inboundEmailId),
+    index("idx_feedback_tokens_event")
+      .on(t.resultingEventId)
+      .where(sql`${t.resultingEventId} IS NOT NULL`),
+    index("idx_feedback_tokens_expires").on(t.expiresAt),
+  ]
+);
+
+export type InboundEmailFeedbackToken = typeof inboundEmailFeedbackTokens.$inferSelect;
+
+// Phase D.3 (drizzle/0081): sender feedback events. One row per click
+// (or per follow-up form submission). feedback_token is UNIQUE so the
+// dataset never double-counts.
+export const inboundEmailSenderFeedback = sqliteTable(
+  "inbound_email_sender_feedback",
+  {
+    id: text("id").primaryKey(),
+    inboundEmailId: text("inbound_email_id").notNull(),
+    feedbackToken: text("feedback_token").notNull().unique(),
+    /** 'receipt' | 'approval' | 'other' */
+    feedbackMoment: text("feedback_moment").notNull(),
+    /** 'correct' | 'wrong_intent' | 'needs_fixing' | 'cancel' | 'looks_good' */
+    feedbackValue: text("feedback_value").notNull(),
+    intendedIntent: text("intended_intent"),
+    freeText: text("free_text"),
+    resultingEventId: text("resulting_event_id"),
+    submittedAt: integer("submitted_at", { mode: "timestamp" }).notNull(),
+    submitterIp: text("submitter_ip"),
+    submitterUserAgent: text("submitter_user_agent"),
+  },
+  (t) => [
+    index("idx_sender_feedback_email").on(t.inboundEmailId),
+    index("idx_sender_feedback_moment").on(t.feedbackMoment, t.feedbackValue),
+  ]
+);
+
+export type InboundEmailSenderFeedback = typeof inboundEmailSenderFeedback.$inferSelect;
