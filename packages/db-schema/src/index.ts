@@ -1224,7 +1224,12 @@ export const inboundEmails = sqliteTable(
     fromAddress: text("from_address").notNull(),
     toAddress: text("to_address").notNull(),
     subject: text("subject"),
-    /** submit | correction | support | press | unsubscribe | unknown */
+    /** Routed intent — what the workflow actually dispatched on.
+     *  Pre-classifier values: submit | correction | support | press |
+     *  unsubscribe | unknown. Post-classifier additions (drizzle/0079):
+     *  new_event | source_suggestion | claim_request | vendor_inquiry |
+     *  spam | unclear | multi. `submit` and `new_event` route to the same
+     *  workflow branch; `multi` denotes a parent of a multi-intent split. */
     intent: text("intent").notNull(),
     /** received | processing | replied | forwarded | failed */
     status: text("status").notNull().default("received"),
@@ -1260,6 +1265,38 @@ export const inboundEmails = sqliteTable(
      *  - `'failed'`             — both paths failed; row has status='failed'
      *  NULL on pre-A5 rows. */
     fetchMethod: text("fetch_method"),
+    // ----- Phase C.1 classifier columns (drizzle/0079) -----
+    /** LLM-predicted intent from the 9-value taxonomy. NULL on pre-
+     *  classifier rows OR when the entrypoint took the trusted_fastpath. */
+    classifiedIntent: text("classified_intent"),
+    /** Sub-intent for new_event only: single_url | multi_url | free_text |
+     *  attachment_only | mixed. NULL for non-new_event intents. */
+    classifiedSubIntent: text("classified_sub_intent"),
+    /** Classifier's 0.0–1.0 confidence. Compared against the
+     *  CLASSIFIER_CONFIDENCE_THRESHOLD env var (default 0.85). */
+    classifiedConfidence: real("classified_confidence"),
+    /** One-sentence rationale string from the LLM. Surfaced in admin UI
+     *  for low-confidence rows. */
+    classifiedRationale: text("classified_rationale"),
+    /** When the classifier ran. May lag received_at if the classifier
+     *  moved into the workflow step due to entrypoint budget pressure. */
+    classifiedAt: integer("classified_at", { mode: "timestamp" }),
+    /** Prompt + model fingerprint (e.g. `c-2026-05-20-v1`). Lets the
+     *  D.1 dashboard track accuracy by version + A/B prompt revisions. */
+    classifierVersion: text("classifier_version"),
+    /** How the row was routed: 'classifier' | 'classifier_override' |
+     *  'fallback_low_confidence' | 'trusted_fastpath' | 'address_only'. */
+    routingSource: text("routing_source"),
+    /** Workflow ID the row dispatched to. Useful for multi-intent split
+     *  rows where each child has its own workflow. */
+    routedToWorkflow: text("routed_to_workflow"),
+    /** Admin-queue surfacing flag: set when confidence < threshold, when
+     *  a multi-intent split fell back, or when admin manually flagged
+     *  via the D.1 UI. */
+    flaggedForReview: integer("flagged_for_review").notNull().default(0),
+    /** Multi-intent split linkage. NULL on normal + parent rows; for
+     *  child rows, points to the parent's id (which has intent='multi'). */
+    parentEmailId: text("parent_email_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -1278,6 +1315,22 @@ export const inboundEmails = sqliteTable(
     index("idx_inbound_emails_reply_kind")
       .on(t.replyKind)
       .where(sql`${t.replyKind} IS NOT NULL`),
+    // Multi-intent child lookup. Added drizzle/0079.
+    index("idx_inbound_emails_parent")
+      .on(t.parentEmailId)
+      .where(sql`${t.parentEmailId} IS NOT NULL`),
+    // D.1 dashboard group-by. Added drizzle/0079.
+    index("idx_inbound_emails_classified_intent")
+      .on(t.classifiedIntent)
+      .where(sql`${t.classifiedIntent} IS NOT NULL`),
+    // Admin queue filter. Added drizzle/0079.
+    index("idx_inbound_emails_flagged")
+      .on(t.flaggedForReview)
+      .where(sql`${t.flaggedForReview} = 1`),
+    // Accuracy-by-version queries. Added drizzle/0079.
+    index("idx_inbound_emails_classifier_version")
+      .on(t.classifierVersion)
+      .where(sql`${t.classifierVersion} IS NOT NULL`),
   ]
 );
 
