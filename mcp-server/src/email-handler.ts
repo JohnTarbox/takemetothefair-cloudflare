@@ -35,9 +35,21 @@
 import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
 import { getDb } from "./db.js";
-import { inboundEmails, users } from "./schema.js";
+import { inboundEmails, inboundEmailSenders, users } from "./schema.js";
 import { eq, sql } from "drizzle-orm";
 import { resolveIntent, shouldForwardToAdmin, type EmailIntent } from "./email-intents.js";
+import {
+  classifyIntent,
+  type AiBinding,
+  type ClassifiedIntent,
+  type ClassifiedSubIntent,
+  type IntentClassification,
+  type SenderTrustTier,
+  CLASSIFIER_VERSION,
+  DEFAULT_CONFIDENCE_THRESHOLD,
+  SPAM_QUARANTINE_THRESHOLD,
+} from "./intent-classifier.js";
+import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -63,6 +75,10 @@ export interface EmailHandlerEnv {
    *  from @cloudflare/workers-types so the retention / id options on
    *  .create() stay in sync with the platform's actual signature. */
   INBOUND_EMAIL: Workflow<{ messageRowId: string; intent: EmailIntent }>;
+  /** Workers AI binding for the intent classifier. Optional so unit
+   *  tests + non-AI environments can omit it; missing → classifier
+   *  silently skipped, address-based routing only. */
+  AI?: AiBinding;
 }
 
 // ForwardableEmailMessage is global per @cloudflare/workers-types.
@@ -162,134 +178,267 @@ export async function handleInboundEmail(
       return;
     }
 
-    // 3. Resolve intent
-    const intent = resolveIntent(toAddr);
+    // 3. Resolve address-based intent (always computed — used as
+    //    fallback when classifier confidence is below threshold).
+    const addressIntent = resolveIntent(toAddr);
 
-    // 4. Forward to admin synchronously if applicable.
-    //    Lifecycle: ForwardableEmailMessage cannot survive into a workflow
-    //    step. This is the only chance.
-    if (shouldForwardToAdmin(intent)) {
-      await forwardToAdminBestEffort(message, env, `intent:${intent}`, sessionId);
+    // 3b. Look up sender trust tier (B6, drizzle/0075). Drives the
+    //     trusted-sender fast-path decision below. Failure-safe: any
+    //     lookup error treats the sender as 'unknown'.
+    const senderTrust = await lookupSenderTrust(env.DB, fromAddr);
+
+    // 3c. Compute the routing decision: maybe run the classifier, maybe
+    //     short-circuit via the trusted-sender fast-path, always end
+    //     with a `routed` array of {intent, ...} for the INSERT loop.
+    const routing = await computeRouting({
+      env,
+      sessionId,
+      addressIntent,
+      senderTrust,
+      toAddr,
+      fromAddr,
+      subject,
+      bodyText,
+      bodyHtml,
+      inReplyTo: parsed.inReplyTo ?? null,
+      references: parsed.references ?? null,
+      attachmentCount,
+      attachmentTypes: (parsed.attachments ?? [])
+        .map((a) => a.mimeType || "")
+        .filter((t) => t.length > 0),
+    });
+
+    // 4. Spam quarantine (spec §C.6). When the classifier confidently
+    //    flagged spam, we INSERT for audit then bail out — no forward,
+    //    no workflow create, no auto-reply. Mirrors the rate-limit
+    //    silent-drop pattern above.
+    if (routing.spamQuarantine) {
+      await insertSpamAuditRow({
+        env,
+        sessionId,
+        fromAddr,
+        toAddr,
+        subject,
+        bodyTextExcerpt,
+        message,
+        parsed,
+        attachmentCount,
+        routing,
+      });
+      return;
     }
 
-    // 5. Pick URL from body (used by `submit` intent only, but stored
-    //    unconditionally so the row is self-contained for future intents).
+    // 5. Forward to admin synchronously if applicable. Decision is
+    //    based on the FIRST routed intent (parent of multi-intent rides
+    //    its own forward decision via the catch-all path). Lifecycle:
+    //    ForwardableEmailMessage cannot survive into a workflow step —
+    //    this is the only chance.
+    const primaryRouted = routing.routed[0];
+    if (shouldForwardToAdmin(primaryRouted.intent)) {
+      await forwardToAdminBestEffort(message, env, `intent:${primaryRouted.intent}`, sessionId);
+    }
+
+    // 6. Pick URL from body (used by `submit` / `new_event` intent
+    //    only, but stored unconditionally so the row is self-contained
+    //    for future intents).
     const parsedUrl = pickPrimaryUrl(bodyText, bodyHtml);
 
-    // 5b. Capture Message-ID for dedup. RFC 5322 §3.6.4 guarantees a
+    // 6b. Capture Message-ID for dedup. RFC 5322 §3.6.4 guarantees a
     //     globally unique value when present; absence is a real signal
     //     (automated senders sometimes omit it) — those messages skip
     //     dedup and proceed with the legacy "always insert" behavior.
     const messageId = (parsed.messageId || "").trim() || null;
 
-    // 6. INSERT inbound_emails row, deduping on message_id.
-    //    onConflictDoNothing pairs with the partial UNIQUE index added
-    //    in drizzle/0073. We pass NO target — bare `ON CONFLICT DO
-    //    NOTHING` matches any unique-constraint violation on the table,
-    //    which in practice means only the partial message_id index
-    //    (the PK is randomUUID and never collides; no other UNIQUEs).
-    //    Why not pass `target: messageId`: SQLite requires partial-
-    //    index conflict targets to repeat the partial WHERE in the
-    //    conflict clause, AND Drizzle's `onConflictDoNothing` only
-    //    accepts a `where` field that gets emitted AFTER `DO NOTHING`
-    //    (invalid syntax) — there's no API path to emit the WHERE
-    //    BEFORE `DO NOTHING` where SQLite actually wants it. Bare
-    //    no-target form sidesteps the whole issue. Hit twice in prod
-    //    2026-05-18; this is the third (and verified) attempt.
-    //    .returning() lets us detect the duplicate case — an empty
-    //    array means another delivery of this same message already
-    //    landed and is being processed by its workflow.
-    const rowId = crypto.randomUUID();
+    // 7. INSERT inbound_emails row(s). Single-intent → one row.
+    //    Multi-intent → one parent row (intent='multi') + N child
+    //    rows (parent_email_id → parent.id). Parent row dedups on
+    //    message_id; children share the parent's message_id is fine
+    //    because the partial UNIQUE doesn't cover children (their
+    //    messageId is null — see the .map below). The first multi-
+    //    intent INSERT also acts as the dedup gate for the whole
+    //    family — if the parent INSERT no-ops on conflict, we skip
+    //    children too (same delivery already being handled).
+    //
+    //    Why .onConflictDoNothing without a target: see the
+    //    pre-classifier comment block below — same SQLite partial-
+    //    index limitation, same workaround.
     const now = new Date();
-    let inserted: { id: string }[];
-    try {
-      const db = getDb(env.DB);
-      inserted = await db
-        .insert(inboundEmails)
-        .values({
-          id: rowId,
-          receivedAt: now,
-          fromAddress: fromAddr,
-          toAddress: toAddr,
-          subject: subject || null,
-          intent,
-          status: "received",
-          workflowInstanceId: null,
-          bodyTextExcerpt: bodyTextExcerpt || null,
-          parsedUrl,
-          attachmentCount,
-          rawSize: message.rawSize,
-          error: null,
-          messageId,
-          createdAt: now,
-        })
-        .onConflictDoNothing()
-        .returning({ id: inboundEmails.id });
-    } catch (err) {
-      await logError(env.DB, {
-        source: SOURCE,
-        message: "failed to insert inbound_emails row; aborting workflow create",
-        error: err,
-        sessionId,
-        context: { from: fromAddr, to: toAddr, subject, intent },
-      });
-      return;
+    const db = getDb(env.DB);
+    const isMulti = routing.routed.length > 1;
+
+    let parentRowId: string | null = null;
+    if (isMulti) {
+      parentRowId = crypto.randomUUID();
+      let parentInserted: { id: string }[];
+      try {
+        parentInserted = await db
+          .insert(inboundEmails)
+          .values({
+            id: parentRowId,
+            receivedAt: now,
+            fromAddress: fromAddr,
+            toAddress: toAddr,
+            subject: subject || null,
+            intent: "multi",
+            status: "received",
+            workflowInstanceId: null,
+            bodyTextExcerpt: bodyTextExcerpt || null,
+            parsedUrl,
+            attachmentCount,
+            rawSize: message.rawSize,
+            error: null,
+            messageId,
+            classifiedIntent: "multi" as ClassifiedIntent,
+            classifiedSubIntent: null,
+            classifiedConfidence: routing.aggregateConfidence,
+            classifiedRationale: routing.aggregateRationale,
+            classifiedAt: now,
+            classifierVersion: routing.classifierVersion,
+            routingSource: routing.routingSource,
+            routedToWorkflow: null,
+            flaggedForReview: routing.flaggedForReview ? 1 : 0,
+            parentEmailId: null,
+            createdAt: now,
+          })
+          .onConflictDoNothing()
+          .returning({ id: inboundEmails.id });
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "failed to insert multi-intent parent row; aborting",
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr, subject },
+        });
+        return;
+      }
+      if (parentInserted.length === 0) {
+        await logError(env.DB, {
+          level: "warn",
+          source: SOURCE,
+          message: "duplicate inbound delivery (multi-intent); skipping",
+          sessionId,
+          context: { from: fromAddr, to: toAddr, subject, messageId },
+        });
+        return;
+      }
     }
 
-    if (inserted.length === 0) {
-      // Duplicate delivery — message_id matched an existing row. Skip
-      // workflow create; the original delivery's workflow is handling it.
-      await logError(env.DB, {
-        level: "warn",
-        source: SOURCE,
-        message: "duplicate inbound delivery; skipping workflow create",
-        sessionId,
-        context: { from: fromAddr, to: toAddr, subject, intent, messageId },
-      });
-      return;
+    // Insert one row per routed entry. For single-intent, this is the
+    // sole row. For multi-intent, these are children of parentRowId.
+    const childRowIds: string[] = [];
+    for (let i = 0; i < routing.routed.length; i++) {
+      const r = routing.routed[i];
+      const rowId = crypto.randomUUID();
+      let inserted: { id: string }[];
+      try {
+        inserted = await db
+          .insert(inboundEmails)
+          .values({
+            id: rowId,
+            receivedAt: now,
+            fromAddress: fromAddr,
+            toAddress: toAddr,
+            subject: subject || null,
+            intent: r.intent,
+            status: "received",
+            workflowInstanceId: null,
+            bodyTextExcerpt: bodyTextExcerpt || null,
+            parsedUrl: r.refUrl ?? parsedUrl,
+            attachmentCount,
+            rawSize: message.rawSize,
+            error: null,
+            // Single-intent rows carry messageId for dedup; child rows
+            // get null so the partial-unique on message_id doesn't
+            // collide across the family.
+            messageId: parentRowId ? null : messageId,
+            classifiedIntent: r.classifiedIntent,
+            classifiedSubIntent: r.classifiedSubIntent,
+            classifiedConfidence: r.confidence,
+            classifiedRationale: r.rationale,
+            classifiedAt: routing.classifierVersion ? now : null,
+            classifierVersion: routing.classifierVersion,
+            routingSource: r.routingSource,
+            routedToWorkflow: null,
+            flaggedForReview: r.flaggedForReview ? 1 : 0,
+            parentEmailId: parentRowId,
+            createdAt: now,
+          })
+          .onConflictDoNothing()
+          .returning({ id: inboundEmails.id });
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: `failed to insert inbound_emails row [${i}]; aborting remaining`,
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr, subject, intent: r.intent },
+        });
+        return;
+      }
+      if (inserted.length === 0) {
+        // Should only happen for single-intent rows (messageId dedup).
+        // Multi-intent children have null messageId; their parent INSERT
+        // already handled the dedup gate.
+        await logError(env.DB, {
+          level: "warn",
+          source: SOURCE,
+          message: "duplicate inbound delivery; skipping workflow create",
+          sessionId,
+          context: { from: fromAddr, to: toAddr, subject, intent: r.intent, messageId },
+        });
+        return;
+      }
+      childRowIds.push(rowId);
     }
 
-    // 7. Create workflow instance + record its id back on the row.
-    //    ctx.waitUntil — UPDATE doesn't need to block message ack.
-    let workflowInstanceId: string;
-    try {
-      const instance = await env.INBOUND_EMAIL.create({
-        params: { messageRowId: rowId, intent },
-        // 7-day retention keeps instance state visible long enough to
-        // debug a failure cluster while keeping storage flat as volume
-        // grows. See workflows/inbound-email.ts header.
-        retention: { successRetention: "7 days", errorRetention: "7 days" },
-      });
-      workflowInstanceId = instance.id;
-    } catch (err) {
-      // Workflow creation failed — row is still in 'received' state;
-      // an admin sweep could re-create the workflow from row ID later.
-      await logError(env.DB, {
-        source: SOURCE,
-        message: "INBOUND_EMAIL.create failed; row remains in 'received' state",
-        error: err,
-        sessionId,
-        context: { messageRowId: rowId, intent, from: fromAddr },
-      });
-      return;
+    // 8. Create workflow instance(s). One per child row. Spec §C.5
+    //    caps multi-intent at 4 children; classifier already enforced
+    //    this when building the routed array.
+    const workflowInstanceIds: string[] = [];
+    for (let i = 0; i < childRowIds.length; i++) {
+      const rowId = childRowIds[i];
+      const r = routing.routed[i];
+      try {
+        const instance = await env.INBOUND_EMAIL.create({
+          params: { messageRowId: rowId, intent: r.intent },
+          retention: { successRetention: "7 days", errorRetention: "7 days" },
+        });
+        workflowInstanceIds.push(instance.id);
+      } catch (err) {
+        // Workflow creation failed — row is still in 'received' state;
+        // the stale-row sweep (commit 10f0e2e) will retry it. Don't
+        // abort siblings; each child's workflow is independent.
+        workflowInstanceIds.push("");
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "INBOUND_EMAIL.create failed; row remains in 'received' state",
+          error: err,
+          sessionId,
+          context: { messageRowId: rowId, intent: r.intent, from: fromAddr },
+        });
+      }
     }
 
     ctx.waitUntil(
       (async () => {
         try {
-          const db = getDb(env.DB);
-          await db
-            .update(inboundEmails)
-            .set({ workflowInstanceId })
-            .where(eq(inboundEmails.id, rowId));
+          for (let i = 0; i < childRowIds.length; i++) {
+            const id = workflowInstanceIds[i];
+            if (!id) continue;
+            await db
+              .update(inboundEmails)
+              .set({ workflowInstanceId: id })
+              .where(eq(inboundEmails.id, childRowIds[i]));
+          }
         } catch (err) {
           await logError(env.DB, {
             level: "warn",
             source: SOURCE,
-            message: "failed to write workflow_instance_id back to row",
+            message: "failed to write workflow_instance_id back to row(s)",
             error: err,
             sessionId,
-            context: { messageRowId: rowId, workflowInstanceId },
+            context: { childRowIds, workflowInstanceIds },
           });
         }
       })()
@@ -441,3 +590,372 @@ async function forwardToAdminBestEffort(
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+// ---------------------------------------------------------------------------
+// Classifier wiring (Phase C.1)
+// ---------------------------------------------------------------------------
+
+/** Per-routed-entry shape produced by computeRouting. One entry → one
+ *  inbound_emails row + one workflow instance. Multi-intent rows produce
+ *  N entries. */
+interface RoutedEntry {
+  intent: EmailIntent; // routed value written to inbound_emails.intent
+  classifiedIntent: ClassifiedIntent | null;
+  classifiedSubIntent: ClassifiedSubIntent;
+  confidence: number | null;
+  rationale: string;
+  routingSource: string;
+  flaggedForReview: boolean;
+  refUrl: string | null;
+}
+
+interface RoutingDecision {
+  routed: RoutedEntry[];
+  classifierVersion: string | null;
+  routingSource: string;
+  aggregateConfidence: number | null;
+  aggregateRationale: string;
+  flaggedForReview: boolean;
+  spamQuarantine: boolean;
+  spamRationale: string;
+}
+
+/** Map a classifier intent to the routed `intent` column value used by
+ *  the workflow's dispatch table. `new_event` keeps its name (rather
+ *  than collapsing to legacy `submit`) so the multi-section receipt
+ *  template can distinguish classifier-routed rows in the future; the
+ *  workflow accepts both as the submit pipeline alias. */
+function classifierToRoutedIntent(c: ClassifiedIntent): EmailIntent {
+  return c;
+}
+
+/** Look up sender trust from inbound_email_senders (B6). Failure-safe:
+ *  any error returns 'unknown'. */
+async function lookupSenderTrust(db: D1Database, fromAddr: string): Promise<SenderTrustTier> {
+  try {
+    const dbi = getDb(db);
+    const rows = await dbi
+      .select({ status: inboundEmailSenders.trustStatus })
+      .from(inboundEmailSenders)
+      .where(eq(inboundEmailSenders.email, fromAddr))
+      .limit(1);
+    const status = rows[0]?.status;
+    if (status === "trusted" || status === "watchlist" || status === "blocked") return status;
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Drive the per-email routing decision. Single source of truth for the
+ *  classifier ↔ address-fallback ↔ trusted-fastpath logic. Pure(ish) —
+ *  reaches into env.AI for the classifier call but does not write to D1
+ *  or touch the ForwardableEmailMessage. */
+async function computeRouting(args: {
+  env: EmailHandlerEnv;
+  sessionId: string;
+  addressIntent: EmailIntent;
+  senderTrust: SenderTrustTier;
+  toAddr: string;
+  fromAddr: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string;
+  inReplyTo: string | null;
+  references: string | null;
+  attachmentCount: number;
+  attachmentTypes: string[];
+}): Promise<RoutingDecision> {
+  const {
+    env,
+    sessionId,
+    addressIntent,
+    senderTrust,
+    toAddr,
+    fromAddr,
+    subject,
+    bodyText,
+    bodyHtml,
+    inReplyTo,
+    references,
+    attachmentCount,
+    attachmentTypes,
+  } = args;
+
+  // Trusted-sender fast-path (spec §C.5): check cheap regex first.
+  // Only short-circuit when sender is trusted AND no multi-intent /
+  // correction / source-suggestion / claim / reply-chain signals fire.
+  const replyChainHeader = isReplyToOurThread(inReplyTo, references);
+  if (senderTrust === "trusted" && env.AI) {
+    const fastpath = hasMultiIntentOrSpecialSignal({
+      bodyText,
+      bodyHtml,
+      inReplyToHeader: inReplyTo,
+      referencesHeader: references,
+    });
+    if (!fastpath.trigger) {
+      return {
+        routed: [
+          {
+            intent: addressIntent,
+            classifiedIntent: null,
+            classifiedSubIntent: null,
+            confidence: null,
+            rationale: `trusted-fastpath: ${fastpath.reason}`,
+            routingSource: "trusted_fastpath",
+            flaggedForReview: false,
+            refUrl: null,
+          },
+        ],
+        classifierVersion: null,
+        routingSource: "trusted_fastpath",
+        aggregateConfidence: null,
+        aggregateRationale: `trusted-fastpath: ${fastpath.reason}`,
+        flaggedForReview: false,
+        spamQuarantine: false,
+        spamRationale: "",
+      };
+    }
+  }
+
+  // No AI binding configured — pre-classifier behavior. Routes by
+  // address only.
+  if (!env.AI) {
+    return {
+      routed: [
+        {
+          intent: addressIntent,
+          classifiedIntent: null,
+          classifiedSubIntent: null,
+          confidence: null,
+          rationale: "no-ai-binding",
+          routingSource: "address_only",
+          flaggedForReview: false,
+          refUrl: null,
+        },
+      ],
+      classifierVersion: null,
+      routingSource: "address_only",
+      aggregateConfidence: null,
+      aggregateRationale: "no-ai-binding",
+      flaggedForReview: false,
+      spamQuarantine: false,
+      spamRationale: "",
+    };
+  }
+
+  // Run the classifier. classifyIntent is fail-safe — never throws —
+  // returns an `unclear` result on any error so this path can't bounce
+  // the email.
+  const result = await classifyIntent(env.AI, {
+    toAddress: toAddr,
+    fromAddress: fromAddr,
+    senderTrustTier: senderTrust,
+    isReplyToOurThread: replyChainHeader,
+    attachmentCount,
+    attachmentTypes,
+    subject,
+    bodyText,
+  });
+
+  await logError(env.DB, {
+    level: "info",
+    source: SOURCE,
+    message: "classifier result",
+    sessionId,
+    context: {
+      from: fromAddr,
+      to: toAddr,
+      addressIntent,
+      classifierIntents: result.intents.map((c) => ({
+        intent: c.intent,
+        subIntent: c.subIntent,
+        confidence: c.confidence,
+      })),
+      version: result.version,
+      fromAi: result.fromAi,
+      durationMs: result.finishedAt - result.startedAt,
+    },
+  });
+
+  // Spam quarantine — applies BEFORE confidence-gate fallback because
+  // we'd rather not auto-reply / forward when classifier is highly
+  // confident this is junk. Use the top result only for this check.
+  const top = result.intents[0];
+  if (top.intent === "spam" && top.confidence >= SPAM_QUARANTINE_THRESHOLD && result.fromAi) {
+    return {
+      routed: [],
+      classifierVersion: result.version,
+      routingSource: "classifier",
+      aggregateConfidence: top.confidence,
+      aggregateRationale: top.rationale,
+      flaggedForReview: false,
+      spamQuarantine: true,
+      spamRationale: top.rationale,
+    };
+  }
+
+  // Multi-intent split: classifier returned 2+ children, all with
+  // confidence ≥ threshold. Build N RoutedEntry's.
+  if (result.intents.length >= 2 && result.fromAi) {
+    const children = result.intents
+      .filter((c) => c.confidence >= DEFAULT_CONFIDENCE_THRESHOLD)
+      .slice(0, 4); // Spec §C.5 cap (also enforced upstream)
+    if (children.length >= 2) {
+      const routed = children.map((c) => buildRoutedEntry(c, addressIntent, "classifier_override"));
+      const minConf = Math.min(...children.map((c) => c.confidence));
+      return {
+        routed,
+        classifierVersion: result.version,
+        routingSource: "classifier_override",
+        aggregateConfidence: minConf,
+        aggregateRationale: `multi-intent: ${children.length} children`,
+        flaggedForReview: false,
+        spamQuarantine: false,
+        spamRationale: "",
+      };
+    }
+    // Multi-intent but only one child crossed threshold — fall through
+    // and treat the top child as single-intent below.
+  }
+
+  // Single-intent path.
+  if (result.fromAi && top.confidence >= DEFAULT_CONFIDENCE_THRESHOLD) {
+    const routedIntent = classifierToRoutedIntent(top.intent);
+    const source =
+      routedIntent === addressIntent || (routedIntent === "new_event" && addressIntent === "submit")
+        ? "classifier"
+        : "classifier_override";
+    return {
+      routed: [buildRoutedEntry(top, addressIntent, source)],
+      classifierVersion: result.version,
+      routingSource: source,
+      aggregateConfidence: top.confidence,
+      aggregateRationale: top.rationale,
+      flaggedForReview: false,
+      spamQuarantine: false,
+      spamRationale: "",
+    };
+  }
+
+  // Confidence below threshold OR classifier errored — fall back to
+  // address-based routing + flag for admin review.
+  return {
+    routed: [
+      {
+        intent: addressIntent,
+        classifiedIntent: top.intent,
+        classifiedSubIntent: top.subIntent,
+        confidence: top.confidence,
+        rationale: top.rationale,
+        routingSource: result.fromAi ? "fallback_low_confidence" : "address_only",
+        flaggedForReview: true,
+        refUrl: top.refUrl ?? null,
+      },
+    ],
+    classifierVersion: result.version,
+    routingSource: result.fromAi ? "fallback_low_confidence" : "address_only",
+    aggregateConfidence: top.confidence,
+    aggregateRationale: top.rationale,
+    flaggedForReview: true,
+    spamQuarantine: false,
+    spamRationale: "",
+  };
+}
+
+function buildRoutedEntry(
+  c: IntentClassification,
+  addressIntent: EmailIntent,
+  routingSource: string
+): RoutedEntry {
+  // Map new_event → routes through the submit pipeline; keep classifier
+  // value distinct so the audit trail preserves intent.
+  const routedIntent = classifierToRoutedIntent(c.intent);
+  const overrode = routedIntent !== addressIntent && routedIntent !== "submit";
+  return {
+    intent: routedIntent,
+    classifiedIntent: c.intent,
+    classifiedSubIntent: c.subIntent,
+    confidence: c.confidence,
+    rationale: c.rationale,
+    routingSource: overrode ? routingSource : "classifier",
+    flaggedForReview: false,
+    refUrl: c.refUrl ?? null,
+  };
+}
+
+/** Persist the audit row for a spam-quarantined message. Mirrors the
+ *  normal INSERT path but writes intent='spam', skips forward, skips
+ *  workflow create. */
+async function insertSpamAuditRow(args: {
+  env: EmailHandlerEnv;
+  sessionId: string;
+  fromAddr: string;
+  toAddr: string;
+  subject: string;
+  bodyTextExcerpt: string;
+  message: import("@cloudflare/workers-types").ForwardableEmailMessage;
+  parsed: Email;
+  attachmentCount: number;
+  routing: RoutingDecision;
+}): Promise<void> {
+  const {
+    env,
+    sessionId,
+    fromAddr,
+    toAddr,
+    subject,
+    bodyTextExcerpt,
+    message,
+    parsed,
+    attachmentCount,
+    routing,
+  } = args;
+  const now = new Date();
+  const messageId = (parsed.messageId || "").trim() || null;
+  try {
+    const db = getDb(env.DB);
+    await db
+      .insert(inboundEmails)
+      .values({
+        id: crypto.randomUUID(),
+        receivedAt: now,
+        fromAddress: fromAddr,
+        toAddress: toAddr,
+        subject: subject || null,
+        intent: "spam",
+        status: "forwarded",
+        workflowInstanceId: null,
+        bodyTextExcerpt: bodyTextExcerpt || null,
+        parsedUrl: null,
+        attachmentCount,
+        rawSize: message.rawSize,
+        error: null,
+        messageId,
+        classifiedIntent: "spam",
+        classifiedSubIntent: null,
+        classifiedConfidence: routing.aggregateConfidence,
+        classifiedRationale: routing.spamRationale,
+        classifiedAt: now,
+        classifierVersion: routing.classifierVersion,
+        routingSource: "classifier",
+        routedToWorkflow: null,
+        flaggedForReview: 0,
+        parentEmailId: null,
+        createdAt: now,
+      })
+      .onConflictDoNothing();
+  } catch (err) {
+    await logError(env.DB, {
+      source: SOURCE,
+      message: "failed to insert spam-quarantine audit row",
+      error: err,
+      sessionId,
+      context: { from: fromAddr, to: toAddr, subject },
+    });
+  }
+}
+
+// Silence "imported but unused" for CLASSIFIER_VERSION — it's available
+// for callers that want to log the version separately.
+void CLASSIFIER_VERSION;

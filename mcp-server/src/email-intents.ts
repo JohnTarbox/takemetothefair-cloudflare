@@ -26,12 +26,21 @@
  */
 
 export type EmailIntent =
-  | "submit" // event submissions; keeps the legacy submit@ behavior
+  // ----- Pre-classifier address-based values (drizzle/0072) -----
+  | "submit" // event submissions; legacy alias for new_event for the submit@ address path
   | "correction" // sender claims an event listing is wrong
   | "support" // general questions; covers support@ and hello@
   | "press" // media inquiries
   | "unsubscribe" // newsletter opt-out (actually flips the DB row)
-  | "unknown"; // catch-all; any recipient address not matched
+  | "unknown" // catch-all; any recipient address not matched
+  // ----- Classifier-only values (drizzle/0079) -----
+  | "new_event" // post-classifier name for `submit` semantics; same workflow branch
+  | "source_suggestion" // sender points us at a website/feed as a potential events source
+  | "claim_request" // organizer claiming ownership of a listing
+  | "vendor_inquiry" // vendor asking about listing/applications/profile
+  | "spam" // quarantine — no auto-reply, no admin forward
+  | "unclear" // confidence below threshold; admin triage
+  | "multi"; // parent of a multi-intent split (children carry the real intent)
 
 const INTENT_MAP: Record<string, EmailIntent> = {
   "submit@meetmeatthefair.com": "submit",
@@ -41,6 +50,41 @@ const INTENT_MAP: Record<string, EmailIntent> = {
   "press@meetmeatthefair.com": "press",
   "unsubscribe@meetmeatthefair.com": "unsubscribe",
 };
+
+/**
+ * Map a classifier intent to a workflow-dispatch intent. The workflow's
+ * dispatch table is keyed on the legacy 6-value union; this collapses the
+ * 11-value classifier output onto that surface so the existing
+ * email-handlers/<intent>.ts modules keep working unchanged.
+ *
+ * - `new_event` → `submit` (existing 3-leg submit pipeline)
+ * - `source_suggestion` → `correction` (admin_actions audit + admin review;
+ *   true 3-tier dedup against discovery_candidates is C.8 follow-up work)
+ * - `claim_request` / `vendor_inquiry` → `support` (manual admin response
+ *   until the unified vendor-tier launch wires dedicated handlers)
+ * - `spam` → handled at the entrypoint (no workflow create); this mapping
+ *   only fires if admin reclassifies → spam after the fact
+ * - `unclear` → `unknown` (admin triage path)
+ * - `multi` → `unknown` (parent row never dispatches; children carry the
+ *   real intent)
+ */
+export function toWorkflowIntent(intent: EmailIntent): EmailIntent {
+  switch (intent) {
+    case "new_event":
+      return "submit";
+    case "source_suggestion":
+    case "claim_request":
+      return "correction";
+    case "vendor_inquiry":
+      return "support";
+    case "spam":
+    case "unclear":
+    case "multi":
+      return "unknown";
+    default:
+      return intent;
+  }
+}
 
 /**
  * Resolve a recipient address to an intent. Case-insensitive,

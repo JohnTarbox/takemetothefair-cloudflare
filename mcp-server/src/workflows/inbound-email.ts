@@ -65,6 +65,8 @@ import { handle as handleSupport } from "../email-handlers/support.js";
 import { handle as handlePress } from "../email-handlers/press.js";
 import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
+import { handle as handleSpam } from "../email-handlers/spam.js";
+import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
 import {
   submitFetch,
   submitExtract,
@@ -91,22 +93,41 @@ type Env = {
 const SOURCE = "mcp:workflow:inbound-email";
 const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 
-/** Dispatch table for non-submit intents. Submit is orchestrated
+/** Dispatch table for non-submit, non-new_event intents. The submit
+ *  pipeline (and its classifier alias `new_event`) is orchestrated
  *  directly in run() because its three external calls each need to
- *  be a separate checkpointed step. */
-const HANDLERS: Record<Exclude<EmailIntent, "submit">, HandlerFn> = {
+ *  be a separate checkpointed step.
+ *
+ *  Classifier-only intents (source_suggestion, claim_request,
+ *  vendor_inquiry, spam, unclear, multi) are NOT in this table —
+ *  toWorkflowIntent() in email-intents.ts collapses them to the
+ *  legacy 6-value union the existing handlers know how to handle.
+ *  source_suggestion and spam DO get their own dedicated handlers
+ *  because their semantics differ enough from correction/unknown
+ *  that mapping would lose information. */
+const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> = {
   correction: handleCorrection,
   support: handleSupport,
   press: handlePress,
   unsubscribe: handleUnsubscribe,
   unknown: handleUnknown,
+  // Classifier-introduced intents with dedicated handlers:
+  source_suggestion: handleSourceSuggestion,
+  spam: handleSpam,
+  // Classifier-introduced intents that route through legacy handlers:
+  claim_request: handleCorrection, // record in admin_actions; admin reviews
+  vendor_inquiry: handleSupport, // manual response via support template
+  unclear: handleUnknown, // catch-all admin triage
+  multi: handleUnknown, // parent row of a multi-intent split; children carry the real intent
 };
 
 /** Map an error message thrown by a submit-leg or handler to a user-
  *  visible reply kind. Submit-specific kinds for submit-intent errors,
- *  null for everything else (admin already saw the forwarded message). */
+ *  null for everything else (admin already saw the forwarded message).
+ *  `new_event` is the classifier's alias for `submit` and gets the same
+ *  treatment. */
 function errorToReplyKind(intent: EmailIntent, errMsg: string): ReplyKind | null {
-  if (intent === "submit") {
+  if (intent === "submit" || intent === "new_event") {
     if (errMsg.startsWith("submit-")) return "submit-failed";
     return "extract-failed";
   }
@@ -116,15 +137,15 @@ function errorToReplyKind(intent: EmailIntent, errMsg: string): ReplyKind | null
 /** Map an admin decision to a tailored reply kind. Decision shape is
  *  sent from the admin UI via `instance.sendEvent({type:"admin-decision",
  *  payload})`. Null decision = waitForEvent timed out; fall back to the
- *  generic ack so the sender doesn't go forever without acknowledgement. */
-function decisionToReplyKind(
-  intent: "correction" | "press",
-  decision: AdminDecision | null
-): ReplyKind {
+ *  generic ack so the sender doesn't go forever without acknowledgement.
+ *  claim_request rides on the correction reply set — same outcomes
+ *  (applied/rejected/needs-more-info) and same downstream UX. */
+function decisionToReplyKind(intent: EmailIntent, decision: AdminDecision | null): ReplyKind {
+  const correctionLike = intent === "correction" || intent === "claim_request";
   if (decision === null) {
-    return intent === "correction" ? "correction-ack" : "press-ack";
+    return correctionLike ? "correction-ack" : "press-ack";
   }
-  if (intent === "correction") {
+  if (correctionLike) {
     switch (decision.action) {
       case "applied":
         return "correction-applied";
@@ -204,7 +225,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     let caughtError: string | null = null;
 
     try {
-      if (intent === "submit") {
+      if (intent === "submit" || intent === "new_event") {
         result = await this.runSubmitPipeline(step, messageRowId);
       } else {
         result = await step.do(
@@ -223,7 +244,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             if (rows.length === 0) {
               throw new NonRetryableError(`inbound_emails row not found: ${messageRowId}`);
             }
-            return await HANDLERS[intent](this.env, { sessionId }, rows[0]);
+            // intent is narrowed away from submit | new_event here, so
+            // HANDLERS key lookup is safe.
+            return await HANDLERS[intent as Exclude<EmailIntent, "submit" | "new_event">](
+              this.env,
+              { sessionId },
+              rows[0]
+            );
           }
         );
       }
@@ -247,7 +274,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // nothing for admin to decide on. The waitForEvent is durable; the
     // workflow hibernates here and resumes when sendEvent fires or the
     // 7-day timeout elapses, whichever comes first.
-    if (!caughtError && (intent === "correction" || intent === "press")) {
+    // The waitForEvent admin-decision pause runs for intents that need
+    // human review before the sender's final auto-reply. `claim_request`
+    // (classifier-introduced) joins correction + press in this set
+    // because it also benefits from admin tailoring (decisionToReplyKind
+    // collapses it onto correction's decision shape).
+    const needsAdminDecision =
+      intent === "correction" || intent === "press" || intent === "claim_request";
+    if (!caughtError && needsAdminDecision) {
       await step.do(
         "mark-waiting",
         { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },

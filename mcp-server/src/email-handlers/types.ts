@@ -45,6 +45,7 @@ export type ReplyKind =
   | "support-ack"
   | "press-ack"
   | "unsubscribe-ack"
+  | "source-suggestion-ack"
   // Admin-decision-tailored kinds (PR-D, waitForEvent flow)
   | "correction-applied"
   | "correction-rejected"
