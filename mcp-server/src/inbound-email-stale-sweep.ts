@@ -1,51 +1,57 @@
 /**
  * Stale-row sweep for inbound_emails.
  *
- * Defense-in-depth for the case where the email() entrypoint inserted
- * an inbound_emails row but the workflow create / first-step UPDATE
- * never completed (D1 transient, Workers AI cold, etc.). Without this
- * sweep, such rows sit silently in status='received' and the submitter
- * never gets an auto-reply.
+ * Defense-in-depth for two distinct stuck-row patterns:
  *
- * Selection criteria (intentionally narrow to avoid double-create):
- *   - status = 'received' AND workflow_instance_id IS NULL
+ *   (A) "Entrypoint dropped the row" — email() INSERTed but the workflow
+ *       create / first-step UPDATE never completed (D1 transient, etc).
+ *       Symptom: status='received' AND workflow_instance_id IS NULL.
+ *       Original incident: 2026-05-19 D1 transient (commit 10f0e2e).
+ *
+ *   (B) "Workflow errored mid-flight" — workflow ran past mark-processing
+ *       but a later step (send-reply, mark-done, etc) threw past its
+ *       retry budget without the run() try/catch covering it, so the
+ *       workflow exits and the row never reaches status='replied' or
+ *       'failed'. Symptom: status='processing' AND workflow_instance_id
+ *       IS NOT NULL. Original incident: 2026-05-20 "Boxboro" stuck row
+ *       (CF Email Sending rejected the Message-ID header — root cause
+ *       at workflows/inbound-email.ts).
+ *
+ * Selection criteria (per recovery path):
  *   - received_at < now - STALE_THRESHOLD_SEC (gives the original
  *     workflow time to either succeed or definitively fail before we
  *     interfere)
  *   - received_at > now - MAX_RECOVERY_AGE_SEC (don't try to resurrect
  *     ancient rows; if it's been 24+ hours, the submitter has moved on
  *     and the URL may be stale)
+ *   - Pattern (A): status='received' AND workflow_instance_id IS NULL
+ *   - Pattern (B): status='processing'   AND workflow_instance_id IS NOT NULL
  *
- * For each matched row we call INBOUND_EMAIL.create() and write the new
- * workflow_instance_id back. The mark-processing step (now fail-soft
- * after 2026-05-19 incident — see workflows/inbound-email.ts) then runs
- * the standard pipeline.
+ * Both patterns get a FRESH workflow created. For pattern (B) this means
+ * the original errored instance and the new instance both exist in the
+ * CF Workflows dashboard — admin can tell them apart via the
+ * workflow_instance_id back-link, which gets overwritten with the new
+ * instance's id below.
  *
  * Wired in two places:
- *   1. The every-10-minutes cron in mcp-server/src/index.ts (automatic
- *      recovery — cron expression "*\/10 * * * *", escaped here so JSDoc
- *      parsing doesn't choke on the inline close-comment)
+ *   1. The every-10-minutes cron in mcp-server/src/index.ts
  *   2. POST /api/admin/workflows/inbound-email/sweep (manual trigger)
  *
- * Idempotency: the WHERE workflow_instance_id IS NULL guard means once
- * a sweep run creates a workflow for a row, subsequent sweeps skip it.
- * The new workflow's mark-processing step (or this function's own
- * post-create UPDATE) sets workflow_instance_id before the next sweep
- * fires.
+ * Idempotency: pattern (A) is naturally idempotent (WHERE
+ * workflow_instance_id IS NULL). Pattern (B) requires the workflow
+ * itself to advance status off 'processing' on the recovery run — if
+ * the original failure mode is deterministic AND not fixed by a deploy
+ * in between sweeps, the same row will be picked up again next cycle.
+ * Cap at MAX_ROWS_PER_SWEEP prevents runaway re-creates.
  *
  * Caveats:
- *   - Rows where workflow_instance_id IS NOT NULL but status='received'
- *     are NOT picked up. That edge case means the original workflow's
- *     mark-processing succeeded enough to write the back-link but then
- *     the workflow errored mid-pipeline without recording status. Rare;
- *     handle in a follow-up if it shows up in production data.
  *   - We don't query the Cloudflare Workflows API to check whether the
  *     original instance is actually errored vs. still running. The
- *     STALE_THRESHOLD_SEC delay (10 min) is the proxy — at that age,
- *     a still-running workflow is almost certainly stuck.
+ *     STALE_THRESHOLD_SEC delay (15 min for processing rows — see
+ *     PROCESSING_STALE_THRESHOLD_SEC) is the proxy.
  */
 
-import { and, eq, gt, isNull, lt } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or, isNotNull } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
@@ -53,13 +59,20 @@ import type { EmailIntent } from "./email-intents.js";
 
 const SOURCE = "mcp:inbound-email:stale-sweep";
 
-/** Rows must be at least this old before sweep considers them. Gives
- *  the original workflow time to complete or definitively error out.
- *  Set lower than the workflow's worst-case latency (Browser Rendering
- *  + AI extract + submit ≈ 90s) wouldn't help; set too high and the
- *  user waits too long for an auto-reply.
- */
+/** Pattern (A) — entrypoint-dropped rows must be at least this old
+ *  before sweep considers them. Gives the original workflow time to
+ *  complete or definitively error out. Set lower than the workflow's
+ *  worst-case latency (Browser Rendering + AI extract + submit ≈ 90s)
+ *  wouldn't help; set too high and the user waits too long. */
 const STALE_THRESHOLD_SEC = 10 * 60; // 10 minutes
+
+/** Pattern (B) — processing rows. Slightly longer threshold because
+ *  these rows had a workflow that DID start; we want to be more sure
+ *  it's actually dead before re-creating. The send-reply step's worst
+ *  case (3 retries × 10s × exponential backoff + 10s timeout) is ~80s;
+ *  the full submit pipeline can take 90s+; 15min comfortably covers
+ *  the longest legitimate "still running" state. */
+const PROCESSING_STALE_THRESHOLD_SEC = 15 * 60; // 15 minutes
 
 /** Don't try to recover rows older than this. After 24h the submitter
  *  has moved on and the source URL may have changed; better to leave
@@ -112,25 +125,49 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
   // plain parameter-bound query that works identically across D1, D1
   // local, and the better-sqlite3 test harness.
   const nowSec = Math.floor(Date.now() / 1000);
-  const olderThanUpperBound = new Date((nowSec - STALE_THRESHOLD_SEC) * 1000);
+  const receivedStaleUpper = new Date((nowSec - STALE_THRESHOLD_SEC) * 1000);
+  const processingStaleUpper = new Date((nowSec - PROCESSING_STALE_THRESHOLD_SEC) * 1000);
   const olderThanLowerBound = new Date((nowSec - MAX_RECOVERY_AGE_SEC) * 1000);
 
-  // Select stale rows. SELECT-only — the actual workflow recreate +
-  // back-link write happens per row below.
-  let stale: Array<{ id: string; intent: string }>;
+  // Select stale rows from BOTH recovery patterns in one query:
+  //   (A) status='received' AND workflow_instance_id IS NULL — entrypoint
+  //       dropped the row before workflow create
+  //   (B) status='processing' AND workflow_instance_id IS NOT NULL —
+  //       workflow started but errored before mark-done
+  // Pattern B uses a longer threshold (15m vs 10m) since these rows had
+  // a workflow that DID start; we want extra confidence it's dead.
+  let stale: Array<{ id: string; intent: string; pattern: "received" | "processing" }>;
   try {
-    stale = await db
-      .select({ id: inboundEmails.id, intent: inboundEmails.intent })
+    const rawStale = await db
+      .select({
+        id: inboundEmails.id,
+        intent: inboundEmails.intent,
+        status: inboundEmails.status,
+      })
       .from(inboundEmails)
       .where(
         and(
-          eq(inboundEmails.status, "received"),
-          isNull(inboundEmails.workflowInstanceId),
-          lt(inboundEmails.receivedAt, olderThanUpperBound),
-          gt(inboundEmails.receivedAt, olderThanLowerBound)
+          gt(inboundEmails.receivedAt, olderThanLowerBound),
+          or(
+            and(
+              eq(inboundEmails.status, "received"),
+              isNull(inboundEmails.workflowInstanceId),
+              lt(inboundEmails.receivedAt, receivedStaleUpper)
+            ),
+            and(
+              eq(inboundEmails.status, "processing"),
+              isNotNull(inboundEmails.workflowInstanceId),
+              lt(inboundEmails.receivedAt, processingStaleUpper)
+            )
+          )
         )
       )
       .limit(MAX_ROWS_PER_SWEEP);
+    stale = rawStale.map((r) => ({
+      id: r.id,
+      intent: r.intent,
+      pattern: r.status === "processing" ? "processing" : "received",
+    }));
   } catch (err) {
     await logError(env.DB, {
       source: SOURCE,
@@ -178,13 +215,23 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
     }
 
     // Write the new workflow_instance_id back so the next sweep
-    // iteration skips this row. WHERE clause double-guards against a
-    // racing successful original workflow.
+    // iteration skips this row. UPDATE shape differs by pattern:
+    //   (A) pattern='received' — guard with WHERE workflow_instance_id
+    //       IS NULL so we don't trample a successful racing workflow's
+    //       back-link write.
+    //   (B) pattern='processing' — overwrite the OLD (errored) workflow
+    //       id with the new one. The original instance still lives in
+    //       the CF Workflows dashboard with status=Errored; the back-
+    //       link just points at the recovery instance now.
     try {
-      await db
-        .update(inboundEmails)
-        .set({ workflowInstanceId })
-        .where(and(eq(inboundEmails.id, row.id), isNull(inboundEmails.workflowInstanceId)));
+      const updateQuery = db.update(inboundEmails).set({ workflowInstanceId });
+      if (row.pattern === "received") {
+        await updateQuery.where(
+          and(eq(inboundEmails.id, row.id), isNull(inboundEmails.workflowInstanceId))
+        );
+      } else {
+        await updateQuery.where(eq(inboundEmails.id, row.id));
+      }
       result.recreatedCount += 1;
       result.rows.push({
         messageRowId: row.id,

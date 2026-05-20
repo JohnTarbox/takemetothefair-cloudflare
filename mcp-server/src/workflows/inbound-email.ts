@@ -318,120 +318,151 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
 
     // ───── Step 3: send-reply (skipped if replyKind null) ───────────
+    // Wrapped in try/catch so a send-reply failure (exhausted retries)
+    // doesn't error the whole workflow before mark-done can record
+    // status='failed'. Without this wrapper the workflow exits at the
+    // throw and the row sits in status='processing' forever, outside
+    // the stale-row sweep's selection criteria. Root-caused 2026-05-20
+    // (the "Boxboro" stuck row): CF Email Sending rejected the custom
+    // Message-ID header from commit 0121d6d, send-reply exhausted its
+    // 3 retries, workflow errored without reaching mark-done. The
+    // Message-ID is now CF-auto-generated (see below) but the wrapper
+    // stays as defense-in-depth for any future env.EMAIL.send rejection.
     if (result.replyKind !== null) {
       const replyKind = result.replyKind;
       const replyParams = result.replyParams ?? {};
-      await step.do(
-        "send-reply",
-        {
-          retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
-          timeout: "10 seconds",
-        },
-        async () => {
-          if (!this.env.EMAIL) {
-            // No binding in this env (dev / unconfigured). Log + skip
-            // rather than throw — losing an auto-reply isn't worth
-            // marking the whole workflow failed.
-            await logError(this.env.DB, {
-              level: "warn",
-              source: SOURCE,
-              message: "EMAIL binding unbound; auto-reply skipped",
-              sessionId,
-              context: { messageRowId, intent, replyKind },
-            });
-            return;
-          }
-          const db = getDb(this.env.DB);
-          const rows = await db
-            .select({
-              fromAddress: inboundEmails.fromAddress,
-              subject: inboundEmails.subject,
-              messageId: inboundEmails.messageId,
-            })
-            .from(inboundEmails)
-            .where(eq(inboundEmails.id, messageRowId))
-            .limit(1);
-          if (rows.length === 0) {
-            throw new NonRetryableError(`inbound_emails row not found for reply: ${messageRowId}`);
-          }
-          // Use replyParams.subject if the handler provided one (e.g.,
-          // submit pipeline's success path); otherwise fall back to the
-          // row's subject (covers the dispatch-failed synthetic-result
-          // path, where the handler threw before populating params).
-          const paramsWithSubject =
-            "subject" in replyParams
-              ? replyParams
-              : { ...replyParams, subject: rows[0].subject ?? "" };
-
-          // Phase D.3: issue a receipt-moment feedback token for reply
-          // kinds where "was this what you wanted?" makes sense. Skip
-          // tailored kinds (correction-applied / press-handled / etc.)
-          // — those are admin-driven and already have their own UX.
-          // Best-effort: any failure leaves the widget out of the email
-          // rather than blocking the reply.
-          const RECEIPT_WIDGET_KINDS: ReplyKind[] = [
-            "ok",
-            "no-url",
-            "already-exists",
-            "extract-failed",
-            "submit-failed",
-          ];
-          let params = paramsWithSubject;
-          if (RECEIPT_WIDGET_KINDS.includes(replyKind)) {
-            try {
-              const token = await issueToken(db, {
-                inboundEmailId: messageRowId,
-                feedbackMoment: "receipt",
-                resultingEventId: result.resultingEventId ?? null,
-              });
-              const base = `https://meetmeatthefair.com/feedback/${encodeURIComponent(token)}`;
-              params = {
-                ...paramsWithSubject,
-                feedbackCorrectUrl: `${base}?v=correct`,
-                feedbackWrongIntentUrl: `${base}?v=wrong_intent`,
-                feedbackCancelUrl: `${base}?v=cancel`,
-              };
-            } catch (err) {
+      try {
+        await step.do(
+          "send-reply",
+          {
+            retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
+            timeout: "10 seconds",
+          },
+          async () => {
+            if (!this.env.EMAIL) {
+              // No binding in this env (dev / unconfigured). Log + skip
+              // rather than throw — losing an auto-reply isn't worth
+              // marking the whole workflow failed.
               await logError(this.env.DB, {
                 level: "warn",
                 source: SOURCE,
-                message: "failed to issue receipt feedback token; widget omitted",
-                error: err,
+                message: "EMAIL binding unbound; auto-reply skipped",
                 sessionId,
-                context: { messageRowId, replyKind },
+                context: { messageRowId, intent, replyKind },
               });
+              return;
             }
+            const db = getDb(this.env.DB);
+            const rows = await db
+              .select({
+                fromAddress: inboundEmails.fromAddress,
+                subject: inboundEmails.subject,
+                messageId: inboundEmails.messageId,
+              })
+              .from(inboundEmails)
+              .where(eq(inboundEmails.id, messageRowId))
+              .limit(1);
+            if (rows.length === 0) {
+              throw new NonRetryableError(
+                `inbound_emails row not found for reply: ${messageRowId}`
+              );
+            }
+            // Use replyParams.subject if the handler provided one (e.g.,
+            // submit pipeline's success path); otherwise fall back to the
+            // row's subject (covers the dispatch-failed synthetic-result
+            // path, where the handler threw before populating params).
+            const paramsWithSubject =
+              "subject" in replyParams
+                ? replyParams
+                : { ...replyParams, subject: rows[0].subject ?? "" };
+
+            // Phase D.3: issue a receipt-moment feedback token for reply
+            // kinds where "was this what you wanted?" makes sense. Skip
+            // tailored kinds (correction-applied / press-handled / etc.)
+            // — those are admin-driven and already have their own UX.
+            // Best-effort: any failure leaves the widget out of the email
+            // rather than blocking the reply.
+            const RECEIPT_WIDGET_KINDS: ReplyKind[] = [
+              "ok",
+              "no-url",
+              "already-exists",
+              "extract-failed",
+              "submit-failed",
+            ];
+            let params = paramsWithSubject;
+            if (RECEIPT_WIDGET_KINDS.includes(replyKind)) {
+              try {
+                const token = await issueToken(db, {
+                  inboundEmailId: messageRowId,
+                  feedbackMoment: "receipt",
+                  resultingEventId: result.resultingEventId ?? null,
+                });
+                const base = `https://meetmeatthefair.com/feedback/${encodeURIComponent(token)}`;
+                params = {
+                  ...paramsWithSubject,
+                  feedbackCorrectUrl: `${base}?v=correct`,
+                  feedbackWrongIntentUrl: `${base}?v=wrong_intent`,
+                  feedbackCancelUrl: `${base}?v=cancel`,
+                };
+              } catch (err) {
+                await logError(this.env.DB, {
+                  level: "warn",
+                  source: SOURCE,
+                  message: "failed to issue receipt feedback token; widget omitted",
+                  error: err,
+                  sessionId,
+                  context: { messageRowId, replyKind },
+                });
+              }
+            }
+
+            const msg = buildReply(replyKind, rows[0].fromAddress, params);
+
+            // RFC 5322 threading headers so Gmail / Apple Mail / etc. nest
+            // the reply under the user's original message. CF Email Sending
+            // auto-generates Message-ID and REJECTS any custom value for it
+            // (error: "custom header 'Message-ID' is not allowed"). Only
+            // In-Reply-To and References are accepted from the threading
+            // triplet — those are enough for Gmail's threading heuristic.
+            // Root-caused 2026-05-20 from a stuck Boxboro row; the previous
+            // implementation (commit 0121d6d) set Message-ID and killed
+            // every auto-reply. See feedback_cf_email_send_header_allowlist
+            // memory.
+            const headers: Record<string, string> = {};
+            if (rows[0].messageId) {
+              headers["In-Reply-To"] = rows[0].messageId;
+              headers["References"] = rows[0].messageId;
+            }
+
+            await this.env.EMAIL.send({
+              from: msg.from ?? DEFAULT_FROM,
+              to: msg.to,
+              subject: msg.subject,
+              html: msg.html,
+              text: msg.text,
+              headers,
+            });
           }
-
-          const msg = buildReply(replyKind, rows[0].fromAddress, params);
-
-          // RFC 5322 threading headers so Gmail / Apple Mail / etc. nest the
-          // reply visually under the user's original message rather than
-          // showing it as a standalone email. Three headers:
-          //   - Message-ID: our own unique id. Always set, so the user's
-          //     reply-to-our-reply chains back to us in turn.
-          //   - In-Reply-To: the inbound message's Message-ID. Only set
-          //     when the inbound row has one (occasional senders omit it).
-          //   - References: chain of ancestor Message-IDs. Single-hop here
-          //     so it equals In-Reply-To; we don't currently track multi-
-          //     turn correction threads.
-          const ourMessageId = `<${crypto.randomUUID()}@meetmeatthefair.com>`;
-          const headers: Record<string, string> = { "Message-ID": ourMessageId };
-          if (rows[0].messageId) {
-            headers["In-Reply-To"] = rows[0].messageId;
-            headers["References"] = rows[0].messageId;
-          }
-
-          await this.env.EMAIL.send({
-            from: msg.from ?? DEFAULT_FROM,
-            to: msg.to,
-            subject: msg.subject,
-            html: msg.html,
-            text: msg.text,
-            headers,
-          });
-        }
-      );
+        );
+      } catch (err) {
+        // send-reply exhausted retries (or threw NonRetryableError).
+        // Log + continue to mark-done so the row records the failure
+        // instead of staying stuck in status='processing'. The sender
+        // doesn't get the auto-reply, but admin sees the failure in
+        // /admin/inbound-emails and can decide what to do.
+        const sendReplyErr = err instanceof Error ? err.message : String(err);
+        await logError(this.env.DB, {
+          source: SOURCE,
+          message: "send-reply step failed after retries; continuing to mark-done",
+          error: err,
+          sessionId,
+          context: { messageRowId, intent, replyKind, sendReplyError: sendReplyErr },
+        });
+        // Promote to caughtError so mark-done writes status='failed'
+        // (rather than 'replied') and the error is visible in the
+        // /admin/inbound-emails UI.
+        caughtError = caughtError ?? `send-reply: ${sendReplyErr}`;
+      }
     }
 
     // ───── Step 4: mark-done ────────────────────────────────────────

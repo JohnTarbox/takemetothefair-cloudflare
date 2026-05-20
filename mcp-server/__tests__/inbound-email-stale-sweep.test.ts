@@ -225,6 +225,82 @@ describe("runInboundEmailStaleSweep", () => {
     });
   });
 
+  // Pattern (B) — workflow errored mid-flight, row stuck in status='processing'
+  // with workflow_instance_id NOT NULL. Added 2026-05-20 after the "Boxboro"
+  // stuck row revealed that send-reply could throw past its retries and
+  // exit the workflow before mark-done. Threshold is 15 min (vs 10 min for
+  // pattern A) because the workflow DID start; we want extra confidence
+  // before re-creating.
+  it("picks up status='processing' rows older than 15 min (pattern B)", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    const stuckId = insertInbound({
+      status: "processing",
+      workflowInstanceId: "wf-original-errored",
+      receivedAtSecondsAgo: 16 * 60, // 16 min ago — past 15-min threshold
+    });
+    const createFn = vi.fn(async () => ({ id: "wf-recovery-1" }));
+
+    const result = await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn)
+    );
+
+    expect(result.foundCount).toBe(1);
+    expect(result.recreatedCount).toBe(1);
+    expect(createFn).toHaveBeenCalledWith({
+      params: { messageRowId: stuckId, intent: "submit" },
+      retention: { successRetention: "7 days", errorRetention: "7 days" },
+    });
+
+    // Back-link is OVERWRITTEN with the new instance id (the original
+    // workflow still lives in the CF Workflows dashboard with
+    // status=Errored, but the inbound row now points at the recovery).
+    const row = raw
+      .prepare("SELECT workflow_instance_id FROM inbound_emails WHERE id = ?")
+      .get(stuckId) as { workflow_instance_id: string | null };
+    expect(row.workflow_instance_id).toBe("wf-recovery-1");
+  });
+
+  it("skips status='processing' rows younger than 15 min (still in normal window)", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    insertInbound({
+      status: "processing",
+      workflowInstanceId: "wf-still-running",
+      receivedAtSecondsAgo: 5 * 60, // 5 min ago — too fresh
+    });
+    const createFn = vi.fn(async () => ({ id: "wf-recovery-1" }));
+
+    const result = await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn)
+    );
+
+    expect(result.foundCount).toBe(0);
+    expect(createFn).not.toHaveBeenCalled();
+  });
+
+  it("skips status='processing' rows with NULL workflow_instance_id (ambiguous state)", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    // status='processing' but workflow_instance_id IS NULL is a malformed
+    // state: either the entrypoint's INSERT raced with the workflow's
+    // mark-processing write OR a manual UPDATE went wrong. Either way,
+    // unsafe to recover automatically — leave for admin review.
+    insertInbound({
+      status: "processing",
+      workflowInstanceId: null,
+      receivedAtSecondsAgo: 20 * 60,
+    });
+    const createFn = vi.fn(async () => ({ id: "wf-recovery-1" }));
+
+    const result = await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn)
+    );
+
+    expect(result.foundCount).toBe(0);
+    expect(createFn).not.toHaveBeenCalled();
+  });
+
   it("respects MAX_ROWS_PER_SWEEP cap to avoid quota saturation", async () => {
     const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
     for (let i = 0; i < 60; i++) {
