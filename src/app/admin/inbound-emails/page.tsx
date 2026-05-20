@@ -37,6 +37,30 @@ interface InboundEmailRow {
   messageId: string | null;
   replyKind: string | null;
   resultingEvent: { id: string; slug: string; name: string } | null;
+  // Phase C.1 / D.1 classifier fields. All nullable because pre-
+  // classifier rows have no values.
+  classifiedIntent: string | null;
+  classifiedSubIntent: string | null;
+  classifiedConfidence: number | null;
+  classifiedRationale: string | null;
+  classifierVersion: string | null;
+  routingSource: string | null;
+  flaggedForReview: number;
+  parentEmailId: string | null;
+}
+
+interface ClassifierStats {
+  windowDays: number;
+  since: string;
+  accuracy: {
+    classifierVersion: string | null;
+    total: number;
+    uncorrected: number;
+    disagreements: number;
+    accuracyPct: number | null;
+  }[];
+  disagreements: { originalIntent: string | null; correctedIntent: string; n: number }[];
+  sources: { feedbackSource: string; n: number }[];
 }
 
 const statusBadge: Record<string, "success" | "info" | "warning" | "danger" | "default"> = {
@@ -76,7 +100,28 @@ const trustBadge: Record<string, "success" | "warning" | "danger" | "default"> =
   unknown: "default",
 };
 
-const INTENTS = ["", "submit", "correction", "support", "press", "unsubscribe", "unknown"];
+const INTENTS = [
+  "",
+  // Legacy address-based values
+  "submit",
+  "correction",
+  "support",
+  "press",
+  "unsubscribe",
+  "unknown",
+  // Classifier-introduced values (drizzle/0079)
+  "new_event",
+  "source_suggestion",
+  "claim_request",
+  "vendor_inquiry",
+  "spam",
+  "unclear",
+  "multi",
+];
+
+// Same union used by the reclassify endpoint's whitelist. Kept in sync
+// with mcp-server/src/email-intents.ts EmailIntent.
+const RECLASSIFY_INTENTS = INTENTS.filter((i) => i.length > 0);
 const WINDOWS = [
   { hours: 24, label: "24h" },
   { hours: 168, label: "7d" },
@@ -96,6 +141,23 @@ export default function AdminInboundEmailsPage() {
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
   const [sendersOpen, setSendersOpen] = useState(false);
+  const [stats, setStats] = useState<ClassifierStats | null>(null);
+  const [reclassifying, setReclassifying] = useState<string | null>(null);
+  const [reclassifyError, setReclassifyError] = useState<string | null>(null);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/inbound-emails/classifier-stats?days=30");
+      if (!res.ok) return;
+      setStats((await res.json()) as ClassifierStats);
+    } catch (err) {
+      console.error("Failed to fetch classifier stats:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
 
   const fetchSenders = useCallback(async () => {
     try {
@@ -156,6 +218,76 @@ export default function AdminInboundEmailsPage() {
     }
   };
 
+  const handleReclassify = async (rowId: string, correctedIntent: string) => {
+    setReclassifying(rowId);
+    setReclassifyError(null);
+    try {
+      const adminNote =
+        window.prompt("Optional note (visible in admin_actions audit):") || undefined;
+      const alsoRerunWorkflow = window.confirm(
+        "Also re-run the workflow with the corrected intent? (OK = re-run, Cancel = just relabel)"
+      );
+      const res = await fetch(`/api/admin/inbound-emails/${encodeURIComponent(rowId)}/reclassify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correctedIntent, adminNote, alsoRerunWorkflow }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      await Promise.all([fetchRows(), fetchStats()]);
+    } catch (err) {
+      setReclassifyError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReclassifying(null);
+    }
+  };
+
+  const handleMarkCorrect = async (rowId: string) => {
+    setReclassifying(rowId);
+    setReclassifyError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/inbound-emails/${encodeURIComponent(rowId)}/mark-correct`,
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      await Promise.all([fetchRows(), fetchStats()]);
+    } catch (err) {
+      setReclassifyError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReclassifying(null);
+    }
+  };
+
+  const handleFlagToggle = async (rowId: string, flagged: boolean) => {
+    setReclassifying(rowId);
+    setReclassifyError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/inbound-emails/${encodeURIComponent(rowId)}/flag-for-review`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flagged }),
+        }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      await fetchRows();
+    } catch (err) {
+      setReclassifyError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReclassifying(null);
+    }
+  };
+
   const handleDecide = async (messageRowId: string, action: DecisionAction) => {
     // Optional note prompt — only when action calls for context. Skipping
     // the prompt entirely for the common "applied" case keeps the UX fast.
@@ -197,6 +329,37 @@ export default function AdminInboundEmailsPage() {
           Click a row to see the error message; use the retry button to re-create the workflow for
           stuck or failed rows.
         </p>
+        {stats && stats.accuracy.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-gray-500">Classifier accuracy (last {stats.windowDays}d):</span>
+            {stats.accuracy.map((a) => (
+              <span
+                key={a.classifierVersion ?? "unversioned"}
+                className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+              >
+                <span className="font-mono text-xs text-gray-500">
+                  {a.classifierVersion ?? "—"}
+                </span>
+                <span
+                  className={
+                    a.accuracyPct === null
+                      ? "text-gray-500"
+                      : a.accuracyPct >= 80
+                        ? "font-medium text-green-700"
+                        : a.accuracyPct >= 60
+                          ? "font-medium text-yellow-700"
+                          : "font-medium text-red-700"
+                  }
+                >
+                  {a.accuracyPct === null ? "—" : `${a.accuracyPct}%`}
+                </span>
+                <span className="text-gray-400">
+                  ({a.uncorrected}/{a.total})
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Sender-quality summary panel — collapsed by default. Shows per-
@@ -332,6 +495,11 @@ export default function AdminInboundEmailsPage() {
       {decideError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
           Decide failed: {decideError}
+        </div>
+      )}
+      {reclassifyError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+          Reclassify failed: {reclassifyError}
         </div>
       )}
 
@@ -548,6 +716,104 @@ export default function AdminInboundEmailsPage() {
                               {row.workflowInstanceId && (
                                 <div className="font-mono text-gray-500">
                                   workflow_instance_id: {row.workflowInstanceId}
+                                </div>
+                              )}
+                              {row.parentEmailId && (
+                                <div className="font-mono text-gray-500">
+                                  parent_email_id: {row.parentEmailId}
+                                </div>
+                              )}
+
+                              {/* Phase D.1 classifier-metadata panel + admin
+                                  affordances. Only shown when the row has
+                                  classifier data (post-C.1 rows). */}
+                              {row.classifiedIntent && (
+                                <div className="mt-3 pt-3 border-t border-gray-200 space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                                    <span className="font-medium">Classifier:</span>
+                                    <Badge variant="default">{row.classifiedIntent}</Badge>
+                                    {row.classifiedSubIntent && (
+                                      <Badge variant="info">{row.classifiedSubIntent}</Badge>
+                                    )}
+                                    {row.classifiedConfidence !== null && (
+                                      <span
+                                        className={
+                                          row.classifiedConfidence >= 0.85
+                                            ? "text-green-700"
+                                            : "text-yellow-700"
+                                        }
+                                      >
+                                        {(row.classifiedConfidence * 100).toFixed(0)}%
+                                      </span>
+                                    )}
+                                    {row.routingSource && (
+                                      <span className="font-mono text-gray-500">
+                                        {row.routingSource}
+                                      </span>
+                                    )}
+                                    {row.classifierVersion && (
+                                      <span className="font-mono text-gray-400">
+                                        {row.classifierVersion}
+                                      </span>
+                                    )}
+                                    {row.flaggedForReview === 1 && (
+                                      <Badge variant="warning">flagged</Badge>
+                                    )}
+                                  </div>
+                                  {row.classifiedRationale && (
+                                    <div className="text-gray-600 italic">
+                                      &ldquo;{row.classifiedRationale}&rdquo;
+                                    </div>
+                                  )}
+                                  <div className="flex flex-wrap items-center gap-2 pt-2">
+                                    <label className="flex items-center gap-1 text-xs">
+                                      <span>Reclassify:</span>
+                                      <select
+                                        className="rounded border border-gray-300 px-2 py-0.5 text-xs"
+                                        defaultValue=""
+                                        disabled={reclassifying === row.id}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          e.target.value = "";
+                                          if (v) handleReclassify(row.id, v);
+                                        }}
+                                      >
+                                        <option value="">— pick —</option>
+                                        {RECLASSIFY_INTENTS.map((i) => (
+                                          <option key={i} value={i}>
+                                            {i}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      type="button"
+                                      disabled={reclassifying === row.id}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleMarkCorrect(row.id);
+                                      }}
+                                    >
+                                      Mark correct
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      type="button"
+                                      disabled={reclassifying === row.id}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleFlagToggle(row.id, row.flaggedForReview !== 1);
+                                      }}
+                                    >
+                                      {row.flaggedForReview === 1 ? "Unflag" : "Flag for review"}
+                                    </Button>
+                                  </div>
                                 </div>
                               )}
                             </div>

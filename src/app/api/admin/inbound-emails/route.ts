@@ -73,6 +73,15 @@ export async function GET(request: NextRequest) {
       messageId: inboundEmails.messageId,
       replyKind: inboundEmails.replyKind,
       resultingEventId: inboundEmails.resultingEventId,
+      // Phase C.1 / D.1 — classifier metadata + admin annotations.
+      classifiedIntent: inboundEmails.classifiedIntent,
+      classifiedSubIntent: inboundEmails.classifiedSubIntent,
+      classifiedConfidence: inboundEmails.classifiedConfidence,
+      classifiedRationale: inboundEmails.classifiedRationale,
+      classifierVersion: inboundEmails.classifierVersion,
+      routingSource: inboundEmails.routingSource,
+      flaggedForReview: inboundEmails.flaggedForReview,
+      parentEmailId: inboundEmails.parentEmailId,
     })
     .from(inboundEmails)
     .where(and(...conditions))
