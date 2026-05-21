@@ -334,3 +334,7 @@ export function formatPrice(minCents?: number | null, maxCents?: number | null):
 // Pre-ingest date-quality gates — pure-function helpers shared by main app
 // ingest paths and the MCP server's vendor.suggest_event tool.
 export * from "./event-date-gates";
+
+// Source-tier classifier for B5 dedup enrichment. Pure-function helper
+// consumed by the main app and the MCP inbound-email workflow.
+export * from "./source-tier";

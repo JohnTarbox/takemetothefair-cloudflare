@@ -58,7 +58,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
-import { classifyDomainTier, isHigherTier } from "../source-tier.js";
+import { classifyDomainTier, isHigherTier } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";

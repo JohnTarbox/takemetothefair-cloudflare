@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyDomainTier, compareTier, isHigherTier } from "../source-tier";
+import { classifyDomainTier, compareTier, isHigherTier } from "./source-tier";
 
 describe("classifyDomainTier", () => {
   describe("T1 (organizer's own site)", () => {
