@@ -338,6 +338,23 @@ const SCHEMA_SQL = `
   CREATE INDEX idx_inbound_emails_reply_kind
     ON inbound_emails(reply_kind)
     WHERE reply_kind IS NOT NULL;
+
+  CREATE TABLE discovery_candidates (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    host TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending_review',
+    suggested_by_email TEXT,
+    suggested_via_inbound_id TEXT,
+    reviewed_at INTEGER,
+    reviewed_by_user_id TEXT,
+    admin_notes TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_discovery_candidates_host ON discovery_candidates (host);
+  CREATE UNIQUE INDEX uq_discovery_candidates_pending_host
+    ON discovery_candidates (host)
+    WHERE status = 'pending_review';
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {

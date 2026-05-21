@@ -1380,6 +1380,43 @@ export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
 export type CompetitorDomain = typeof competitorDomains.$inferSelect;
 export type InboundEmail = typeof inboundEmails.$inferSelect;
 
+// Registry of source domains. Backs the 3-tier source_suggestion handler
+// in mcp-server (spec §C.8 / drizzle/0084). Sender emails us pointing at
+// a website as an events source → Tier 1 (this table) or Tier 2 (informal
+// events.source_url match) or Tier 3 (INSERT new pending_review row).
+export const discoveryCandidates = sqliteTable(
+  "discovery_candidates",
+  {
+    id: text("id").primaryKey(),
+    url: text("url").notNull(),
+    /** Lowercased hostname stripped of `www.` prefix, e.g. "mainemade.com".
+     *  Primary lookup key for Tier 1 ("do we already pull from this?"). */
+    host: text("host").notNull(),
+    /** pending_review (default) | active | rejected. */
+    status: text("status").notNull().default("pending_review"),
+    /** Email of the sender who first suggested it. Denormalized from the
+     *  inbound row for cheap admin queries. */
+    suggestedByEmail: text("suggested_by_email"),
+    /** FK-style link back to inbound_emails.id. NULL if entered manually. */
+    suggestedViaInboundId: text("suggested_via_inbound_id"),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedByUserId: text("reviewed_by_user_id"),
+    adminNotes: text("admin_notes"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_discovery_candidates_host").on(t.host),
+    index("idx_discovery_candidates_status").on(t.status),
+    // One pending suggestion per host — multiple senders flagging the
+    // same domain pile into one row instead of spawning a duplicate queue.
+    uniqueIndex("uq_discovery_candidates_pending_host")
+      .on(t.host)
+      .where(sql`status = 'pending_review'`),
+  ]
+);
+
+export type DiscoveryCandidate = typeof discoveryCandidates.$inferSelect;
+
 // Operator-set trust annotation for email senders. Read-side surfaces on
 // /admin/inbound-emails sender summary panel; write via the
 // set_email_sender_trust MCP tool. trust_status values: unknown (default),

@@ -214,10 +214,20 @@ ${SIGN_OFF}`;
     case "source-suggestion-ack": {
       const host = (params.suggestedHost as string | undefined) ?? "";
       const informalUsageCount = Number(params.informalUsageCount ?? 0);
-      // Three reply variants based on the handler's lookup tier.
-      // (The full discovery_candidates table → tier-1 reply is a follow-up;
-      // until then we only branch on "informal usage" vs "fresh suggestion".)
-      if (informalUsageCount > 0 && host) {
+      const tier = (params.tier as string | undefined) ?? "";
+      const hostLine = host ? ` (${host})` : "";
+
+      // Tier 1: already registered as an active source via discovery_candidates.
+      if (tier === "registered") {
+        return `Thanks for the source suggestion!
+
+We already pull events from ${host || "this source"} — it's on our active discovery list. If you noticed a specific event missing from the site, please reply with the URL and we'll take a look.
+
+${SIGN_OFF}`;
+      }
+
+      // Tier 2: informal usage — flagged for admin to formally register.
+      if (tier === "informal" || (!tier && informalUsageCount > 0 && host)) {
         return `Thanks for the source suggestion!
 
 We already pull events informally from ${host} — we have ${informalUsageCount} event${informalUsageCount === 1 ? "" : "s"} on the site sourced from there. We've flagged this for our team to formally register the source in our discovery queue.
@@ -226,7 +236,8 @@ If you noticed a specific event missing, please reply with the URL and we'll tak
 
 ${SIGN_OFF}`;
       }
-      const hostLine = host ? ` (${host})` : "";
+
+      // Tier 3 (default): fresh suggestion queued for admin review.
       return `Thanks for the source suggestion!
 
 We've added your suggestion${hostLine} to our discovery queue. Our team reviews these regularly and we'll let you know if we start pulling events from it.

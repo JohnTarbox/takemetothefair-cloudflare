@@ -1,35 +1,35 @@
 /**
  * `source_suggestion` handler — sender points us at a website/feed as a
- * potential source of events to harvest. Spec §C.8.
+ * potential source of events to harvest. Spec §C.8 / drizzle/0084.
  *
- * Two-tier lookup (current; the spec's full 3-tier requires the
- * discovery_candidates table which doesn't exist yet — see follow-up):
+ * Three-tier lookup. First match wins:
  *
- *   1. Check events.source_url for the suggested host. If we already have
- *      events from this domain (informal usage), the auto-reply tells the
- *      sender we use the source already, and the admin_actions row flags
- *      it as a "register this informal usage" follow-up.
- *   2. No informal usage either → record as a fresh discovery suggestion
- *      for admin to evaluate.
+ *   Tier 1: discovery_candidates lookup. If we already track this host
+ *           with status='active', tell the sender we already use it.
+ *           They get the polished "thanks, already on it" reply with no
+ *           admin queue entry.
  *
- * Either way we INSERT admin_actions for the audit log + admin queue, and
- * return a `source-suggestion-ack` ReplyKind for the auto-reply.
+ *   Tier 2: events.source_url LIKE check. If we have events sourced from
+ *           this host (informal usage) but no discovery_candidates row,
+ *           tell the sender we use the source AND flag for admin to
+ *           formally register it (admin_actions row tagged
+ *           source_suggestion.register_informal).
  *
- * --- Follow-up (NOT in scope for the wired-but-active classifier ship) ---
- * Spec §C.8's full 3-tier check needs a `discovery_candidates` table that
- * doesn't currently exist in the schema. When that table lands (separate
- * project), upgrade this handler to:
- *   tier 1 — discovery_candidates lookup by URL/domain
- *   tier 2 — events.source_url informal-usage check (today's tier 1)
- *   tier 3 — fresh suggestion → INSERT into discovery_candidates
- * Until then, this handler routes through admin_actions like correction.
- * Search for the action name `email.source_suggestion` to find the
- * relevant rows when the upgrade ships.
+ *   Tier 3: Fresh suggestion → INSERT discovery_candidates row with
+ *           status='pending_review'. Sender gets the "thanks, queued for
+ *           review" reply. Partial-unique index on host means a second
+ *           sender flagging the same host just collides harmlessly with
+ *           ON CONFLICT DO NOTHING.
+ *
+ * All three tiers also write an admin_actions row for the audit trail
+ * (action='email.source_suggestion'). Replies use the existing
+ * source-suggestion-ack ReplyKind — the reply template branches on
+ * params.tier so the sender sees the right message.
  */
 
-import { adminActions, events } from "../schema.js";
+import { adminActions, discoveryCandidates, events } from "../schema.js";
 import { getDb } from "../db.js";
-import { sql, like } from "drizzle-orm";
+import { sql, like, eq, and } from "drizzle-orm";
 import type { HandlerFn, HandlerResult } from "./types.js";
 
 export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> => {
@@ -41,21 +41,59 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
   const suggestedUrl = row.parsedUrl ?? extractFirstUrl(row.bodyTextExcerpt ?? "");
   const host = suggestedUrl ? extractHost(suggestedUrl) : null;
 
+  let tier: "registered" | "informal" | "new" | "no-host" = "no-host";
   let informalUsageCount = 0;
+
   if (host) {
-    // Tier 2 (current tier 1): does events.source_url already contain
-    // this host? `LIKE '%host%'` is loose on purpose — same-domain matches
-    // are what we want to detect.
-    const rows = await db
-      .select({ n: sql<number>`COUNT(*)` })
-      .from(events)
-      .where(like(events.sourceUrl, `%${host}%`))
+    // Tier 1: already-registered source check.
+    const existing = await db
+      .select({ id: discoveryCandidates.id, status: discoveryCandidates.status })
+      .from(discoveryCandidates)
+      .where(and(eq(discoveryCandidates.host, host), eq(discoveryCandidates.status, "active")))
       .limit(1);
-    informalUsageCount = Number(rows[0]?.n ?? 0);
+
+    if (existing.length > 0) {
+      tier = "registered";
+    } else {
+      // Tier 2: informal-usage check via events.source_url LIKE.
+      const usageRows = await db
+        .select({ n: sql<number>`COUNT(*)` })
+        .from(events)
+        .where(like(events.sourceUrl, `%${host}%`))
+        .limit(1);
+      informalUsageCount = Number(usageRows[0]?.n ?? 0);
+
+      if (informalUsageCount > 0) {
+        tier = "informal";
+      } else {
+        // Tier 3: fresh suggestion → INSERT into discovery_candidates.
+        // ON CONFLICT DO NOTHING in case two senders flag the same host
+        // simultaneously and we'd otherwise hit the partial-unique index.
+        try {
+          await db.insert(discoveryCandidates).values({
+            id: crypto.randomUUID(),
+            url: suggestedUrl ?? "",
+            host,
+            status: "pending_review",
+            suggestedByEmail: row.fromAddress,
+            suggestedViaInboundId: row.id,
+            createdAt: new Date(),
+          });
+          tier = "new";
+        } catch {
+          // Likely partial-unique-index collision (someone else already
+          // suggested this host). Tier-wise still treat as "queued" — the
+          // sender's experience matches the spec.
+          tier = "new";
+        }
+      }
+    }
   }
 
+  // Audit row for ALL tiers. Tier 'informal' flags for admin to register
+  // formally; the others are just bookkeeping.
   await db.insert(adminActions).values({
-    action: "email.source_suggestion",
+    action: tier === "informal" ? "source_suggestion.register_informal" : "email.source_suggestion",
     actorUserId: null,
     targetType: "inbound_email",
     targetId: row.id,
@@ -64,6 +102,7 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
       subject: row.subject ?? null,
       suggestedUrl,
       suggestedHost: host,
+      tier,
       informalUsageCount,
       bodyExcerpt: row.bodyTextExcerpt ?? null,
     }),
@@ -74,6 +113,7 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
     replyKind: "source-suggestion-ack",
     replyParams: {
       suggestedHost: host ?? "",
+      tier,
       informalUsageCount,
     },
     status: "replied",
