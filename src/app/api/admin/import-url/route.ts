@@ -267,7 +267,10 @@ export async function POST(request: NextRequest) {
       notes: sourceUrl ? `URL import: ${sourceUrl}` : "URL import",
     });
 
-    // Insert eventDays rows
+    // Insert eventDays rows. D1 caps each statement at 100 bound parameters;
+    // event_days rows pass up to 9 columns (8 explicit + the $defaultFn
+    // createdAt), so chunks are capped at 11 rows (11 × 9 = 99). See the
+    // admin event-edit PATCH handler for the full incident note.
     if (hasSpecificDates) {
       // Discontinuous: create eventDays from specificDates
       const days = event.specificDates!.map((dateStr, idx) => ({
@@ -280,7 +283,7 @@ export async function POST(request: NextRequest) {
         closed: false,
       }));
 
-      const BATCH_SIZE = 100;
+      const BATCH_SIZE = 11;
       for (let i = 0; i < days.length; i += BATCH_SIZE) {
         const batch = days.slice(i, i + BATCH_SIZE);
         await db.insert(eventDays).values(batch);
@@ -316,8 +319,8 @@ export async function POST(request: NextRequest) {
         current.setDate(current.getDate() + 1);
       }
 
-      // Batch insert to avoid SQLite variable limit (7 vars per row × 100 = 700 < 999)
-      const BATCH_SIZE = 100;
+      // Batch insert. Same 11-row cap as the discontinuous branch above.
+      const BATCH_SIZE = 11;
       for (let i = 0; i < days.length; i += BATCH_SIZE) {
         const batch = days.slice(i, i + BATCH_SIZE);
         await db.insert(eventDays).values(batch);

@@ -104,15 +104,22 @@ export async function syncContentLinks(
   const toDelete = existing.filter((r) => !refSet.has(existingKey(r)));
 
   if (toInsert.length > 0) {
-    await db.insert(contentLinks).values(
-      toInsert.map((r) => ({
-        sourceType: "BLOG_POST" as const,
-        sourceId: blogPostId,
-        targetType: r.targetType as ContentLinkTargetType,
-        targetSlug: r.targetSlug,
-        targetId: r.targetId,
-      }))
-    );
+    // D1 caps each statement at 100 bound parameters. content_links has 8
+    // columns (id and createdAt come from $defaultFn but Drizzle still emits
+    // them), so chunks are capped at 12 rows (12 × 8 = 96). A long blog post
+    // referencing 20+ entities used to silently throw "too many SQL variables"
+    // here — same root cause as the event_days data-loss bug.
+    const rows = toInsert.map((r) => ({
+      sourceType: "BLOG_POST" as const,
+      sourceId: blogPostId,
+      targetType: r.targetType as ContentLinkTargetType,
+      targetSlug: r.targetSlug,
+      targetId: r.targetId,
+    }));
+    const CONTENT_LINKS_CHUNK_SIZE = 12;
+    for (let i = 0; i < rows.length; i += CONTENT_LINKS_CHUNK_SIZE) {
+      await db.insert(contentLinks).values(rows.slice(i, i + CONTENT_LINKS_CHUNK_SIZE));
+    }
   }
 
   if (toDelete.length > 0) {
