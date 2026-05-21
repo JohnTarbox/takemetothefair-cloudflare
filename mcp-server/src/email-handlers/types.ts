@@ -34,6 +34,12 @@ export type ReplyKind =
   | "extract-failed"
   | "submit-failed"
   | "already-exists"
+  // Terminal fail emitted by the stale-sweep when a row's
+  // recovery_attempt_n exceeds the cap. Not produced by the workflow
+  // itself — sent directly from inbound-email-stale-sweep.ts after
+  // MAX_RECOVERY_ATTEMPTS deterministic failures, to break the recreate
+  // loop the docblock warns about. See drizzle/0082.
+  | "sweep-exceeded"
   // Post-review notification: fires when admin transitions a
   // submitter-attributed event from PENDING/TENTATIVE → APPROVED.
   // Not a handler reply — pushed onto EMAIL_JOBS by the approval-

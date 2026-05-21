@@ -327,6 +327,7 @@ const SCHEMA_SQL = `
     routed_to_workflow TEXT,
     flagged_for_review INTEGER NOT NULL DEFAULT 0,
     parent_email_id TEXT,
+    recovery_attempt_n INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
 

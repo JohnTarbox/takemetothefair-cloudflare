@@ -1297,6 +1297,14 @@ export const inboundEmails = sqliteTable(
     /** Multi-intent split linkage. NULL on normal + parent rows; for
      *  child rows, points to the parent's id (which has intent='multi'). */
     parentEmailId: text("parent_email_id"),
+    /** Number of times the stale-sweep has recreated this row's workflow.
+     *  Sweep increments on each Pattern-B recreate; after MAX_RECOVERY_ATTEMPTS
+     *  (3) the sweep marks the row terminally failed with
+     *  reply_kind='sweep-exceeded' instead of recreating — caps the
+     *  infinite-loop scenario the existing sweep docblock warns about
+     *  (root-caused 2026-05-19 hamxposition.org NonRetryableError loop).
+     *  Added drizzle/0082. */
+    recoveryAttemptN: integer("recovery_attempt_n").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
