@@ -45,7 +45,11 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Apply D1 migrations
-        run: npm run db:migrate:prod -- --yes
+        # wrangler d1 migrations apply doesn't accept --yes — its help text
+        # says the confirmation step is auto-skipped in CI/CD environments.
+        # PR-F shipped with `-- --yes` and failed the first deploy run with
+        # "Unknown argument: yes" (run 26233584752, 2026-05-21).
+        run: npm run db:migrate:prod
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
