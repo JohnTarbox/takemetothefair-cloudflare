@@ -104,7 +104,19 @@ ${SIGN_OFF}`;
       const eventName = (params.eventName as string | undefined) ?? "your event";
       const unsure = (params.unsureFields as string | undefined) ?? "";
       const unsureClause = unsure ? ` — specifically the ${unsure}` : "";
-      return `Thanks for submitting "${eventName}" to Meet Me at the Fair!
+      // When the extracted name itself is in the unsure list, don't quote
+      // it — quoting a dubious value back to the sender reads as "we're
+      // confident about this name even though we just said it's unsure"
+      // (e.g. AI extracted "Next Business Meeting" from a club homepage
+      // and listed event_name among the unsure fields, the original
+      // template said: "Thanks for submitting \"Next Business Meeting\"
+      // … the event name was hard to pin down"). Generic phrasing avoids
+      // the contradiction.
+      const nameIsUnsure = isNameUnsure(unsure);
+      const opening = nameIsUnsure
+        ? `Thanks for emailing Meet Me at the Fair about your event submission!`
+        : `Thanks for submitting "${eventName}" to Meet Me at the Fair!`;
+      return `${opening}
 
 We've captured your submission and our team will review it within 24 hours. A couple of details were a little hard to pin down${unsureClause}. If you can reply with anything we missed, it'll speed up the review.
 
@@ -120,7 +132,12 @@ ${SIGN_OFF}`;
       const eventName = (params.eventName as string | undefined) ?? "your event";
       const unsure = (params.unsureFields as string | undefined) ?? "";
       const unsureClause = unsure ? ` (we're not yet confident about: ${unsure})` : "";
-      return `Thanks for emailing Meet Me at the Fair about "${eventName}"!
+      // Same rule as ok-medium: don't quote a name we flagged as unsure.
+      const nameIsUnsure = isNameUnsure(unsure);
+      const opening = nameIsUnsure
+        ? `Thanks for emailing Meet Me at the Fair!`
+        : `Thanks for emailing Meet Me at the Fair about "${eventName}"!`;
+      return `${opening}
 
 We captured the basics${unsureClause}, but to make sure your event shows up correctly we need a few more details. Please reply with the date(s), venue name + address, and a short description of the event. Our team will review and publish once we have what we need.
 
@@ -339,4 +356,16 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * Whether the unsureFields list (a comma-separated string the workflow
+ * builds from summarizeUnsureFields) flags the event name as unsure.
+ * Matches the label string "event name" that summarizeUnsureFields emits
+ * for `name`. Loose match — also catches stray variants ("name", "event
+ * title") if those ever get added. Exported for unit tests.
+ */
+export function isNameUnsure(unsureFields: string): boolean {
+  if (!unsureFields) return false;
+  return /\bevent name\b|\bname\b|\btitle\b/i.test(unsureFields);
 }

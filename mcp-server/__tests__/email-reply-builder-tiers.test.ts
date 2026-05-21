@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildReply } from "../src/email-reply-builder.js";
+import { buildReply, isNameUnsure } from "../src/email-reply-builder.js";
 import { stripSignature } from "../src/email-handlers/submit.js";
 
 describe("buildReply — B3 confidence tiers", () => {
@@ -56,6 +56,68 @@ describe("buildReply — B3 confidence tiers", () => {
     // No "- specifically the " dangling phrase.
     expect(msg.text).not.toContain("specifically the .");
     expect(msg.text).not.toContain("specifically the  ");
+  });
+
+  // PR-L: don't quote the AI-extracted name back to the sender when we
+  // just flagged event_name as unsure. Reads as contradictory:
+  // "Thanks for submitting "Next Business Meeting" ... the event name was
+  // hard to pin down". The 2026-05-21 nobarc.org submission flagged this.
+  it("ok-medium uses generic opening when event name is unsure", () => {
+    const msg = buildReply("ok-medium", "sender@example.com", {
+      subject: "Test",
+      eventName: "Next Business Meeting", // dubious AI extraction
+      unsureFields: "event name, date, venue",
+    });
+    expect(msg.text).not.toContain(`"Next Business Meeting"`);
+    expect(msg.text).toContain("about your event submission");
+    // Still names the unsure fields in the clause.
+    expect(msg.text).toContain("specifically the event name, date, venue");
+  });
+
+  it("ok-medium keeps the quoted name when event name is NOT in unsureFields", () => {
+    const msg = buildReply("ok-medium", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "date, venue", // name not flagged
+    });
+    expect(msg.text).toContain(`"Holiday Fair"`);
+    expect(msg.text).not.toContain("about your event submission");
+  });
+
+  it("ok-low uses generic opening when event name is unsure", () => {
+    const msg = buildReply("ok-low", "sender@example.com", {
+      subject: "Test",
+      eventName: "Next Business Meeting",
+      unsureFields: "event name, date, venue",
+    });
+    expect(msg.text).not.toContain(`"Next Business Meeting"`);
+    // ok-low's no-name opening still says "Thanks for emailing Meet Me
+    // at the Fair!" but drops the "about X" phrase.
+    expect(msg.text).toContain("Thanks for emailing Meet Me at the Fair");
+    expect(msg.text).not.toContain('about "');
+  });
+});
+
+describe("isNameUnsure", () => {
+  it("returns true when 'event name' is in the list", () => {
+    expect(isNameUnsure("event name, date, venue")).toBe(true);
+  });
+  it("returns true when bare 'name' is in the list", () => {
+    expect(isNameUnsure("name, date")).toBe(true);
+  });
+  it("returns true when 'title' is in the list (defensive)", () => {
+    expect(isNameUnsure("title, venue")).toBe(true);
+  });
+  it("returns false when only date/venue are flagged", () => {
+    expect(isNameUnsure("date, venue")).toBe(false);
+  });
+  it("returns false for empty string", () => {
+    expect(isNameUnsure("")).toBe(false);
+  });
+  it("returns false for unrelated words (doesn't substring-match)", () => {
+    // "nameless" would substring-match a naive .includes("name") but
+    // \bname\b respects word boundaries.
+    expect(isNameUnsure("date, nameless venue")).toBe(false);
   });
 });
 
