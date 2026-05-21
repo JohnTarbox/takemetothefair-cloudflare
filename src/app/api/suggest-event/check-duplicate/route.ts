@@ -97,6 +97,10 @@ export async function POST(request: NextRequest) {
           name: events.name,
           startDate: events.startDate,
           status: events.status,
+          // Returned to the caller so the dedup-enrichment branch (B5
+          // Phase 1) can classify whether the incoming source is a
+          // higher tier than what's already on file. See src/lib/source-tier.ts.
+          sourceUrl: events.sourceUrl,
         })
         .from(events)
         .where(eq(events.sourceUrl, sourceUrl))
@@ -113,6 +117,7 @@ export async function POST(request: NextRequest) {
             name: exactMatch[0].name,
             startDate: exactMatch[0].startDate,
             status: exactMatch[0].status,
+            sourceUrl: exactMatch[0].sourceUrl,
           },
         });
       }
@@ -135,6 +140,7 @@ export async function POST(request: NextRequest) {
           name: events.name,
           startDate: events.startDate,
           status: events.status,
+          sourceUrl: events.sourceUrl,
         })
         .from(events)
         .where(and(gte(events.startDate, minDate), lte(events.startDate, maxDate)));
@@ -159,6 +165,7 @@ export async function POST(request: NextRequest) {
               name: event.name,
               startDate: event.startDate,
               status: event.status,
+              sourceUrl: event.sourceUrl,
             },
           });
         }

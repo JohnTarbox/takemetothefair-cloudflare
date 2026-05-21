@@ -56,8 +56,9 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
-import { inboundEmails } from "../schema.js";
+import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
+import { classifyDomainTier, isHigherTier } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";
@@ -733,6 +734,59 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     );
 
     if (dedup.isDuplicate && dedup.existingEventSlug) {
+      // B5 dedup-enrichment, Phase 1 (log-only). When the incoming source
+      // is a higher tier than the existing event's source_url, record an
+      // admin_actions audit row so we can review the would-have-enriched
+      // set over the first week of real traffic. Phase 2 flips the if-block
+      // to actually re-extract and overwrite the existing event's fields.
+      // Wrapped in its own step.do so a transient D1 hiccup on the audit
+      // write doesn't fail the whole already-exists reply path.
+      await step.do(
+        "submit/dedup-tier-audit",
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
+        async () => {
+          try {
+            const fromDomain = fromAddress.includes("@")
+              ? (fromAddress.split("@")[1]?.toLowerCase() ?? null)
+              : null;
+            const candidateTier = classifyDomainTier(extracted.url, {
+              contactEmailDomain: fromDomain,
+            });
+            const existingTier = classifyDomainTier(dedup.existingEventSourceUrl ?? null);
+            if (
+              dedup.existingEventId &&
+              isHigherTier(candidateTier, existingTier) &&
+              extracted.url
+            ) {
+              const db = getDb(this.env.DB);
+              await db.insert(adminActions).values({
+                action: "dedup.would_enrich",
+                actorUserId: null,
+                targetType: "event",
+                targetId: dedup.existingEventId,
+                payloadJson: JSON.stringify({
+                  matchType: dedup.matchType ?? "exact_url",
+                  existingSourceUrl: dedup.existingEventSourceUrl ?? null,
+                  existingTier,
+                  newSourceUrl: extracted.url,
+                  newTier: candidateTier,
+                  fromAddress,
+                }),
+                createdAt: new Date(),
+              });
+            }
+          } catch (err) {
+            // Non-fatal — Phase 1 is observation only. A failed audit
+            // write must not block the already-exists reply.
+            await logError(getDb(this.env.DB), {
+              source: "mcp:workflow:dedup-tier-audit",
+              message: "dedup.would_enrich audit write failed",
+              error: err,
+            });
+          }
+        }
+      );
+
       return {
         replyKind: "already-exists",
         replyParams: {

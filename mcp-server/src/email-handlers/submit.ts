@@ -143,6 +143,11 @@ export interface SubmitCheckDuplicateResult {
    *  matches just say "your submission is already in review" without
    *  linking — the public URL 404s until approval. */
   existingEventStatus?: string;
+  /** Existing event's source URL. Passed to the B5 dedup-enrichment
+   *  branch (Phase 1 log-only) so the workflow can classify whether the
+   *  incoming source is a higher tier than what's already on file.
+   *  See src/lib/source-tier.ts for the tier rules. */
+  existingEventSourceUrl?: string | null;
 }
 
 interface ExtractedEvent {
@@ -398,7 +403,13 @@ export async function submitCheckDuplicate(
         success: true;
         isDuplicate: boolean;
         matchType?: string;
-        existingEvent?: { id?: string; name?: string; slug?: string; status?: string };
+        existingEvent?: {
+          id?: string;
+          name?: string;
+          slug?: string;
+          status?: string;
+          sourceUrl?: string | null;
+        };
       }
     | { success: false; error: string }
     | null;
@@ -412,6 +423,7 @@ export async function submitCheckDuplicate(
     existingEventName: data.existingEvent?.name,
     existingEventSlug: data.existingEvent?.slug,
     existingEventStatus: data.existingEvent?.status,
+    existingEventSourceUrl: data.existingEvent?.sourceUrl ?? null,
   };
 }
 
