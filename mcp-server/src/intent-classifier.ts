@@ -87,8 +87,20 @@ export type ClassifierInput = {
   bodyText: string;
 };
 
-const AI_TIMEOUT_MS = 2500;
-const MODEL = "@cf/meta/llama-3.1-8b-instruct";
+// Bumped 2026-05-22 from 2500ms → 4000ms in conjunction with the
+// model swap below — gave the smaller 3B model more headroom rather
+// than tighter pressure, since the first 4 production runs already
+// produced one timeout-fallback on the previous 2500ms gate.
+const AI_TIMEOUT_MS = 4000;
+// 2026-05-22 swap: was @cf/meta/llama-3.1-8b-instruct. The 8B model is
+// overkill for a 9-class single-label intent classification — the same
+// model is used for full event JSON extraction (which actually needs
+// the larger context + structured-output reliability). The 3B variant
+// is materially faster + cheaper at acceptable accuracy for this task.
+// Bump CLASSIFIER_VERSION in intent-classifier-prompt.ts alongside any
+// model change so the D.1 accuracy dashboard can attribute trends to
+// the right model/prompt revision.
+const MODEL = "@cf/meta/llama-3.2-3b-instruct";
 
 /** Workers AI binding shape. We only call .run(); typed loosely so the
  *  caller can pass either the wrangler-injected `env.AI` binding or a

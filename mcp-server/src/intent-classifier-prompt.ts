@@ -11,8 +11,17 @@
  */
 
 /** Bumped any time the prompt OR the model binding changes. Stored on
- *  every classified inbound_emails row in classifier_version. */
-export const CLASSIFIER_VERSION = "c-2026-05-20-v1";
+ *  every classified inbound_emails row in classifier_version.
+ *
+ *  v1 (2026-05-20): @cf/meta/llama-3.1-8b-instruct, 2500ms timeout.
+ *  v2 (2026-05-22): @cf/meta/llama-3.2-3b-instruct, 4000ms timeout.
+ *    Smaller/faster model on a single-label classification task fits
+ *    the workload better — 8B was overkill, and the tight 2500ms
+ *    timeout already produced one `intent-classifier-timeout` fallback
+ *    in the first 4 production classifications. The 3B model with a
+ *    4s budget gives both more compute headroom and tighter median
+ *    latency. Prompt itself unchanged from v1. */
+export const CLASSIFIER_VERSION = "c-2026-05-22-v2";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —
