@@ -124,6 +124,28 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // B1: multi-URL submission. Workflow fanned out across N URLs and
+    // produced one reply summarizing all outcomes. resultsText is a
+    // newline-joined block built by the workflow (kept as a single
+    // string in replyParams to satisfy the JSON-serializable-primitive
+    // constraint on HandlerResult.replyParams).
+    case "ok-multi": {
+      const count = Number(params.eventCount ?? 0);
+      const resultsText = (params.resultsText as string | undefined) ?? "";
+      const overflowed = !!params.overflowed;
+      const overflowLine = overflowed
+        ? "\n\nNote: your email had more than 10 URLs — we processed the first 10. Reply with the remaining URLs and we'll handle those too."
+        : "";
+      return `Thanks for submitting ${count} event${count === 1 ? "" : "s"} to Meet Me at the Fair!
+
+${resultsText}
+
+Our team will review pending submissions within 24 hours.${overflowLine}
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     // B3: LOW confidence — extractor pulled a minimal event but most
     // critical fields are uncertain. PENDING event still created, but
     // the sender's reply (with date + venue + name) is essentially

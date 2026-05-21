@@ -36,6 +36,12 @@ export type ReplyKind =
   // sender-facing message differs.
   | "ok-medium"
   | "ok-low"
+  // B1 multi-URL: classifier returned sub_intent='multi_url'. Workflow
+  // ran fetch+extract+submit sequentially per URL and produced a single
+  // combined reply listing all per-URL outcomes (created, dedup-hit,
+  // failed-extract). One feedback widget for the batch — per-event
+  // widgets are a follow-up.
+  | "ok-multi"
   | "no-url"
   | "extract-failed"
   | "submit-failed"
