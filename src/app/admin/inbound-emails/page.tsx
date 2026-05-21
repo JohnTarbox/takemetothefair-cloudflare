@@ -360,6 +360,12 @@ export default function AdminInboundEmailsPage() {
                 </span>
               </span>
             ))}
+            <a
+              href="/admin/classifier-accuracy"
+              className="ml-1 text-xs text-blue-600 hover:underline"
+            >
+              weekly trend →
+            </a>
           </div>
         )}
       </div>
