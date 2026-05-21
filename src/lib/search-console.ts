@@ -18,6 +18,12 @@ function normalizeApiDate(raw: unknown): string | null {
 const SC_API_BASE = "https://searchconsole.googleapis.com/webmasters/v3";
 const SC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
 const SC_TOKEN_CACHE_KEY = "sc:access_token";
+// Write scope (full `webmasters`, not `.readonly`) is used only by the
+// sitemap-submit path. Tokens cache separately from the read token because
+// they're keyed by scope at the Google OAuth layer — sharing the cache key
+// would produce the wrong scope on cache hit.
+const SC_WRITE_SCOPE = "https://www.googleapis.com/auth/webmasters";
+const SC_WRITE_TOKEN_CACHE_KEY = "sc:access_token_write";
 const REPORT_CACHE_TTL = 900;
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -66,6 +72,19 @@ async function getAccessToken(env: ScEnv, skipCache: boolean): Promise<string> {
     return await getGoogleAccessToken(env, SC_SCOPE, {
       skipCache,
       cacheKey: SC_TOKEN_CACHE_KEY,
+    });
+  } catch (error) {
+    if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
+    if (error instanceof GoogleAuthError) throw new ScApiError(error.status, error.detail);
+    throw error;
+  }
+}
+
+async function getWriteAccessToken(env: ScEnv, skipCache: boolean): Promise<string> {
+  try {
+    return await getGoogleAccessToken(env, SC_WRITE_SCOPE, {
+      skipCache,
+      cacheKey: SC_WRITE_TOKEN_CACHE_KEY,
     });
   } catch (error) {
     if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
@@ -869,4 +888,104 @@ export async function inspectUrl(
     await kv.put(cacheKey, JSON.stringify(inspectionOutcome), { expirationTtl: 6 * 60 * 60 });
   }
   return inspectionOutcome;
+}
+
+export type SubmitSitemapResult = {
+  siteUrl: string;
+  feedpath: string;
+  submittedAt: string;
+};
+
+/**
+ * Validates that a sitemap URL belongs to the configured GSC property.
+ * GSC's API will 403 if the host doesn't match, so checking client-side
+ * surfaces a clearer, faster error and saves a round-trip plus token fetch.
+ *
+ * Allows exact host match for both URL-prefix and sc-domain: properties,
+ * plus subdomain match for sc-domain: properties (which cover the whole
+ * domain by definition).
+ */
+export function validateSitemapBelongsToProperty(siteUrl: string, sitemapUrl: string): void {
+  let host: string;
+  try {
+    host = new URL(sitemapUrl).hostname.toLowerCase();
+  } catch {
+    throw new ScConfigError(`Invalid sitemap URL: ${sitemapUrl}`);
+  }
+
+  if (siteUrl.startsWith("sc-domain:")) {
+    const expectedHost = siteUrl.slice("sc-domain:".length).toLowerCase();
+    if (host !== expectedHost && !host.endsWith(`.${expectedHost}`)) {
+      throw new ScConfigError(
+        `Sitemap URL host '${host}' does not belong to property 'sc-domain:${expectedHost}'.`
+      );
+    }
+    return;
+  }
+
+  let expectedHost: string;
+  try {
+    expectedHost = new URL(siteUrl).hostname.toLowerCase();
+  } catch {
+    throw new ScConfigError(`Invalid SC_SITE_URL property: ${siteUrl}`);
+  }
+  if (host !== expectedHost) {
+    throw new ScConfigError(
+      `Sitemap URL host '${host}' does not belong to property '${expectedHost}'.`
+    );
+  }
+}
+
+/**
+ * Submit (or resubmit) a sitemap URL to Google Search Console. Triggers a
+ * recrawl signal — Google fetches the sitemap soon after, typically within
+ * hours rather than the multi-day default recrawl cadence.
+ *
+ * Idempotent on the GSC side: if the sitemap is already known, this is a
+ * recrawl ping; if it's new, it gets registered. Either way returns 200.
+ *
+ * Requires the `webmasters` (full) OAuth scope — `.readonly` will 403.
+ * Service account must have Owner-level standing on the GSC property.
+ */
+export async function submitSitemap(env: ScEnv, sitemapUrl: string): Promise<SubmitSitemapResult> {
+  const siteUrl = resolveSiteUrl(env);
+  validateSitemapBelongsToProperty(siteUrl, sitemapUrl);
+
+  const token = await getWriteAccessToken(env, false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/sitemaps/${encodeURIComponent(sitemapUrl)}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "PUT",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail: string;
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message) {
+        detail = `HTTP ${res.status} ${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+      } else {
+        detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
+      }
+    } catch {
+      detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
+    }
+    throw new ScApiError(res.status, detail);
+  }
+
+  return {
+    siteUrl,
+    feedpath: sitemapUrl,
+    submittedAt: new Date().toISOString(),
+  };
 }
