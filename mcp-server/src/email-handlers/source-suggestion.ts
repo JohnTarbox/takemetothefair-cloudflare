@@ -4,18 +4,18 @@
  *
  * Three-tier lookup. First match wins:
  *
- *   Tier 1: discovery_candidates lookup. If we already track this host
+ *   Tier 1: email_source_suggestions lookup. If we already track this host
  *           with status='active', tell the sender we already use it.
  *           They get the polished "thanks, already on it" reply with no
  *           admin queue entry.
  *
  *   Tier 2: events.source_url LIKE check. If we have events sourced from
- *           this host (informal usage) but no discovery_candidates row,
+ *           this host (informal usage) but no email_source_suggestions row,
  *           tell the sender we use the source AND flag for admin to
  *           formally register it (admin_actions row tagged
  *           source_suggestion.register_informal).
  *
- *   Tier 3: Fresh suggestion → INSERT discovery_candidates row with
+ *   Tier 3: Fresh suggestion → INSERT email_source_suggestions row with
  *           status='pending_review'. Sender gets the "thanks, queued for
  *           review" reply. Partial-unique index on host means a second
  *           sender flagging the same host just collides harmlessly with
@@ -27,7 +27,7 @@
  * params.tier so the sender sees the right message.
  */
 
-import { adminActions, discoveryCandidates, events } from "../schema.js";
+import { adminActions, emailSourceSuggestions, events } from "../schema.js";
 import { getDb } from "../db.js";
 import { sql, like, eq, and } from "drizzle-orm";
 import type { HandlerFn, HandlerResult } from "./types.js";
@@ -47,9 +47,11 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
   if (host) {
     // Tier 1: already-registered source check.
     const existing = await db
-      .select({ id: discoveryCandidates.id, status: discoveryCandidates.status })
-      .from(discoveryCandidates)
-      .where(and(eq(discoveryCandidates.host, host), eq(discoveryCandidates.status, "active")))
+      .select({ id: emailSourceSuggestions.id, status: emailSourceSuggestions.status })
+      .from(emailSourceSuggestions)
+      .where(
+        and(eq(emailSourceSuggestions.host, host), eq(emailSourceSuggestions.status, "active"))
+      )
       .limit(1);
 
     if (existing.length > 0) {
@@ -66,11 +68,11 @@ export const handle: HandlerFn = async (env, _ctx, row): Promise<HandlerResult> 
       if (informalUsageCount > 0) {
         tier = "informal";
       } else {
-        // Tier 3: fresh suggestion → INSERT into discovery_candidates.
+        // Tier 3: fresh suggestion → INSERT into email_source_suggestions.
         // ON CONFLICT DO NOTHING in case two senders flag the same host
         // simultaneously and we'd otherwise hit the partial-unique index.
         try {
-          await db.insert(discoveryCandidates).values({
+          await db.insert(emailSourceSuggestions).values({
             id: crypto.randomUUID(),
             url: suggestedUrl ?? "",
             host,

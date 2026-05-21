@@ -1,18 +1,22 @@
 /**
- * GET /api/admin/discovery-candidates — list pending discovery-candidate
- * source suggestions for admin review.
+ * GET /api/admin/email-source-suggestions — list pending source-domain
+ * suggestions received via inbound email, for admin review.
  *
  * Backs the source_suggestion Tier-3 path (drizzle/0084). When a sender
  * emails us suggesting a website as an events source AND we don't already
  * pull from it (Tier 1) AND it's not informally used (Tier 2), the
  * handler INSERTs a row here for admin to evaluate. POST → approve|reject
  * transitions status off pending_review and writes an admin_actions audit row.
+ *
+ * Renamed from /api/admin/discovery-candidates in PR-F after the original
+ * `discovery_candidates` table name collided with a pre-existing prod
+ * table owned by a separate harvest-rules feature.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { adminActions, discoveryCandidates } from "@/lib/db/schema";
+import { adminActions, emailSourceSuggestions } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 
 export const runtime = "edge";
@@ -27,9 +31,9 @@ export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   const rows = await db
     .select()
-    .from(discoveryCandidates)
-    .where(eq(discoveryCandidates.status, statusFilter))
-    .orderBy(desc(discoveryCandidates.createdAt))
+    .from(emailSourceSuggestions)
+    .where(eq(emailSourceSuggestions.status, statusFilter))
+    .orderBy(desc(emailSourceSuggestions.createdAt))
     .limit(200);
 
   return NextResponse.json({
@@ -62,19 +66,19 @@ export async function POST(request: NextRequest) {
   const newStatus = body.action === "approve" ? "active" : "rejected";
   const db = getCloudflareDb();
   await db
-    .update(discoveryCandidates)
+    .update(emailSourceSuggestions)
     .set({
       status: newStatus,
       reviewedAt: new Date(),
       reviewedByUserId: session.user.id,
       adminNotes: body.notes ?? null,
     })
-    .where(eq(discoveryCandidates.id, body.id));
+    .where(eq(emailSourceSuggestions.id, body.id));
 
   await db.insert(adminActions).values({
-    action: `discovery_candidate.${body.action}`,
+    action: `email_source_suggestion.${body.action}`,
     actorUserId: session.user.id,
-    targetType: "discovery_candidate",
+    targetType: "email_source_suggestion",
     targetId: body.id,
     payloadJson: JSON.stringify({ notes: body.notes ?? null }),
     createdAt: new Date(),
