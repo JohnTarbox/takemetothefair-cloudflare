@@ -46,6 +46,7 @@ import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
+import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
@@ -79,6 +80,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Outbox drainer for the defer_search_ping flag — fires one batched
   // IndexNow call instead of N inline pings after a bulk ingestion run.
   registerFlushPendingSearchPingsTool(server, db, auth, env);
+
+  // Google Search Console sitemap resubmit. Pairs with the post-bulk-
+  // ingest workflow — nudges Google to recrawl a sitemap ahead of its
+  // default multi-day cadence.
+  registerSitemapResubmitTool(server, db, auth, env);
 
   // Sender-quality + trust annotation for inbound email submissions
   // (drizzle/0075). Adds get_email_submitter_quality (read) and
