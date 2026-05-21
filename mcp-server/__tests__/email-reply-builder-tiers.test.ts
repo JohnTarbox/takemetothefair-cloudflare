@@ -140,6 +140,51 @@ describe("buildReply — B3 confidence tiers", () => {
     expect(msg.text).toContain("Thanks for submitting 1 event ");
     expect(msg.text).not.toContain("1 events");
   });
+
+  // PR-N B4: ok-medium / ok-low embed correction-form URL when present.
+  it("ok-medium embeds correction form URL when correctionFormUrl is set", () => {
+    const msg = buildReply("ok-medium", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "date, venue",
+      correctionFormUrl: "https://meetmeatthefair.com/submit-event/abc123",
+    });
+    expect(msg.text).toContain("https://meetmeatthefair.com/submit-event/abc123");
+    expect(msg.text).toContain("use this form");
+    expect(msg.text).not.toContain("reply with anything we missed");
+  });
+
+  it("ok-medium falls back to reply-with-corrections prose when no form URL", () => {
+    const msg = buildReply("ok-medium", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "date, venue",
+    });
+    expect(msg.text).toContain("reply with anything we missed");
+    expect(msg.text).not.toContain("submit-event/");
+  });
+
+  it("ok-low embeds correction form URL when correctionFormUrl is set", () => {
+    const msg = buildReply("ok-low", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "event name, date, venue",
+      correctionFormUrl: "https://meetmeatthefair.com/submit-event/xyz789",
+    });
+    expect(msg.text).toContain("https://meetmeatthefair.com/submit-event/xyz789");
+    expect(msg.text).toContain("Please fill in the missing details using this form");
+    expect(msg.text).not.toContain("Please reply with the date(s)");
+  });
+
+  it("ok-low falls back to prose ask when no form URL", () => {
+    const msg = buildReply("ok-low", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "date, venue",
+    });
+    expect(msg.text).toContain("Please reply with the date(s)");
+    expect(msg.text).not.toContain("submit-event/");
+  });
 });
 
 describe("isNameUnsure", () => {

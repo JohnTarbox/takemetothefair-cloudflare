@@ -1425,6 +1425,33 @@ export const emailSourceSuggestions = sqliteTable(
 
 export type EmailSourceSuggestion = typeof emailSourceSuggestions.$inferSelect;
 
+// B4: single-use tokens backing the pre-filled correction form sent in
+// MEDIUM/LOW confidence email replies. See drizzle/0085. Sender clicks
+// link in reply email → GET /submit-event/<token> renders edit form
+// pre-filled with event fields → POST corrects the event + marks used.
+// 30-day expiry; one-time use.
+export const submissionCorrectionTokens = sqliteTable(
+  "submission_correction_tokens",
+  {
+    token: text("token").primaryKey(),
+    eventId: text("event_id").notNull(),
+    /** Inbound email that produced this token. Useful for the admin UI
+     *  to backlink "this event was corrected via inbound 2f5f0c74". */
+    inboundEmailId: text("inbound_email_id").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    usedAt: integer("used_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [
+    index("idx_submission_correction_tokens_event").on(t.eventId),
+    index("idx_submission_correction_tokens_expires")
+      .on(t.expiresAt)
+      .where(sql`used_at IS NULL`),
+  ]
+);
+
+export type SubmissionCorrectionToken = typeof submissionCorrectionTokens.$inferSelect;
+
 // Operator-set trust annotation for email senders. Read-side surfaces on
 // /admin/inbound-emails sender summary panel; write via the
 // set_email_sender_trust MCP tool. trust_status values: unknown (default),
