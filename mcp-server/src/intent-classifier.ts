@@ -87,20 +87,35 @@ export type ClassifierInput = {
   bodyText: string;
 };
 
-// Bumped 2026-05-22 from 2500ms → 4000ms in conjunction with the
-// model swap below — gave the smaller 3B model more headroom rather
-// than tighter pressure, since the first 4 production runs already
-// produced one timeout-fallback on the previous 2500ms gate.
+// History:
+//   2500ms (v1, 2026-05-20) — initial 8B model.
+//   4000ms (v2, 2026-05-22) — bumped with 3B model swap.
+//   4000ms (v3, 2026-05-21) — reverted to 8B; kept the 4000ms budget
+//     because higher headroom is a clean cost. 8B median latency at our
+//     usage is well under 2000ms but tail can spike.
 const AI_TIMEOUT_MS = 4000;
-// 2026-05-22 swap: was @cf/meta/llama-3.1-8b-instruct. The 8B model is
-// overkill for a 9-class single-label intent classification — the same
-// model is used for full event JSON extraction (which actually needs
-// the larger context + structured-output reliability). The 3B variant
-// is materially faster + cheaper at acceptable accuracy for this task.
-// Bump CLASSIFIER_VERSION in intent-classifier-prompt.ts alongside any
-// model change so the D.1 accuracy dashboard can attribute trends to
-// the right model/prompt revision.
-const MODEL = "@cf/meta/llama-3.2-3b-instruct";
+// Model history:
+//   v1 (2026-05-20): @cf/meta/llama-3.1-8b-instruct — initial choice.
+//     Worked correctly: returned { response: <plain JSON string> } that
+//     parseClassifierResponse could consume directly.
+//   v2 (2026-05-22): @cf/meta/llama-3.2-3b-instruct — swapped on the
+//     theory that 8B was overkill for a 9-class single-label task and
+//     3B would be faster/cheaper. In practice the 3B model returned
+//     `.response` as a non-string (likely a structured-output array or
+//     tool-call shape — the exact format wasn't traced), which crashed
+//     parseClassifierResponse on `.replace`. Hotfix PR-H added a typeof
+//     guard so the crash degrades cleanly, but every email since the
+//     swap was routing with classified_rationale='classifier-no-json'
+//     and falling back to address-only — the classifier intelligence
+//     feature was effectively dark.
+//   v3 (2026-05-21, this revert): back to 8B. Trade-off: 8B is a bit
+//     slower + costlier per call than 3B, but it actually works at the
+//     given prompt. Until we have time to trace the 3B response shape
+//     and tune the prompt to coerce plain-JSON output, 8B is the right
+//     answer. Bump CLASSIFIER_VERSION in intent-classifier-prompt.ts
+//     alongside any model change so the D.1 accuracy dashboard can
+//     attribute trends to the right model/prompt revision.
+const MODEL = "@cf/meta/llama-3.1-8b-instruct";
 
 /** Workers AI binding shape. We only call .run(); typed loosely so the
  *  caller can pass either the wrangler-injected `env.AI` binding or a
