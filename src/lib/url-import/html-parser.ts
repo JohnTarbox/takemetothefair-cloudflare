@@ -115,28 +115,25 @@ export function extractMetadata(html: string): PageMetadata {
     try {
       const jsonData = JSON.parse(match[1].trim());
 
-      // Look for Event schema
-      if (jsonData["@type"] === "Event" || jsonData["@type"]?.includes("Event")) {
+      // Look for Event schema (bare object)
+      if (isEventSchema(jsonData)) {
         metadata.jsonLd = jsonData;
         break;
       }
 
-      // Check if it's an array of schemas
+      // Array of schemas (some sites emit one <script> per type)
       if (Array.isArray(jsonData)) {
-        const eventSchema = jsonData.find(
-          (item) => item["@type"] === "Event" || item["@type"]?.includes("Event")
-        );
+        const eventSchema = jsonData.find((item) => isEventSchema(item));
         if (eventSchema) {
           metadata.jsonLd = eventSchema;
           break;
         }
       }
 
-      // Check for @graph pattern
+      // @graph pattern (WordPress plugins like Yoast SEO use this)
       if (jsonData["@graph"] && Array.isArray(jsonData["@graph"])) {
-        const eventSchema = jsonData["@graph"].find(
-          (item: Record<string, unknown>) =>
-            item["@type"] === "Event" || (item["@type"] as string[])?.includes?.("Event")
+        const eventSchema = jsonData["@graph"].find((item: Record<string, unknown>) =>
+          isEventSchema(item)
         );
         if (eventSchema) {
           metadata.jsonLd = eventSchema;
@@ -149,6 +146,58 @@ export function extractMetadata(html: string): PageMetadata {
   }
 
   return metadata;
+}
+
+/**
+ * Schema.org Event types we treat as event-bearing. Subset of the full
+ * Event subclass tree — covers the WordPress plugin output we see most
+ * often (The Events Calendar, EventOn, Events Manager all emit one of
+ * these) without the niche types (CourseInstance, DeliveryEvent, etc.)
+ * that are unlikely to be a fair / market submission.
+ */
+const EVENT_SCHEMA_TYPES = new Set([
+  "Event",
+  "BusinessEvent",
+  "ChildrensEvent",
+  "ComedyEvent",
+  "DanceEvent",
+  "EducationEvent",
+  "ExhibitionEvent",
+  "Festival",
+  "FoodEvent",
+  "Hackathon",
+  "LiteraryEvent",
+  "MusicEvent",
+  "SaleEvent",
+  "ScreeningEvent",
+  "SocialEvent",
+  "SportsEvent",
+  "TheaterEvent",
+  "VisualArtsEvent",
+]);
+
+/**
+ * Does this JSON-LD node represent an Event we can extract from? Tolerates:
+ *   - @type: "Event" (string)
+ *   - @type: ["Event", "MusicEvent"] (array — schema.org allows multi-typing)
+ *   - @type: "schema:Event" (rare prefixed form)
+ * Doesn't fire on accidental substrings like "EventReservation" — the
+ * older `.includes("Event")` heuristic in this file was vulnerable to that.
+ */
+function isEventSchema(node: unknown): node is Record<string, unknown> {
+  if (!node || typeof node !== "object") return false;
+  const t = (node as Record<string, unknown>)["@type"];
+  if (typeof t === "string") {
+    return EVENT_SCHEMA_TYPES.has(stripSchemaPrefix(t));
+  }
+  if (Array.isArray(t)) {
+    return t.some((x) => typeof x === "string" && EVENT_SCHEMA_TYPES.has(stripSchemaPrefix(x)));
+  }
+  return false;
+}
+
+function stripSchemaPrefix(t: string): string {
+  return t.replace(/^schema:/i, "");
 }
 
 /**

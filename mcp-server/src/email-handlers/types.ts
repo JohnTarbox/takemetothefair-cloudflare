@@ -96,6 +96,11 @@ export interface HandlerResult {
    *  null/undefined for other intents (no fetch happens). Persisted to
    *  inbound_emails.fetch_method at mark-done. See drizzle/0078. */
   fetchMethod?: "standard" | "browser-rendering" | "failed" | null;
+  /** Which extraction strategy produced the event. Only set for submit
+   *  intent; null/undefined for other intents (no extraction happens).
+   *  Persisted to inbound_emails.extraction_method at mark-done. See
+   *  drizzle/0083. */
+  extractionMethod?: "json-ld" | "ai" | "free-text" | "mixed" | null;
 }
 
 /**

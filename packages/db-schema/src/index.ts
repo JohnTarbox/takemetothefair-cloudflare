@@ -1265,6 +1265,16 @@ export const inboundEmails = sqliteTable(
      *  - `'failed'`             — both paths failed; row has status='failed'
      *  NULL on pre-A5 rows. */
     fetchMethod: text("fetch_method"),
+    /** Which extraction strategy produced the event:
+     *  - `'json-ld'`   — Event-schema JSON-LD on the page was complete enough
+     *                     to populate ExtractedEventData directly; Workers AI
+     *                     was NOT called for this row. Added drizzle/0083.
+     *  - `'ai'`        — Workers AI Llama 3.1 8B extracted from page prose.
+     *  - `'free-text'` — No URL in the email; AI extracted directly from body
+     *                     text. Reserved for the free-text branch.
+     *  - `'mixed'`     — Partial JSON-LD + AI top-up. Reserved.
+     *  NULL on rows from before PR-B shipped. */
+    extractionMethod: text("extraction_method"),
     // ----- Phase C.1 classifier columns (drizzle/0079) -----
     /** LLM-predicted intent from the 9-value taxonomy. NULL on pre-
      *  classifier rows OR when the entrypoint took the trusted_fastpath. */

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareAi, getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
-import type { PageMetadata } from "@/lib/url-import/types";
+import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
+import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -51,9 +52,38 @@ export async function POST(request: NextRequest) {
 
     const { content, url, metadata } = validation.data;
 
-    const ai = getCloudflareAi();
+    // JSON-LD priority extraction: if the fetched page emitted a complete-
+    // enough schema.org Event node, skip the AI call entirely and return
+    // the JSON-LD-derived event. JSON-LD is authoritative on these pages
+    // (WordPress events plugins, venue CMSes); the AI just paraphrases the
+    // same content from prose, often with worse fidelity. Bypass kicks in
+    // when the mapper returns non-null (name + startDate + at least one of
+    // {location, description}); otherwise we fall through to AI.
+    if (metadata?.jsonLd) {
+      const jsonLdEvent = tryExtractFromJsonLd(metadata.jsonLd);
+      if (jsonLdEvent) {
+        const extractId = `jsonld-${Date.now()}-0`;
+        const event: ExtractedEvent = { ...jsonLdEvent, _extractId: extractId };
+        // Every populated field gets "high" confidence: schema.org Event is
+        // the authoritative source on the page. Nulls get "low" — the
+        // mapper already gates on name+startDate+one-of-{location,desc} so
+        // most events have ≥3 high fields.
+        const confidence: Record<string, "high" | "medium" | "low"> = {};
+        for (const [key, value] of Object.entries(event)) {
+          if (key.startsWith("_")) continue;
+          confidence[key] = value === null || value === undefined ? "low" : "high";
+        }
+        return NextResponse.json({
+          success: true,
+          events: [event],
+          confidence: { [extractId]: confidence },
+          count: 1,
+          extractionMethod: "json-ld",
+        });
+      }
+    }
 
-    // Debug logging removed for production
+    const ai = getCloudflareAi();
 
     // Call AI extraction for multiple events
     const { events, confidence } = await extractMultipleEvents(
@@ -76,6 +106,7 @@ export async function POST(request: NextRequest) {
       events,
       confidence,
       count: events.length,
+      extractionMethod: "ai",
     });
   } catch (error) {
     await logError(db, {

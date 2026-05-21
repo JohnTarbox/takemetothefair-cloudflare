@@ -64,6 +64,12 @@ export interface SubmitFetchResult {
 export interface SubmitExtractResult {
   url: string;
   event: ExtractedEvent;
+  /** Which extraction strategy produced the event on the main app:
+   *  'json-ld' when the page's schema.org Event JSON-LD was complete
+   *  enough to skip the AI call entirely; 'ai' on the normal AI-extract
+   *  path. Forwarded to the workflow's mark-done step which persists it
+   *  to inbound_emails.extraction_method (drizzle/0083). */
+  extractionMethod: "json-ld" | "ai";
 }
 
 export interface SubmitEventResult {
@@ -205,7 +211,12 @@ export async function submitExtract(
     throw new NonRetryableError(`extract-${res.status}`);
   }
   const body = (await res.json().catch(() => null)) as
-    | { success: true; events: ExtractedEvent[]; count: number }
+    | {
+        success: true;
+        events: ExtractedEvent[];
+        count: number;
+        extractionMethod?: "json-ld" | "ai";
+      }
     | { success: false; error: string }
     | null;
   if (!body || !body.success || body.events.length === 0) {
@@ -213,7 +224,13 @@ export async function submitExtract(
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
     throw new NonRetryableError(`extract-upstream: ${upstream}`);
   }
-  return { url: fetched.url, event: body.events[0] };
+  // Default to 'ai' for the (rare) case where the main app is on an older
+  // deploy that doesn't return the field. Matches the pre-PR-B behavior.
+  return {
+    url: fetched.url,
+    event: body.events[0],
+    extractionMethod: body.extractionMethod ?? "ai",
+  };
 }
 
 /**
