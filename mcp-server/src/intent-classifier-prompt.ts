@@ -15,13 +15,16 @@
  *
  *  v1 (2026-05-20): @cf/meta/llama-3.1-8b-instruct, 2500ms timeout.
  *  v2 (2026-05-22): @cf/meta/llama-3.2-3b-instruct, 4000ms timeout.
- *    Smaller/faster model on a single-label classification task fits
- *    the workload better — 8B was overkill, and the tight 2500ms
- *    timeout already produced one `intent-classifier-timeout` fallback
- *    in the first 4 production classifications. The 3B model with a
- *    4s budget gives both more compute headroom and tighter median
- *    latency. Prompt itself unchanged from v1. */
-export const CLASSIFIER_VERSION = "c-2026-05-22-v2";
+ *    Swapped on the theory that 8B was overkill for a 9-class task,
+ *    but in production 3B returned non-string `.response` shapes that
+ *    crashed parseClassifierResponse. Hotfix PR-H caught the crash but
+ *    the classifier still returned classifier-no-json on every email —
+ *    feature was dark.
+ *  v3 (2026-05-21): reverted to @cf/meta/llama-3.1-8b-instruct, 4000ms.
+ *    8B is known to work at this prompt. Open follow-up: trace 3B's
+ *    response shape and decide whether to tune the prompt for it (cost
+ *    win), or keep 8B (correctness win). Prompt itself unchanged. */
+export const CLASSIFIER_VERSION = "c-2026-05-21-v3";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —
