@@ -385,6 +385,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             // rather than blocking the reply.
             const RECEIPT_WIDGET_KINDS: ReplyKind[] = [
               "ok",
+              // PR-E B3 confidence-aware variants of ok — both deserve the
+              // widget the same way "ok" does. Missing from the original
+              // PR-E patch (caught in prod 2026-05-21 16:18 UTC when an
+              // ok-medium reply went out without voting links).
+              "ok-medium",
+              "ok-low",
               "no-url",
               "already-exists",
               "extract-failed",
