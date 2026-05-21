@@ -144,10 +144,22 @@ export async function classifyIntent(
         setTimeout(() => reject(new Error("intent-classifier-timeout")), AI_TIMEOUT_MS)
       ),
     ]);
-    aiResponseText =
-      typeof raceResult === "string"
-        ? raceResult
-        : (raceResult as { response?: string }).response || "";
+    // Cloudflare Workers AI's response shape varies by model. llama-3.1-8b
+    // returns `{ response: string }` reliably. llama-3.2-3b sometimes
+    // returns `response` as a NON-string (object with tool-call shapes,
+    // structured-output array, etc.) and the previous `.response || ""`
+    // fallback would propagate the non-string through, crashing later
+    // on `raw.replace` inside parseClassifierResponse.
+    //
+    // Caught in production 2026-05-21 15:54 UTC: a two-URL inbound email
+    // failed at the entrypoint with `raw2.replace is not a function`,
+    // dropping the email entirely (no inbound_emails row inserted).
+    // typeof-gate added to coerce non-string responses to "" so the
+    // downstream JSON-parse path's existing fallbacks ("classifier-no-json")
+    // kick in instead of crashing.
+    const rawResponse =
+      typeof raceResult === "string" ? raceResult : (raceResult as { response?: unknown }).response;
+    aiResponseText = typeof rawResponse === "string" ? rawResponse : "";
   } catch (err) {
     return {
       intents: [

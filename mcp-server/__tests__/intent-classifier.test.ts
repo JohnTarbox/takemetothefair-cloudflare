@@ -182,6 +182,39 @@ describe("classifyIntent — fail-safe integration", () => {
     expect(result.fromAi).toBe(true);
     expect(result.intents[0].intent).toBe("unclear");
   });
+
+  // PR-H regression guard: production incident 2026-05-21 15:54 UTC.
+  // llama-3.2-3b returned `{ response: <non-string object> }` and the
+  // previous `.response || ""` fallback let it through; downstream
+  // `raw.replace` crashed and dropped the entire email (no inbound_emails
+  // row inserted, sender got no auto-reply). PR-H added a typeof gate.
+  it("returns unclear fallback when AI response.response is not a string (object)", async () => {
+    const ai: AiBinding = {
+      run: vi.fn().mockResolvedValue({ response: { unexpected: "object instead of string" } }),
+    };
+    const result = await classifyIntent(ai, SAMPLE_INPUT);
+    expect(result.fromAi).toBe(true);
+    expect(result.intents[0].intent).toBe("unclear");
+    // Must NOT throw — that's what the production crash was.
+  });
+
+  it("returns unclear fallback when AI response.response is missing entirely", async () => {
+    const ai: AiBinding = {
+      run: vi.fn().mockResolvedValue({ output: "something else, no .response field" }),
+    };
+    const result = await classifyIntent(ai, SAMPLE_INPUT);
+    expect(result.fromAi).toBe(true);
+    expect(result.intents[0].intent).toBe("unclear");
+  });
+
+  it("returns unclear fallback when AI response.response is an array", async () => {
+    const ai: AiBinding = {
+      run: vi.fn().mockResolvedValue({ response: ["array", "instead", "of", "string"] }),
+    };
+    const result = await classifyIntent(ai, SAMPLE_INPUT);
+    expect(result.fromAi).toBe(true);
+    expect(result.intents[0].intent).toBe("unclear");
+  });
 });
 
 // Spec §"Canonical test cases" — 12 single-intent + 4 multi-intent.
