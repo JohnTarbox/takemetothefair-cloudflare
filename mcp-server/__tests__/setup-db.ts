@@ -355,6 +355,17 @@ const SCHEMA_SQL = `
   CREATE UNIQUE INDEX uq_email_source_suggestions_pending_host
     ON email_source_suggestions (host)
     WHERE status = 'pending_review';
+
+  CREATE TABLE submission_correction_tokens (
+    token TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    inbound_email_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_submission_correction_tokens_event
+    ON submission_correction_tokens (event_id);
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {

@@ -77,6 +77,7 @@ import {
 } from "../email-handlers/submit.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
+import { issueCorrectionToken } from "../correction-tokens.js";
 
 export type InboundEmailParams = {
   messageRowId: string;
@@ -421,6 +422,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
                   level: "warn",
                   source: SOURCE,
                   message: "failed to issue receipt feedback token; widget omitted",
+                  error: err,
+                  sessionId,
+                  context: { messageRowId, replyKind },
+                });
+              }
+            }
+
+            // B4 (PR-N): for confidence-uncertain replies that resolved
+            // to a real PENDING event, issue a correction token and embed
+            // its form URL in the reply. Better UX than asking the
+            // sender to write corrections in prose. Only ok-medium and
+            // ok-low get this — ok (HIGH) doesn't need it, the negative-
+            // outcome kinds (no-url / extract-failed / submit-failed)
+            // don't have an event to correct.
+            const NEEDS_CORRECTION_FORM: ReplyKind[] = ["ok-medium", "ok-low"];
+            if (NEEDS_CORRECTION_FORM.includes(replyKind) && result.resultingEventId) {
+              try {
+                const correctionToken = await issueCorrectionToken(db, {
+                  eventId: result.resultingEventId,
+                  inboundEmailId: messageRowId,
+                });
+                params = {
+                  ...params,
+                  correctionFormUrl: `https://meetmeatthefair.com/submit-event/${encodeURIComponent(correctionToken)}`,
+                };
+              } catch (err) {
+                // Best-effort: failing to issue the token shouldn't block
+                // the reply. Sender just won't see the form link in the
+                // email; they can still reply with corrections.
+                await logError(this.env.DB, {
+                  level: "warn",
+                  source: SOURCE,
+                  message: "failed to issue correction token; form link omitted",
                   error: err,
                   sessionId,
                   context: { messageRowId, replyKind },

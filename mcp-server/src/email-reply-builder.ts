@@ -104,6 +104,7 @@ ${SIGN_OFF}`;
       const eventName = (params.eventName as string | undefined) ?? "your event";
       const unsure = (params.unsureFields as string | undefined) ?? "";
       const unsureClause = unsure ? ` — specifically the ${unsure}` : "";
+      const correctionFormUrl = (params.correctionFormUrl as string | undefined) ?? "";
       // When the extracted name itself is in the unsure list, don't quote
       // it — quoting a dubious value back to the sender reads as "we're
       // confident about this name even though we just said it's unsure"
@@ -116,9 +117,15 @@ ${SIGN_OFF}`;
       const opening = nameIsUnsure
         ? `Thanks for emailing Meet Me at the Fair about your event submission!`
         : `Thanks for submitting "${eventName}" to Meet Me at the Fair!`;
+      // PR-N B4: when a correction form URL is available, prefer it to
+      // the "reply with corrections" prose ask — much higher completion
+      // rate than free-text-reply correction.
+      const correctionAsk = correctionFormUrl
+        ? `If you can correct anything we missed, use this form (link valid for 30 days):\n${correctionFormUrl}`
+        : `If you can reply with anything we missed, it'll speed up the review.`;
       return `${opening}
 
-We've captured your submission and our team will review it within 24 hours. A couple of details were a little hard to pin down${unsureClause}. If you can reply with anything we missed, it'll speed up the review.
+We've captured your submission and our team will review it within 24 hours. A couple of details were a little hard to pin down${unsureClause}. ${correctionAsk}
 
 ${SUPPORT_LINE}
 
@@ -154,14 +161,21 @@ ${SIGN_OFF}`;
       const eventName = (params.eventName as string | undefined) ?? "your event";
       const unsure = (params.unsureFields as string | undefined) ?? "";
       const unsureClause = unsure ? ` (we're not yet confident about: ${unsure})` : "";
+      const correctionFormUrl = (params.correctionFormUrl as string | undefined) ?? "";
       // Same rule as ok-medium: don't quote a name we flagged as unsure.
       const nameIsUnsure = isNameUnsure(unsure);
       const opening = nameIsUnsure
         ? `Thanks for emailing Meet Me at the Fair!`
         : `Thanks for emailing Meet Me at the Fair about "${eventName}"!`;
+      // PR-N B4: prefer the form when available. The prose ask stays as
+      // the fallback (workflow may fail to issue the token; the reply
+      // still needs to ask for corrections in that case).
+      const correctionAsk = correctionFormUrl
+        ? `Please fill in the missing details using this form (link valid for 30 days):\n${correctionFormUrl}`
+        : `Please reply with the date(s), venue name + address, and a short description of the event.`;
       return `${opening}
 
-We captured the basics${unsureClause}, but to make sure your event shows up correctly we need a few more details. Please reply with the date(s), venue name + address, and a short description of the event. Our team will review and publish once we have what we need.
+We captured the basics${unsureClause}, but to make sure your event shows up correctly we need a few more details. ${correctionAsk} Our team will review and publish once we have what we need.
 
 ${SUPPORT_LINE}
 
