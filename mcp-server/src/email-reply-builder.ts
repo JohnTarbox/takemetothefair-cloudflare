@@ -249,7 +249,7 @@ ${SIGN_OFF}`;
       const tier = (params.tier as string | undefined) ?? "";
       const hostLine = host ? ` (${host})` : "";
 
-      // Tier 1: already registered as an active source via discovery_candidates.
+      // Tier 1: already registered as an active source via email_source_suggestions.
       if (tier === "registered") {
         return `Thanks for the source suggestion!
 

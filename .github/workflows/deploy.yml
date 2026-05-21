@@ -10,7 +10,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # D1 migrations must apply BEFORE either the Pages or MCP Worker deploy
+  # so the new code never runs against an old schema. Added 2026-05-21
+  # after PR-D's drizzle/0084 collision incident — three migrations
+  # (0082/0083/0084) had been merged but never applied because this
+  # workflow had no migration step at all.
+  #
+  # Idempotent: `wrangler d1 migrations apply` skips any migration whose
+  # filename is already recorded in d1_migrations. Safe to re-run on every
+  # push to main, even when no migration files changed.
+  d1-migrate:
+    name: Apply D1 migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply D1 migrations
+        run: npm run db:migrate:prod -- --yes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
   deploy-pages:
+    needs: d1-migrate
     name: Build & Deploy Main App (Pages)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -56,6 +97,7 @@ jobs:
           command: pages deploy .vercel/output/static --project-name=takemetothefair --branch=main --commit-dirty=true
 
   deploy-mcp-server:
+    needs: d1-migrate
     name: Build & Deploy MCP Server (Worker)
     runs-on: ubuntu-latest
     timeout-minutes: 15

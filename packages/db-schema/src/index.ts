@@ -1380,12 +1380,20 @@ export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
 export type CompetitorDomain = typeof competitorDomains.$inferSelect;
 export type InboundEmail = typeof inboundEmails.$inferSelect;
 
-// Registry of source domains. Backs the 3-tier source_suggestion handler
-// in mcp-server (spec §C.8 / drizzle/0084). Sender emails us pointing at
-// a website as an events source → Tier 1 (this table) or Tier 2 (informal
-// events.source_url match) or Tier 3 (INSERT new pending_review row).
-export const discoveryCandidates = sqliteTable(
-  "discovery_candidates",
+// Registry of source domains suggested via inbound email. Backs the
+// 3-tier source_suggestion handler in mcp-server (spec §C.8 /
+// drizzle/0084). Sender emails us pointing at a website as an events
+// source → Tier 1 (this table) or Tier 2 (informal events.source_url
+// match) or Tier 3 (INSERT new pending_review row).
+//
+// **Naming history**: originally called `discovery_candidates` in PR-D
+// (drizzle/0084), but that name collided with a pre-existing prod table
+// of the same name owned by a separate harvest-rules feature. Renamed
+// to `email_source_suggestions` in PR-F before any prod migration was
+// applied, so no rename-data-migration is needed — drizzle/0084 was
+// modified in place to create the renamed table.
+export const emailSourceSuggestions = sqliteTable(
+  "email_source_suggestions",
   {
     id: text("id").primaryKey(),
     url: text("url").notNull(),
@@ -1405,17 +1413,17 @@ export const discoveryCandidates = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
-    index("idx_discovery_candidates_host").on(t.host),
-    index("idx_discovery_candidates_status").on(t.status),
+    index("idx_email_source_suggestions_host").on(t.host),
+    index("idx_email_source_suggestions_status").on(t.status),
     // One pending suggestion per host — multiple senders flagging the
     // same domain pile into one row instead of spawning a duplicate queue.
-    uniqueIndex("uq_discovery_candidates_pending_host")
+    uniqueIndex("uq_email_source_suggestions_pending_host")
       .on(t.host)
       .where(sql`status = 'pending_review'`),
   ]
 );
 
-export type DiscoveryCandidate = typeof discoveryCandidates.$inferSelect;
+export type EmailSourceSuggestion = typeof emailSourceSuggestions.$inferSelect;
 
 // Operator-set trust annotation for email senders. Read-side surfaces on
 // /admin/inbound-emails sender summary panel; write via the

@@ -339,7 +339,7 @@ const SCHEMA_SQL = `
     ON inbound_emails(reply_kind)
     WHERE reply_kind IS NOT NULL;
 
-  CREATE TABLE discovery_candidates (
+  CREATE TABLE email_source_suggestions (
     id TEXT PRIMARY KEY,
     url TEXT NOT NULL,
     host TEXT NOT NULL,
@@ -351,9 +351,9 @@ const SCHEMA_SQL = `
     admin_notes TEXT,
     created_at INTEGER NOT NULL
   );
-  CREATE INDEX idx_discovery_candidates_host ON discovery_candidates (host);
-  CREATE UNIQUE INDEX uq_discovery_candidates_pending_host
-    ON discovery_candidates (host)
+  CREATE INDEX idx_email_source_suggestions_host ON email_source_suggestions (host);
+  CREATE UNIQUE INDEX uq_email_source_suggestions_pending_host
+    ON email_source_suggestions (host)
     WHERE status = 'pending_review';
 `;
 
