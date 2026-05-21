@@ -920,14 +920,22 @@ export const AEO_BUCKET_ORDER: AeoBucket[] = [
 ];
 
 const AEO_DOMAIN_BUCKETS: Array<{ bucket: AeoBucket; domains: string[] }> = [
-  { bucket: "chatgpt", domains: ["chatgpt.com", "chat.openai.com"] },
+  // `oai.com` is OpenAI's short-link redirector — ChatGPT-share URLs surface
+  // here when the user followed a `oai.com/...` link rather than the chat UI.
+  { bucket: "chatgpt", domains: ["chatgpt.com", "chat.openai.com", "oai.com"] },
   { bucket: "perplexity", domains: ["perplexity.ai", "www.perplexity.ai"] },
   { bucket: "copilot", domains: ["copilot.microsoft.com"] },
   { bucket: "claude", domains: ["claude.ai"] },
   { bucket: "gemini", domains: ["gemini.google.com", "bard.google.com"] },
   // Known "other AI" sources observed in our GA4 today + early movers.
   // Add new domains here as they appear in the trafficSources list.
-  { bucket: "other", domains: ["noai.duckduckgo.com", "duckduckgo.com", "you.com", "phind.com"] },
+  // NOTE: `www.bing.com/chat` is path-scoped and GA4 sessionSource is
+  // hostname-only, so Bing Copilot Chat traffic surfaces as `www.bing.com`
+  // and isn't separable from organic Bing search here.
+  {
+    bucket: "other",
+    domains: ["noai.duckduckgo.com", "duckduckgo.com", "you.com", "phind.com", "kagi.com"],
+  },
 ];
 
 const AEO_DOMAIN_TO_BUCKET: Map<string, AeoBucket> = new Map(
@@ -936,23 +944,84 @@ const AEO_DOMAIN_TO_BUCKET: Map<string, AeoBucket> = new Map(
   )
 );
 
+/**
+ * Resolves a GA4 sessionSource string to its AEO bucket, or `null` if the
+ * source isn't an AI-engine referrer we track. Exported for unit testing
+ * and for any future caller that wants per-row classification without
+ * re-running the report.
+ */
+export function getAeoBucket(source: string): AeoBucket | null {
+  return AEO_DOMAIN_TO_BUCKET.get(source.trim().toLowerCase()) ?? null;
+}
+
 export type AeoReferralsResult = {
   totals: Record<AeoBucket, number>;
   total: number;
+  // Previous-period (days 8-14 ago) totals for period-over-period delta.
+  // The detail card renders these alongside current to show momentum;
+  // the KPI tile ignores them because state coloring (green/yellow/red)
+  // is a more honest signal at single-digit volumes than %-delta noise.
+  previous: Record<AeoBucket, number>;
+  previousTotal: number;
   generatedAt: string;
   dateRange: { startDate: string; endDate: string; days: number };
+  previousDateRange: { startDate: string; endDate: string; days: number };
 };
 
 function emptyAeoTotals(): Record<AeoBucket, number> {
   return { chatgpt: 0, perplexity: 0, copilot: 0, claude: 0, gemini: 0, other: 0 };
 }
 
+function aggregateAeoRows(rows: RunReportResponse["rows"]): Record<AeoBucket, number> {
+  const totals = emptyAeoTotals();
+  for (const row of rows ?? []) {
+    const bucket = getAeoBucket(row.dimensionValues?.[0]?.value ?? "");
+    if (!bucket) continue; // Defensive: filter should have excluded these.
+    totals[bucket] += toNumber(row.metricValues?.[0]?.value);
+  }
+  return totals;
+}
+
+function sumAeoTotals(totals: Record<AeoBucket, number>): number {
+  return (
+    totals.chatgpt +
+    totals.perplexity +
+    totals.copilot +
+    totals.claude +
+    totals.gemini +
+    totals.other
+  );
+}
+
+async function fetchAeoRange(
+  env: Ga4Env,
+  startDate: string,
+  endDate: string,
+  expressions: DimensionFilterExpression[],
+  opts: { skipCache?: boolean }
+): Promise<Record<AeoBucket, number>> {
+  const res = await runReport(
+    env,
+    {
+      dateRanges: [{ startDate, endDate }],
+      dimensions: [{ name: "sessionSource" }],
+      metrics: [{ name: "sessions" }],
+      dimensionFilter: { orGroup: { expressions } },
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      limit: 50,
+    },
+    opts
+  );
+  return aggregateAeoRows(res.rows);
+}
+
 /**
- * Last-7d AI-engine referrals broken down by engine.
+ * Last-7d AI-engine referrals broken down by engine, with previous-7d
+ * comparison.
  *
  * Filter: `sessionSource` EXACT match against the known-domain list in
  * `AEO_DOMAIN_BUCKETS` (combined as an `orGroup`). Reuses `runReport`'s
- * KV cache (10 min TTL).
+ * KV cache (10 min TTL) — current + previous ranges each cache separately.
  *
  * Throws `Ga4ConfigError` / `Ga4ApiError` on failure — consumers should
  * catch and render an empty / "GA4 unavailable" state.
@@ -961,8 +1030,10 @@ export async function getAeoReferrals(
   env: Ga4Env,
   opts: { skipCache?: boolean } = {}
 ): Promise<AeoReferralsResult> {
-  const startDate = "7daysAgo";
-  const endDate = "today";
+  const currentRange = { startDate: "7daysAgo", endDate: "today" };
+  // GA4's relative ranges are inclusive on both ends, so `14daysAgo..8daysAgo`
+  // is the immediately-preceding 7 days (today-14 .. today-8).
+  const previousRange = { startDate: "14daysAgo", endDate: "8daysAgo" };
 
   const expressions: DimensionFilterExpression[] = AEO_DOMAIN_BUCKETS.flatMap(({ domains }) =>
     domains.map((domain) => ({
@@ -977,41 +1048,32 @@ export async function getAeoReferrals(
     }))
   );
 
-  const res = await runReport(
-    env,
-    {
-      dateRanges: [{ startDate, endDate }],
-      dimensions: [{ name: "sessionSource" }],
-      metrics: [{ name: "sessions" }],
-      dimensionFilter: { orGroup: { expressions } },
-      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-      limit: 50,
-    },
-    opts
-  );
-
-  const totals = emptyAeoTotals();
-  for (const row of res.rows ?? []) {
-    const source = (row.dimensionValues?.[0]?.value ?? "").toLowerCase();
-    const bucket = AEO_DOMAIN_TO_BUCKET.get(source);
-    if (!bucket) continue; // Defensive: filter should have excluded these.
-    totals[bucket] += toNumber(row.metricValues?.[0]?.value);
-  }
-
-  const total =
-    totals.chatgpt +
-    totals.perplexity +
-    totals.copilot +
-    totals.claude +
-    totals.gemini +
-    totals.other;
+  const [totals, previous] = await Promise.all([
+    fetchAeoRange(env, currentRange.startDate, currentRange.endDate, expressions, opts),
+    fetchAeoRange(env, previousRange.startDate, previousRange.endDate, expressions, opts),
+  ]);
 
   return {
     totals,
-    total,
+    total: sumAeoTotals(totals),
+    previous,
+    previousTotal: sumAeoTotals(previous),
     generatedAt: new Date().toISOString(),
-    dateRange: { startDate, endDate, days: 7 },
+    dateRange: { ...currentRange, days: 7 },
+    previousDateRange: { ...previousRange, days: 7 },
   };
+}
+
+/**
+ * Period-over-period delta as a signed percentage, or `null` when the
+ * comparison would be misleading. Returns `null` when previous < 5 to
+ * suppress "+200% (1→3)" style noise at low volumes; the bucket-level
+ * threshold matches the AEO yellow band, so a delta only renders once
+ * the previous period had a non-trivial baseline.
+ */
+export function aeoDeltaPercent(current: number, previous: number): number | null {
+  if (previous < AEO_THRESHOLDS.yellow) return null;
+  return ((current - previous) / previous) * 100;
 }
 
 export const AEO_THRESHOLDS = { green: 10, yellow: 5 } as const;

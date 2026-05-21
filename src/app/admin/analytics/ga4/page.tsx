@@ -6,6 +6,7 @@ import {
   AEO_BUCKET_LABELS,
   AEO_BUCKET_ORDER,
   aeoBadgeColor,
+  aeoDeltaPercent,
   Ga4ApiError,
   Ga4ConfigError,
   getAeoReferrals,
@@ -116,7 +117,9 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
             <thead className="bg-gray-50 text-gray-600">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">AI engine</th>
-                <th className="text-right px-6 py-2 font-medium">Sessions</th>
+                <th className="text-right px-6 py-2 font-medium">Sessions (7d)</th>
+                <th className="text-right px-6 py-2 font-medium">Prev 7d</th>
+                <th className="text-right px-6 py-2 font-medium">Δ</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -124,11 +127,23 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
                 <tr key={bucket}>
                   <td className="px-6 py-2 text-gray-900">{AEO_BUCKET_LABELS[bucket]}</td>
                   <td className="px-6 py-2 text-right tabular-nums">{fmt(aeo.totals[bucket])}</td>
+                  <td className="px-6 py-2 text-right tabular-nums text-gray-500">
+                    {fmt(aeo.previous[bucket])}
+                  </td>
+                  <td className="px-6 py-2 text-right tabular-nums">
+                    <AeoDeltaCell current={aeo.totals[bucket]} previous={aeo.previous[bucket]} />
+                  </td>
                 </tr>
               ))}
               <tr className="bg-gray-50 font-semibold">
                 <td className="px-6 py-2 text-gray-900">Total</td>
                 <td className="px-6 py-2 text-right tabular-nums">{fmt(aeo.total)}</td>
+                <td className="px-6 py-2 text-right tabular-nums text-gray-500">
+                  {fmt(aeo.previousTotal)}
+                </td>
+                <td className="px-6 py-2 text-right tabular-nums">
+                  <AeoDeltaCell current={aeo.total} previous={aeo.previousTotal} />
+                </td>
               </tr>
             </tbody>
           </table>
@@ -328,6 +343,20 @@ function AeoTotalBadge({ total }: { total: number }) {
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${classes}`}
     >
       {total} this week
+    </span>
+  );
+}
+
+function AeoDeltaCell({ current, previous }: { current: number; previous: number }) {
+  const pct = aeoDeltaPercent(current, previous);
+  if (pct === null) return <span className="text-gray-400">—</span>;
+  const rounded = Math.round(pct);
+  const sign = rounded > 0 ? "+" : "";
+  const color = rounded > 0 ? "text-green-700" : rounded < 0 ? "text-red-700" : "text-gray-600";
+  return (
+    <span className={color}>
+      {sign}
+      {rounded}%
     </span>
   );
 }
