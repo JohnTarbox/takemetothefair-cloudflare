@@ -35,21 +35,58 @@ test.describe("Vendor detail regression", () => {
 });
 
 test.describe("Sitemap", () => {
-  test("sitemap.xml returns valid XML with expected pages", async ({ request }) => {
+  // /sitemap.xml is now a sitemap INDEX; per-content-type URLs live in
+  // child sitemaps referenced from the index.
+  const childSitemaps = [
+    "sitemap-static.xml",
+    "sitemap-events.xml",
+    "sitemap-venues.xml",
+    "sitemap-vendors.xml",
+    "sitemap-promoters.xml",
+    "sitemap-blog.xml",
+  ];
+
+  test("sitemap.xml is a sitemapindex referencing all 6 children", async ({ request }) => {
     const response = await request.get("/sitemap.xml");
     expect(response.status()).toBe(200);
+    const body = await response.text();
+    expect(body).toContain("<sitemapindex");
+    for (const child of childSitemaps) {
+      expect(body).toContain(`/${child}</loc>`);
+    }
+  });
 
+  test("sitemap-static.xml lists the curated static pages", async ({ request }) => {
+    const response = await request.get("/sitemap-static.xml");
+    expect(response.status()).toBe(200);
     const body = await response.text();
     expect(body).toContain("<urlset");
-
-    // Static pages
     for (const path of publicPages) {
       expect(body).toContain(path === "/" ? "<loc>" : `${path}</loc>`);
     }
+  });
 
-    // Dynamic pages should exist
+  test("sitemap-events.xml contains /events/ detail URLs", async ({ request }) => {
+    const response = await request.get("/sitemap-events.xml");
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    expect(body).toContain("<urlset");
     expect(body).toContain("/events/");
+  });
+
+  test("sitemap-venues.xml contains /venues/ detail URLs", async ({ request }) => {
+    const response = await request.get("/sitemap-venues.xml");
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    expect(body).toContain("<urlset");
     expect(body).toContain("/venues/");
+  });
+
+  test("sitemap-vendors.xml contains /vendors/ detail URLs", async ({ request }) => {
+    const response = await request.get("/sitemap-vendors.xml");
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    expect(body).toContain("<urlset");
     expect(body).toContain("/vendors/");
   });
 

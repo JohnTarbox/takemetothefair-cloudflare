@@ -61,20 +61,33 @@ function sampleArray<T>(arr: T[], count: number): T[] {
   return result;
 }
 
+function extractLocs(xml: string): string[] {
+  return Array.from(xml.matchAll(/<loc>([^<]+)<\/loc>/g), (m) => m[1]);
+}
+
 async function parseSitemap(): Promise<DiscoveredSlugs> {
-  const res = await fetch(`${BASE_URL}/sitemap.xml`);
-  const xml = await res.text();
-  const urls: string[] = [];
-  const regex = /<loc>([^<]+)<\/loc>/g;
-  let match;
-  while ((match = regex.exec(xml)) !== null) {
-    urls.push(match[1]);
-  }
+  // /sitemap.xml is a sitemapindex; walk it to fetch each child and
+  // aggregate the per-child URL lists.
+  const indexRes = await fetch(`${BASE_URL}/sitemap.xml`);
+  const indexXml = await indexRes.text();
+  const childSitemapUrls = extractLocs(indexXml);
+  const childBodies = await Promise.all(
+    childSitemapUrls.map((u) =>
+      fetch(u)
+        .then((r) => r.text())
+        .catch(() => "")
+    )
+  );
+  const urls = childBodies.flatMap(extractLocs);
 
   const events = urls.filter(
-    (u) => u.match(/\/events\/[^/]+$/) && !u.includes("/events/past") &&
-           !u.includes("/events/maine") && !u.includes("/events/vermont") &&
-           !u.includes("/events/new-hampshire") && !u.includes("/events/massachusetts")
+    (u) =>
+      u.match(/\/events\/[^/]+$/) &&
+      !u.includes("/events/past") &&
+      !u.includes("/events/maine") &&
+      !u.includes("/events/vermont") &&
+      !u.includes("/events/new-hampshire") &&
+      !u.includes("/events/massachusetts")
   );
   const venues = urls.filter((u) => u.match(/\/venues\/[^/]+$/));
   const vendors = urls.filter((u) => u.match(/\/vendors\/[^/]+$/));
@@ -96,7 +109,11 @@ function urlToPath(url: string): string {
 }
 
 async function getMetaContent(page: Page, selector: string): Promise<string | null> {
-  return page.locator(selector).first().getAttribute("content").catch(() => null);
+  return page
+    .locator(selector)
+    .first()
+    .getAttribute("content")
+    .catch(() => null);
 }
 
 async function headCheck(url: string): Promise<number> {
@@ -121,7 +138,11 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
     try {
       await page.goto(eventUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
 
-      const jsonLdText = await page.locator('script[type="application/ld+json"]').first().textContent().catch(() => null);
+      const jsonLdText = await page
+        .locator('script[type="application/ld+json"]')
+        .first()
+        .textContent()
+        .catch(() => null);
       if (!jsonLdText) {
         fail(cat, `JSON-LD present (${path})`, "No JSON-LD script tag found");
         continue;
@@ -140,10 +161,15 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
       const hasType = typeof schema["@type"] === "string";
       const hasName = typeof schema.name === "string" && (schema.name as string).length > 0;
       const hasUrl = typeof schema.url === "string";
-      const hasDatesOrPostponed = schema.startDate || schema.eventStatus === "https://schema.org/EventPostponed";
+      const hasDatesOrPostponed =
+        schema.startDate || schema.eventStatus === "https://schema.org/EventPostponed";
 
       if (hasContext && hasType && hasName && hasUrl && hasDatesOrPostponed) {
-        pass(cat, `JSON-LD required fields (${path})`, `@type=${schema["@type"]}, name="${(schema.name as string).slice(0, 40)}"`);
+        pass(
+          cat,
+          `JSON-LD required fields (${path})`,
+          `@type=${schema["@type"]}, name="${(schema.name as string).slice(0, 40)}"`
+        );
       } else {
         const missing = [];
         if (!hasContext) missing.push("@context");
@@ -165,7 +191,11 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
       // Organizer check
       const organizer = schema.organizer as Record<string, unknown> | undefined;
       if (organizer && organizer.name === "Meet Me at the Fair") {
-        warn(cat, `JSON-LD organizer (${path})`, "Organizer is 'Meet Me at the Fair' — should be actual promoter or omitted");
+        warn(
+          cat,
+          `JSON-LD organizer (${path})`,
+          "Organizer is 'Meet Me at the Fair' — should be actual promoter or omitted"
+        );
       }
 
       // Offers validFrom
@@ -181,11 +211,7 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
   }
 
   // Meta description length checks
-  const descPages = [
-    slugs.events[0],
-    slugs.venues[0],
-    slugs.vendors[0],
-  ].filter(Boolean);
+  const descPages = [slugs.events[0], slugs.venues[0], slugs.vendors[0]].filter(Boolean);
 
   for (const url of descPages) {
     const path = urlToPath(url);
@@ -200,7 +226,11 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
       } else if (desc.length >= 100 && desc.length <= 170) {
         warn(cat, `Meta description length (${path})`, `${desc.length} chars (ideal: 120-160)`);
       } else {
-        fail(cat, `Meta description length (${path})`, `${desc.length} chars — outside 100-170 range`);
+        fail(
+          cat,
+          `Meta description length (${path})`,
+          `${desc.length} chars — outside 100-170 range`
+        );
       }
     } finally {
       await page.close();
@@ -224,7 +254,11 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
 
       // Canonical
-      const canonical = await page.locator('link[rel="canonical"]').first().getAttribute("href").catch(() => null);
+      const canonical = await page
+        .locator('link[rel="canonical"]')
+        .first()
+        .getAttribute("href")
+        .catch(() => null);
       if (canonical && (canonical === url || canonical === url + "/")) {
         pass(cat, `Canonical URL (${path})`, canonical);
       } else if (canonical) {
@@ -265,12 +299,12 @@ async function runSeoHealth(context: BrowserContext, slugs: DiscoveredSlugs) {
 
   // Sitemap spot-check
   const sitemapSample = sampleArray(slugs.allUrls, 10);
-  let sitemapOk = 0;
+  let _sitemapOk = 0;
   let sitemapFail = 0;
   for (const url of sitemapSample) {
     const status = await headCheck(url);
     if (status === 200) {
-      sitemapOk++;
+      _sitemapOk++;
     } else {
       sitemapFail++;
       fail(cat, "Sitemap URL reachable", `${urlToPath(url)} returned ${status}`);
@@ -292,7 +326,10 @@ async function runApiHealth() {
     const res = await fetch(`${BASE_URL}/api/health`);
     const contentType = res.headers.get("content-type") || "";
     if (res.status === 200 && contentType.includes("application/json")) {
-      const body = await res.json() as { status: string; checks?: { database?: { latencyMs?: number } } };
+      const body = (await res.json()) as {
+        status: string;
+        checks?: { database?: { latencyMs?: number } };
+      };
       if (body.status === "healthy" || body.status === "degraded") {
         pass(cat, "/api/health", `status=${body.status}, db=${body.checks?.database?.latencyMs}ms`);
       } else {
@@ -309,8 +346,13 @@ async function runApiHealth() {
   try {
     const res = await fetch(`${BASE_URL}/api/search?q=fair`);
     if (res.status === 200) {
-      const body = await res.json() as { events?: unknown[]; venues?: unknown[]; vendors?: unknown[] };
-      const totalResults = (body.events?.length || 0) + (body.venues?.length || 0) + (body.vendors?.length || 0);
+      const body = (await res.json()) as {
+        events?: unknown[];
+        venues?: unknown[];
+        vendors?: unknown[];
+      };
+      const totalResults =
+        (body.events?.length || 0) + (body.venues?.length || 0) + (body.vendors?.length || 0);
       if (totalResults > 0) {
         pass(cat, "/api/search?q=fair", `${totalResults} results returned`);
       } else {
@@ -325,10 +367,7 @@ async function runApiHealth() {
 
   // Protected routes should return 401
   // Note: /api/favorites GET returns empty array for unauthenticated users (by design)
-  const protectedRoutes = [
-    "/api/admin/events",
-    "/api/vendor/profile",
-  ];
+  const protectedRoutes = ["/api/admin/events", "/api/vendor/profile"];
   for (const route of protectedRoutes) {
     try {
       const res = await fetch(`${BASE_URL}${route}`);
@@ -355,17 +394,17 @@ async function runLinkIntegrity(context: BrowserContext, slugs: DiscoveredSlugs)
   const homepage = await context.newPage();
   await homepage.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 15000 });
 
-  const footerLinks = await homepage.locator("footer a").evaluateAll((els) =>
-    els.map((el) => el.getAttribute("href")).filter((h): h is string => !!h)
-  );
+  const footerLinks = await homepage
+    .locator("footer a")
+    .evaluateAll((els) => els.map((el) => el.getAttribute("href")).filter((h): h is string => !!h));
 
   const internalFooterLinks = footerLinks.filter((h) => h.startsWith("/"));
-  let footerOk = 0;
+  let _footerOk = 0;
   let footerFail = 0;
   for (const href of internalFooterLinks) {
     const status = await headCheck(`${BASE_URL}${href}`);
     if (status === 200) {
-      footerOk++;
+      _footerOk++;
     } else {
       footerFail++;
       fail(cat, `Footer link: ${href}`, `HTTP ${status}`);
@@ -401,24 +440,32 @@ async function runLinkIntegrity(context: BrowserContext, slugs: DiscoveredSlugs)
     const eventPath = urlToPath(slugs.events[0]);
     await detailPage.goto(slugs.events[0], { waitUntil: "domcontentloaded", timeout: 15000 });
 
-    const detailLinks = await detailPage.locator("main a").evaluateAll((els) =>
-      els.map((el) => el.getAttribute("href")).filter((h): h is string => !!h && h.startsWith("/"))
-    );
+    const detailLinks = await detailPage
+      .locator("main a")
+      .evaluateAll((els) =>
+        els
+          .map((el) => el.getAttribute("href"))
+          .filter((h): h is string => !!h && h.startsWith("/"))
+      );
 
     const uniqueLinks = [...new Set(detailLinks)].slice(0, 15);
-    let detailOk = 0;
+    let _detailOk = 0;
     let detailFail = 0;
     for (const href of uniqueLinks) {
       const status = await headCheck(`${BASE_URL}${href}`);
       if (status === 200) {
-        detailOk++;
+        _detailOk++;
       } else {
         detailFail++;
         fail(cat, `Detail page link: ${href}`, `HTTP ${status} (from ${eventPath})`);
       }
     }
     if (detailFail === 0) {
-      pass(cat, `Event detail internal links (${uniqueLinks.length})`, `All returned 200 (${eventPath})`);
+      pass(
+        cat,
+        `Event detail internal links (${uniqueLinks.length})`,
+        `All returned 200 (${eventPath})`
+      );
     }
     await detailPage.close();
   }
@@ -436,7 +483,11 @@ async function runContentValidation(context: BrowserContext, slugs: DiscoveredSl
     const page = await context.newPage();
     try {
       await page.goto(eventUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-      const h1 = await page.locator("h1").first().textContent().catch(() => null);
+      const h1 = await page
+        .locator("h1")
+        .first()
+        .textContent()
+        .catch(() => null);
       if (h1 && h1.trim().length > 0) {
         pass(cat, `Event h1 (${path})`, h1.trim().slice(0, 50));
       } else {
@@ -453,10 +504,22 @@ async function runContentValidation(context: BrowserContext, slugs: DiscoveredSl
     const page = await context.newPage();
     try {
       await page.goto(venueUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-      const h1 = await page.locator("h1").first().textContent().catch(() => null);
-      const hasLocation = await page.locator("text=/[A-Z]{2}/").first().isVisible().catch(() => false);
+      const h1 = await page
+        .locator("h1")
+        .first()
+        .textContent()
+        .catch(() => null);
+      const hasLocation = await page
+        .locator("text=/[A-Z]{2}/")
+        .first()
+        .isVisible()
+        .catch(() => false);
       if (h1 && h1.trim().length > 0) {
-        pass(cat, `Venue renders (${path})`, `h1="${h1.trim().slice(0, 40)}", location=${hasLocation}`);
+        pass(
+          cat,
+          `Venue renders (${path})`,
+          `h1="${h1.trim().slice(0, 40)}", location=${hasLocation}`
+        );
       } else {
         fail(cat, `Venue renders (${path})`, "Missing h1");
       }
@@ -471,7 +534,11 @@ async function runContentValidation(context: BrowserContext, slugs: DiscoveredSl
     const page = await context.newPage();
     try {
       await page.goto(vendorUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-      const h1 = await page.locator("h1").first().textContent().catch(() => null);
+      const h1 = await page
+        .locator("h1")
+        .first()
+        .textContent()
+        .catch(() => null);
       if (h1 && h1.trim().length > 0) {
         pass(cat, `Vendor renders (${path})`, h1.trim().slice(0, 50));
       } else {
@@ -486,7 +553,11 @@ async function runContentValidation(context: BrowserContext, slugs: DiscoveredSl
   const blogPage = await context.newPage();
   try {
     await blogPage.goto(`${BASE_URL}/blog`, { waitUntil: "domcontentloaded", timeout: 15000 });
-    const blogH1 = await blogPage.locator("h1").first().textContent().catch(() => null);
+    const blogH1 = await blogPage
+      .locator("h1")
+      .first()
+      .textContent()
+      .catch(() => null);
     const blogLinks = await blogPage.locator('a[href^="/blog/"]').count();
     if (blogH1 && blogLinks > 0) {
       pass(cat, "Blog listing", `h1 present, ${blogLinks} post links`);
@@ -505,7 +576,11 @@ async function runContentValidation(context: BrowserContext, slugs: DiscoveredSl
     const page = await context.newPage();
     try {
       await page.goto(slugs.blogPosts[0], { waitUntil: "domcontentloaded", timeout: 15000 });
-      const h1 = await page.locator("h1").first().textContent().catch(() => null);
+      const h1 = await page
+        .locator("h1")
+        .first()
+        .textContent()
+        .catch(() => null);
       const bodyLength = await page.evaluate(() => {
         const article = document.querySelector("article") || document.querySelector("main");
         return article?.textContent?.length || 0;
@@ -534,7 +609,11 @@ async function runContentValidation(context: BrowserContext, slugs: DiscoveredSl
         warn(cat, "RSS feed (/blog/feed.xml)", "Valid XML but no items");
       }
     } else {
-      fail(cat, "RSS feed (/blog/feed.xml)", `status=${res.status}, xml=${isXml}, channel=${hasChannel}`);
+      fail(
+        cat,
+        "RSS feed (/blog/feed.xml)",
+        `status=${res.status}, xml=${isXml}, channel=${hasChannel}`
+      );
     }
   } catch (e) {
     fail(cat, "RSS feed (/blog/feed.xml)", `Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -550,9 +629,16 @@ async function runFunctionalChecks(context: BrowserContext, slugs: DiscoveredSlu
   // Search results page
   const searchPage = await context.newPage();
   try {
-    const res = await searchPage.goto(`${BASE_URL}/search?q=fair`, { waitUntil: "domcontentloaded", timeout: 15000 });
+    const res = await searchPage.goto(`${BASE_URL}/search?q=fair`, {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
     const status = res?.status() || 0;
-    const h1 = await searchPage.locator("h1").first().textContent().catch(() => null);
+    const h1 = await searchPage
+      .locator("h1")
+      .first()
+      .textContent()
+      .catch(() => null);
     if (status === 200 && h1) {
       pass(cat, "Search page renders", `h1="${h1.trim().slice(0, 40)}"`);
     } else {
@@ -566,13 +652,20 @@ async function runFunctionalChecks(context: BrowserContext, slugs: DiscoveredSlu
   const eventsPage = await context.newPage();
   try {
     await eventsPage.goto(`${BASE_URL}/events`, { waitUntil: "domcontentloaded", timeout: 15000 });
-    const nextLink = await eventsPage.locator('a:has-text("»")').first().getAttribute("href").catch(() => null);
+    const nextLink = await eventsPage
+      .locator('a:has-text("»")')
+      .first()
+      .getAttribute("href")
+      .catch(() => null);
     if (nextLink) {
       pass(cat, "Events pagination link exists", nextLink);
 
       // Navigate to page 2
       const page2Url = nextLink.startsWith("http") ? nextLink : `${BASE_URL}${nextLink}`;
-      const page2Res = await eventsPage.goto(page2Url, { waitUntil: "domcontentloaded", timeout: 15000 });
+      const page2Res = await eventsPage.goto(page2Url, {
+        waitUntil: "domcontentloaded",
+        timeout: 15000,
+      });
       if (page2Res?.status() === 200) {
         pass(cat, "Events page 2 loads", "HTTP 200");
       } else {
@@ -588,8 +681,15 @@ async function runFunctionalChecks(context: BrowserContext, slugs: DiscoveredSlu
   // State filter
   const mainePage = await context.newPage();
   try {
-    const res = await mainePage.goto(`${BASE_URL}/events/maine`, { waitUntil: "domcontentloaded", timeout: 15000 });
-    const h1 = await mainePage.locator("h1").first().textContent().catch(() => null);
+    const res = await mainePage.goto(`${BASE_URL}/events/maine`, {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
+    const h1 = await mainePage
+      .locator("h1")
+      .first()
+      .textContent()
+      .catch(() => null);
     if (res?.status() === 200 && h1 && h1.toLowerCase().includes("maine")) {
       pass(cat, "State filter (Maine)", `h1="${h1.trim().slice(0, 50)}"`);
     } else {
@@ -602,8 +702,15 @@ async function runFunctionalChecks(context: BrowserContext, slugs: DiscoveredSlu
   // Past events page
   const pastPage = await context.newPage();
   try {
-    const res = await pastPage.goto(`${BASE_URL}/events/past`, { waitUntil: "domcontentloaded", timeout: 15000 });
-    const h1 = await pastPage.locator("h1").first().textContent().catch(() => null);
+    const res = await pastPage.goto(`${BASE_URL}/events/past`, {
+      waitUntil: "domcontentloaded",
+      timeout: 15000,
+    });
+    const h1 = await pastPage
+      .locator("h1")
+      .first()
+      .textContent()
+      .catch(() => null);
     if (res?.status() === 200 && h1) {
       pass(cat, "Past events page", `h1="${h1.trim().slice(0, 50)}"`);
     } else {
@@ -646,22 +753,34 @@ async function runErrorHandling(context: BrowserContext) {
   for (const path of notFoundPaths) {
     const page = await context.newPage();
     try {
-      const res = await page.goto(`${BASE_URL}${path}`, { waitUntil: "domcontentloaded", timeout: 15000 });
+      const res = await page.goto(`${BASE_URL}${path}`, {
+        waitUntil: "domcontentloaded",
+        timeout: 15000,
+      });
       const status = res?.status() || 0;
-      const bodyText = await page.locator("body").textContent().catch(() => "") || "";
+      const bodyText =
+        (await page
+          .locator("body")
+          .textContent()
+          .catch(() => "")) || "";
       const hasErrorStack = bodyText.includes("Error:") && bodyText.includes("at ");
       // Cloudflare Pages edge runtime may return 200 with notFound() content
-      const hasNotFoundContent = bodyText.toLowerCase().includes("not found") ||
-                                  bodyText.toLowerCase().includes("404") ||
-                                  bodyText.toLowerCase().includes("doesn't exist") ||
-                                  bodyText.toLowerCase().includes("does not exist");
+      const hasNotFoundContent =
+        bodyText.toLowerCase().includes("not found") ||
+        bodyText.toLowerCase().includes("404") ||
+        bodyText.toLowerCase().includes("doesn't exist") ||
+        bodyText.toLowerCase().includes("does not exist");
 
       if (hasErrorStack) {
         fail(cat, `Error handling ${path}`, "Page contains error stack trace — crashed");
       } else if (status === 404 || hasNotFoundContent) {
         pass(cat, `Not found ${path}`, `status=${status}, shows not-found content`);
       } else {
-        fail(cat, `Not found ${path}`, `status=${status}, no not-found content — may render broken page`);
+        fail(
+          cat,
+          `Not found ${path}`,
+          `status=${status}, no not-found content — may render broken page`
+        );
       }
     } finally {
       await page.close();
@@ -761,7 +880,9 @@ async function main() {
   // Discover content from sitemap
   console.log("\nDiscovering content from sitemap...");
   const slugs = await parseSitemap();
-  console.log(`  Found: ${slugs.events.length} event samples, ${slugs.venues.length} venue samples, ${slugs.vendors.length} vendor samples, ${slugs.blogPosts.length} blog samples`);
+  console.log(
+    `  Found: ${slugs.events.length} event samples, ${slugs.venues.length} venue samples, ${slugs.vendors.length} vendor samples, ${slugs.blogPosts.length} blog samples`
+  );
   console.log(`  Total sitemap URLs: ${slugs.allUrls.length}`);
 
   // Launch browser
@@ -799,13 +920,18 @@ async function main() {
     const catPassed = catResults.filter((r) => r.status === "PASS").length;
     const catFailed = catResults.filter((r) => r.status === "FAIL").length;
     const catWarned = catResults.filter((r) => r.status === "WARN").length;
-    const statusIcon = catFailed > 0 ? "\x1b[31m✗\x1b[0m" : catWarned > 0 ? "\x1b[33m!\x1b[0m" : "\x1b[32m✓\x1b[0m";
-    console.log(`  ${statusIcon} ${cat}: ${catPassed} passed, ${catFailed} failed, ${catWarned} warnings`);
+    const statusIcon =
+      catFailed > 0 ? "\x1b[31m✗\x1b[0m" : catWarned > 0 ? "\x1b[33m!\x1b[0m" : "\x1b[32m✓\x1b[0m";
+    console.log(
+      `  ${statusIcon} ${cat}: ${catPassed} passed, ${catFailed} failed, ${catWarned} warnings`
+    );
   }
 
   console.log("\n  " + "-".repeat(50));
   const summaryColor = failed > 0 ? "\x1b[31m" : warned > 0 ? "\x1b[33m" : "\x1b[32m";
-  console.log(`  ${summaryColor}Total: ${passed} passed, ${failed} failed, ${warned} warnings\x1b[0m`);
+  console.log(
+    `  ${summaryColor}Total: ${passed} passed, ${failed} failed, ${warned} warnings\x1b[0m`
+  );
   console.log(`  Duration: ${elapsed}s`);
   console.log("=".repeat(70) + "\n");
 
