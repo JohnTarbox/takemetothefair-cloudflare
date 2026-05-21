@@ -96,6 +96,50 @@ describe("buildReply — B3 confidence tiers", () => {
     expect(msg.text).toContain("Thanks for emailing Meet Me at the Fair");
     expect(msg.text).not.toContain('about "');
   });
+
+  // PR-M: B1 multi-URL combined reply.
+  it("ok-multi summarizes N URL outcomes in a single reply", () => {
+    const msg = buildReply("ok-multi", "sender@example.com", {
+      subject: "Three URLs",
+      eventCount: 3,
+      resultsText: [
+        '✅ "Event A" — pending review',
+        '✅ "Event B" — already in our directory: https://meetmeatthefair.com/events/event-b',
+        "❌ Couldn't extract event details from https://example.com/junk",
+      ].join("\n"),
+      hasAttachments: false,
+      overflowed: false,
+    });
+    expect(msg.text).toContain("Thanks for submitting 3 events");
+    expect(msg.text).toContain('"Event A"');
+    expect(msg.text).toContain("already in our directory");
+    expect(msg.text).toContain("Couldn't extract");
+    expect(msg.text).toContain("review pending submissions within 24 hours");
+  });
+
+  it("ok-multi includes overflow note when caller flagged overflowed=true", () => {
+    const msg = buildReply("ok-multi", "sender@example.com", {
+      subject: "Many URLs",
+      eventCount: 10,
+      resultsText: "...processed list...",
+      overflowed: true,
+    });
+    expect(msg.text).toContain("more than 10 URLs");
+    expect(msg.text).toContain("Reply with the remaining URLs");
+  });
+
+  it("ok-multi singular wording at eventCount=1 (edge case)", () => {
+    // Won't normally happen — workflow falls back to single-URL path
+    // when extractAllUrls returns <2 — but the template should still
+    // pluralize correctly if it does.
+    const msg = buildReply("ok-multi", "sender@example.com", {
+      subject: "One URL",
+      eventCount: 1,
+      resultsText: '✅ "Single Event" — pending review',
+    });
+    expect(msg.text).toContain("Thanks for submitting 1 event ");
+    expect(msg.text).not.toContain("1 events");
+  });
 });
 
 describe("isNameUnsure", () => {

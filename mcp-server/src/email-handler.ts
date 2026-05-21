@@ -482,6 +482,39 @@ export function pickPrimaryUrl(text: string, html: string): string | null {
   return null;
 }
 
+/**
+ * Collect ALL distinct URLs from text + html body for B1 multi-URL
+ * submission fan-out. Order preserved (text URLs in document order,
+ * then html href URLs that weren't already seen in text). Deduplicates
+ * on the cleaned-URL string after normalization via cleanUrl.
+ *
+ * `cap` bounds the result length — we hard-stop at the caller's cap
+ * BEFORE returning, so admin-forward-on-overflow logic in the workflow
+ * can detect "the email had more URLs than we processed" by comparing
+ * the returned length to the cap.
+ */
+export function extractAllUrls(text: string, html: string, cap: number = 10): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
+    const cleaned = cleanUrl(m[0]);
+    if (cleaned && !seen.has(cleaned)) {
+      seen.add(cleaned);
+      out.push(cleaned);
+      if (out.length >= cap) return out;
+    }
+  }
+  for (const m of html.matchAll(/href=["']([^"']+)["']/g)) {
+    const cleaned = cleanUrl(m[1]);
+    if (cleaned && !seen.has(cleaned)) {
+      seen.add(cleaned);
+      out.push(cleaned);
+      if (out.length >= cap) return out;
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Per-sender rate limit (KV-backed)
 // ---------------------------------------------------------------------------

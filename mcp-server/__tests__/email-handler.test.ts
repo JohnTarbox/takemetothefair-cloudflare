@@ -8,7 +8,12 @@
  * the workflow binding, which is more setup than the value justifies.
  */
 import { describe, expect, it, vi } from "vitest";
-import { pickPrimaryUrl, checkSenderRateLimit, computeRateLimit } from "../src/email-handler.js";
+import {
+  pickPrimaryUrl,
+  extractAllUrls,
+  checkSenderRateLimit,
+  computeRateLimit,
+} from "../src/email-handler.js";
 
 describe("pickPrimaryUrl — happy path", () => {
   it("extracts the first http(s) URL from a text body", () => {
@@ -49,6 +54,55 @@ describe("pickPrimaryUrl — rejection", () => {
     const html =
       '<a href="javascript:void(0)">click</a><a href="https://real.example.com/x">real</a>';
     expect(pickPrimaryUrl("", html)).toBe("https://real.example.com/x");
+  });
+});
+
+describe("extractAllUrls — B1 multi-URL", () => {
+  it("returns multiple distinct text URLs in document order", () => {
+    const text =
+      "First: https://a.example.com\nSecond: https://b.example.com\nThird: https://c.example.com";
+    expect(extractAllUrls(text, "", 10)).toEqual([
+      "https://a.example.com/",
+      "https://b.example.com/",
+      "https://c.example.com/",
+    ]);
+  });
+
+  it("deduplicates URLs that appear in both text and html", () => {
+    const text = "https://shared.example.com is the event";
+    const html =
+      '<a href="https://shared.example.com">link</a><a href="https://other.example.com">other</a>';
+    const result = extractAllUrls(text, html, 10);
+    expect(result).toContain("https://shared.example.com/");
+    expect(result).toContain("https://other.example.com/");
+    // Shared URL should appear exactly once.
+    expect(result.filter((u) => u === "https://shared.example.com/")).toHaveLength(1);
+  });
+
+  it("hard-caps at the requested limit (10 default)", () => {
+    const text = Array.from({ length: 15 }, (_, i) => `https://e${i}.example.com`).join("\n");
+    const result = extractAllUrls(text, "", 10);
+    expect(result).toHaveLength(10);
+    // First 10 URLs preserved, last 5 dropped.
+    expect(result[0]).toBe("https://e0.example.com/");
+    expect(result[9]).toBe("https://e9.example.com/");
+  });
+
+  it("returns empty array when no URLs anywhere", () => {
+    expect(extractAllUrls("no urls in this body", "", 10)).toEqual([]);
+  });
+
+  it("returns a single-element array when only one URL is present", () => {
+    // multi-URL workflow falls back to single-URL path on .length<2;
+    // this case just verifies the helper itself.
+    expect(extractAllUrls("just https://only.example.com here", "", 10)).toEqual([
+      "https://only.example.com/",
+    ]);
+  });
+
+  it("custom cap parameter respected (e.g. cap=3)", () => {
+    const text = "a https://a.com b https://b.com c https://c.com d https://d.com";
+    expect(extractAllUrls(text, "", 3)).toHaveLength(3);
   });
 });
 

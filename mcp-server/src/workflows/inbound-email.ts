@@ -67,6 +67,7 @@ import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
+import { extractAllUrls } from "../email-handler.js";
 import {
   submitFetch,
   submitExtract,
@@ -391,6 +392,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               // ok-medium reply went out without voting links).
               "ok-medium",
               "ok-low",
+              // PR-M B1 multi-URL — one widget for the batch (per-event
+              // widgets are a follow-up needing schema for per-URL child
+              // rows).
+              "ok-multi",
               "no-url",
               "already-exists",
               "extract-failed",
@@ -562,6 +567,27 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     const subject = rowSnapshot.subject ?? "";
 
+    // B1 multi-URL branch — classifier flagged the email as containing
+    // multiple distinct event URLs. Fan out sequentially: each URL runs
+    // through fetch+extract+dedup+submit independently, results combine
+    // into a single 'ok-multi' reply at the end. Falls back to normal
+    // single-URL path if multi-URL extraction yields zero or one URL
+    // (e.g. classifier mislabeled or all candidates failed cleanUrl).
+    if (rowSnapshot.classifiedSubIntent === "multi_url" && rowSnapshot.bodyTextExcerpt) {
+      const allUrls = extractAllUrls(rowSnapshot.bodyTextExcerpt, "", 10);
+      if (allUrls.length >= 2) {
+        const overflowed = allUrls.length >= 10;
+        return await this.runMultiUrlPipeline(
+          step,
+          allUrls,
+          subject,
+          rowSnapshot.fromAddress,
+          rowSnapshot.attachmentCount > 0,
+          overflowed
+        );
+      }
+    }
+
     // B2 free-text branch — fires when there's no URL but the classifier
     // identified the body as a usable prose event description. Falls
     // through to the standard "no-url" reply when sub_intent is anything
@@ -719,6 +745,150 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       resultingEventId: submitted.id,
       fetchMethod,
       extractionMethod: extracted.extractionMethod,
+    };
+  }
+
+  /**
+   * B1 multi-URL pipeline. Called from runSubmitPipeline when classifier
+   * flagged sub_intent='multi_url' AND >=2 URLs were extracted from the
+   * body. Runs the standard fetch+extract+dedup+submit cycle SEQUENTIALLY
+   * per URL — each leg is its own step.do so a transient failure on one
+   * URL doesn't redo the others on retry.
+   *
+   * Result aggregation: builds a per-URL outcome list with simple bullet
+   * lines and combines into a single 'ok-multi' reply via the existing
+   * email-reply-builder template. resulting_event_id on the parent row
+   * is set to the FIRST successfully-created event id so /admin/inbound-
+   * emails still has a useful jump-link; other events are queryable via
+   * source_url. Future improvement (separate PR): write actual child rows
+   * with parent_email_id so admin sees one row per URL.
+   *
+   * Sequential, not parallel: simplicity > raw speed for a sub-10-URL
+   * loop. CF Workflows allow long runs (we're well within budget) and
+   * each step.do is independently retryable, so failures don't replay
+   * the whole batch.
+   */
+  private async runMultiUrlPipeline(
+    step: WorkflowStep,
+    urls: string[],
+    subject: string,
+    fromAddress: string,
+    hasAttachments: boolean,
+    overflowed: boolean
+  ): Promise<HandlerResult> {
+    interface UrlOutcome {
+      url: string;
+      kind: "created" | "already-exists" | "extract-failed" | "fetch-failed" | "submit-failed";
+      eventName?: string;
+      eventSlug?: string;
+      eventId?: string;
+    }
+    const outcomes: UrlOutcome[] = [];
+    let firstCreatedEventId: string | null = null;
+
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      // Per-URL step labels include the index so the CF Workflows
+      // dashboard can show which URL each step.do was for.
+      const labelPrefix = `submit/multi[${i}]`;
+      try {
+        const fetched = await step.do(
+          `${labelPrefix}/fetch-url`,
+          {
+            retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+            timeout: "30 seconds",
+          },
+          () => submitFetch(this.env, url)
+        );
+        const extracted = await step.do(
+          `${labelPrefix}/ai-extract`,
+          {
+            retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+            timeout: "30 seconds",
+          },
+          () => submitExtract(this.env, fetched)
+        );
+        const dedup = await step.do(
+          `${labelPrefix}/check-duplicate`,
+          { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          () => submitCheckDuplicate(this.env, extracted)
+        );
+        if (dedup.isDuplicate && dedup.existingEventSlug) {
+          outcomes.push({
+            url,
+            kind: "already-exists",
+            eventName: dedup.existingEventName ?? extracted.event.name,
+            eventSlug: dedup.existingEventSlug,
+            eventId: dedup.existingEventId,
+          });
+          continue;
+        }
+        const submitted = await step.do(
+          `${labelPrefix}/submit-event`,
+          {
+            retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+            timeout: "15 seconds",
+          },
+          () => submitEvent(this.env, extracted, fromAddress)
+        );
+        outcomes.push({
+          url,
+          kind: "created",
+          eventName: submitted.eventName,
+          eventSlug: submitted.slug,
+          eventId: submitted.id,
+        });
+        if (!firstCreatedEventId) firstCreatedEventId = submitted.id;
+      } catch (err) {
+        // Per-URL failures degrade gracefully — the other URLs still run.
+        // Map common prefixes to outcome kinds; everything else is a
+        // generic extract-failed for the sender-facing list.
+        const msg = err instanceof Error ? err.message : String(err);
+        const kind = msg.startsWith("fetch-")
+          ? "fetch-failed"
+          : msg.startsWith("submit-")
+            ? "submit-failed"
+            : "extract-failed";
+        outcomes.push({ url, kind });
+      }
+    }
+
+    // Format the results block for the ok-multi template. One bullet
+    // per URL; uses plain ✅/❌ glyphs that buildReply's HTML-escape pass
+    // converts safely to entities.
+    const resultsText = outcomes
+      .map((o) => {
+        switch (o.kind) {
+          case "created":
+            return `✅ "${o.eventName}" — pending review`;
+          case "already-exists":
+            return `✅ "${o.eventName}" — already in our directory: https://meetmeatthefair.com/events/${o.eventSlug}`;
+          case "extract-failed":
+            return `❌ Couldn't extract event details from ${o.url}`;
+          case "fetch-failed":
+            return `❌ Couldn't fetch ${o.url}`;
+          case "submit-failed":
+            return `❌ Extracted event from ${o.url} but couldn't save it — our team will follow up`;
+        }
+      })
+      .join("\n");
+
+    return {
+      replyKind: "ok-multi",
+      replyParams: {
+        subject,
+        eventCount: outcomes.length,
+        resultsText,
+        hasAttachments,
+        overflowed,
+      },
+      status: "replied",
+      resultingEventId: firstCreatedEventId,
+      // No fetch_method on the parent row for multi-URL — different URLs
+      // may have used different paths. The per-URL workflows handle their
+      // own tracking via the step-output trail in the CF dashboard.
+      fetchMethod: null,
+      extractionMethod: "ai",
     };
   }
 }
