@@ -23,8 +23,13 @@
  *  v3 (2026-05-21): reverted to @cf/meta/llama-3.1-8b-instruct, 4000ms.
  *    8B is known to work at this prompt. Open follow-up: trace 3B's
  *    response shape and decide whether to tune the prompt for it (cost
- *    win), or keep 8B (correctness win). Prompt itself unchanged. */
-export const CLASSIFIER_VERSION = "c-2026-05-21-v3";
+ *    win), or keep 8B (correctness win). Prompt itself unchanged.
+ *  v4 (2026-05-22): tightened claim_request — was over-firing on plain
+ *    event submissions that contained a vendor-application URL, splitting
+ *    them into multi-intent and spawning orphan claim_request child
+ *    workflows. claim_request now requires explicit ownership language,
+ *    not just the presence of an application/registration link. */
+export const CLASSIFIER_VERSION = "c-2026-05-22-v4";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —
@@ -56,10 +61,18 @@ export const INTENT_TAXONOMY_DOC = `INTENT TAXONOMY (pick exactly one per messag
                       Examples: a meetmeatthefair.com/events/ URL in the body;
                       "the date is wrong"; "appears to be incorrect";
                       a reply to one of our approval-notification emails.
-- claim_request:      Sender is claiming ownership/representation of an
-                      event listing (organizer or promoter).
+- claim_request:      Sender is EXPLICITLY claiming ownership/representation
+                      of an event listing (organizer or promoter). Requires
+                      first-person ownership language about the listing
+                      itself — not just the presence of an application or
+                      registration link in the body.
                       Examples: "I am the organizer of this event";
                       "How do I claim my listing?"; "I run this fair".
+                      NOT claim_request: a plain new_event submission that
+                      happens to include a vendor-application URL (e.g. a
+                      JotForm "apply to vend" link) — that is normal
+                      content in an event submission, not an ownership
+                      claim. Classify the message as new_event only.
 - vendor_inquiry:     A vendor/exhibitor asking about how to be listed,
                       how to apply to events, or about their vendor profile.
                       Examples: "How do I list my booth?";

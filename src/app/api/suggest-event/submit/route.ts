@@ -74,6 +74,12 @@ const submitEventSchema = z.object({
   jsonLd: z.record(z.string(), z.unknown()).optional(),
   turnstileToken: z.string().optional(), // Turnstile verification token
   eventDays: z.array(eventDaySchema).optional(), // Per-day schedule
+  // Recurring / multi-date support. When `specificDates` is provided the
+  // submit pipeline expands it into eventDays rows (one per date) and sets
+  // `discontinuousDates=true` on the resulting event row. Mutually
+  // compatible with an explicit `eventDays` payload — eventDays wins.
+  discontinuousDates: z.boolean().optional(),
+  specificDates: z.array(z.string()).optional(),
   submittedByUserId: z.string().optional(), // User who submitted (auto-filled for authenticated users)
   source: z.enum(["community", "vendor", "email"]).optional(), // Submission source
 });
@@ -225,8 +231,23 @@ export async function POST(request: NextRequest) {
       description,
       eventScale: data.eventScale ?? null,
     });
-    const eventStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
-    const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+    const gateReasons = [...gateResult.reasons];
+    let gateRoute = gateResult.route;
+
+    // Past-date guard: never auto-publish a submission whose startDate is
+    // already in the past at ingest time. The AI extractor will occasionally
+    // pick a season-start string from a linked form (e.g. "Every other
+    // Saturday beginning 4/11/2026") instead of the future dates listed in
+    // the submitter's email body — producing a past-dated PENDING/TENTATIVE
+    // row that pollutes the public listings and wastes admin review time.
+    // Force PENDING + flag for human review.
+    if (startDate && startDate.getTime() < Date.now()) {
+      gateRoute = "PENDING_REVIEW";
+      if (!gateReasons.includes("past_date")) gateReasons.push("past_date");
+    }
+
+    const eventStatus = gateRoute === "PENDING_REVIEW" ? "PENDING" : baseEventStatus;
+    const gateFlagsJson = gateReasons.length > 0 ? JSON.stringify(gateReasons) : null;
     const tagList: string[] =
       data.source === "vendor"
         ? ["community-suggestion", "vendor-submission"]
@@ -279,6 +300,50 @@ export async function POST(request: NextRequest) {
       resolvedStateCode = deriveStateFromText(description);
     }
 
+    // Expand `specificDates` (recurring/multi-date) into eventDays rows when
+    // the caller didn't already provide an eventDays payload. Lets the
+    // inbound-email pipeline ship cadence-expanded events without having to
+    // construct the eventDays array itself.
+    interface NormalizedDay {
+      date: string;
+      openTime: string;
+      closeTime: string;
+      notes?: string | null;
+      closed?: boolean;
+      vendorOnly?: boolean;
+    }
+    const effectiveEventDays: NormalizedDay[] | null =
+      data.eventDays && data.eventDays.length > 0
+        ? data.eventDays.map((d) => ({
+            date: d.date,
+            openTime: d.openTime,
+            closeTime: d.closeTime,
+            notes: d.notes ?? null,
+            closed: d.closed ?? false,
+            vendorOnly: d.vendorOnly ?? false,
+          }))
+        : data.specificDates && data.specificDates.length > 0
+          ? data.specificDates.map((date) => ({
+              date,
+              openTime: data.startTime || "10:00",
+              closeTime: data.endTime || "18:00",
+            }))
+          : null;
+
+    const finalDiscontinuous =
+      data.discontinuousDates === true ||
+      (effectiveEventDays !== null && effectiveEventDays.length >= 2);
+
+    // When discontinuous, align startDate/endDate with the first and last
+    // occurrence so the public range matches the actual schedule.
+    let effectiveStartDate = startDate;
+    let effectiveEndDate = endDate;
+    if (finalDiscontinuous && effectiveEventDays && effectiveEventDays.length > 0) {
+      const sortedDates = effectiveEventDays.map((d) => d.date).sort();
+      effectiveStartDate = normalizeEventDate(sortedDates[0]);
+      effectiveEndDate = normalizeEventDate(sortedDates[sortedDates.length - 1]);
+    }
+
     // Create the event
     const newEventId = crypto.randomUUID();
     await db.insert(events).values({
@@ -289,17 +354,18 @@ export async function POST(request: NextRequest) {
       promoterId: COMMUNITY_PROMOTER_ID,
       venueId: resolvedVenueId,
       stateCode: resolvedStateCode,
-      startDate,
-      endDate,
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
+      discontinuousDates: finalDiscontinuous,
       publicStartDate:
-        data.eventDays && data.eventDays.length > 0
-          ? computePublicDates(data.eventDays).publicStartDate
-          : startDate,
+        effectiveEventDays && effectiveEventDays.length > 0
+          ? computePublicDates(effectiveEventDays).publicStartDate
+          : effectiveStartDate,
       publicEndDate:
-        data.eventDays && data.eventDays.length > 0
-          ? computePublicDates(data.eventDays).publicEndDate
-          : endDate,
-      datesConfirmed: startDate !== null,
+        effectiveEventDays && effectiveEventDays.length > 0
+          ? computePublicDates(effectiveEventDays).publicEndDate
+          : effectiveEndDate,
+      datesConfirmed: effectiveStartDate !== null,
       categories: JSON.stringify(
         Array.isArray(data.categories) && data.categories.length > 0
           ? data.categories
@@ -332,20 +398,27 @@ export async function POST(request: NextRequest) {
 
     await recomputeEventCompleteness(db, newEventId);
 
-    // Insert event days if provided
-    if (data.eventDays && data.eventDays.length > 0) {
-      await db.insert(eventDays).values(
-        data.eventDays.map((day) => ({
-          id: crypto.randomUUID(),
-          eventId: newEventId,
-          date: day.date,
-          openTime: day.openTime,
-          closeTime: day.closeTime,
-          notes: day.notes || null,
-          closed: day.closed || false,
-          vendorOnly: day.vendorOnly || false,
-        }))
-      );
+    // Insert event days from whichever input provided them (explicit
+    // eventDays payload or specificDates expansion above). D1 caps each
+    // statement at 100 bound parameters; event_days rows pass 9 columns
+    // (8 explicit + the $defaultFn createdAt), so chunks are capped at 11
+    // rows (11 × 9 = 99). Recurring events easily exceed the safe count —
+    // 582f3156 had 16 — so the loop is required, not optional.
+    if (effectiveEventDays && effectiveEventDays.length > 0) {
+      const rows = effectiveEventDays.map((day) => ({
+        id: crypto.randomUUID(),
+        eventId: newEventId,
+        date: day.date,
+        openTime: day.openTime,
+        closeTime: day.closeTime,
+        notes: day.notes ?? null,
+        closed: day.closed ?? false,
+        vendorOnly: day.vendorOnly ?? false,
+      }));
+      const EVENT_DAYS_CHUNK_SIZE = 11;
+      for (let i = 0; i < rows.length; i += EVENT_DAYS_CHUNK_SIZE) {
+        await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_CHUNK_SIZE));
+      }
     }
 
     // Store schema.org data if JSON-LD was provided

@@ -150,6 +150,8 @@ interface ExtractedEvent {
   description?: string | null;
   startDate?: string | null;
   endDate?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
   venueName?: string | null;
   venueAddress?: string | null;
   venueCity?: string | null;
@@ -157,6 +159,12 @@ interface ExtractedEvent {
   ticketUrl?: string | null;
   imageUrl?: string | null;
   categories?: string[] | null;
+  // Recurring / multi-date support. `specificDates` flows from the main-app
+  // extract endpoint (either AI-enumerated or cadence-expander-backstop) and
+  // the submit endpoint expands it into eventDays rows on its side. Set
+  // `discontinuousDates=true` to mark the resulting event row.
+  specificDates?: string[] | null;
+  discontinuousDates?: boolean;
 }
 
 /**
