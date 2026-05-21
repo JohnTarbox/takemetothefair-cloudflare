@@ -36,6 +36,8 @@ interface InboundEmailRow {
   attachmentCount: number;
   messageId: string | null;
   replyKind: string | null;
+  fetchMethod: string | null;
+  extractionMethod: string | null;
   resultingEvent: { id: string; slug: string; name: string } | null;
   // Phase C.1 / D.1 classifier fields. All nullable because pre-
   // classifier rows have no values.
@@ -677,6 +679,32 @@ export default function AdminInboundEmailsPage() {
                                   >
                                     {row.replyKind}
                                   </span>
+                                </div>
+                              )}
+                              {(row.extractionMethod || row.fetchMethod) && (
+                                <div className="flex gap-3">
+                                  {row.extractionMethod && (
+                                    <span>
+                                      <span className="font-medium">Extracted via:</span>{" "}
+                                      <span
+                                        className={
+                                          row.extractionMethod === "json-ld"
+                                            ? "font-mono text-emerald-700"
+                                            : "font-mono text-gray-700"
+                                        }
+                                      >
+                                        {row.extractionMethod}
+                                      </span>
+                                    </span>
+                                  )}
+                                  {row.fetchMethod && (
+                                    <span>
+                                      <span className="font-medium">Fetched via:</span>{" "}
+                                      <span className="font-mono text-gray-700">
+                                        {row.fetchMethod}
+                                      </span>
+                                    </span>
+                                  )}
                                 </div>
                               )}
                               {row.resultingEvent && (

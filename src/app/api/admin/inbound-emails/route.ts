@@ -73,6 +73,8 @@ export async function GET(request: NextRequest) {
       messageId: inboundEmails.messageId,
       replyKind: inboundEmails.replyKind,
       resultingEventId: inboundEmails.resultingEventId,
+      fetchMethod: inboundEmails.fetchMethod,
+      extractionMethod: inboundEmails.extractionMethod,
       // Phase C.1 / D.1 — classifier metadata + admin annotations.
       classifiedIntent: inboundEmails.classifiedIntent,
       classifiedSubIntent: inboundEmails.classifiedSubIntent,

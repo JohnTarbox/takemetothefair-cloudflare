@@ -317,6 +317,7 @@ const SCHEMA_SQL = `
     reply_kind TEXT,
     resulting_event_id TEXT,
     fetch_method TEXT,
+    extraction_method TEXT,
     classified_intent TEXT,
     classified_sub_intent TEXT,
     classified_confidence REAL,

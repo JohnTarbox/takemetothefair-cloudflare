@@ -494,6 +494,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             replyKind: result.replyKind ?? null,
             resultingEventId: result.resultingEventId ?? null,
             fetchMethod: inferredFetchMethod,
+            // extraction_method tracking (drizzle/0083). Only populated on
+            // submit-intent successful extracts (json-ld / ai). On failure
+            // paths or non-submit intents the field stays null — matches
+            // pre-PR-B rows and keeps "did extraction even run?" queryable.
+            extractionMethod: result.extractionMethod ?? null,
           })
           .where(eq(inboundEmails.id, messageRowId));
       }
@@ -606,6 +611,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // can render a "matched against X" link without a JOIN.
         resultingEventId: dedup.existingEventId ?? null,
         fetchMethod: fetched.fetchMethod,
+        extractionMethod: extracted.extractionMethod,
       };
     }
 
@@ -626,6 +632,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // Persist the newly-created event id for the same admin-UI link.
       resultingEventId: submitted.id,
       fetchMethod: fetched.fetchMethod,
+      extractionMethod: extracted.extractionMethod,
     };
   }
 }

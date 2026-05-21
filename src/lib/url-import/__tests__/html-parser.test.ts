@@ -312,6 +312,44 @@ describe("extractMetadata", () => {
       expect(metadata.jsonLd?.name).toBe("Party");
     });
 
+    // Event subtypes — WordPress events plugins (The Events Calendar,
+    // EventOn, Events Manager) and venue CMSes commonly emit these.
+    // Pre-PR-B detection used `.includes("Event")` substring matching
+    // which DID catch these but also false-positive matched things like
+    // "EventReservation". PR-B narrows to a known set.
+    it.each([
+      "Festival",
+      "MusicEvent",
+      "FoodEvent",
+      "BusinessEvent",
+      "SocialEvent",
+      "ChildrensEvent",
+      "ComedyEvent",
+    ])("recognizes %s as an event subtype", (typeName) => {
+      const html = `<script type="application/ld+json">
+        { "@type": "${typeName}", "name": "X", "startDate": "2026-12-15" }
+      </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLd).toBeDefined();
+      expect(metadata.jsonLd?.name).toBe("X");
+    });
+
+    it("ignores schema:-prefixed Event types via prefix-strip", () => {
+      const html = `<script type="application/ld+json">
+        { "@type": "schema:Event", "name": "Prefixed", "startDate": "2026-12-15" }
+      </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLd?.name).toBe("Prefixed");
+    });
+
+    it("rejects EventReservation (would have false-positive matched pre-PR-B)", () => {
+      const html = `<script type="application/ld+json">
+        { "@type": "EventReservation", "name": "Booking" }
+      </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLd).toBeUndefined();
+    });
+
     it("ignores invalid JSON-LD", () => {
       const html = `<script type="application/ld+json">
         { invalid json here }
