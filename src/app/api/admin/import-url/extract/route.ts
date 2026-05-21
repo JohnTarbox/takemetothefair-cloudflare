@@ -5,6 +5,7 @@ import { getCloudflareAi, getCloudflareDb, getCloudflareEnv } from "@/lib/cloudf
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
+import { expandCadence } from "@/lib/url-import/cadence-expander";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { content, url, metadata } = validation.data;
+    const { content, metadata } = validation.data;
 
     // JSON-LD priority extraction: if the fetched page emitted a complete-
     // enough schema.org Event node, skip the AI call entirely and return
@@ -92,12 +93,37 @@ export async function POST(request: NextRequest) {
       (metadata || {}) as PageMetadata
     );
 
-    // If URL provided but no ticketUrl extracted, use source URL for events without one
-    if (url) {
-      for (const event of events) {
-        if (!event.ticketUrl) {
-          event.ticketUrl = url;
-        }
+    // Removed pre-2026-05-22 ticketUrl defaulting block. Defaulting the
+    // ticket field to the source URL silently copied page URLs (and
+    // sometimes vendor-application form URLs) into the ticket field,
+    // breaking trust. Both extraction branches (AI and JSON-LD) now leave
+    // ticket_url NULL when no genuine ticketing/registration link is
+    // found — the field is supposed to mean "where to buy tickets", not
+    // "where the event lives". See ai-extractor.ts:393 + jsonld-to-event.ts:66.
+
+    // Cadence backstop: when the AI returned a wide date range with empty
+    // specificDates AND the description mentions a cadence phrase, expand
+    // deterministically into per-occurrence dates. Catches the
+    // LLM-doesn't-enumerate failure mode (582f3156 biweekly market —
+    // AI returned a 7-month span and empty specificDates instead of 16
+    // Saturdays). Skipped when the AI already produced a specificDates
+    // list or when the date span is short.
+    for (const event of events) {
+      if (event.specificDates && event.specificDates.length > 0) continue;
+      if (!event.startDate || !event.endDate) continue;
+      if (!event.description) continue;
+      const startMs = Date.parse(event.startDate);
+      const endMs = Date.parse(event.endDate);
+      if (!isFinite(startMs) || !isFinite(endMs)) continue;
+      // Only expand for ranges > 14 days. A normal multi-day event
+      // (county fair Aug 2-10) has a contiguous schedule, not a cadence.
+      if (endMs - startMs < 14 * 86400000) continue;
+      const expanded = expandCadence(event.description, {
+        windowStart: event.startDate.slice(0, 10),
+        windowEnd: event.endDate.slice(0, 10),
+      });
+      if (expanded.length >= 2) {
+        event.specificDates = expanded;
       }
     }
 

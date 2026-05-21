@@ -385,7 +385,12 @@ function sanitizeEventData(
     stateCode:
       sanitizeState(item.stateCode || item.state_code) ||
       sanitizeState(item.venueState || item.venue_state || item.state),
-    ticketUrl: sanitizeUrl(item.ticketUrl || item.ticket_url || item.url || item.link),
+    // Only accept a genuine ticket/registration URL. The pre-2026-05-22 fallback
+    // chain (… || item.url || item.link) silently copied the source page URL —
+    // or a vendor-application form URL — into ticket_url, breaking trust in the
+    // field. Mirrors the JSON-LD branch (jsonld-to-event.ts:66), which uses
+    // offers.url only and leaves the field NULL when not present.
+    ticketUrl: sanitizeUrl(item.ticketUrl || item.ticket_url),
     ticketPriceMin: sanitizePrice(
       item.ticketPriceMin || item.ticket_price_min || item.price_min || item.price
     ),
