@@ -16,8 +16,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { adminActions, emailSourceSuggestions } from "@/lib/db/schema";
+import { adminActions, discoveryCandidates, emailSourceSuggestions } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
+import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
 
@@ -83,6 +84,60 @@ export async function POST(request: NextRequest) {
     payloadJson: JSON.stringify({ notes: body.notes ?? null }),
     createdAt: new Date(),
   });
+
+  // Promote-on-approve: hand the suggested URL off to the daily NE event
+  // discovery harvest by writing a `discovery_candidates` row. The harvest
+  // skill (owned outside this repo) reads from that table; this closes the
+  // C.8 loop that PR-D's table-rename collision opened up. Idempotent: if
+  // the URL is already in discovery_candidates we skip the insert so we
+  // don't override an existing snoozed/skipped/resolved decision the
+  // harvest side may have made independently. Non-fatal on failure — the
+  // approve itself succeeded; surfacing a queue-write hiccup as a 500 to
+  // the admin would be worse than logging and moving on.
+  if (body.action === "approve") {
+    try {
+      const [row] = await db
+        .select({
+          url: emailSourceSuggestions.url,
+          host: emailSourceSuggestions.host,
+        })
+        .from(emailSourceSuggestions)
+        .where(eq(emailSourceSuggestions.id, body.id))
+        .limit(1);
+
+      if (row?.url) {
+        const existing = await db
+          .select({ id: discoveryCandidates.id })
+          .from(discoveryCandidates)
+          .where(eq(discoveryCandidates.sourceUrl, row.url))
+          .limit(1);
+
+        if (existing.length === 0) {
+          const now = new Date();
+          await db.insert(discoveryCandidates).values({
+            id: crypto.randomUUID(),
+            ruleSlug: "email_suggestion",
+            sourceType: "aggregator",
+            sourceLabel: row.host || row.url,
+            sourceUrl: row.url,
+            status: "pending",
+            notes: `Promoted from email_source_suggestions ${body.id} on ${now.toISOString()}`,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+    } catch (err) {
+      // Don't fail the approval over a queue-write hiccup; the admin
+      // can re-trigger via /admin/email-source-suggestions if needed.
+      await logError(db, {
+        source: "api/admin/email-source-suggestions:promote",
+        message: "Failed to promote approved suggestion to discovery_candidates",
+        error: err,
+        context: { suggestionId: body.id },
+      });
+    }
+  }
 
   return NextResponse.json({ success: true, status: newStatus });
 }

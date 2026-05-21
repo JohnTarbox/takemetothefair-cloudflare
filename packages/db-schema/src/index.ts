@@ -1425,6 +1425,56 @@ export const emailSourceSuggestions = sqliteTable(
 
 export type EmailSourceSuggestion = typeof emailSourceSuggestions.$inferSelect;
 
+// Pre-existing prod table — owned by the daily NE event discovery skill
+// that lives outside this repo. Schema captured from `PRAGMA
+// table_info(discovery_candidates)` on 2026-05-21 prod D1 (24 rows). No
+// migration here: this Drizzle entry just types our writes into the
+// table from the email-source-suggestions approval endpoint. The
+// harvest skill is the canonical owner; we're acting as a producer that
+// promotes approved suggestions into the harvest queue (PR-T closes
+// the C.8 loop the spec §C.8 originally intended). Don't add columns or
+// indices from this side — coordinate with the harvest-skill owner first.
+export const discoveryCandidates = sqliteTable("discovery_candidates", {
+  id: text("id").primaryKey(),
+  /** Which discovery rule produced this candidate. Existing values:
+   *  aggregator_probe, jsonapi_harvest, phase_b_daily_search,
+   *  simpleview_sitemap_harvest, tec_events_api_harvest,
+   *  year_rollover_missing, maker_fest_2026_verification. Email
+   *  promotions use 'email_suggestion'. */
+  ruleSlug: text("rule_slug").notNull(),
+  /** Source taxonomy. Existing values: aggregator, event_page, probe,
+   *  web_search, year_rollover. Email promotions use 'aggregator' since
+   *  the suggested URL is typically an events-calendar / listing page. */
+  sourceType: text("source_type").notNull(),
+  /** Display label for the source. Email promotions use the hostname. */
+  sourceLabel: text("source_label").notNull(),
+  sourceUrl: text("source_url"),
+  sourceRefId: text("source_ref_id"),
+  state: text("state"),
+  category: text("category"),
+  expectedYield: integer("expected_yield"),
+  lastYield: integer("last_yield"),
+  totalEventsCreated: integer("total_events_created").notNull().default(0),
+  cmsType: text("cms_type"),
+  harvestMethod: text("harvest_method"),
+  harvestEndpoint: text("harvest_endpoint"),
+  rescrapeIntervalDays: integer("rescrape_interval_days"),
+  /** pending (default) | snoozed | skipped | needs_followup | resolved.
+   *  Email promotions land at 'pending' for the harvest skill to triage. */
+  status: text("status").notNull().default("pending"),
+  statusReason: text("status_reason"),
+  lastOutcome: text("last_outcome"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  lastCheckedAt: integer("last_checked_at", { mode: "timestamp" }),
+  lastHarvestedAt: integer("last_harvested_at", { mode: "timestamp" }),
+  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  snoozedUntil: integer("snoozed_until", { mode: "timestamp" }),
+});
+
+export type DiscoveryCandidate = typeof discoveryCandidates.$inferSelect;
+
 // B4: single-use tokens backing the pre-filled correction form sent in
 // MEDIUM/LOW confidence email replies. See drizzle/0085. Sender clicks
 // link in reply email → GET /submit-event/<token> renders edit form
