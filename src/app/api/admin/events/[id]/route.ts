@@ -17,7 +17,8 @@ import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
-import { parseTimestamp, parseDateOnly } from "@/lib/datetime";
+import { parseTimestamp } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
 
 export const runtime = "edge";
@@ -170,20 +171,29 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       if (venueRow[0]?.state) updateData.stateCode = venueRow[0].state;
     }
     if (data.startDate !== undefined) {
-      updateData.startDate = data.startDate ? new Date(data.startDate) : null;
+      // Anchor to noon UTC so the date renders as the intended calendar day
+      // in every US timezone. `new Date("YYYY-MM-DD")` parses to midnight UTC
+      // and shows the previous calendar day under Eastern/Pacific — the bug
+      // 582f3156 surfaced when this handler reintroduced midnight-UTC writes
+      // on every save. Matches the convention used by the submit path and
+      // the noon-UTC backfill (drizzle/0074).
+      updateData.startDate = normalizeEventDate(data.startDate);
     }
     if (data.endDate !== undefined) {
-      updateData.endDate = data.endDate ? new Date(data.endDate) : null;
+      updateData.endDate = normalizeEventDate(data.endDate);
     }
     if (data.datesConfirmed !== undefined) updateData.datesConfirmed = data.datesConfirmed;
     if (data.discontinuousDates !== undefined)
       updateData.discontinuousDates = data.discontinuousDates;
 
-    // Auto-compute startDate/endDate from eventDays when discontinuous
+    // Auto-compute startDate/endDate from eventDays when discontinuous.
+    // Use normalizeEventDate (noon UTC) rather than parseDateOnly (midnight
+    // UTC) so the calendar day renders correctly in US timezones — same fix
+    // as the explicit startDate/endDate branches above.
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
       const sorted = data.eventDays.map((d) => d.date).sort();
-      updateData.startDate = parseDateOnly(sorted[0]);
-      updateData.endDate = parseDateOnly(sorted[sorted.length - 1]);
+      updateData.startDate = normalizeEventDate(sorted[0]);
+      updateData.endDate = normalizeEventDate(sorted[sorted.length - 1]);
     }
 
     // Auto-compute public date range (excluding vendor-only days)
@@ -235,12 +245,67 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.walkInsAllowed !== undefined) updateData.walkInsAllowed = data.walkInsAllowed;
     if (data.syncEnabled !== undefined) updateData.syncEnabled = data.syncEnabled;
 
-    // The slug check above is check-then-set — between SELECT and UPDATE
-    // a concurrent admin can claim the same slug. The unique constraint
-    // on events.slug catches it; convert that into a friendly 409 instead
-    // of letting the generic catch surface a 500.
+    // Atomic save: bundle the events UPDATE, the optional slug-history INSERT,
+    // and the event_days rewrite (DELETE + chunked INSERTs) into a single
+    // db.batch() so a mid-operation failure rolls the whole save back instead
+    // of stranding the event with zero event_days. The pre-2026-05-22 sequence
+    // ran the eventDays DELETE before any chunked INSERT — a "too many SQL
+    // variables" error on the INSERT then left the event with no day rows.
+    //
+    // D1 caps each statement (including inside a batch) at 100 bound parameters.
+    // event_days rows pass 9 columns (8 explicit + the $defaultFn createdAt),
+    // so chunks are capped at 11 rows (11 × 9 = 99). Lifting the BATCH_SIZE
+    // back up changes the cap, not the limit — the limit is per statement.
+    const slugChanged =
+      typeof updateData.slug === "string" && updateData.slug !== currentEvent.slug;
+
+    const eventDayRows =
+      data.eventDays && data.eventDays.length > 0
+        ? data.eventDays.map((day) => ({
+            id: crypto.randomUUID(),
+            eventId: id,
+            date: day.date,
+            openTime: day.openTime,
+            closeTime: day.closeTime,
+            notes: day.notes || null,
+            closed: day.closed || false,
+            vendorOnly: day.vendorOnly || false,
+          }))
+        : [];
+    const EVENT_DAYS_CHUNK_SIZE = 11;
+    const eventDayInsertChunks: Array<typeof eventDayRows> = [];
+    for (let i = 0; i < eventDayRows.length; i += EVENT_DAYS_CHUNK_SIZE) {
+      eventDayInsertChunks.push(eventDayRows.slice(i, i + EVENT_DAYS_CHUNK_SIZE));
+    }
+
+    // db.batch requires a non-empty tuple. The events UPDATE is always present,
+    // so cast-spreading the conditional statements is safe.
+    const batchStatements = [
+      db.update(events).set(updateData).where(eq(events.id, id)),
+      ...(slugChanged
+        ? [
+            db.insert(eventSlugHistory).values({
+              eventId: id,
+              oldSlug: currentEvent.slug,
+              newSlug: unsafeSlug(updateData.slug as string),
+              changedAt: new Date(),
+              changedBy: session.user.id,
+            }),
+          ]
+        : []),
+      ...(data.eventDays !== undefined
+        ? [
+            db.delete(eventDays).where(eq(eventDays.eventId, id)),
+            ...eventDayInsertChunks.map((chunk) => db.insert(eventDays).values(chunk)),
+          ]
+        : []),
+    ] as const;
+
     try {
-      await db.update(events).set(updateData).where(eq(events.id, id));
+      // The events.slug unique constraint surfaces here as an error from the
+      // whole batch; convert to a friendly 409. Any other failure rolls back
+      // every statement above and falls through to the outer catch.
+      await db.batch(batchStatements as unknown as Parameters<typeof db.batch>[0]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("UNIQUE constraint failed: events.slug")) {
@@ -252,59 +317,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       throw err;
     }
 
-    // Record slug rename in event_slug_history so the middleware 301-redirects
-    // the old URL to the new one (mirrors the vendor_slug_history pattern from
-    // drizzle/0038). Only fires when the slug actually changed; a same-name
-    // edit that produces the same slug is a no-op above and skipped here.
-    if (typeof updateData.slug === "string" && updateData.slug !== currentEvent.slug) {
-      try {
-        await db.insert(eventSlugHistory).values({
-          eventId: id,
-          oldSlug: currentEvent.slug,
-          newSlug: unsafeSlug(updateData.slug),
-          changedAt: new Date(),
-          changedBy: session.user.id,
-        });
-      } catch (err) {
-        // Non-fatal — the rename succeeded, the redirect is just missing.
-        // Log so the gap is visible in wrangler tail.
-        await logError(db, {
-          message: "event-slug-rename: failed to write history row",
-          error: err,
-          source: "admin/events/[id]:PATCH",
-          context: { eventId: id, oldSlug: currentEvent.slug, newSlug: updateData.slug },
-        });
-      }
-    }
-
+    // Run after the batch so completeness reflects the fresh row (the score
+    // depends on dates, venue, etc., which the UPDATE just changed).
     await recomputeEventCompleteness(db, id);
-
-    // Handle eventDays update if provided
-    if (data.eventDays !== undefined) {
-      // Delete existing event days
-      await db.delete(eventDays).where(eq(eventDays.eventId, id));
-
-      // Insert new event days if any (batch to avoid SQLite variable limit)
-      if (data.eventDays && data.eventDays.length > 0) {
-        const BATCH_SIZE = 100; // Safe batch size (7 vars per day × 100 = 700 < 999 limit)
-        const days = data.eventDays.map((day) => ({
-          id: crypto.randomUUID(),
-          eventId: id,
-          date: day.date,
-          openTime: day.openTime,
-          closeTime: day.closeTime,
-          notes: day.notes || null,
-          closed: day.closed || false,
-          vendorOnly: day.vendorOnly || false,
-        }));
-
-        // Insert in batches to avoid "too many SQL variables" error
-        for (let i = 0; i < days.length; i += BATCH_SIZE) {
-          const batch = days.slice(i, i + BATCH_SIZE);
-          await db.insert(eventDays).values(batch);
-        }
-      }
-    }
 
     const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 

@@ -214,9 +214,12 @@ export async function POST(request: NextRequest) {
 
     await recomputeEventCompleteness(db, eventId);
 
-    // Insert event days if provided (batch to avoid SQLite variable limit)
+    // Insert event days if provided. D1 caps each statement at 100 bound
+    // parameters; event_days rows pass 9 columns (8 explicit + the $defaultFn
+    // createdAt), so chunks are capped at 11 rows (11 × 9 = 99). The previous
+    // BATCH_SIZE=100 was the bug that wiped event_days on save for any event
+    // with ≥12 day rows — see the PATCH handler for the full incident note.
     if (data.eventDays && data.eventDays.length > 0) {
-      const BATCH_SIZE = 100; // Safe batch size (7 vars per day × 100 = 700 < 999 limit)
       const days = data.eventDays.map((day) => ({
         id: crypto.randomUUID(),
         eventId,
@@ -227,8 +230,7 @@ export async function POST(request: NextRequest) {
         closed: day.closed || false,
         vendorOnly: day.vendorOnly || false,
       }));
-
-      // Insert in batches to avoid "too many SQL variables" error
+      const BATCH_SIZE = 11;
       for (let i = 0; i < days.length; i += BATCH_SIZE) {
         const batch = days.slice(i, i + BATCH_SIZE);
         await db.insert(eventDays).values(batch);
