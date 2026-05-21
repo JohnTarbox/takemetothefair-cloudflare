@@ -30,6 +30,12 @@ import type { InboundEmail } from "@takemetothefair/db-schema";
 export type ReplyKind =
   // Submit-intent reply kinds (workflow-orchestrated; not a handler)
   | "ok"
+  // B3 confidence-aware variants of ok. The workflow picks one based on
+  // the extractor's per-field confidence: HIGH=ok, MEDIUM=ok-medium,
+  // LOW=ok-low. All three still create a PENDING event — only the
+  // sender-facing message differs.
+  | "ok-medium"
+  | "ok-low"
   | "no-url"
   | "extract-failed"
   | "submit-failed"

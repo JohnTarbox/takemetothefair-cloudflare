@@ -1,0 +1,109 @@
+/**
+ * Unit tests for B3 confidence-aware reply tier templates + B2 signature
+ * stripping. The workflow integration (which decides ok vs ok-medium vs
+ * ok-low based on field confidence) is exercised by hand-running the
+ * pipeline end-to-end; here we just verify the pure helpers produce
+ * sensible text for each tier.
+ */
+
+import { describe, it, expect } from "vitest";
+import { buildReply } from "../src/email-reply-builder.js";
+import { stripSignature } from "../src/email-handlers/submit.js";
+
+describe("buildReply — B3 confidence tiers", () => {
+  it("ok (HIGH) — current polished pending-review reply", () => {
+    const msg = buildReply("ok", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      hasAttachments: false,
+    });
+    expect(msg.text).toContain('"Holiday Fair"');
+    expect(msg.text).toContain("being reviewed");
+    expect(msg.text).not.toContain("could not");
+    expect(msg.subject.startsWith("Re:")).toBe(true);
+  });
+
+  it("ok-medium — captured + asks for confirmation of unsure fields", () => {
+    const msg = buildReply("ok-medium", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "date, venue",
+    });
+    expect(msg.text).toContain('"Holiday Fair"');
+    expect(msg.text).toContain("date, venue");
+    expect(msg.text).toContain("speed up the review");
+  });
+
+  it("ok-low — asks for date + venue + name + description outright", () => {
+    const msg = buildReply("ok-low", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "event name, date, venue",
+    });
+    expect(msg.text).toContain("date(s)");
+    expect(msg.text).toContain("venue");
+    // The low template should be explicit that we need more info, not
+    // just say "approved soon".
+    expect(msg.text).toContain("more details");
+  });
+
+  it("ok-medium with empty unsureFields renders without dangling clause", () => {
+    const msg = buildReply("ok-medium", "sender@example.com", {
+      subject: "Test",
+      eventName: "Holiday Fair",
+      unsureFields: "",
+    });
+    // No "- specifically the " dangling phrase.
+    expect(msg.text).not.toContain("specifically the .");
+    expect(msg.text).not.toContain("specifically the  ");
+  });
+});
+
+describe("stripSignature — B2 helper", () => {
+  it("cuts at the RFC 3676 '-- ' delimiter", () => {
+    const body = `There's a craft fair at Town Hall on December 12.
+
+--
+Bob Smith
+bob@example.com`;
+    expect(stripSignature(body)).toBe("There's a craft fair at Town Hall on December 12.");
+  });
+
+  it("cuts at iOS 'Sent from my iPhone' signature", () => {
+    const body = `There's a craft fair at Town Hall on December 12.
+
+Sent from my iPhone`;
+    expect(stripSignature(body)).toBe("There's a craft fair at Town Hall on December 12.");
+  });
+
+  it("cuts at Outlook 'Get Outlook for iOS' signature", () => {
+    const body = `There's a craft fair at Town Hall on December 12.
+
+Get Outlook for iOS<https://aka.ms/o0ukef>`;
+    expect(stripSignature(body)).toBe("There's a craft fair at Town Hall on December 12.");
+  });
+
+  it("does not cut when no signature delimiter present", () => {
+    const body = "There's a craft fair at Town Hall on December 12.";
+    expect(stripSignature(body)).toBe(body);
+  });
+
+  it("does not falsely cut on 'Sent' appearing mid-sentence", () => {
+    // The mobile-sig regex is anchored on (^|\n) + "Sent from my ", so
+    // text like "He Sent from his phone" mid-prose shouldn't trip it.
+    const body = "He Sent from his phone earlier. Event is on Dec 12.";
+    expect(stripSignature(body)).toBe(body);
+  });
+
+  it("handles both delimiter types together — cuts at the earlier one", () => {
+    const body = `Event is on Dec 12.
+
+--
+Bob
+
+Sent from my iPhone`;
+    // The "-- " delimiter comes first, so the iOS signature line is
+    // inside the already-cut region.
+    expect(stripSignature(body)).toBe("Event is on Dec 12.");
+  });
+});

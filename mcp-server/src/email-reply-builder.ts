@@ -96,6 +96,38 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // B3: MEDIUM confidence — extractor pulled an event but flagged
+    // some critical fields as uncertain. PENDING event was still created
+    // (admin reviews like normal), but the sender is invited to reply
+    // with the unsure fields to speed up the review.
+    case "ok-medium": {
+      const eventName = (params.eventName as string | undefined) ?? "your event";
+      const unsure = (params.unsureFields as string | undefined) ?? "";
+      const unsureClause = unsure ? ` — specifically the ${unsure}` : "";
+      return `Thanks for submitting "${eventName}" to Meet Me at the Fair!
+
+We've captured your submission and our team will review it within 24 hours. A couple of details were a little hard to pin down${unsureClause}. If you can reply with anything we missed, it'll speed up the review.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
+    // B3: LOW confidence — extractor pulled a minimal event but most
+    // critical fields are uncertain. PENDING event still created, but
+    // the sender's reply (with date + venue + name) is essentially
+    // required for the event to be useful.
+    case "ok-low": {
+      const eventName = (params.eventName as string | undefined) ?? "your event";
+      const unsure = (params.unsureFields as string | undefined) ?? "";
+      const unsureClause = unsure ? ` (we're not yet confident about: ${unsure})` : "";
+      return `Thanks for emailing Meet Me at the Fair about "${eventName}"!
+
+We captured the basics${unsureClause}, but to make sure your event shows up correctly we need a few more details. Please reply with the date(s), venue name + address, and a short description of the event. Our team will review and publish once we have what we need.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "no-url": {
       const hasAttachments = !!params.hasAttachments;
       const attachmentNote = hasAttachments

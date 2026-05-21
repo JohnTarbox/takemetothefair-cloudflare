@@ -70,6 +70,7 @@ import { handle as handleSourceSuggestion } from "../email-handlers/source-sugge
 import {
   submitFetch,
   submitExtract,
+  submitFreeTextExtract,
   submitCheckDuplicate,
   submitEvent,
 } from "../email-handlers/submit.js";
@@ -537,6 +538,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             fromAddress: inboundEmails.fromAddress,
             subject: inboundEmails.subject,
             attachmentCount: inboundEmails.attachmentCount,
+            // B2: read the classifier sub-intent + body excerpt so we can
+            // branch into the free-text extraction path when the sender
+            // sent prose without a URL.
+            classifiedSubIntent: inboundEmails.classifiedSubIntent,
+            bodyTextExcerpt: inboundEmails.bodyTextExcerpt,
           })
           .from(inboundEmails)
           .where(eq(inboundEmails.id, messageRowId))
@@ -550,7 +556,46 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
 
     const subject = rowSnapshot.subject ?? "";
 
+    // B2 free-text branch — fires when there's no URL but the classifier
+    // identified the body as a usable prose event description. Falls
+    // through to the standard "no-url" reply when sub_intent is anything
+    // else (or empty), so emails without a URL AND without prose context
+    // still get the "please include a link" ack.
     if (!rowSnapshot.parsedUrl) {
+      const isFreeText = rowSnapshot.classifiedSubIntent === "free_text";
+      const hasBodyText = (rowSnapshot.bodyTextExcerpt ?? "").trim().length > 20;
+      if (isFreeText && hasBodyText) {
+        // Best-effort: if extraction fails to produce a viable event, we
+        // fall back to the no-url reply rather than send a confusing
+        // partial result. The minimum-fields gate inside the workflow
+        // (name + (startDate OR venueName)) catches near-empty outputs.
+        try {
+          const extracted = await step.do(
+            "submit/free-text-extract",
+            {
+              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+              timeout: "30 seconds",
+            },
+            () => submitFreeTextExtract(this.env, rowSnapshot.bodyTextExcerpt ?? "")
+          );
+          const hasMinFields =
+            !!extracted.event.name && (!!extracted.event.startDate || !!extracted.event.venueName);
+          if (hasMinFields) {
+            return await this.submitExtractedEvent(
+              step,
+              extracted,
+              subject,
+              rowSnapshot.fromAddress,
+              rowSnapshot.attachmentCount > 0,
+              null // no fetch happened on free-text path
+            );
+          }
+        } catch {
+          // Workers AI extract failed on prose — fall through to no-url
+          // reply. The original submission row still exists for admin
+          // triage via /admin/inbound-emails.
+        }
+      }
       return {
         replyKind: "no-url",
         replyParams: { subject, hasAttachments: rowSnapshot.attachmentCount > 0 },
@@ -577,6 +622,37 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       () => submitExtract(this.env, fetched)
     );
 
+    return await this.submitExtractedEvent(
+      step,
+      extracted,
+      subject,
+      rowSnapshot.fromAddress,
+      rowSnapshot.attachmentCount > 0,
+      fetched.fetchMethod
+    );
+  }
+
+  /**
+   * Shared tail-end of the submit pipeline: dedup-check → submit-event →
+   * confidence-tiered reply (B3). Called from both the URL fetch path
+   * and the B2 free-text path; the only difference between the two is
+   * how `extracted` was produced (fetched HTML+AI vs body-text-only AI).
+   *
+   * Reply tier (HIGH/MEDIUM/LOW) is derived from min field confidence
+   * over the critical event fields (name, startDate, venueName). HIGH
+   * gets the polished "your event X is pending review" template; MEDIUM
+   * acknowledges the capture but asks the sender to confirm
+   * dates/venue; LOW asks for more details outright. All three create
+   * the PENDING event — only the reply differs.
+   */
+  private async submitExtractedEvent(
+    step: WorkflowStep,
+    extracted: import("../email-handlers/submit.js").SubmitExtractResult,
+    subject: string,
+    fromAddress: string,
+    hasAttachments: boolean,
+    fetchMethod: "standard" | "browser-rendering" | null
+  ): Promise<HandlerResult> {
     // Duplicate-check before insert. Two-stage (exact source_url, then
     // name+date similarity ≥0.85 within ±7d) — sender of an already-
     // listed event gets the tailored "already-exists" reply pointing at
@@ -591,12 +667,6 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     );
 
     if (dedup.isDuplicate && dedup.existingEventSlug) {
-      // Only include the public URL when the matched event is actually
-      // public. PENDING / REJECTED matches link to 404s — common case
-      // when a sender re-submits before admin review. The reply
-      // builder branches on existingEventStatus to suppress the URL
-      // line for non-public statuses (still acknowledges the dedup,
-      // just doesn't link).
       return {
         replyKind: "already-exists",
         replyParams: {
@@ -607,10 +677,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           existingEventStatus: dedup.existingEventStatus ?? "",
         },
         status: "replied",
-        // Persist the matched existing event id so /admin/inbound-emails
-        // can render a "matched against X" link without a JOIN.
         resultingEventId: dedup.existingEventId ?? null,
-        fetchMethod: fetched.fetchMethod,
+        fetchMethod,
         extractionMethod: extracted.extractionMethod,
       };
     }
@@ -618,21 +686,77 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const submitted = await step.do(
       "submit/submit-event",
       { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "15 seconds" },
-      () => submitEvent(this.env, extracted, rowSnapshot.fromAddress)
+      () => submitEvent(this.env, extracted, fromAddress)
     );
 
+    // B3 confidence-aware reply. Pick HIGH/MEDIUM/LOW based on min
+    // confidence across the fields a submitter most needs to verify
+    // (name + date + venue). When the extract endpoint didn't return
+    // confidence (older deploy / edge cases) default to HIGH — fall
+    // back to current behavior rather than over-asking the sender.
+    const confidenceTier = computeReplyTier(extracted.fieldConfidence);
+    const replyKind =
+      confidenceTier === "high" ? "ok" : confidenceTier === "medium" ? "ok-medium" : "ok-low";
+
     return {
-      replyKind: "ok",
+      replyKind,
       replyParams: {
         subject,
         eventName: submitted.eventName,
-        hasAttachments: rowSnapshot.attachmentCount > 0,
+        eventSlug: submitted.slug,
+        hasAttachments,
+        // Surface which fields the extractor was unsure about so the
+        // MEDIUM/LOW templates can name them.
+        unsureFields: summarizeUnsureFields(extracted.fieldConfidence),
       },
       status: "replied",
-      // Persist the newly-created event id for the same admin-UI link.
       resultingEventId: submitted.id,
-      fetchMethod: fetched.fetchMethod,
+      fetchMethod,
       extractionMethod: extracted.extractionMethod,
     };
   }
+}
+
+/**
+ * Map per-field "high"/"medium"/"low" confidence to a reply tier.
+ * Considers only the fields the submitter can confirm via a reply (name,
+ * dates, venue) — `_extractId` and similar bookkeeping fields don't
+ * factor in. Worst-case wins: any LOW-confidence critical field demotes
+ * the whole reply to LOW.
+ */
+function computeReplyTier(
+  fieldConfidence: Record<string, "high" | "medium" | "low"> | undefined
+): "high" | "medium" | "low" {
+  if (!fieldConfidence) return "high";
+  const critical: Array<"name" | "startDate" | "venueName"> = ["name", "startDate", "venueName"];
+  let worst: "high" | "medium" | "low" = "high";
+  for (const field of critical) {
+    const c = fieldConfidence[field];
+    if (c === "low") return "low";
+    if (c === "medium" && worst === "high") worst = "medium";
+  }
+  return worst;
+}
+
+/**
+ * Comma-separated list of critical fields the extractor flagged
+ * medium/low, for the MEDIUM/LOW reply templates to interpolate. Empty
+ * string when nothing's uncertain (HIGH tier path).
+ */
+function summarizeUnsureFields(
+  fieldConfidence: Record<string, "high" | "medium" | "low"> | undefined
+): string {
+  if (!fieldConfidence) return "";
+  const labels: Array<[keyof typeof fieldConfidence, string]> = [
+    ["name", "event name"],
+    ["startDate", "date"],
+    ["venueName", "venue"],
+  ];
+  const unsure = labels
+    .filter(([f]) => {
+      const c = fieldConfidence[f];
+      return c === "medium" || c === "low";
+    })
+    .map(([, label]) => label);
+  return unsure.join(", ");
 }

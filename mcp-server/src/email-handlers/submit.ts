@@ -62,14 +62,57 @@ export interface SubmitFetchResult {
 }
 
 export interface SubmitExtractResult {
+  /** URL the event came from. Empty string in the B2 free-text path
+   *  where there's no source URL — the workflow's submit-event leg
+   *  omits sourceUrl from the API call in that case. */
   url: string;
   event: ExtractedEvent;
-  /** Which extraction strategy produced the event on the main app:
-   *  'json-ld' when the page's schema.org Event JSON-LD was complete
-   *  enough to skip the AI call entirely; 'ai' on the normal AI-extract
-   *  path. Forwarded to the workflow's mark-done step which persists it
-   *  to inbound_emails.extraction_method (drizzle/0083). */
-  extractionMethod: "json-ld" | "ai";
+  /** Per-field confidence from the extract endpoint, keyed by field
+   *  name ("name", "startDate", "venueName", ...). Used by the workflow
+   *  to pick HIGH/MEDIUM/LOW reply tier (B3). Sparsely populated —
+   *  fields the extractor didn't return are simply absent. */
+  fieldConfidence?: Record<string, "high" | "medium" | "low">;
+  /** Which extraction strategy produced the event:
+   *  - 'json-ld'    — page's schema.org Event JSON-LD was complete enough
+   *                   to skip the AI call entirely (PR-B path).
+   *  - 'ai'         — fetch-then-AI-extract on a URL (default path).
+   *  - 'free-text'  — no URL; body text fed directly to AI (PR-E B2 path).
+   *  Forwarded to the workflow's mark-done step which persists it to
+   *  inbound_emails.extraction_method (drizzle/0083). */
+  extractionMethod: "json-ld" | "ai" | "free-text";
+}
+
+/**
+ * Strip the most common sender-signature blocks before feeding body text
+ * to AI extraction. Signature lines confuse the extractor — it'll happily
+ * pull "Bob Smith\nbob@example.com" into the event description if the
+ * body is short. Two cuts:
+ *
+ *   1. Standard RFC 3676 signature delimiter: "-- " on its own line
+ *      (trailing space optional per Gmail/Apple Mail practice).
+ *   2. iOS/Android/Outlook default signatures. Cut from match onward.
+ *
+ * Conservative on purpose — a false cut on legitimate event text is worse
+ * than leaving a few signature lines in. The 3000-char body cap upstream
+ * limits the damage either way.
+ *
+ * Exported for unit tests.
+ */
+export function stripSignature(bodyText: string): string {
+  let out = bodyText;
+  // Cut 1: standard signature delimiter (must be on its own line).
+  const sigDelim = out.search(/(^|\n)-- ?(\r?\n|$)/);
+  if (sigDelim >= 0) {
+    out = out.slice(0, sigDelim);
+  }
+  // Cut 2: mobile-mailer signatures.
+  const mobileSig = out.search(
+    /(^|\n)(Sent from my |Get Outlook for |Get the Outlook app|Sent via )/i
+  );
+  if (mobileSig >= 0) {
+    out = out.slice(0, mobileSig);
+  }
+  return out.trim();
 }
 
 export interface SubmitEventResult {
@@ -213,8 +256,9 @@ export async function submitExtract(
   const body = (await res.json().catch(() => null)) as
     | {
         success: true;
-        events: ExtractedEvent[];
+        events: (ExtractedEvent & { _extractId?: string })[];
         count: number;
+        confidence?: Record<string, Record<string, "high" | "medium" | "low">>;
         extractionMethod?: "json-ld" | "ai";
       }
     | { success: false; error: string }
@@ -224,12 +268,82 @@ export async function submitExtract(
       body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
     throw new NonRetryableError(`extract-upstream: ${upstream}`);
   }
-  // Default to 'ai' for the (rare) case where the main app is on an older
-  // deploy that doesn't return the field. Matches the pre-PR-B behavior.
+  // Default extractionMethod to 'ai' when the upstream doesn't return the
+  // field (older deploy / fallback path). The endpoint returns 'json-ld'
+  // when the schema.org bypass triggered. fieldConfidence is keyed by the
+  // event's _extractId — sparse when the extractor didn't surface
+  // confidence for every field.
+  const event = body.events[0];
+  const extractId = event._extractId;
   return {
     url: fetched.url,
-    event: body.events[0],
+    event,
+    fieldConfidence: extractId && body.confidence ? body.confidence[extractId] : undefined,
     extractionMethod: body.extractionMethod ?? "ai",
+  };
+}
+
+/**
+ * B2: free-text extraction. Called when classifier returned
+ * sub_intent='free_text' AND there's no parsedUrl. Calls the same
+ * /api/admin/import-url/extract endpoint with body text as content and
+ * NO URL — the extractor doesn't care whether content came from a fetch
+ * or an email body. Signature is stripped first to keep the AI from
+ * dragging signature blocks into the event description.
+ *
+ * Minimum result (gated in the workflow): event.name + (startDate OR
+ * venueName). Below that we fall back to the existing "no-url" reply
+ * since we couldn't pull a usable event from the prose.
+ *
+ * Errors: same NonRetryableError model as submitExtract — Workers AI
+ * load timeouts don't recover on tight retries.
+ */
+export async function submitFreeTextExtract(
+  env: HandlerEnv,
+  bodyText: string
+): Promise<SubmitExtractResult> {
+  const stripped = stripSignature(bodyText).slice(0, MAX_FETCH_CONTENT_LEN);
+  let res: Response;
+  try {
+    res = await fetch(`${env.MAIN_APP_URL}/api/admin/import-url/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
+      body: JSON.stringify({
+        content: stripped,
+        // No URL — extractor handles missing url gracefully (skip
+        // ticketUrl fallback that defaults to sourceUrl on AI path).
+        metadata: { title: null, description: null, ogImage: null, jsonLd: null },
+      }),
+    });
+  } catch (err) {
+    throw new NonRetryableError(
+      `extract-network: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  if (!res.ok) {
+    throw new NonRetryableError(`extract-${res.status}`);
+  }
+  const body = (await res.json().catch(() => null)) as
+    | {
+        success: true;
+        events: (ExtractedEvent & { _extractId?: string })[];
+        count: number;
+        confidence?: Record<string, Record<string, "high" | "medium" | "low">>;
+      }
+    | { success: false; error: string }
+    | null;
+  if (!body || !body.success || body.events.length === 0) {
+    const upstream =
+      body && "error" in body ? body.error : body && body.success ? "zero-events" : "no-body";
+    throw new NonRetryableError(`extract-upstream: ${upstream}`);
+  }
+  const event = body.events[0];
+  const extractId = event._extractId;
+  return {
+    url: "",
+    event,
+    fieldConfidence: extractId && body.confidence ? body.confidence[extractId] : undefined,
+    extractionMethod: "free-text",
   };
 }
 
@@ -307,15 +421,21 @@ export async function submitEvent(
 ): Promise<SubmitEventResult> {
   let res: Response;
   try {
+    const submitBody: Record<string, unknown> = {
+      ...extracted.event,
+      source: "email",
+      suggesterEmail: fromAddress,
+    };
+    // Omit sourceUrl entirely when free-text-extracted (no source URL
+    // exists). The submitEventSchema requires sourceUrl to be a valid
+    // URL when present, so passing empty-string would fail validation.
+    if (extracted.url) {
+      submitBody.sourceUrl = extracted.url;
+    }
     res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-internal-key": env.INTERNAL_API_KEY },
-      body: JSON.stringify({
-        ...extracted.event,
-        source: "email",
-        sourceUrl: extracted.url,
-        suggesterEmail: fromAddress,
-      }),
+      body: JSON.stringify(submitBody),
     });
   } catch (err) {
     throw new Error(`submit-network: ${err instanceof Error ? err.message : String(err)}`);
