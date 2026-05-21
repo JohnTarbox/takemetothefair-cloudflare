@@ -42,7 +42,10 @@
  * itself to advance status off 'processing' on the recovery run — if
  * the original failure mode is deterministic AND not fixed by a deploy
  * in between sweeps, the same row will be picked up again next cycle.
- * Cap at MAX_ROWS_PER_SWEEP prevents runaway re-creates.
+ * Per-row cap at MAX_RECOVERY_ATTEMPTS (drizzle/0082) breaks the loop
+ * after 3 cycles: the sweep marks the row terminally failed with
+ * reply_kind='sweep-exceeded' and sends a final auto-reply. Cap at
+ * MAX_ROWS_PER_SWEEP additionally prevents per-sweep runaway re-creates.
  *
  * Caveats:
  *   - We don't query the Cloudflare Workflows API to check whether the
@@ -51,13 +54,15 @@
  *     PROCESSING_STALE_THRESHOLD_SEC) is the proxy.
  */
 
-import { and, eq, gt, isNull, lt, or, isNotNull } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or, isNotNull, sql } from "drizzle-orm";
 import { getDb, type Db } from "./db.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import type { EmailIntent } from "./email-intents.js";
+import { buildReply } from "./email-reply-builder.js";
 
 const SOURCE = "mcp:inbound-email:stale-sweep";
+const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 
 /** Pattern (A) — entrypoint-dropped rows must be at least this old
  *  before sweep considers them. Gives the original workflow time to
@@ -86,12 +91,24 @@ const MAX_RECOVERY_AGE_SEC = 24 * 60 * 60; // 24 hours
  *  saturate Workflows quota. */
 const MAX_ROWS_PER_SWEEP = 50;
 
-/** Env subset the sweep needs. D1 is used for error_logs writes; the
+/** Per-row cap on sweep recreates. After this many deterministic-failure
+ *  cycles the sweep stops recreating the workflow, marks the row
+ *  terminally failed, and sends a 'sweep-exceeded' auto-reply so the
+ *  submitter isn't left hanging. Root-caused 2026-05-19 hamxposition.org
+ *  loop (5 wasted workflow runs on the same NonRetryableError before
+ *  mark-done settled). drizzle/0082 added the counter. */
+const MAX_RECOVERY_ATTEMPTS = 3;
+
+/** Env subset the sweep needs. DB for SELECT/UPDATE + error_logs; INBOUND_EMAIL
+ *  for recreate; EMAIL (optional) for the terminal sweep-exceeded auto-reply
+ *  — when EMAIL is unbound we still mark the row failed but skip the reply
+ *  with a warn log, matching the workflow's own send-reply behavior. The
  *  actual SELECT/UPDATE flows through the caller-provided `db` so tests
  *  can inject a better-sqlite3-backed Drizzle instance. */
 interface SweepEnv {
   DB: D1Database;
   INBOUND_EMAIL: Workflow<{ messageRowId: string; intent: EmailIntent }>;
+  EMAIL?: SendEmail;
 }
 
 export interface SweepResult {
@@ -101,11 +118,15 @@ export interface SweepResult {
   recreatedCount: number;
   /** Subset where create failed (each gets a logError entry too). */
   createFailedCount: number;
+  /** Subset where recovery_attempt_n was already >= MAX_RECOVERY_ATTEMPTS
+   *  so the sweep skipped the recreate and marked the row terminally
+   *  failed instead. drizzle/0082. */
+  exceededCount: number;
   /** Per-row outcomes for the admin endpoint to return. */
   rows: Array<{
     messageRowId: string;
     intent: string;
-    outcome: "recreated" | "create-failed" | "update-failed";
+    outcome: "recreated" | "create-failed" | "update-failed" | "exceeded-recovery-cap";
     newWorkflowInstanceId?: string;
     error?: string;
   }>;
@@ -117,6 +138,7 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
     foundCount: 0,
     recreatedCount: 0,
     createFailedCount: 0,
+    exceededCount: 0,
     rows: [],
   };
 
@@ -136,13 +158,27 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
   //       workflow started but errored before mark-done
   // Pattern B uses a longer threshold (15m vs 10m) since these rows had
   // a workflow that DID start; we want extra confidence it's dead.
-  let stale: Array<{ id: string; intent: string; pattern: "received" | "processing" }>;
+  let stale: Array<{
+    id: string;
+    intent: string;
+    pattern: "received" | "processing";
+    recoveryAttemptN: number;
+    fromAddress: string;
+    subject: string | null;
+    messageId: string | null;
+    parsedUrl: string | null;
+  }>;
   try {
     const rawStale = await db
       .select({
         id: inboundEmails.id,
         intent: inboundEmails.intent,
         status: inboundEmails.status,
+        recoveryAttemptN: inboundEmails.recoveryAttemptN,
+        fromAddress: inboundEmails.fromAddress,
+        subject: inboundEmails.subject,
+        messageId: inboundEmails.messageId,
+        parsedUrl: inboundEmails.parsedUrl,
       })
       .from(inboundEmails)
       .where(
@@ -167,6 +203,11 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
       id: r.id,
       intent: r.intent,
       pattern: r.status === "processing" ? "processing" : "received",
+      recoveryAttemptN: r.recoveryAttemptN ?? 0,
+      fromAddress: r.fromAddress,
+      subject: r.subject,
+      messageId: r.messageId,
+      parsedUrl: r.parsedUrl,
     }));
   } catch (err) {
     await logError(env.DB, {
@@ -187,6 +228,20 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
   // hammer Workflows quota on a backlog; volume is expected to be tiny
   // anyway.
   for (const row of stale) {
+    // Pre-check the per-row recovery cap. Pattern A rows haven't been
+    // recreated yet (counter still 0) so this only ever fires on Pattern B
+    // rows where the workflow has already failed deterministically N times.
+    if (row.recoveryAttemptN >= MAX_RECOVERY_ATTEMPTS) {
+      await terminallyFailRow(db, env, sessionId, row);
+      result.exceededCount += 1;
+      result.rows.push({
+        messageRowId: row.id,
+        intent: row.intent,
+        outcome: "exceeded-recovery-cap",
+      });
+      continue;
+    }
+
     const intent = row.intent as EmailIntent;
     let workflowInstanceId: string;
     try {
@@ -214,17 +269,23 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
       continue;
     }
 
-    // Write the new workflow_instance_id back so the next sweep
-    // iteration skips this row. UPDATE shape differs by pattern:
+    // Write the new workflow_instance_id back AND increment the recovery
+    // counter so the next sweep iteration skips this row AND so the cap
+    // check above eventually fires. UPDATE shape differs by pattern:
     //   (A) pattern='received' — guard with WHERE workflow_instance_id
     //       IS NULL so we don't trample a successful racing workflow's
-    //       back-link write.
+    //       back-link write. Counter still increments — Pattern A is rare
+    //       enough that even an over-counted row would still take 3 cycles
+    //       to reach the cap.
     //   (B) pattern='processing' — overwrite the OLD (errored) workflow
     //       id with the new one. The original instance still lives in
     //       the CF Workflows dashboard with status=Errored; the back-
     //       link just points at the recovery instance now.
     try {
-      const updateQuery = db.update(inboundEmails).set({ workflowInstanceId });
+      const updateQuery = db.update(inboundEmails).set({
+        workflowInstanceId,
+        recoveryAttemptN: sql`${inboundEmails.recoveryAttemptN} + 1`,
+      });
       if (row.pattern === "received") {
         await updateQuery.where(
           and(eq(inboundEmails.id, row.id), isNull(inboundEmails.workflowInstanceId))
@@ -262,10 +323,121 @@ export async function runInboundEmailStaleSweep(db: Db, env: SweepEnv): Promise<
     }
   }
 
+  // Heartbeat: emit a single info-level error_logs row per sweep run so
+  // silent cron failures are diagnosable from D1 alone. Without this the
+  // sweep source has zero rows on a healthy run — we found out about a
+  // misbehaving sweep cycle by querying error_logs and seeing nothing,
+  // which is exactly what a healthy run looks like too. (See PR-A's
+  // diagnostic for row 2f5f0c74.)
   console.log(
-    `[stale-sweep] found=${result.foundCount} recreated=${result.recreatedCount} createFailed=${result.createFailedCount}`
+    `[stale-sweep] found=${result.foundCount} recreated=${result.recreatedCount} createFailed=${result.createFailedCount} exceeded=${result.exceededCount}`
   );
+  await logError(env.DB, {
+    level: "info",
+    source: SOURCE,
+    message: "stale-sweep run completed",
+    sessionId,
+    context: {
+      foundCount: result.foundCount,
+      recreatedCount: result.recreatedCount,
+      createFailedCount: result.createFailedCount,
+      exceededCount: result.exceededCount,
+    },
+  }).catch(() => {});
   return result;
+}
+
+/**
+ * Terminal-fail a row that has exceeded the recovery cap. Writes a final
+ * status='failed' / reply_kind='sweep-exceeded' transition and best-effort
+ * sends an auto-reply explaining we gave up. The submitter isn't left
+ * hanging the way the pre-cap implementation could leave them — a row
+ * that errored deterministically would just sit in 'processing' until the
+ * 24h MAX_RECOVERY_AGE_SEC bound stopped the sweep from picking it up,
+ * with no user-visible notification.
+ *
+ * The send is fail-soft: any throw (EMAIL unbound, CF rejection, network)
+ * still lets us write the row to a terminal state. The submitter losing
+ * the auto-reply is bad UX but not as bad as leaving the row indefinitely
+ * processing.
+ */
+async function terminallyFailRow(
+  db: Db,
+  env: SweepEnv,
+  sessionId: string,
+  row: {
+    id: string;
+    intent: string;
+    recoveryAttemptN: number;
+    fromAddress: string;
+    subject: string | null;
+    messageId: string | null;
+    parsedUrl: string | null;
+  }
+): Promise<void> {
+  const errorMsg = `sweep retry cap exceeded (${row.recoveryAttemptN} attempts)`;
+  try {
+    await db
+      .update(inboundEmails)
+      .set({
+        status: "failed",
+        error: errorMsg,
+        replyKind: "sweep-exceeded",
+      })
+      .where(eq(inboundEmails.id, row.id));
+  } catch (err) {
+    await logError(env.DB, {
+      source: SOURCE,
+      message: "terminally-fail UPDATE failed; row left in current state",
+      error: err,
+      sessionId,
+      context: { messageRowId: row.id, recoveryAttemptN: row.recoveryAttemptN },
+    });
+    // Don't try to send a reply if we couldn't even update the row —
+    // sending without the UPDATE would risk double-replies on the next
+    // sweep if it picks up the row again.
+    return;
+  }
+
+  if (!env.EMAIL) {
+    await logError(env.DB, {
+      level: "warn",
+      source: SOURCE,
+      message: "EMAIL binding unbound; sweep-exceeded auto-reply skipped",
+      sessionId,
+      context: { messageRowId: row.id },
+    });
+    return;
+  }
+
+  try {
+    const msg = buildReply("sweep-exceeded", row.fromAddress, {
+      subject: row.subject ?? "",
+      url: row.parsedUrl ?? "",
+    });
+    const headers: Record<string, string> = {};
+    if (row.messageId) {
+      headers["In-Reply-To"] = row.messageId;
+      headers["References"] = row.messageId;
+    }
+    await env.EMAIL.send({
+      from: msg.from ?? DEFAULT_FROM,
+      to: msg.to,
+      subject: msg.subject,
+      html: msg.html,
+      text: msg.text,
+      headers,
+    });
+  } catch (err) {
+    await logError(env.DB, {
+      level: "warn",
+      source: SOURCE,
+      message: "sweep-exceeded auto-reply send failed; row stays terminally failed",
+      error: err,
+      sessionId,
+      context: { messageRowId: row.id },
+    });
+  }
 }
 
 /** Thin wrapper for the cron handler — matches the existing

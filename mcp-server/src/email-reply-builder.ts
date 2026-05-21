@@ -128,6 +128,16 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "sweep-exceeded": {
+      const url = (params.url as string | undefined) ?? "the page you linked";
+      return `Thanks for emailing Meet Me at the Fair!
+
+We tried multiple times to process your submission for ${url} but ran into the same problem each time. Our team has been notified and will review it manually — you don't need to do anything. If you have a different link with clearer event details (date, location, hours), feel free to reply with it.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "submission-approved": {
       // Fires when admin transitions a submitter-attributed event from
       // PENDING/TENTATIVE → APPROVED. Generic phrasing about edits ("some

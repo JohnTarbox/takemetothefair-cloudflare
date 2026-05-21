@@ -35,10 +35,22 @@ interface MockWorkflowInstance {
 type MockCreateFn = (params: {
   params: { messageRowId: string; intent: EmailIntent };
 }) => Promise<MockWorkflowInstance>;
+type MockEmailSendFn = (msg: {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  headers?: Record<string, string>;
+}) => Promise<void>;
 
-function makeMockEnv(createFn: MockCreateFn): {
+function makeMockEnv(
+  createFn: MockCreateFn,
+  emailSendFn?: MockEmailSendFn
+): {
   DB: D1Database;
   INBOUND_EMAIL: Workflow<{ messageRowId: string; intent: EmailIntent }>;
+  EMAIL?: SendEmail;
 } {
   return {
     // env.DB is only used by the sweep for logError side-channel writes.
@@ -48,13 +60,14 @@ function makeMockEnv(createFn: MockCreateFn): {
     INBOUND_EMAIL: {
       create: createFn,
     } as unknown as Workflow<{ messageRowId: string; intent: EmailIntent }>,
+    ...(emailSendFn ? { EMAIL: { send: emailSendFn } as unknown as SendEmail } : {}),
   };
 }
 
 const INSERT_INBOUND_SQL = `INSERT INTO inbound_emails (
   id, received_at, from_address, to_address, intent, status,
-  workflow_instance_id, attachment_count, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  workflow_instance_id, attachment_count, recovery_attempt_n, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 function insertInbound(opts: {
   id?: string;
@@ -62,6 +75,7 @@ function insertInbound(opts: {
   workflowInstanceId?: string | null;
   receivedAtSecondsAgo?: number;
   intent?: EmailIntent;
+  recoveryAttemptN?: number;
 }) {
   const id = opts.id ?? crypto.randomUUID();
   const receivedAtSec = Math.floor(Date.now() / 1000) - (opts.receivedAtSecondsAgo ?? 900);
@@ -76,6 +90,7 @@ function insertInbound(opts: {
       opts.status ?? "received",
       opts.workflowInstanceId ?? null,
       0,
+      opts.recoveryAttemptN ?? 0,
       receivedAtSec
     );
   return id;
@@ -299,6 +314,128 @@ describe("runInboundEmailStaleSweep", () => {
 
     expect(result.foundCount).toBe(0);
     expect(createFn).not.toHaveBeenCalled();
+  });
+
+  // Per-row recovery cap (drizzle/0082) — breaks the loop the existing
+  // sweep docblock warned about ("if the original failure mode is
+  // deterministic ... the same row will be picked up again next cycle").
+  // Root incident: 2026-05-19 hamxposition.org NonRetryableError loop
+  // (5 workflow runs before mark-done settled).
+  it("increments recovery_attempt_n on each Pattern B recreate", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    const id = insertInbound({
+      status: "processing",
+      workflowInstanceId: "wf-original",
+      receivedAtSecondsAgo: 16 * 60,
+      recoveryAttemptN: 0,
+    });
+    const createFn = vi.fn(async () => ({ id: "wf-recovery-1" }));
+
+    await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn)
+    );
+
+    const row = raw
+      .prepare("SELECT recovery_attempt_n FROM inbound_emails WHERE id = ?")
+      .get(id) as { recovery_attempt_n: number };
+    expect(row.recovery_attempt_n).toBe(1);
+  });
+
+  it("marks row terminally failed + sends sweep-exceeded reply once recovery_attempt_n hits the cap", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    const id = insertInbound({
+      status: "processing",
+      workflowInstanceId: "wf-old",
+      receivedAtSecondsAgo: 16 * 60,
+      recoveryAttemptN: 3, // already at cap
+    });
+    const createFn = vi.fn(async () => ({ id: "wf-should-not-create" }));
+    const emailSendFn = vi.fn(async () => {});
+
+    const result = await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn, emailSendFn)
+    );
+
+    expect(result.foundCount).toBe(1);
+    expect(result.exceededCount).toBe(1);
+    expect(result.recreatedCount).toBe(0);
+    expect(createFn).not.toHaveBeenCalled();
+
+    const row = raw
+      .prepare(
+        "SELECT status, error, reply_kind, workflow_instance_id FROM inbound_emails WHERE id = ?"
+      )
+      .get(id) as {
+      status: string;
+      error: string | null;
+      reply_kind: string | null;
+      workflow_instance_id: string | null;
+    };
+    expect(row.status).toBe("failed");
+    expect(row.reply_kind).toBe("sweep-exceeded");
+    expect(row.error).toMatch(/sweep retry cap exceeded/);
+    // workflow_instance_id is NOT overwritten — the cap path doesn't create
+    // a new instance, so the old id stays for debugging in the CF dashboard.
+    expect(row.workflow_instance_id).toBe("wf-old");
+
+    // Sweep-exceeded auto-reply was sent.
+    expect(emailSendFn).toHaveBeenCalledTimes(1);
+    const call = emailSendFn.mock.calls[0][0];
+    expect(call.to).toBe("alice@example.com");
+    expect(call.subject).toMatch(/^Re:/);
+  });
+
+  it("still marks row terminally failed when EMAIL binding is absent (reply is best-effort)", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    const id = insertInbound({
+      status: "processing",
+      workflowInstanceId: "wf-old",
+      receivedAtSecondsAgo: 16 * 60,
+      recoveryAttemptN: 3,
+    });
+    const createFn = vi.fn(async () => ({ id: "wf-should-not-create" }));
+
+    // No emailSendFn passed → env.EMAIL is undefined; row should still
+    // transition to failed, just without a reply going out.
+    await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn)
+    );
+
+    const row = raw
+      .prepare("SELECT status, reply_kind FROM inbound_emails WHERE id = ?")
+      .get(id) as { status: string; reply_kind: string | null };
+    expect(row.status).toBe("failed");
+    expect(row.reply_kind).toBe("sweep-exceeded");
+    expect(createFn).not.toHaveBeenCalled();
+  });
+
+  it("does not increment recovery_attempt_n when INBOUND_EMAIL.create throws", async () => {
+    const { runInboundEmailStaleSweep } = await import("../src/inbound-email-stale-sweep.js");
+    const id = insertInbound({
+      status: "processing",
+      workflowInstanceId: "wf-original",
+      receivedAtSecondsAgo: 16 * 60,
+      recoveryAttemptN: 0,
+    });
+    const createFn = vi.fn(async () => {
+      throw new Error("simulated workflows quota error");
+    });
+
+    await runInboundEmailStaleSweep(
+      db as unknown as Parameters<typeof runInboundEmailStaleSweep>[0],
+      makeMockEnv(createFn)
+    );
+
+    // Counter stays at 0 — a Workflows-side quota failure shouldn't burn
+    // through the per-row retry budget (the row would be unrecoverable
+    // after 3 unrelated quota hits).
+    const row = raw
+      .prepare("SELECT recovery_attempt_n FROM inbound_emails WHERE id = ?")
+      .get(id) as { recovery_attempt_n: number };
+    expect(row.recovery_attempt_n).toBe(0);
   });
 
   it("respects MAX_ROWS_PER_SWEEP cap to avoid quota saturation", async () => {
