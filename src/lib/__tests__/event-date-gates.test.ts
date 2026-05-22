@@ -127,12 +127,17 @@ describe("nameMatchesAdminFlag", () => {
     expect(r.reasons).toContain("name_registration_pattern");
   });
 
-  it("does NOT flag 'apply' inside longer words like 'application'", () => {
-    // Tests the \b word boundary in the apply pattern.
-    expect(nameMatchesAdminFlag("Vendor Applications Now Open").reasons).not.toContain(
+  it("flags 'apply' and its application/applications inflections", () => {
+    // The apply pattern was broadened 2026-05-22 (analyst P2 follow-up):
+    // /\bapply\b/ → /\bappl(?:y|ication|ications)\b/ so "Vendor Application
+    // Open" and "Vendor Applications Now Open" fire alongside "Apply Today".
+    // The old word-boundary test (apply DOES NOT match application) inverted
+    // here — that was correct under the narrower regex; under the broadened
+    // regex it's the failure mode the broadening was meant to close.
+    expect(nameMatchesAdminFlag("Vendor Applications Now Open").reasons).toContain(
       "name_apply_pattern"
     );
-    // But standalone "apply" still matches.
+    expect(nameMatchesAdminFlag("Vendor Application Open").reasons).toContain("name_apply_pattern");
     expect(nameMatchesAdminFlag("Apply Today: Maker Faire").reasons).toContain(
       "name_apply_pattern"
     );
