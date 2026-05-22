@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, like, inArray, isNull, sql } from "drizzle-orm";
+import { eq, and, like, lte, inArray, isNull, ne, sql } from "drizzle-orm";
 import {
   events,
   eventVendors,
@@ -505,6 +505,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .optional()
         .default(false)
         .describe("If true, queue the IndexNow ping for batched flush."),
+      acknowledge_possible_duplicates: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Set to true to suppress the venue+date duplicate-detection warning. Use only after manually verifying that the events flagged in a prior call's `warnings.possible_duplicates` array are NOT actually the same event. Default false: the call returns a warning (not an error) listing potential duplicates so the caller can review."
+        ),
       // Optional provenance for tracked fields. When supplied AND any of
       // estimated_attendance / vendor_fee_min / vendor_fee_max /
       // ticket_price_min / ticket_price_max / application_deadline is being
@@ -815,6 +822,68 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Always set updatedAt
       updates.updatedAt = new Date();
 
+      // ── Venue+date duplicate detection (analyst 2026-05-22 P7c) ──────
+      // suggest_event runs dedup at creation time, but its workaround for
+      // a separate D1_TYPE_ERROR bug (now fixed) made callers create the
+      // event date-less and set dates via update_event afterward. That
+      // path skipped dedup entirely — a duplicate (plus a duplicate venue)
+      // slipped through this week. This check fires when the SAME call
+      // sets a venue (via venue_id) AND a start_date, and warns the caller
+      // about overlapping events at the same venue. Warning, not blocking:
+      // pass acknowledge_possible_duplicates=true after manual review.
+      let possibleDuplicatesWarning: Array<{
+        id: string;
+        name: string;
+        slug: string;
+        dates: string;
+        status: string;
+      }> | null = null;
+      const mergedVenueId =
+        params.venue_id !== undefined
+          ? params.venue_id
+          : ((event as { venueId?: string | null }).venueId ?? null);
+      if (
+        params.venue_id !== undefined &&
+        params.start_date !== undefined &&
+        mergedVenueId &&
+        updates.startDate instanceof Date &&
+        !params.acknowledge_possible_duplicates
+      ) {
+        const newStartDate = updates.startDate as Date;
+        const newEnd = (updates.endDate as Date | undefined) ?? newStartDate;
+        // Match the suggest_event dedup query verbatim, exclude self, and
+        // serialize Date to seconds-epoch for the raw sql fragment (the same
+        // D1_TYPE_ERROR avoidance the suggest_event side now applies).
+        const newStartSecs = Math.floor(newStartDate.getTime() / 1000);
+        const possibleDupes = await db
+          .select({
+            id: events.id,
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            status: events.status,
+          })
+          .from(events)
+          .where(
+            and(
+              eq(events.venueId, mergedVenueId),
+              ne(events.id, event.id),
+              lte(events.startDate, newEnd),
+              sql`coalesce(${events.endDate}, ${events.startDate}) >= ${newStartSecs}`
+            )
+          );
+        if (possibleDupes.length > 0) {
+          possibleDuplicatesWarning = possibleDupes.map((d) => ({
+            id: d.id,
+            name: d.name,
+            slug: d.slug as unknown as string,
+            dates: formatDateRange(d.startDate, d.endDate),
+            status: d.status,
+          }));
+        }
+      }
+
       // Capture previous values for confirmation
       const previousValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
@@ -1073,6 +1142,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
+      }
+      if (possibleDuplicatesWarning && possibleDuplicatesWarning.length > 0) {
+        // Warning, not error: the update has already succeeded by this
+        // point. The caller is expected to review the candidates and, if
+        // they are genuinely distinct, re-run the same call with
+        // acknowledge_possible_duplicates=true to suppress the warning.
+        result.warnings = {
+          possible_duplicates: possibleDuplicatesWarning,
+          message: `Found ${possibleDuplicatesWarning.length} existing event(s) at the same venue with overlapping dates. Review and re-call with acknowledge_possible_duplicates=true if these are distinct events.`,
+        };
       }
 
       return { content: [jsonContent(result)] };

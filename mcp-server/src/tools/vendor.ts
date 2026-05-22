@@ -731,6 +731,14 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // ── Duplicate detection ──────────────────────────────────────
       if (venueId && startDate && !params.force_create) {
         const newEnd = endDate || startDate;
+        // D1's parameter binder rejects Date objects passed inside a raw
+        // sql template — that was the source of the D1_TYPE_ERROR the
+        // analyst saw (2026-05-22 P7c). Drizzle's column-aware operators
+        // (lte/gte/eq) DO convert Date → seconds via the column's
+        // mapToDriverValue; raw sql templates do not, so we explicitly
+        // serialize to seconds-epoch here. events.startDate / events.endDate
+        // are mode: "timestamp" which stores as integer seconds.
+        const newStartSecs = Math.floor(startDate.getTime() / 1000);
 
         // Overlap: existing.start <= newEnd AND coalesce(existing.end, existing.start) >= newStart
         const possibleDupes = await db
@@ -747,7 +755,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             and(
               eq(events.venueId, venueId),
               lte(events.startDate, newEnd),
-              sql`coalesce(${events.endDate}, ${events.startDate}) >= ${startDate}`
+              sql`coalesce(${events.endDate}, ${events.startDate}) >= ${newStartSecs}`
             )
           );
 
