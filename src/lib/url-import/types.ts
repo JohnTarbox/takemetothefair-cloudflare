@@ -81,5 +81,15 @@ export interface PageMetadata {
   title?: string;
   description?: string;
   ogImage?: string;
+  // Legacy single-event JSON-LD slot — first Event-schema node found on the
+  // page. Kept for backward compatibility with callers that haven't been
+  // upgraded to the multi-event API below.
   jsonLd?: Record<string, unknown>;
+  // Multi-event JSON-LD slot (analyst 2026-05-22 P7a): EVERY Event-schema
+  // node found on the page, in document order. Populated alongside
+  // `jsonLd` for back-compat. When a landing page describes N events via
+  // JSON-LD (e.g., a venue calendar emitting one Event per row), the
+  // extract endpoint maps each one to an ExtractedEvent instead of
+  // dropping all but the first.
+  jsonLdEvents?: Record<string, unknown>[];
 }

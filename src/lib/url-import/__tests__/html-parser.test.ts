@@ -383,6 +383,70 @@ describe("extractMetadata", () => {
     });
   });
 
+  // Multi-event JSON-LD support (analyst 2026-05-22 P7a). Landing pages
+  // that describe N events (a venue calendar emitting one Event per
+  // upcoming show, or a town's "Our Markets" page) used to drop all but
+  // the first — html-parser now collects every Event-schema node into
+  // `jsonLdEvents` while keeping `jsonLd` as the first for back-compat.
+  describe("JSON-LD multi-event extraction (P7a)", () => {
+    it("collects every Event node from a single array script", () => {
+      const html = `<script type="application/ld+json">
+        [
+          { "@type": "Event", "name": "Market #1", "startDate": "2026-06-06" },
+          { "@type": "Event", "name": "Market #2", "startDate": "2026-06-13" },
+          { "@type": "Event", "name": "Market #3", "startDate": "2026-06-20" }
+        ]
+      </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLdEvents).toHaveLength(3);
+      expect(metadata.jsonLdEvents?.[0].name).toBe("Market #1");
+      expect(metadata.jsonLdEvents?.[2].name).toBe("Market #3");
+      // Back-compat: jsonLd still resolves to the first event.
+      expect(metadata.jsonLd?.name).toBe("Market #1");
+    });
+
+    it("collects events from separate JSON-LD script blocks", () => {
+      const html = `
+        <script type="application/ld+json">
+          { "@type": "Event", "name": "Show A", "startDate": "2026-07-01" }
+        </script>
+        <script type="application/ld+json">
+          { "@type": "Event", "name": "Show B", "startDate": "2026-07-15" }
+        </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLdEvents).toHaveLength(2);
+      expect(metadata.jsonLdEvents?.[0].name).toBe("Show A");
+      expect(metadata.jsonLdEvents?.[1].name).toBe("Show B");
+    });
+
+    it("collects every Event node from a @graph array", () => {
+      const html = `<script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@graph": [
+            { "@type": "WebSite", "name": "Site" },
+            { "@type": "Event", "name": "Conf #1", "startDate": "2026-09-01" },
+            { "@type": "Organization", "name": "Org" },
+            { "@type": "Event", "name": "Conf #2", "startDate": "2026-09-08" }
+          ]
+        }
+      </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLdEvents).toHaveLength(2);
+      expect(metadata.jsonLdEvents?.[0].name).toBe("Conf #1");
+      expect(metadata.jsonLdEvents?.[1].name).toBe("Conf #2");
+    });
+
+    it("does not set jsonLdEvents when the page has no Event schemas", () => {
+      const html = `<script type="application/ld+json">
+        { "@type": "Organization", "name": "Just a company" }
+      </script>`;
+      const metadata = extractMetadata(html);
+      expect(metadata.jsonLdEvents).toBeUndefined();
+      expect(metadata.jsonLd).toBeUndefined();
+    });
+  });
+
   describe("empty/missing metadata", () => {
     it("returns empty object for html without metadata", () => {
       const html = "<html><body>No metadata here</body></html>";

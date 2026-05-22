@@ -19,6 +19,7 @@ const extractRequestSchema = z.object({
       description: z.string().nullable().optional(),
       ogImage: z.string().nullable().optional(),
       jsonLd: z.record(z.string(), z.unknown()).nullable().optional(),
+      jsonLdEvents: z.array(z.record(z.string(), z.unknown())).nullable().optional(),
     })
     .optional(),
 });
@@ -53,18 +54,36 @@ export async function POST(request: NextRequest) {
 
     const { content, metadata } = validation.data;
 
-    // JSON-LD priority extraction: if the fetched page emitted a complete-
-    // enough schema.org Event node, skip the AI call entirely and return
-    // the JSON-LD-derived event. JSON-LD is authoritative on these pages
+    // JSON-LD priority extraction: if the fetched page emitted complete-
+    // enough schema.org Event node(s), skip the AI call entirely and return
+    // the JSON-LD-derived events. JSON-LD is authoritative on these pages
     // (WordPress events plugins, venue CMSes); the AI just paraphrases the
-    // same content from prose, often with worse fidelity. Bypass kicks in
-    // when the mapper returns non-null (name + startDate + at least one of
-    // {location, description}); otherwise we fall through to AI.
-    if (metadata?.jsonLd) {
-      const jsonLdEvent = tryExtractFromJsonLd(metadata.jsonLd);
-      if (jsonLdEvent) {
-        const extractId = `jsonld-${Date.now()}-0`;
+    // same content from prose, often with worse fidelity.
+    //
+    // Multi-event support (analyst 2026-05-22 P7a): when `jsonLdEvents`
+    // carries N>1 Event-schema nodes, map each through the same gate. A
+    // venue calendar emitting one Event per upcoming show used to drop
+    // all but the first; now every qualifying node becomes a candidate
+    // for selection in the admin UI. Falls back to the legacy single-
+    // node `jsonLd` field when `jsonLdEvents` isn't populated (older
+    // fetch responses).
+    const jsonLdNodes: Record<string, unknown>[] =
+      metadata?.jsonLdEvents && metadata.jsonLdEvents.length > 0
+        ? metadata.jsonLdEvents
+        : metadata?.jsonLd
+          ? [metadata.jsonLd]
+          : [];
+
+    if (jsonLdNodes.length > 0) {
+      const now = Date.now();
+      const eventsFromJsonLd: ExtractedEvent[] = [];
+      const confidenceMap: Record<string, Record<string, "high" | "medium" | "low">> = {};
+      for (let i = 0; i < jsonLdNodes.length; i++) {
+        const jsonLdEvent = tryExtractFromJsonLd(jsonLdNodes[i]);
+        if (!jsonLdEvent) continue;
+        const extractId = `jsonld-${now}-${i}`;
         const event: ExtractedEvent = { ...jsonLdEvent, _extractId: extractId };
+        eventsFromJsonLd.push(event);
         // Every populated field gets "high" confidence: schema.org Event is
         // the authoritative source on the page. Nulls get "low" — the
         // mapper already gates on name+startDate+one-of-{location,desc} so
@@ -74,11 +93,14 @@ export async function POST(request: NextRequest) {
           if (key.startsWith("_")) continue;
           confidence[key] = value === null || value === undefined ? "low" : "high";
         }
+        confidenceMap[extractId] = confidence;
+      }
+      if (eventsFromJsonLd.length > 0) {
         return NextResponse.json({
           success: true,
-          events: [event],
-          confidence: { [extractId]: confidence },
-          count: 1,
+          events: eventsFromJsonLd,
+          confidence: confidenceMap,
+          count: eventsFromJsonLd.length,
           extractionMethod: "json-ld",
         });
       }

@@ -106,43 +106,47 @@ export function extractMetadata(html: string): PageMetadata {
     }
   }
 
-  // Extract JSON-LD structured data
+  // Extract JSON-LD structured data. Collects ALL Event-schema nodes
+  // (analyst 2026-05-22 P7a) — `metadata.jsonLdEvents` carries the full
+  // list, `metadata.jsonLd` keeps the first for back-compat with callers
+  // not yet upgraded to the multi-event API.
   const jsonLdMatches = html.matchAll(
     /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
   );
 
+  const allEvents: Record<string, unknown>[] = [];
   for (const match of jsonLdMatches) {
     try {
       const jsonData = JSON.parse(match[1].trim());
 
-      // Look for Event schema (bare object)
+      // Bare Event schema object
       if (isEventSchema(jsonData)) {
-        metadata.jsonLd = jsonData;
-        break;
+        allEvents.push(jsonData);
+        continue;
       }
 
       // Array of schemas (some sites emit one <script> per type)
       if (Array.isArray(jsonData)) {
-        const eventSchema = jsonData.find((item) => isEventSchema(item));
-        if (eventSchema) {
-          metadata.jsonLd = eventSchema;
-          break;
+        for (const item of jsonData) {
+          if (isEventSchema(item)) allEvents.push(item);
         }
+        continue;
       }
 
       // @graph pattern (WordPress plugins like Yoast SEO use this)
       if (jsonData["@graph"] && Array.isArray(jsonData["@graph"])) {
-        const eventSchema = jsonData["@graph"].find((item: Record<string, unknown>) =>
-          isEventSchema(item)
-        );
-        if (eventSchema) {
-          metadata.jsonLd = eventSchema;
-          break;
+        for (const item of jsonData["@graph"]) {
+          if (isEventSchema(item)) allEvents.push(item as Record<string, unknown>);
         }
       }
     } catch {
       // Ignore JSON parse errors
     }
+  }
+
+  if (allEvents.length > 0) {
+    metadata.jsonLdEvents = allEvents;
+    metadata.jsonLd = allEvents[0]; // back-compat
   }
 
   return metadata;
