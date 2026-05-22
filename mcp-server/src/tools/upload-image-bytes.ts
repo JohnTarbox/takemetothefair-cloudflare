@@ -43,10 +43,10 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
       "appropriate prefix (events/, vendors/, venues/) and the target row's image column",
       "(events.image_url, vendors.logo_url, venues.image_url) updates to the CDN URL.",
       "",
-      "Phase 2a (current): EXIF/XMP/IPTC stripped from JPEGs before R2 put — guarantees no",
-      "GPS coordinates from phone photos hit the public CDN. Response includes `bytes_removed_by_exif_strip`",
-      "and `over_soft_budget` (true when stored bytes > 1MB) so callers can decide whether to pre-optimize.",
-      "Phase 2b (still deferred): auto-orient pixels + resize 2000px + WebP q85.",
+      "Pipeline (analyst 2026-05-22 P5a, Phases 2a + 2b):",
+      "  • Phase 2a: EXIF/XMP/IPTC stripped from JPEGs before R2 put — guarantees no GPS coordinates from phone photos hit the public CDN.",
+      "  • Phase 2b: auto-orient (EXIF Orientation applied to pixels) + resize to 2000px longest edge + re-encode to WebP q85 via Cloudflare Image Resizing. Skipped for SVG and inputs < 50KB.",
+      "Response includes `phase2b.status` ('applied' | 'skipped' | 'fallback'), `width`, `height`, `compression_ratio`, and `bytes_removed_by_exif_strip` so callers can observe each pipeline stage. `fallback` means the cf.image transform failed (zone not enabled, timeout, etc.) and the Phase-2a-stripped original was kept — worst case is identical to Phase-2a-only behavior.",
     ].join(" "),
     {
       image_base64: z

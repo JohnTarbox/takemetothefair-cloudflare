@@ -12,7 +12,7 @@ Phases 1-13 of the April-17 UX/UI audit roadmap are live. This file captures wha
 
 **13.5 R2 image self-hosting** — event hero images that ship hotlinked from third-party CDNs (mainemade.com and similar) will break silently when those sites reshuffle. Proper fix: background job that copies og-images to R2 and rewrites `events.imageUrl`. Requires R2 bucket setup and a small Cron Trigger worker. Estimated 2-3 days including backfill.
 
-**13.6 AVIF/WebP pipeline** — Cloudflare Images binding is available on this account. Wiring up image transforms on upload would reduce bandwidth materially. Estimated 1 day once the binding is configured.
+**13.6 AVIF/WebP pipeline** — ✅ Shipped 2026-05-22 as P5a Phase 2b (`src/app/api/admin/upload-image-bytes/route.ts` + `src/lib/image-optim.ts:transformViaCloudflare`). Uses Cloudflare Image Resizing via `cf: { image: {...} }` rather than the Cloudflare Images storage binding — same outcome (auto-orient + resize-to-2000px + WebP q85), no binding configuration needed, just the Image Resizing toggle on the zone.
 
 ## Phase 14 — Visual identity (contractor-dependent)
 
