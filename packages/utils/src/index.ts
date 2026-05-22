@@ -338,3 +338,8 @@ export * from "./event-date-gates";
 // Source-tier classifier for B5 dedup enrichment. Pure-function helper
 // consumed by the main app and the MCP inbound-email workflow.
 export * from "./source-tier";
+
+// Blog FAQ source classifier — shared between main app and MCP server so
+// both surfaces agree on which source (column / markdown / none) is driving
+// a post's FAQPage JSON-LD emission. See CLAUDE.md "Blog FAQ schema".
+export * from "./blog-faq-source";

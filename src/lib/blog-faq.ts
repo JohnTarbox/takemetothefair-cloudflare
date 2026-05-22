@@ -1,19 +1,34 @@
-// Tier-2 FAQ extractor for pillar blog posts. Detects the Q&A structure
-// described in MMATF-FAQ-Strategy.md §4.2:
-//
-//   ## Q: How do I find craft fairs near me?
-//   [answer paragraphs]
-//
-//   ## Q: When should I start applying for fall shows?
-//   [answer paragraphs]
-//
-// Pure function — same shape as src/lib/event-faq.ts so the same
-// FAQPageSchema component can render either source. Returns [] (which
-// FAQPageSchema renders as null) when fewer than FAQ_MIN_ITEMS Q&A pairs
-// are found, so non-FAQ posts emit no schema.
-//
-// Skips ATX-style headings inside fenced code blocks, matching
-// `extractHeadings` from src/lib/markdown-utils.ts.
+/**
+ * Tier-2 (fallback) FAQ extractor for pillar blog posts. Called by
+ * `src/app/blog/[slug]/page.tsx` ONLY when the Tier-1 source — the
+ * `blog_posts.faqs` JSON column — fails to deliver ≥ FAQ_MIN_ITEMS (=3)
+ * valid {question, answer} pairs. See `FAQPageSchema` for the full
+ * precedence rule and the CLAUDE.md "Blog FAQ schema" section.
+ *
+ * Detects the Q&A structure described in MMATF-FAQ-Strategy.md §4.2:
+ *
+ *   ## Q: How do I find craft fairs near me?
+ *   [answer paragraphs]
+ *
+ *   ## Q: When should I start applying for fall shows?
+ *   [answer paragraphs]
+ *
+ * The `Q:` prefix is required and the heading must be H2 — H3 sub-questions
+ * are intentionally ignored to keep the top-level FAQ schema focused.
+ *
+ * Pure function — same shape as `src/lib/event-faq.ts` so the same
+ * `FAQPageSchema` component renders either source. Returns `[]` (which
+ * `FAQPageSchema` renders as `null`) when fewer than FAQ_MIN_ITEMS pairs
+ * are found, so non-FAQ posts emit no schema.
+ *
+ * Skips ATX-style headings inside fenced code blocks, matching
+ * `extractHeadings` from `src/lib/markdown-utils.ts`.
+ *
+ * The SOURCE classification (column vs markdown vs none) used by MCP
+ * `get_blog_post` / `list_blog_posts` lives in
+ * `packages/utils/src/blog-faq-source.ts` so both sides agree without
+ * shipping the full extractor cross-package.
+ */
 
 import { stripMarkdown } from "@/lib/markdown-utils";
 import { FAQ_MIN_ITEMS, type FaqItem } from "@/lib/event-faq";
