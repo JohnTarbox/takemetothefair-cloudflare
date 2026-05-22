@@ -1138,7 +1138,10 @@ export default async function EventDetailPage({ params }: Props) {
                 <h3 className="font-semibold text-gray-900">Presented By</h3>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-3">
+                <Link
+                  href={`/promoters/${event.promoter.slug}`}
+                  className="flex items-center gap-3 group"
+                >
                   <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
                     {event.promoter.logoUrl ? (
                       <Image
@@ -1153,10 +1156,15 @@ export default async function EventDetailPage({ params }: Props) {
                     )}
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">{event.promoter.companyName}</p>
-                    {event.promoter.verified && <Badge variant="success">Verified</Badge>}
+                    <p className="font-medium text-gray-900 group-hover:text-royal">
+                      {event.promoter.companyName}
+                    </p>
+                    {/* Strict equality so any non-true value (legacy 0,
+                        unexpected string) renders nothing instead of leaking
+                        a stray "false" into the DOM. */}
+                    {event.promoter.verified === true && <Badge variant="success">Verified</Badge>}
                   </div>
-                </div>
+                </Link>
                 {event.promoter.website && (
                   <TrackedLink
                     href={event.promoter.website}
