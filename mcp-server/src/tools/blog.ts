@@ -10,6 +10,7 @@ import {
   unsafeSlug,
   decodeHtmlEntities,
 } from "../helpers.js";
+import { blogFaqSource } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -134,7 +135,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── get_blog_post ────────────────────────────────────────────────
   server.tool(
     "get_blog_post",
-    "Retrieve a single blog post by its slug. Returns full post including Markdown body, tags, categories, and author info.",
+    "Retrieve a single blog post by its slug. Returns full post including Markdown body, tags, categories, author info, and a computed `faq_source` ('column' | 'markdown' | 'none') indicating which source is currently driving the post's FAQPage JSON-LD emission on the public detail page.",
     {
       slug: z.string().min(1).describe("The URL slug of the blog post"),
     },
@@ -178,6 +179,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
             tags: parseJsonArray(post.tags),
             categories: parseJsonArray(post.categories),
             faqs: parseJsonArray(post.faqs),
+            faq_source: blogFaqSource(post.faqs, post.body),
             publishDate: formatDate(post.publishDate),
             createdAt: formatDate(post.createdAt),
             updatedAt: formatDate(post.updatedAt),
@@ -190,7 +192,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── list_blog_posts ──────────────────────────────────────────────
   server.tool(
     "list_blog_posts",
-    "List blog posts with optional filters for status and tag. Returns posts ordered by publish date (newest first). Admin sees all posts including drafts.",
+    "List blog posts with optional filters for status and tag. Returns posts ordered by publish date (newest first). Admin sees all posts including drafts. Each row includes a computed `faq_source` ('column' | 'markdown' | 'none') so FAQPage emission drift after an edit is visible at a glance.",
     {
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("Filter by status: DRAFT or PUBLISHED"),
       tag: z.string().optional().describe("Filter by tag name"),
@@ -229,6 +231,8 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           title: blogPosts.title,
           slug: blogPosts.slug,
           excerpt: blogPosts.excerpt,
+          body: blogPosts.body,
+          faqs: blogPosts.faqs,
           authorName: users.name,
           tags: blogPosts.tags,
           categories: blogPosts.categories,
@@ -251,12 +255,13 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
             count: posts.length,
             offset,
             has_more: posts.length === limit,
-            posts: posts.map((p) => ({
-              ...p,
-              tags: parseJsonArray(p.tags),
-              categories: parseJsonArray(p.categories),
-              publishDate: formatDate(p.publishDate),
-              createdAt: formatDate(p.createdAt),
+            posts: posts.map(({ body, faqs, ...rest }) => ({
+              ...rest,
+              tags: parseJsonArray(rest.tags),
+              categories: parseJsonArray(rest.categories),
+              publishDate: formatDate(rest.publishDate),
+              createdAt: formatDate(rest.createdAt),
+              faq_source: blogFaqSource(faqs, body),
             })),
           }),
         ],

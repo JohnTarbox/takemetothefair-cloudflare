@@ -132,6 +132,19 @@ const session = await auth();
 if (session?.user?.role === "ADMIN") { ... }
 ```
 
+### Blog FAQ schema (FAQPage emission)
+
+Blog posts emit Schema.org `FAQPage` JSON-LD from exactly one of two sources, chosen at render time in `src/app/blog/[slug]/page.tsx`:
+
+1. **Tier 1 (wins): `blog_posts.faqs` JSON column.** Emitted when the column parses to an array of ≥ `FAQ_MIN_ITEMS` (=3) valid `{question, answer}` pairs. Populated via MCP `create_blog_post` / `update_blog_post` (`faqs:` arg) or the admin API. Pass `faqs: []` via `update_blog_post` to clear and revert to Tier 2.
+2. **Tier 2 (fallback): `## Q: …` H2 headings in the body markdown.** `extractBlogFaqItems(post.body)` parses each `## Q: <question>` heading and pairs it with the prose up to the next H1/H2. Emitted when ≥3 pairs are found. H3 sub-questions are intentionally ignored.
+
+Posts with neither emit no FAQ schema (`<FAQPageSchema items={[]} />` renders `null`).
+
+The two sources **never combine and never conflict**: one wins per render, or neither meets the threshold and nothing is emitted. Hand-editing a body that already has a populated `faqs` column does NOT change the emitted schema — to change it, edit `faqs` via MCP.
+
+Visibility from MCP: `get_blog_post` and `list_blog_posts` return a computed `faq_source` field with one of `"column"`, `"markdown"`, or `"none"`, so drift after an edit is visible without loading the public page. The classifier lives in `packages/utils/src/blog-faq-source.ts`.
+
 ### Event Scrapers
 
 Located in `src/lib/scrapers/`. Import events from external fair websites (mainefairs.net, etc.). Used via admin import page (`/admin/import`).
