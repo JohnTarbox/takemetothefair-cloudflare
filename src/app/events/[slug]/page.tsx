@@ -846,6 +846,16 @@ export default async function EventDetailPage({ params }: Props) {
                       className="mt-2"
                       showVendorDays={isAdmin ? "all" : isVendor ? "badge" : "hide"}
                     />
+                  ) : event.discontinuousDates ? (
+                    // Season-span case (analyst P7b sub-case): discontinuousDates
+                    // is set but no event_days back it (e.g., "every Saturday
+                    // May–October" stored as just a start/end range with the
+                    // flag). Give the user a recurring/periodic cue rather
+                    // than letting the bare multi-month range carry no signal.
+                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                      <Clock className="w-4 h-4" />
+                      Recurring event — see description for specific dates
+                    </p>
                   ) : event.startDate ? (
                     <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                       <Clock className="w-4 h-4" />
