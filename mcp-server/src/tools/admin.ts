@@ -47,6 +47,7 @@ import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
+import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
@@ -85,6 +86,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ingest workflow — nudges Google to recrawl a sitemap ahead of its
   // default multi-day cadence.
   registerSitemapResubmitTool(server, db, auth, env);
+
+  // Google Indexing API per-URL recrawl notification. Use sparingly on
+  // high-value pages stuck in "Discovered – not indexed" or fresh slug
+  // renames; the API officially scopes to JobPosting / BroadcastEvent
+  // but empirically accepts other URL types as recrawl signals.
+  registerRequestIndexingTool(server, db, auth, env);
 
   // Sender-quality + trust annotation for inbound email submissions
   // (drizzle/0075). Adds get_email_submitter_quality (read) and

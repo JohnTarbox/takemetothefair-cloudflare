@@ -24,6 +24,15 @@ const SC_TOKEN_CACHE_KEY = "sc:access_token";
 // would produce the wrong scope on cache hit.
 const SC_WRITE_SCOPE = "https://www.googleapis.com/auth/webmasters";
 const SC_WRITE_TOKEN_CACHE_KEY = "sc:access_token_write";
+// Google Indexing API — separate API surface, separate OAuth scope. Used by
+// the request_indexing MCP tool to nudge Google's crawl queue for individual
+// URLs (e.g. blog posts stuck in "Discovered – currently not indexed"). The
+// Indexing API is officially scoped to JobPosting and BroadcastEvent schemas
+// but empirically accepts other URL types as recrawl signals. Token cached
+// separately for the same scope-keying reason as SC_WRITE.
+const INDEXING_API_BASE = "https://indexing.googleapis.com/v3";
+const INDEXING_SCOPE = "https://www.googleapis.com/auth/indexing";
+const INDEXING_TOKEN_CACHE_KEY = "sc:access_token_indexing";
 const REPORT_CACHE_TTL = 900;
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -85,6 +94,19 @@ async function getWriteAccessToken(env: ScEnv, skipCache: boolean): Promise<stri
     return await getGoogleAccessToken(env, SC_WRITE_SCOPE, {
       skipCache,
       cacheKey: SC_WRITE_TOKEN_CACHE_KEY,
+    });
+  } catch (error) {
+    if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
+    if (error instanceof GoogleAuthError) throw new ScApiError(error.status, error.detail);
+    throw error;
+  }
+}
+
+async function getIndexingAccessToken(env: ScEnv, skipCache: boolean): Promise<string> {
+  try {
+    return await getGoogleAccessToken(env, INDEXING_SCOPE, {
+      skipCache,
+      cacheKey: INDEXING_TOKEN_CACHE_KEY,
     });
   } catch (error) {
     if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
@@ -986,6 +1008,136 @@ export async function submitSitemap(env: ScEnv, sitemapUrl: string): Promise<Sub
   return {
     siteUrl,
     feedpath: sitemapUrl,
+    submittedAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Google Indexing API
+// ---------------------------------------------------------------------------
+
+export type RequestIndexingType = "URL_UPDATED" | "URL_DELETED";
+
+export type RequestIndexingResult = {
+  url: string;
+  type: RequestIndexingType;
+  notifyTime: string | null;
+  submittedAt: string;
+};
+
+/**
+ * Validates that a target URL belongs to the configured GSC property. Same
+ * shape rules as `validateSitemapBelongsToProperty`, but reused here because
+ * the Indexing API authorizes per-property: the service account can only
+ * notify URLs on a property it owns. Surfacing the wrong-host case client-
+ * side beats a 403 from upstream.
+ */
+function validateUrlBelongsToProperty(siteUrl: string, targetUrl: string): void {
+  let host: string;
+  try {
+    host = new URL(targetUrl).hostname.toLowerCase();
+  } catch {
+    throw new ScConfigError(`Invalid URL: ${targetUrl}`);
+  }
+
+  if (siteUrl.startsWith("sc-domain:")) {
+    const expectedHost = siteUrl.slice("sc-domain:".length).toLowerCase();
+    if (host !== expectedHost && !host.endsWith(`.${expectedHost}`)) {
+      throw new ScConfigError(
+        `URL host '${host}' does not belong to property 'sc-domain:${expectedHost}'.`
+      );
+    }
+    return;
+  }
+
+  let expectedHost: string;
+  try {
+    expectedHost = new URL(siteUrl).hostname.toLowerCase();
+  } catch {
+    throw new ScConfigError(`Invalid SC_SITE_URL property: ${siteUrl}`);
+  }
+  if (host !== expectedHost) {
+    throw new ScConfigError(`URL host '${host}' does not belong to property '${expectedHost}'.`);
+  }
+}
+
+/**
+ * Notify Google's Indexing API that a URL has been updated (or deleted).
+ * The API officially supports only `JobPosting` and `BroadcastEvent` schemas,
+ * but empirically accepts other URL types and treats the notification as a
+ * recrawl signal. Use sparingly on high-value pages (stuck blog posts,
+ * newly-renamed slugs) rather than bulk-submitting — Google may rate-limit
+ * or no-op such requests at any time.
+ *
+ * Requires the `https://www.googleapis.com/auth/indexing` OAuth scope (the
+ * `webmasters` scope used by sitemap submit is orthogonal and won't work).
+ * Service account must have Owner-level standing on the GSC property — the
+ * same standing the URL-Inspection sweep already relies on.
+ */
+export async function requestIndexing(
+  env: ScEnv,
+  targetUrl: string,
+  type: RequestIndexingType = "URL_UPDATED"
+): Promise<RequestIndexingResult> {
+  const siteUrl = resolveSiteUrl(env);
+  validateUrlBelongsToProperty(siteUrl, targetUrl);
+
+  const token = await getIndexingAccessToken(env, false);
+  const url = `${INDEXING_API_BASE}/urlNotifications:publish`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url: targetUrl, type }),
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    let detail: string;
+    try {
+      const parsed = JSON.parse(text) as { error?: { status?: string; message?: string } };
+      if (parsed?.error?.message) {
+        detail = `HTTP ${res.status} ${parsed.error.status ?? "ERROR"}: ${parsed.error.message}`;
+      } else {
+        detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
+      }
+    } catch {
+      detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
+    }
+    throw new ScApiError(res.status, detail);
+  }
+
+  // Response shape per Google docs:
+  // { urlNotificationMetadata: { url, latestUpdate: { type, notifyTime } } }
+  type IndexingResponse = {
+    urlNotificationMetadata?: {
+      url?: string;
+      latestUpdate?: { type?: string; notifyTime?: string };
+    };
+  };
+  let parsed: IndexingResponse = {};
+  try {
+    parsed = (await res.json()) as IndexingResponse;
+  } catch {
+    // Treat unparseable success body as no-op metadata; the 2xx status is
+    // the real signal that Google accepted the notification.
+  }
+
+  return {
+    url: parsed.urlNotificationMetadata?.url ?? targetUrl,
+    type,
+    notifyTime: parsed.urlNotificationMetadata?.latestUpdate?.notifyTime ?? null,
     submittedAt: new Date().toISOString(),
   };
 }
