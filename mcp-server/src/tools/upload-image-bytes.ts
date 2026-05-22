@@ -43,8 +43,10 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
       "appropriate prefix (events/, vendors/, venues/) and the target row's image column",
       "(events.image_url, vendors.logo_url, venues.image_url) updates to the CDN URL.",
       "",
-      "Phase 1 (this version): no server-side optimization. Bytes are stored as-is up to 10MB.",
-      "Phase 2 (planned): auto-orient + EXIF strip + WebP resize/quality pipeline per analyst spec.",
+      "Phase 2a (current): EXIF/XMP/IPTC stripped from JPEGs before R2 put — guarantees no",
+      "GPS coordinates from phone photos hit the public CDN. Response includes `bytes_removed_by_exif_strip`",
+      "and `over_soft_budget` (true when stored bytes > 1MB) so callers can decide whether to pre-optimize.",
+      "Phase 2b (still deferred): auto-orient pixels + resize 2000px + WebP q85.",
     ].join(" "),
     {
       image_base64: z

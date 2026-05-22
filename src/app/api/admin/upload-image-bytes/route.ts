@@ -22,12 +22,20 @@
  *   - Writes raw bytes to R2 with target-aware key prefix.
  *   - Updates the target row's image column.
  *
- * Phase 2 (deferred):
- *   - Server-side optimization pipeline (auto-orient + EXIF strip +
- *     resize 2000px + WebP q85, soft 800KB / hard 2MB step-down). The
- *     analyst's spec mandates this but doesn't specify the runtime;
- *     Pages + WASM image-processing libraries (@cf-wasm/photon,
- *     imagescript) need a research spike first. Filed as follow-up.
+ * Phase 2a (this commit, analyst 2026-05-22 P5a):
+ *   - EXIF/XMP/IPTC strip for JPEG uploads. Eliminates the GPS-coordinate
+ *     leak for phone photos before any byte hits the public CDN — the
+ *     highest-stakes piece of the analyst's spec.
+ *   - Soft-budget warning at 1MB. Response now includes `bytes_stored`,
+ *     `bytes_removed_by_exif_strip`, and `over_soft_budget` so callers
+ *     can decide whether to re-upload a pre-optimized version.
+ *
+ * Phase 2b (still deferred):
+ *   - Auto-orient pixels, resize to 2000px longest edge, convert to WebP
+ *     q85. These need either a WASM image library (bundle size hit) or
+ *     Cloudflare Images binding configuration (account-side setup, ~1 day
+ *     per docs/post-audit-followups.md §13.6). Phase 2a is the meaningful
+ *     subset that ships without either of those dependencies.
  *
  * Auth: admin session OR X-Internal-Key (mirrors existing upload routes).
  */
@@ -39,6 +47,7 @@ import { events, vendors, venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
+import { stripExifFromJpeg, SOFT_SIZE_LIMIT_BYTES } from "@/lib/image-optim";
 
 export const runtime = "edge";
 
@@ -222,7 +231,7 @@ export async function POST(request: NextRequest) {
   // Magic-byte sniff. Bail before R2 if the declared content_type doesn't
   // match the actual bytes — analyst spec's "<svg> claiming image/jpeg"
   // test case.
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes = new Uint8Array(await file.arrayBuffer());
   const detected = detectMagicBytes(bytes);
   if (!detected) {
     return NextResponse.json(
@@ -254,6 +263,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Phase 2a EXIF strip (analyst 2026-05-22 P5a). JPEGs from phones embed
+  // GPS coordinates by default; the strip happens BEFORE the R2 put so the
+  // bytes that land on the public CDN can't contain location history.
+  // Non-JPEG content types pass through unchanged (PNG/WebP/SVG metadata
+  // handling is Phase 2b territory).
+  let bytesRemovedByExifStrip = 0;
+  let exifSegmentsStripped = 0;
+  if (declaredType === "image/jpeg" || declaredType === "image/jpg") {
+    const stripResult = stripExifFromJpeg(bytes);
+    // stripResult.bytes is Uint8Array<ArrayBufferLike> (general); wrap in a
+    // fresh ArrayBuffer-backed view so the inferred type matches R2's
+    // strict Uint8Array<ArrayBuffer> input.
+    const stripped = new Uint8Array(stripResult.bytes.length);
+    stripped.set(stripResult.bytes);
+    bytes = stripped;
+    bytesRemovedByExifStrip = stripResult.bytesRemoved;
+    exifSegmentsStripped = stripResult.segmentsStripped;
+  }
+  const overSoftBudget = bytes.length > SOFT_SIZE_LIMIT_BYTES;
+
   // Key layout mirrors the per-entity routes. Includes target_type so we
   // can find/clean up later regardless of which endpoint wrote the bytes.
   const keyPrefix =
@@ -269,8 +298,13 @@ export async function POST(request: NextRequest) {
         originalName: file.name,
         caption: caption ?? "",
         source: "upload_image_bytes",
-        // Phase 1: no optimization. Phase 2 will overwrite or post-process.
-        optimization: "none",
+        // Phase 2a: EXIF strip for JPEGs; Phase 2b (resize + WebP) still
+        // deferred. R2 metadata records what actually happened so future
+        // audits can identify which assets were processed pre-Phase-2b.
+        optimization:
+          bytesRemovedByExifStrip > 0
+            ? `phase-2a:exif-strip,bytes_removed=${bytesRemovedByExifStrip}`
+            : "phase-2a:none",
       },
     });
   } catch (e) {
@@ -314,6 +348,10 @@ export async function POST(request: NextRequest) {
     target_id: targetId,
     image_column: imageColumn,
     bytes_stored: bytes.length,
-    optimization: "none_phase_1",
+    bytes_removed_by_exif_strip: bytesRemovedByExifStrip,
+    exif_segments_stripped: exifSegmentsStripped,
+    over_soft_budget: overSoftBudget,
+    soft_size_limit_bytes: SOFT_SIZE_LIMIT_BYTES,
+    optimization: "phase-2a",
   });
 }
