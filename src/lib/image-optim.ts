@@ -152,8 +152,159 @@ export function stripExifFromJpeg(input: Uint8Array): StripResult {
 }
 
 /** Soft size budget. Phase 2a target: keep CDN-served bytes under 1MB
- *  per image. Phase 2b will resize+WebP to enforce this automatically;
- *  Phase 2a just surfaces a warning when an uploaded image exceeds it
- *  after the EXIF strip. Hard cap stays at the input MAX_BYTES (10MB)
- *  in the route. */
+ *  per image. Phase 2b's resize+WebP transform usually brings outputs
+ *  well under this; the field stays useful as an observability signal
+ *  when the transform falls back to the original (rare). Hard cap stays
+ *  at the input MAX_BYTES (10MB) in the route. */
 export const SOFT_SIZE_LIMIT_BYTES = 1024 * 1024; // 1 MB
+
+// ---------------------------------------------------------------------------
+// Phase 2b — Cloudflare Image Resizing transform
+// ---------------------------------------------------------------------------
+//
+// Phase 2a (above) strips EXIF/XMP/IPTC metadata in-process via a JS segment
+// walker. Phase 2b layers on the pixel-level operations the analyst's spec
+// also requires: auto-orient (apply EXIF Orientation as a pixel rotation),
+// resize to 2000px longest edge, re-encode as WebP at q85.
+//
+// Implementation: Cloudflare's Image Resizing via `fetch(url, { cf: { image:
+// {...} } })`. Image Resizing must be enabled on the meetmeatthefair.com
+// zone in the Cloudflare dashboard (Speed → Optimization → Image Resizing).
+// Without that toggle, the transform call returns the source bytes unchanged
+// or a non-2xx — the caller is expected to detect this and fall back to
+// storing the Phase-2a-stripped original (the worst case is identical to
+// today's behavior).
+
+/** Default resize / re-encode parameters per analyst spec 2026-05-22. */
+const PHASE2B_DEFAULT_LONGEST_EDGE = 2000;
+const PHASE2B_DEFAULT_QUALITY = 85;
+
+/** Outputs the transform helper carries back to the caller. `bytes` and
+ *  `finalBytes` are the WebP body and its length; `originalBytes` is the
+ *  size of the source URL's response (useful for compression-ratio
+ *  observability). `durationMs` is the wall-clock time of the cf.image
+ *  fetch — typically <500 ms for a same-zone source. */
+export interface TransformResult {
+  bytes: Uint8Array;
+  originalBytes: number;
+  finalBytes: number;
+  contentType: "image/webp";
+  width: number | null;
+  height: number | null;
+  durationMs: number;
+}
+
+export class ImageTransformError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string) {
+    super(`Image transform error ${status}: ${detail}`);
+    this.name = "ImageTransformError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+export interface TransformOptions {
+  maxLongestEdge?: number;
+  quality?: number;
+  /** Override fetch for tests. Defaults to global fetch. */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Transform a publicly-fetchable image URL via Cloudflare Image Resizing.
+ * Returns WebP bytes resized to fit within `maxLongestEdge` (default 2000)
+ * with quality `quality` (default 85). EXIF Orientation is applied
+ * automatically — the output is upright regardless of input orientation.
+ *
+ * Throws `ImageTransformError` when Cloudflare responds non-2xx (which
+ * happens when Image Resizing isn't enabled on the zone, or when the
+ * source URL isn't fetchable). Callers are expected to catch and fall
+ * back to storing original bytes.
+ *
+ * The `cf.image` option is honored only when this fetch leaves the Workers
+ * runtime on Cloudflare's network. Local dev / test runs without the cf
+ * option set will return the source bytes unchanged — `fetchImpl` is
+ * provided so unit tests can mock the network response.
+ */
+export async function transformViaCloudflare(
+  sourceUrl: string,
+  opts: TransformOptions = {}
+): Promise<TransformResult> {
+  const maxLongestEdge = opts.maxLongestEdge ?? PHASE2B_DEFAULT_LONGEST_EDGE;
+  const quality = opts.quality ?? PHASE2B_DEFAULT_QUALITY;
+  const fetchImpl = opts.fetchImpl ?? fetch;
+
+  const cfImageOptions = {
+    width: maxLongestEdge,
+    height: maxLongestEdge,
+    fit: "scale-down" as const,
+    format: "webp" as const,
+    quality,
+    // Strip remaining metadata at the transform boundary. Phase 2a already
+    // stripped on the JPEG side; this catches the PNG/WebP cases too.
+    metadata: "none" as const,
+  };
+
+  const startedAt = Date.now();
+  let response: Response;
+  try {
+    response = await fetchImpl(sourceUrl, {
+      // Cloudflare Workers fetch accepts the cf option for image
+      // transforms. TypeScript's RequestInit doesn't include cf in the
+      // shared lib types; pass through with a cast rather than augmenting
+      // the global type. This is the same pattern Cloudflare's own docs use.
+      cf: { image: cfImageOptions },
+    } as RequestInit & { cf: { image: typeof cfImageOptions } });
+  } catch (err) {
+    throw new ImageTransformError(
+      0,
+      `fetch failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const text = await response.text();
+      if (text) detail = `${detail}: ${text.slice(0, 300)}`;
+    } catch {
+      // Body unreadable; the status alone is enough context.
+    }
+    throw new ImageTransformError(response.status, detail);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.startsWith("image/")) {
+    throw new ImageTransformError(
+      response.status,
+      `unexpected content-type "${contentType}" (Image Resizing not enabled on zone?)`
+    );
+  }
+
+  // Cloudflare returns the transformed dimensions in custom response
+  // headers. They're informational — when missing (older edge cache, etc.)
+  // we surface null rather than guess.
+  const widthHeader = response.headers.get("cf-resized-image-width");
+  const heightHeader = response.headers.get("cf-resized-image-height");
+  const width = widthHeader ? parseInt(widthHeader, 10) : null;
+  const height = heightHeader ? parseInt(heightHeader, 10) : null;
+
+  // Read the original Content-Length for compression-ratio observability.
+  // This is the size of the *source* response before transform; on hit
+  // it may be the cached transform — which is fine, we just want a number.
+  const originalLengthHeader = response.headers.get("x-original-content-length");
+  const originalBytes = originalLengthHeader ? parseInt(originalLengthHeader, 10) : 0;
+
+  const buf = new Uint8Array(await response.arrayBuffer());
+  return {
+    bytes: buf,
+    originalBytes: originalBytes || buf.length,
+    finalBytes: buf.length,
+    contentType: "image/webp",
+    width: Number.isFinite(width) ? width : null,
+    height: Number.isFinite(height) ? height : null,
+    durationMs: Date.now() - startedAt,
+  };
+}

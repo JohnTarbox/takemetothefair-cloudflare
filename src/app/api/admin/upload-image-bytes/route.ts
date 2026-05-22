@@ -22,20 +22,19 @@
  *   - Writes raw bytes to R2 with target-aware key prefix.
  *   - Updates the target row's image column.
  *
- * Phase 2a (this commit, analyst 2026-05-22 P5a):
+ * Phase 2a (analyst 2026-05-22 P5a):
  *   - EXIF/XMP/IPTC strip for JPEG uploads. Eliminates the GPS-coordinate
  *     leak for phone photos before any byte hits the public CDN — the
  *     highest-stakes piece of the analyst's spec.
- *   - Soft-budget warning at 1MB. Response now includes `bytes_stored`,
- *     `bytes_removed_by_exif_strip`, and `over_soft_budget` so callers
- *     can decide whether to re-upload a pre-optimized version.
  *
- * Phase 2b (still deferred):
- *   - Auto-orient pixels, resize to 2000px longest edge, convert to WebP
- *     q85. These need either a WASM image library (bundle size hit) or
- *     Cloudflare Images binding configuration (account-side setup, ~1 day
- *     per docs/post-audit-followups.md §13.6). Phase 2a is the meaningful
- *     subset that ships without either of those dependencies.
+ * Phase 2b (this commit, analyst 2026-05-22):
+ *   - Auto-orient + resize-to-2000px-longest-edge + re-encode to WebP q85
+ *     via Cloudflare Image Resizing (`cf: { image: {...} }`). Requires
+ *     Image Resizing enabled on the meetmeatthefair.com zone. The
+ *     transform is best-effort: on failure (zone not enabled, transform
+ *     timeout, etc.) we keep the Phase-2a-stripped original at the
+ *     original-extension key — i.e., worst case is identical to Phase 2a
+ *     behavior alone. No data migration needed for rollback.
  *
  * Auth: admin session OR X-Internal-Key (mirrors existing upload routes).
  */
@@ -47,7 +46,12 @@ import { events, vendors, venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
-import { stripExifFromJpeg, SOFT_SIZE_LIMIT_BYTES } from "@/lib/image-optim";
+import {
+  stripExifFromJpeg,
+  transformViaCloudflare,
+  ImageTransformError,
+  SOFT_SIZE_LIMIT_BYTES,
+} from "@/lib/image-optim";
 
 export const runtime = "edge";
 
@@ -281,26 +285,35 @@ export async function POST(request: NextRequest) {
     bytesRemovedByExifStrip = stripResult.bytesRemoved;
     exifSegmentsStripped = stripResult.segmentsStripped;
   }
-  const overSoftBudget = bytes.length > SOFT_SIZE_LIMIT_BYTES;
+  // (over-soft-budget is computed in the response payload below against
+  // `finalBytesCount`, which reflects either the Phase-2b transform output
+  // or the Phase-2a fallback — both honest values.)
 
   // Key layout mirrors the per-entity routes. Includes target_type so we
   // can find/clean up later regardless of which endpoint wrote the bytes.
+  // `baseKey` is the prefix shared between the originalKey (used for the
+  // Phase-2b staging round-trip) and the eventual webpKey (if the
+  // transform succeeds).
   const keyPrefix =
     targetType === "event" ? "events" : targetType === "vendor" ? "vendors" : "venues";
   const fileKind = targetType === "vendor" ? "logo" : "image";
-  const key = `${keyPrefix}/${targetId}/${fileKind}-${Date.now()}.${ext}`;
+  const timestamp = Date.now();
+  const baseKey = `${keyPrefix}/${targetId}/${fileKind}-${timestamp}`;
+  const originalKey = `${baseKey}.${ext}`;
 
+  // First R2 put: the Phase-2a-stripped original. This is also the source
+  // URL that Cloudflare Image Resizing fetches from for the Phase-2b
+  // transform — Image Resizing needs a public-fetchable URL.
   try {
-    await bucket.put(key, bytes, {
+    await bucket.put(originalKey, bytes, {
       httpMetadata: { contentType: declaredType },
       customMetadata: {
         uploadedBy: actorId,
         originalName: file.name,
         caption: caption ?? "",
         source: "upload_image_bytes",
-        // Phase 2a: EXIF strip for JPEGs; Phase 2b (resize + WebP) still
-        // deferred. R2 metadata records what actually happened so future
-        // audits can identify which assets were processed pre-Phase-2b.
+        // Marker BEFORE transform attempt; rewritten on the webp key if
+        // the transform succeeds.
         optimization:
           bytesRemovedByExifStrip > 0
             ? `phase-2a:exif-strip,bytes_removed=${bytesRemovedByExifStrip}`
@@ -309,15 +322,102 @@ export async function POST(request: NextRequest) {
     });
   } catch (e) {
     await logError(db, {
-      message: "upload-image-bytes: R2 put failed",
+      message: "upload-image-bytes: R2 put (original) failed",
       error: e,
       source: "admin-upload-image-bytes",
-      context: { key, targetType, targetId },
+      context: { key: originalKey, targetType, targetId },
     });
     return NextResponse.json({ error: "Upload failed" }, { status: 502 });
   }
 
-  const url = `${CDN_BASE}/${key}`;
+  // ── Phase 2b transform pipeline ──────────────────────────────────
+  // Skip when:
+  //   - input is SVG (vector — transform would rasterize)
+  //   - input is already small (< 50 KB — typically already optimized)
+  // Otherwise fetch the just-stored URL with cf.image and re-put the
+  // WebP body at a sibling key. Cloudflare's Image Resizing applies
+  // EXIF Orientation, scale-down to 2000px longest edge, and WebP q85
+  // re-encoding in a single transform.
+  const PHASE2B_SKIP_BELOW_BYTES = 50 * 1024;
+  const skipPhase2bReason: string | null =
+    declaredType === "image/svg+xml"
+      ? "svg-not-rasterized"
+      : bytes.length < PHASE2B_SKIP_BELOW_BYTES
+        ? "small-input"
+        : null;
+
+  let finalKey = originalKey;
+  let finalContentType: string = declaredType;
+  let finalBytesCount = bytes.length;
+  let phase2bStatus: "applied" | "skipped" | "fallback" = skipPhase2bReason ? "skipped" : "applied";
+  const phase2bSkipReason: string | null = skipPhase2bReason;
+  let phase2bWidth: number | null = null;
+  let phase2bHeight: number | null = null;
+  let phase2bDurationMs: number | null = null;
+  let phase2bErrorDetail: string | null = null;
+
+  if (!skipPhase2bReason) {
+    try {
+      const originalUrl = `${CDN_BASE}/${originalKey}`;
+      const transform = await transformViaCloudflare(originalUrl);
+
+      // Second R2 put: the WebP output at a sibling key. Use the same
+      // timestamp so the two assets sort together; the .webp extension
+      // is what the DB column ends up pointing at.
+      const webpKey = `${baseKey}.webp`;
+      await bucket.put(webpKey, transform.bytes, {
+        httpMetadata: { contentType: "image/webp" },
+        customMetadata: {
+          uploadedBy: actorId,
+          originalName: file.name,
+          caption: caption ?? "",
+          source: "upload_image_bytes",
+          optimization: `phase-2b:cf-image,original_bytes=${transform.originalBytes},final_bytes=${transform.finalBytes},width=${transform.width ?? ""},height=${transform.height ?? ""}`,
+        },
+      });
+
+      // Delete the original-extension copy. Best-effort: an orphan
+      // doesn't break anything user-facing (the DB points at the
+      // .webp key) but burns R2 storage if we never cleaned up.
+      try {
+        await bucket.delete(originalKey);
+      } catch (delErr) {
+        await logError(db, {
+          level: "warn",
+          message: "upload-image-bytes: Phase 2b cleanup delete failed (non-fatal)",
+          error: delErr,
+          source: "admin-upload-image-bytes",
+          context: { originalKey, targetType, targetId },
+        });
+      }
+
+      finalKey = webpKey;
+      finalContentType = "image/webp";
+      finalBytesCount = transform.finalBytes;
+      phase2bWidth = transform.width;
+      phase2bHeight = transform.height;
+      phase2bDurationMs = transform.durationMs;
+    } catch (e) {
+      // Fallback path: the original-extension R2 object stays, the DB
+      // gets that URL. Worst case is "Phase 2a behavior only" — exactly
+      // what would have shipped if Phase 2b didn't exist.
+      phase2bStatus = "fallback";
+      if (e instanceof ImageTransformError) {
+        phase2bErrorDetail = `status=${e.status} ${e.detail.slice(0, 200)}`;
+      } else {
+        phase2bErrorDetail = e instanceof Error ? e.message : String(e);
+      }
+      await logError(db, {
+        level: "warn",
+        message: "upload-image-bytes: Phase 2b transform failed; falling back to original bytes",
+        error: e,
+        source: "admin-upload-image-bytes",
+        context: { originalKey, targetType, targetId },
+      });
+    }
+  }
+
+  const url = `${CDN_BASE}/${finalKey}`;
 
   try {
     if (targetType === "event") {
@@ -333,25 +433,40 @@ export async function POST(request: NextRequest) {
       message: "upload-image-bytes: DB update failed (R2 has the file)",
       error: e,
       source: "admin-upload-image-bytes",
-      context: { key, targetType, targetId },
+      context: { key: finalKey, targetType, targetId },
     });
     return NextResponse.json(
-      { error: "Uploaded but DB update failed; paste URL manually", url, key },
+      { error: "Uploaded but DB update failed; paste URL manually", url, key: finalKey },
       { status: 502 }
     );
   }
 
+  const compressionRatio =
+    phase2bStatus === "applied" && bytes.length > 0
+      ? Number((finalBytesCount / bytes.length).toFixed(3))
+      : null;
+
   return NextResponse.json({
     url,
-    key,
+    key: finalKey,
+    content_type: finalContentType,
     target_type: targetType,
     target_id: targetId,
     image_column: imageColumn,
-    bytes_stored: bytes.length,
+    bytes_stored: finalBytesCount,
     bytes_removed_by_exif_strip: bytesRemovedByExifStrip,
     exif_segments_stripped: exifSegmentsStripped,
-    over_soft_budget: overSoftBudget,
+    over_soft_budget: finalBytesCount > SOFT_SIZE_LIMIT_BYTES,
     soft_size_limit_bytes: SOFT_SIZE_LIMIT_BYTES,
-    optimization: "phase-2a",
+    optimization: "phase-2b",
+    phase2b: {
+      status: phase2bStatus,
+      skip_reason: phase2bSkipReason,
+      error_detail: phase2bErrorDetail,
+      width: phase2bWidth,
+      height: phase2bHeight,
+      duration_ms: phase2bDurationMs,
+      compression_ratio: compressionRatio,
+    },
   });
 }
