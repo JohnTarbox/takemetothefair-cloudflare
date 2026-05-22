@@ -157,11 +157,17 @@ type NamePattern = {
 const NAME_PATTERNS: NamePattern[] = [
   // "CALL FOR ARTISTS", "Call for Vendors", "Call for Submissions"
   { reason: "name_call_for_pattern", match: /\bcall for\b/i },
-  // "Vendor REGISTRATION Open", "Registration Now Available"
-  { reason: "name_registration_pattern", match: /\bregistration\b/i },
-  // "Apply Today", "Vendor Applications Open" — distinct from "apply" inside
-  // a longer word like "application". \b on both sides.
-  { reason: "name_apply_pattern", match: /\bapply\b/i },
+  // "Vendor REGISTRATION Open", "Registration Now Available", "REGISTER NOW".
+  // Broadened 2026-05-22 (analyst follow-up): the original /\bregistration\b/
+  // missed "REGISTER" as a standalone word — caught only the -ation form.
+  // The alternation now covers both "register" and "registration".
+  { reason: "name_registration_pattern", match: /\bregist(?:er|ration)s?\b/i },
+  // "Apply Today", "Vendor Applications Open", "Vendor Application — Open".
+  // Broadened 2026-05-22 (analyst follow-up): the original /\bapply\b/ did
+  // NOT match "application" because the `y`→`i` boundary fails the \b
+  // requirement. Names like "Vendor Application Open" slipped through.
+  // The alternation now covers apply / application / applications.
+  { reason: "name_apply_pattern", match: /\bappl(?:y|ication|ications)\b/i },
   // Sub-venue / sub-component markers — "Arts Alley Sub-Venue", "Component:
   // Children's Tent". A real top-level event wouldn't include the word
   // sub-venue or component in its own name. Catches the Lakes Region Arts
