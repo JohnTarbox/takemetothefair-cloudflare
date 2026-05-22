@@ -308,6 +308,11 @@ export async function GET(request: NextRequest) {
       description: metadata.description || null,
       ogImage: metadata.ogImage || null,
       jsonLd: metadata.jsonLd || null,
+      // Multi-event JSON-LD passthrough (analyst P7a). Older callers that
+      // only consume `jsonLd` keep working; new ones can map the whole
+      // array through the extract endpoint to produce N events from one
+      // landing page.
+      jsonLdEvents: metadata.jsonLdEvents || null,
       fetchMethod,
     });
   } catch (error) {
