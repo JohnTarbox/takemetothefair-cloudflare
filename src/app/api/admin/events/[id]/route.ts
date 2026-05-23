@@ -20,6 +20,7 @@ import { recomputeEventCompleteness } from "@/lib/completeness";
 import { parseTimestamp } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
+import { evaluateGates } from "@takemetothefair/utils";
 
 export const runtime = "edge";
 
@@ -119,6 +120,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         venueId: events.venueId,
         startDate: events.startDate,
         endDate: events.endDate,
+        // Gate re-evaluation inputs (analyst 2026-05-22): used by the
+        // post-merge evaluateGates() call below so a PATCH that changes
+        // name / dates / deadline / scale re-runs the same gates the
+        // ingest paths use, rather than silently bypassing them.
+        sourceUrl: events.sourceUrl,
+        sourceName: events.sourceName,
+        applicationDeadline: events.applicationDeadline,
+        eventScale: events.eventScale,
       })
       .from(events)
       .where(eq(events.id, id))
@@ -244,6 +253,73 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       updateData.applicationInstructions = data.applicationInstructions;
     if (data.walkInsAllowed !== undefined) updateData.walkInsAllowed = data.walkInsAllowed;
     if (data.syncEnabled !== undefined) updateData.syncEnabled = data.syncEnabled;
+
+    // Re-run pre-ingest gates on material edits (analyst 2026-05-22 P2).
+    // Before this hook, gates fired only on INSERT — a PATCH that introduced
+    // a "Call for Vendors" name, a start_date == application_deadline
+    // collision, or other failure patterns would slip through silently
+    // because the existing logic ABOVE only *cleared* gate_flags on a
+    // PENDING-out transition. Now: if any gate-relevant field changes,
+    // evaluate against the post-merge view, persist any firing reasons,
+    // and downgrade status to PENDING if the admin tried to set APPROVED
+    // or CONFIRMED on a flagged row.
+    //
+    // Cosmetic edits (venue, image, tags, fees) don't touch gate inputs
+    // and so don't trigger re-eval — keeps the gate from firing on every
+    // admin edit.
+    const gateRelevantChanging =
+      data.name !== undefined ||
+      data.description !== undefined ||
+      data.startDate !== undefined ||
+      data.endDate !== undefined ||
+      data.applicationDeadline !== undefined ||
+      data.eventScale !== undefined;
+
+    let gateFlagsWarning: string[] | null = null;
+    if (gateRelevantChanging) {
+      const mergedStartDate =
+        updateData.startDate !== undefined
+          ? (updateData.startDate as Date | null)
+          : currentEvent.startDate;
+      const mergedEndDate =
+        updateData.endDate !== undefined
+          ? (updateData.endDate as Date | null)
+          : currentEvent.endDate;
+      const mergedApplicationDeadline =
+        updateData.applicationDeadline !== undefined
+          ? (updateData.applicationDeadline as Date | null)
+          : currentEvent.applicationDeadline;
+      const mergedDescription =
+        data.description !== undefined ? data.description : currentEvent.description;
+      const mergedEventScale =
+        data.eventScale !== undefined ? data.eventScale : currentEvent.eventScale;
+
+      const gateResult = evaluateGates({
+        name: data.name ?? currentEvent.name,
+        sourceUrl: currentEvent.sourceUrl,
+        sourceName: currentEvent.sourceName,
+        startDate: mergedStartDate,
+        endDate: mergedEndDate,
+        applicationDeadline: mergedApplicationDeadline,
+        description: mergedDescription,
+        eventScale: mergedEventScale,
+      });
+
+      if (gateResult.route === "PENDING_REVIEW") {
+        gateFlagsWarning = gateResult.reasons;
+        updateData.gateFlags = JSON.stringify(gateResult.reasons);
+        // If the PATCH tried to land the event in APPROVED, downgrade to
+        // PENDING. The existing "clear gate_flags when status != PENDING"
+        // branch above ran BEFORE this block, so the new gate_flags assigned
+        // here overrides that clearing. Order matters.
+        const requestedStatus = data.status ?? currentEvent.status;
+        if (requestedStatus === "APPROVED") {
+          updateData.status = "PENDING";
+        }
+      }
+      // If route === "APPROVED", leave gate_flags alone. The existing
+      // status-transition clear above is the right behavior in that case.
+    }
 
     // Atomic save: bundle the events UPDATE, the optional slug-history INSERT,
     // and the event_days rewrite (DELETE + chunked INSERTs) into a single
@@ -383,6 +459,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
 
+    // Surface gate flags that fired during this PATCH so the admin UI (and
+    // MCP callers) can render a warning. Absence of the field means "no
+    // gates fired on this PATCH" — does NOT mean the row is currently free
+    // of flags (an older flag may persist in events.gate_flags from ingest).
+    if (gateFlagsWarning) {
+      return NextResponse.json({
+        ...updatedEvent,
+        warnings: { gate_flags: gateFlagsWarning },
+      });
+    }
     return NextResponse.json(updatedEvent);
   } catch (error) {
     await logError(db, {

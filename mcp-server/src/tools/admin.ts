@@ -42,6 +42,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
+import { evaluateGates } from "@takemetothefair/utils";
 import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
@@ -884,6 +885,86 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
+      // ── Pre-ingest gate re-evaluation (analyst 2026-05-22 P2) ──────
+      // Before this hook, gates fired only on INSERT — an update_event call
+      // that introduced a "Call for Vendors" name, a start_date ==
+      // application_deadline collision, etc. would silently skip the same
+      // gates the suggest_event ingest path runs. Now: if any gate-relevant
+      // field changes, evaluate against the post-merge view, persist any
+      // firing reasons into events.gate_flags, and surface the warning in
+      // the response. Independent of the P7c venue+date dedup above — both
+      // can fire on the same call and surface side-by-side under warnings.
+      //
+      // This tool does NOT change status (see tool description), so unlike
+      // the main-app PATCH there's no APPROVED → PENDING downgrade to make
+      // here. Admins reviewing flagged rows still use update_event_status
+      // for the transition.
+      const gateRelevantChanging =
+        params.name !== undefined ||
+        params.description !== undefined ||
+        params.start_date !== undefined ||
+        params.end_date !== undefined ||
+        params.application_deadline !== undefined ||
+        params.event_scale !== undefined ||
+        params.source_url !== undefined ||
+        params.source_name !== undefined;
+
+      let gateFlagsWarning: string[] | null = null;
+      if (gateRelevantChanging) {
+        const evRow = event as Record<string, unknown>;
+        const mergedStartDate =
+          updates.startDate !== undefined
+            ? (updates.startDate as Date | null)
+            : ((evRow.startDate as Date | null | undefined) ?? null);
+        const mergedEndDate =
+          updates.endDate !== undefined
+            ? (updates.endDate as Date | null)
+            : ((evRow.endDate as Date | null | undefined) ?? null);
+        const mergedApplicationDeadline =
+          updates.applicationDeadline !== undefined
+            ? (updates.applicationDeadline as Date | null)
+            : ((evRow.applicationDeadline as Date | null | undefined) ?? null);
+        const mergedDescription =
+          params.description !== undefined
+            ? params.description
+            : ((evRow.description as string | null | undefined) ?? null);
+        const mergedEventScale =
+          params.event_scale !== undefined
+            ? params.event_scale
+            : ((evRow.eventScale as string | null | undefined) ?? null);
+        const mergedSourceUrl =
+          params.source_url !== undefined
+            ? params.source_url
+            : ((evRow.sourceUrl as string | null | undefined) ?? null);
+        const mergedSourceName =
+          params.source_name !== undefined
+            ? params.source_name
+            : ((evRow.sourceName as string | null | undefined) ?? null);
+
+        const gateResult = evaluateGates({
+          name: params.name ?? (evRow.name as string | null | undefined) ?? null,
+          sourceUrl: mergedSourceUrl,
+          sourceName: mergedSourceName,
+          startDate: mergedStartDate,
+          endDate: mergedEndDate,
+          applicationDeadline: mergedApplicationDeadline,
+          description: mergedDescription,
+          eventScale: mergedEventScale,
+        });
+
+        if (gateResult.route === "PENDING_REVIEW") {
+          gateFlagsWarning = gateResult.reasons;
+          updates.gateFlags = JSON.stringify(gateResult.reasons);
+          // Make sure the gate-flags column write actually happens even if
+          // no other field is in `requestedFields` — the existing write
+          // block only fires when requestedFields.length > 0. Add a synthetic
+          // marker so the gate-only path still writes.
+          if (!requestedFields.includes("gate_flags")) {
+            requestedFields.push("gate_flags");
+          }
+        }
+      }
+
       // Capture previous values for confirmation
       const previousValues: Record<string, unknown> = {};
       for (const field of requestedFields) {
@@ -1143,15 +1224,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (citationsInserted.length > 0) {
         result.citationsInserted = citationsInserted;
       }
+      // Warnings: both P7c venue+date duplicates and P2 gate-flag re-eval
+      // can fire on the same call. Surface both under `warnings`; admins
+      // can act on either independently. The update has already succeeded
+      // by this point — warnings never block.
+      const warnings: Record<string, unknown> = {};
       if (possibleDuplicatesWarning && possibleDuplicatesWarning.length > 0) {
-        // Warning, not error: the update has already succeeded by this
-        // point. The caller is expected to review the candidates and, if
-        // they are genuinely distinct, re-run the same call with
-        // acknowledge_possible_duplicates=true to suppress the warning.
-        result.warnings = {
-          possible_duplicates: possibleDuplicatesWarning,
-          message: `Found ${possibleDuplicatesWarning.length} existing event(s) at the same venue with overlapping dates. Review and re-call with acknowledge_possible_duplicates=true if these are distinct events.`,
-        };
+        warnings.possible_duplicates = possibleDuplicatesWarning;
+        warnings.message = `Found ${possibleDuplicatesWarning.length} existing event(s) at the same venue with overlapping dates. Review and re-call with acknowledge_possible_duplicates=true if these are distinct events.`;
+      }
+      if (gateFlagsWarning) {
+        warnings.gate_flags = gateFlagsWarning;
+      }
+      if (Object.keys(warnings).length > 0) {
+        result.warnings = warnings;
       }
 
       return { content: [jsonContent(result)] };
