@@ -1,7 +1,14 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpAgent } from "agents/mcp";
+import { getCurrentAgent } from "agents";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { LoginHandler } from "./oauth/login-handler.js";
+import {
+  decideSendRouting,
+  sendViaConnection,
+  type ConnectionLike,
+  type TransportPrivates,
+} from "./transport-collision-fix.js";
 import { getDb } from "./db.js";
 import { authenticateToken } from "./auth.js";
 import { registerPublicTools } from "./tools/public.js";
@@ -227,54 +234,111 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
   }
 
   // ───────────────────────────────────────────────────────────────────────
-  // Workaround for issue #121 / upstream MCP TS SDK #1186 (open, P2):
+  // Routing fix for upstream MCP TS SDK #1186 (open) / our issue #121:
   // "Zombie Task Collision in StreamableHTTPServerTransport"
   //
   // The agents package's StreamableHTTPServerTransport.send() routes responses
   // by walking agent.getConnections() and picking the first connection whose
   // state.requestIds includes the response's request id. When two concurrent
   // clients (or one client reusing JSON-RPC ids across parallel requests) end
-  // up with the same id in their per-connection state, the find() returns
-  // either connection arbitrarily. Result: the response is written to the
-  // wrong client's HTTP socket — silently, with the wrong shape.
+  // up with the same id in their per-connection state, find() returns either
+  // connection arbitrarily. Result: the response is written to the wrong
+  // client's HTTP socket — silently, with the wrong shape.
   //
-  // We hit this in production on 2026-05-10 (8 parallel update_event MCP calls,
-  // 3 returned page_analytics-shaped responses). Filed upstream with concurrent-
-  // variant analysis.
+  // Production manifestations:
+  //   - 2026-05-10: 8 parallel update_event MCP calls, 3 returned
+  //     page_analytics-shaped responses.
+  //   - 2026-05-24 (analyst report): update_blog_post / get_blog_links_in_post
+  //     during a bulk blog-linking session, several echoed an unrelated
+  //     post or event payload. Writes landed correctly; responses didn't.
   //
-  // This wrap doesn't fix the routing — that requires a transport-level change
-  // (composite (streamId, requestId) keys, or upstream's id-collision rejection).
-  // What it DOES is structured-log every collision detection so we can quantify
-  // recurrence in `wrangler tail` and confirm when an upstream fix takes effect.
+  // What this wrap does:
+  //   1. Hook transport.onmessage to record (requestId -> connection.id) at
+  //      intake. The agents transport sets connection.state.requestIds in
+  //      handlePostRequest before calling onmessage, so by intake time the
+  //      async-context connection from getCurrentAgent() is the originating
+  //      connection.
+  //   2. Replace transport.send with a router that:
+  //        - passes through to original when no collision (≤1 match);
+  //        - direct-writes to the tracked connection on a fixable collision,
+  //          bypassing the buggy find();
+  //        - throws a structured error when collision is unfixable (intake
+  //          record missing), surfacing as a JSON-RPC error to the caller
+  //          rather than a silent wrong-shape response.
   //
-  // Removable when: agents package upgrades past the upstream SDK fix for #1186.
+  // Removable when: agents package upgrades past the upstream SDK fix for
+  // #1186, OR the agents transport switches to composite (streamId,
+  // requestId) keys. The pure routing logic and direct-write helper live in
+  // ./transport-collision-fix.ts and are unit-tested there.
   async onStart(props?: UserProps) {
     await super.onStart(props);
-    // Access the protected `_transport` via `any` cast — agents package doesn't
-    // expose it for instrumentation but it's safe to read after onStart.
     const transport = (this as unknown as { _transport?: unknown })._transport as
-      | { send?: (m: unknown, o?: { relatedRequestId?: unknown }) => Promise<unknown> }
+      | (TransportPrivates & {
+          send?: (m: unknown, o?: { relatedRequestId?: unknown }) => Promise<unknown>;
+          onmessage?: (m: unknown, extra: unknown) => unknown;
+        })
       | undefined;
     if (!transport || typeof transport.send !== "function") return;
 
+    // Per-DO map of intake-recorded (requestId -> connection.id). Each
+    // entry is removed when send() is called for that id. We only consult
+    // it on the collision branch, so a missed delete on the happy path
+    // leaks at most one entry per request — bounded by concurrent in-
+    // flight count, not by lifetime traffic.
+    const intakeConnByReqId = new Map<unknown, string>();
+
+    // Hook onmessage to record the originating connection at intake time.
+    // Defense in depth: any throw inside the recording branch is caught so
+    // a tracking failure can never block message intake.
+    const originalOnMessage = transport.onmessage;
+    if (typeof originalOnMessage === "function") {
+      const boundOnMessage = originalOnMessage.bind(transport);
+      transport.onmessage = (m: unknown, extra: unknown) => {
+        try {
+          const message = m as { id?: unknown };
+          if (message && message.id !== undefined && message.id !== null) {
+            const { connection } = getCurrentAgent();
+            if (connection?.id) intakeConnByReqId.set(message.id, connection.id);
+          }
+        } catch {
+          /* never block intake on tracking failure */
+        }
+        return boundOnMessage(m, extra);
+      };
+    }
+
     const originalSend = transport.send.bind(transport);
-    const getConnections = () => this.getConnections();
+    const getConnsArr = (): ConnectionLike[] =>
+      Array.from(this.getConnections() ?? []) as ConnectionLike[];
+
     transport.send = async (m: unknown, o?: { relatedRequestId?: unknown }) => {
       const message = m as { id?: unknown };
       const reqId = o?.relatedRequestId ?? message?.id;
-      if (reqId !== undefined && reqId !== null) {
-        const conns = Array.from(getConnections() ?? []);
-        const matches = conns.filter((c) => {
-          const ids = (c.state as { requestIds?: unknown[] } | undefined)?.requestIds;
-          return Array.isArray(ids) && ids.includes(reqId);
-        });
-        if (matches.length > 1) {
-          console.error(
-            `[MCP/#121] JSON-RPC id collision detected — request id ${String(reqId)} matches ${matches.length} active connections. Response routing is ambiguous; one or more clients will receive the wrong response shape. See upstream modelcontextprotocol/typescript-sdk#1186.`
-          );
-        }
+
+      const tracked =
+        reqId !== undefined && reqId !== null ? intakeConnByReqId.get(reqId) : undefined;
+      if (reqId !== undefined && reqId !== null) intakeConnByReqId.delete(reqId);
+
+      const decision = decideSendRouting(getConnsArr(), reqId, tracked);
+
+      if (decision.kind === "passthrough") {
+        return originalSend(m, o);
       }
-      return originalSend(m, o);
+
+      if (decision.kind === "ambiguous") {
+        console.error(
+          `[MCP/#121] response routing ambiguous for request id ${String(reqId)} — refusing send to prevent wrong-shape response. Matching connections: ${decision.matchedIds.join(", ")}`
+        );
+        throw new Error(
+          `MCP response routing ambiguous for request id ${String(reqId)}; ${decision.matchedIds.length} connections collide and intake-tracked connection is unavailable. Caller should re-fetch the underlying record.`
+        );
+      }
+
+      // decision.kind === "fixed" — direct-write to the correct connection.
+      console.warn(
+        `[MCP/#121] collision routed to tracked connection ${decision.connection.id} for request id ${String(reqId)} (bypassed buggy find())`
+      );
+      await sendViaConnection(transport, decision.connection, m, reqId);
     };
   }
 }
