@@ -4,7 +4,8 @@
  * Covers the BLOG_POST widening landed alongside the content_links
  * reconciliation work — the extractor must now recognize `/blog/<slug>`
  * references and emit them as `BLOG_POST` content-link refs, alongside
- * the existing EVENT/VENDOR/VENUE extraction.
+ * the existing EVENT/VENDOR/VENUE extraction. Also covers the four
+ * broken-slug patterns from the analyst's 2026-05-24 report.
  */
 
 import { describe, expect, it } from "vitest";
@@ -115,5 +116,44 @@ describe("extractContentLinks", () => {
     `;
     const result = extractContentLinks(body);
     expect(result.map((r) => r.targetType)).toEqual(["BLOG_POST", "EVENT", "VENDOR"]);
+  });
+
+  // ── Analyst-observed broken-slug patterns ──────────────────────
+  // These tests assert the extractor recognizes the SHAPE of the four
+  // patterns from the 2026-05-24 report. The extractor's job is just
+  // shape recognition; resolving each ref against the live DB is the
+  // job of findBrokenContentLinksInDb (which then reports them as
+  // broken). What we're guarding here: the extractor mustn't silently
+  // skip these patterns and hide them from the broken-link audit.
+
+  it("pattern 1: extracts year-prefix slug (will resolve as broken when DB has year-suffix)", () => {
+    // 2026-bangor-craft-fair instead of bangor-craft-fair-2026
+    const result = extractContentLinks("see [the fair](/events/2026-bangor-craft-fair)");
+    expect(result).toEqual([{ targetType: "EVENT", targetSlug: "2026-bangor-craft-fair" }]);
+  });
+
+  it("pattern 2: extracts fabricated name-venue slug (will resolve as broken)", () => {
+    // topsfield-fair-topsfield — never existed; pattern-matches an authoring
+    // script that concatenated event name + venue name.
+    const result = extractContentLinks("[link](/events/topsfield-fair-topsfield)");
+    expect(result).toEqual([{ targetType: "EVENT", targetSlug: "topsfield-fair-topsfield" }]);
+  });
+
+  it("pattern 3: extracts ordinal-prefix slug (will resolve as broken)", () => {
+    // 63rd-… and 46th-annual-… — the discovery task normalizes these to
+    // the year-suffix form via event_slug_history, but blog authoring
+    // sometimes invents the un-normalized version.
+    const a = extractContentLinks("[link](/events/63rd-newport-fair)");
+    const b = extractContentLinks("[link](/events/46th-annual-keene-craft-show)");
+    expect(a).toEqual([{ targetType: "EVENT", targetSlug: "63rd-newport-fair" }]);
+    expect(b).toEqual([{ targetType: "EVENT", targetSlug: "46th-annual-keene-craft-show" }]);
+  });
+
+  it("pattern 4 (singular path) is intentionally NOT extracted — Item 5's 301 handles it", () => {
+    // /event/foo (singular) is an authoring typo. PR #220 added a route-
+    // layer 301 to /events/foo, so the URL works. The extractor still
+    // doesn't match singular forms because they're not valid content-link
+    // shapes per the regex spec.
+    expect(extractContentLinks("[link](/event/some-fair)")).toEqual([]);
   });
 });
