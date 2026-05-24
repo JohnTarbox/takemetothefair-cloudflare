@@ -1,38 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Mail, X } from "lucide-react";
+import { useState } from "react";
+import Link from "next/link";
+import { Mail } from "lucide-react";
 
 interface Props {
   email: string;
 }
 
-const DISMISS_KEY = "mmatf.unverified.dismissed";
-
+/**
+ * Site-wide banner shown to logged-in users whose `users.email_verified`
+ * is null. **Non-dismissible by design.** Previously sessionStorage-
+ * dismissible, but the dismissible-X created a recovery dead-end: a
+ * user who closed the banner had no in-product way back to the resend
+ * trigger, which became visible in the 2026-05-24 email-outage
+ * post-mortem. The banner now stays put until the user verifies, at
+ * which point the wrapper server component stops rendering it.
+ *
+ * The "Resend" button hits `/api/auth/send-verification`, same as
+ * before. A "Need help?" link points to `/verify-email/resend` so
+ * non-JS users (or anyone who'd rather see a dedicated page) have a
+ * clean path too.
+ */
 export function UnverifiedBannerClient({ email }: Props) {
-  const [dismissed, setDismissed] = useState(true); // hide on SSR; reveal on hydrate
   const [resending, setResending] = useState(false);
   const [resendStatus, setResendStatus] = useState<"idle" | "sent" | "error">("idle");
-
-  useEffect(() => {
-    try {
-      if (sessionStorage.getItem(DISMISS_KEY) === "1") return;
-    } catch {
-      /* ignore */
-    }
-    setDismissed(false);
-  }, []);
-
-  if (dismissed) return null;
-
-  const handleDismiss = () => {
-    try {
-      sessionStorage.setItem(DISMISS_KEY, "1");
-    } catch {
-      /* ignore */
-    }
-    setDismissed(true);
-  };
 
   const handleResend = async () => {
     setResending(true);
@@ -68,7 +60,11 @@ export function UnverifiedBannerClient({ email }: Props) {
           )}
           {resendStatus === "error" && (
             <span className="ml-2 text-danger font-medium">
-              Couldn&apos;t resend. Please try again in a moment.
+              Couldn&apos;t resend.{" "}
+              <Link href="/verify-email/resend" className="underline">
+                Try the resend page
+              </Link>
+              .
             </span>
           )}
         </p>
@@ -79,14 +75,6 @@ export function UnverifiedBannerClient({ email }: Props) {
           className="text-sm font-semibold text-navy hover:underline disabled:opacity-50 disabled:no-underline"
         >
           {resending ? "Sending…" : resendStatus === "sent" ? "Sent" : "Resend email"}
-        </button>
-        <button
-          type="button"
-          onClick={handleDismiss}
-          className="text-stone-600 hover:text-stone-900 p-1 -mr-1"
-          aria-label="Dismiss"
-        >
-          <X className="w-4 h-4" />
         </button>
       </div>
     </div>
