@@ -712,6 +712,27 @@ export default async function VendorDetailPage({ params }: Props) {
             )}
           </aside>
         </div>
+
+        {/* Bottom-of-page link to the public Vendor Guide. Shown only on
+            verified vendors' pages (Enhanced Profile + the verified flag)
+            — these are the listings most likely to be visited by other
+            vendors weighing whether to sign up themselves, so the guide
+            is most useful here. Add a wider audience for the link if
+            needed; today this is the minimal-friction placement. */}
+        {isEnhanced && vendor.verified && (
+          <div className="mt-12 border-t border-gray-200 pt-8 text-center">
+            <p className="text-sm text-gray-600">
+              Are you a vendor?{" "}
+              <Link
+                href="/vendor-guide"
+                className="font-medium text-royal hover:text-navy underline"
+              >
+                Read the Vendor Guide
+              </Link>{" "}
+              to sign up, claim your listing, and edit your profile.
+            </p>
+          </div>
+        )}
       </div>
     </>
   );
