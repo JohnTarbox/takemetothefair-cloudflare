@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { users } from "@/lib/db/schema";
 
 /**
  * Sentinel actor id for the Claude read-only Bearer token. Use as
@@ -141,4 +143,118 @@ export async function getRequestIdentity(request: Request): Promise<string | nul
 export async function requireAdminAuth(request: Request): Promise<NextResponse | null> {
   if (await isAuthorized(request)) return null;
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+/**
+ * Gate result for `requireVerifiedSession`. On `ok: false`, the caller
+ * should `return result.response` directly. On `ok: true`, the resolved
+ * `userId` + `email` are safe to use.
+ */
+export type VerifiedSessionResult =
+  | { ok: true; userId: string; email: string }
+  | { ok: false; response: NextResponse };
+
+/**
+ * Single-call session + email-verification gate for vendor (and other
+ * end-user) API routes. Two-step check:
+ *
+ *   1. Logged in?  No → 401 Unauthorized.
+ *   2. `users.email_verified` is non-null?  No → 403 with a structured
+ *      `{error: "email_unverified", message, verifyUrl}` shape so the
+ *      frontend can render a "Verify your email to continue" CTA.
+ *
+ * OAuth signups (Google/Facebook) get `emailVerified` auto-set at
+ * user-create time (lib/auth.ts) — the OAuth provider's email vouch
+ * counts as verification. So this gate only ever fires for the
+ * password-signup path who hasn't clicked the verification link yet.
+ *
+ * Pattern:
+ *
+ *     export async function PUT(request: NextRequest) {
+ *       const gate = await requireVerifiedSession();
+ *       if (!gate.ok) return gate.response;
+ *       const { userId, email } = gate;
+ *       // ...handler body
+ *     }
+ *
+ * Added 2026-05-24 (PR following #226) as the first three vendor gates
+ * on emailVerified: profile EDIT, event-application submission, and
+ * contact-form forwarding. Before that, verification was advisory —
+ * unverified users could do everything a verified user could.
+ */
+export async function requireVerifiedSession(): Promise<VerifiedSessionResult> {
+  const session = await auth();
+  if (!session?.user?.id || !session.user.email) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
+
+  try {
+    const db = getCloudflareDb();
+    const [user] = await db
+      .select({ emailVerified: users.emailVerified })
+      .from(users)
+      .where(eq(users.id, session.user.id))
+      .limit(1);
+
+    if (!user?.emailVerified) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "email_unverified",
+            message:
+              "Please verify your email address before continuing. Check your inbox for the verification link, or request a new one from your dashboard.",
+            verifyUrl: "/api/auth/send-verification",
+          },
+          { status: 403 }
+        ),
+      };
+    }
+
+    return { ok: true, userId: session.user.id, email: session.user.email };
+  } catch {
+    // DB error — fall back to the same 403 shape so we never silently
+    // permit a write on a verification-gated route when the gate itself
+    // couldn't run. Better to nag a verified user than to skip the
+    // check.
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "verification_check_failed",
+          message: "Could not verify your account status. Please try again.",
+        },
+        { status: 503 }
+      ),
+    };
+  }
+}
+
+/**
+ * Anonymous-caller variant for surfaces that gate on a target user's
+ * (not the caller's) verification status — e.g., the vendor contact
+ * form, where we don't forward messages to a vendor whose account
+ * holder hasn't proven email control.
+ *
+ * Returns `true` only when the user row exists AND `emailVerified` is
+ * non-null. A null `userId` (placeholder vendor with no real owner)
+ * returns `false`.
+ */
+export async function targetUserIsVerified(userId: string | null): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const db = getCloudflareDb();
+    const [user] = await db
+      .select({ emailVerified: users.emailVerified })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return !!user?.emailVerified;
+  } catch {
+    // Fail closed — if we can't check, don't forward.
+    return false;
+  }
 }
