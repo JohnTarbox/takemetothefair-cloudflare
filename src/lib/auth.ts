@@ -57,7 +57,7 @@ declare module "next-auth/jwt" {
  * be migrated in PR 2.
  */
 export function hasRole(
-  session: { user?: { roles?: UserRole[] } } | null | undefined,
+  session: { user?: { roles?: readonly UserRole[] } } | null | undefined,
   role: UserRole
 ): boolean {
   return !!session?.user?.roles?.includes(role);

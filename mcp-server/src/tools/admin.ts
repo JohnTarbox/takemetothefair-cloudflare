@@ -49,6 +49,7 @@ import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
+import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
@@ -93,6 +94,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // renames; the API officially scopes to JobPosting / BroadcastEvent
   // but empirically accepts other URL types as recrawl signals.
   registerRequestIndexingTool(server, db, auth, env);
+
+  // Manual claim approval — escape hatch for vendors whose
+  // contact_email is null/empty and can't go through the standard
+  // email-match or claim-confirmation flows. Admin verifies ownership
+  // out-of-band, then runs this tool to set claimed=true + grant
+  // VENDOR role.
+  registerAdminClaimApprovalTool(server, db, auth);
 
   // Sender-quality + trust annotation for inbound email submissions
   // (drizzle/0075). Adds get_email_submitter_quality (read) and
