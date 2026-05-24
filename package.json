@@ -14,7 +14,7 @@
     "lint": "next lint",
     "pages:build": "npx @cloudflare/next-on-pages",
     "pages:preview": "npm run pages:build && wrangler pages dev .vercel/output/static",
-    "pages:deploy": "npm run pages:build && wrangler pages deploy .vercel/output/static -c wrangler.toml",
+    "pages:deploy": "npm run pages:build && wrangler pages deploy .vercel/output/static",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "wrangler d1 migrations apply takemetothefair-db --local",
     "db:migrate:prod": "wrangler d1 migrations apply takemetothefair-db --remote",
