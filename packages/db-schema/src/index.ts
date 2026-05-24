@@ -394,6 +394,31 @@ export const eventSlugHistory = sqliteTable(
   })
 );
 
+// Blog slug history — mirrors eventSlugHistory for /blog/[slug].
+// drizzle/0087. blog_post_id points at the SUCCESSOR post so the FK
+// cascade behaves sensibly across both the rename case (post still
+// lives at its new slug) and the consolidation case (deleted post's
+// slug redirects to a different, living successor).
+export const blogSlugHistory = sqliteTable(
+  "blog_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    blogPostId: text("blog_post_id")
+      .notNull()
+      .references(() => blogPosts.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => ({
+    oldSlugIdx: index("idx_blog_slug_history_old_slug").on(t.oldSlug),
+    blogPostIdIdx: index("idx_blog_slug_history_blog_post_id").on(t.blogPostId),
+  })
+);
+
 // Admin actions audit log — drizzle/0039.
 // Generic enough for non-vendor actions later; first user is the Enhanced
 // Profile lifecycle (activate / expire_set / auto_expire).
