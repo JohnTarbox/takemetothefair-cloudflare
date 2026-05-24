@@ -6,7 +6,7 @@ import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, ne } from "drizzle-orm";
-import { findBrokenLinksInDb } from "@/lib/blog-links";
+import { findBrokenContentLinksInDb, findBrokenLinksInDb } from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
@@ -203,13 +203,26 @@ export async function PUT(request: NextRequest, { params }: Params) {
     // Run a broken-link check on the saved body and surface warnings in the
     // response. Doesn't block the save — legitimate edits and cross-link
     // refactors need room to land before the target slug exists.
-    let warnings: { brokenLinks: string[] } | undefined;
+    // brokenLinks is legacy /blog/ refs only; brokenContentLinks covers all
+    // four target types (EVENT/VENDOR/VENUE/BLOG_POST) and catches the four
+    // patterns from the analyst's 2026-05-24 report (prefix-suffix year swap,
+    // fabricated name-venue slugs, ordinal prefixes, singular-path typos).
+    let warnings:
+      | {
+          brokenLinks?: string[];
+          brokenContentLinks?: Array<{ targetType: string; targetSlug: string }>;
+        }
+      | undefined;
     if (data.body !== undefined) {
       try {
-        const broken = await findBrokenLinksInDb(db, data.body);
-        if (broken.length > 0) {
-          warnings = { brokenLinks: broken };
-        }
+        const [brokenBlog, brokenContent] = await Promise.all([
+          findBrokenLinksInDb(db, data.body),
+          findBrokenContentLinksInDb(db, data.body),
+        ]);
+        const out: NonNullable<typeof warnings> = {};
+        if (brokenBlog.length > 0) out.brokenLinks = brokenBlog;
+        if (brokenContent.length > 0) out.brokenContentLinks = brokenContent;
+        if (Object.keys(out).length > 0) warnings = out;
       } catch {
         /* non-fatal — skip warnings on query failure */
       }

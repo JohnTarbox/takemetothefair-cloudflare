@@ -1,5 +1,5 @@
 import { inArray } from "drizzle-orm";
-import { blogPosts } from "@/lib/db/schema";
+import { blogPosts, events, vendors, venues } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import { EVENT_LISTING_SLUGS } from "@/lib/constants";
 import type { Slug } from "@/lib/utils";
@@ -93,4 +93,53 @@ export async function findBrokenLinksInDb(
     .where(inArray(blogPosts.slug, referenced as Slug[]));
   const known = new Set(rows.map((r) => r.slug.toLowerCase()));
   return referenced.filter((s) => !known.has(s));
+}
+
+/**
+ * DB-aware broken-link check across ALL four content-link target types
+ * (EVENT, VENDOR, VENUE, BLOG_POST). Returns the refs that didn't resolve
+ * to a live row — exactly the set of "broken" links per the analyst's
+ * 2026-05-24 report on ~90 broken internal event links.
+ *
+ * Why a separate function from findBrokenLinksInDb: the latter only
+ * checks /blog/<slug> refs and predates the BLOG_POST widening in PR
+ * #222. This one mirrors the resolution logic in syncContentLinks but
+ * is read-only — safe to call before a save to surface warnings.
+ *
+ * Returned shape matches the API warnings field. Empty array when
+ * everything resolves cleanly.
+ */
+export async function findBrokenContentLinksInDb(
+  db: ReturnType<typeof getCloudflareDb>,
+  body: string
+): Promise<ContentLinkRef[]> {
+  const referenced = extractContentLinks(body);
+  if (referenced.length === 0) return [];
+
+  // Resolve in parallel — one query per target type, only for slugs of
+  // that type that were actually referenced. Mirrors syncContentLinks.
+  const resolvedKeys = new Set<string>();
+  await Promise.all(
+    (["EVENT", "VENDOR", "VENUE", "BLOG_POST"] as const).map(async (type) => {
+      const slugs = referenced.filter((r) => r.targetType === type).map((r) => r.targetSlug);
+      if (slugs.length === 0) return;
+      const table =
+        type === "EVENT"
+          ? events
+          : type === "VENDOR"
+            ? vendors
+            : type === "VENUE"
+              ? venues
+              : blogPosts;
+      const rows = await db
+        .select({ slug: table.slug })
+        .from(table)
+        .where(inArray(table.slug, slugs as Slug[]));
+      for (const r of rows) {
+        resolvedKeys.add(`${type}|${r.slug.toLowerCase()}`);
+      }
+    })
+  );
+
+  return referenced.filter((r) => !resolvedKeys.has(`${r.targetType}|${r.targetSlug}`));
 }

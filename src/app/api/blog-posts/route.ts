@@ -3,7 +3,7 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { isAuthorized, getAuthorizedSession } from "@/lib/api-auth";
 import { blogPostCreateSchema, validateRequestBody } from "@/lib/validations";
-import { findBrokenLinksInDb } from "@/lib/blog-links";
+import { findBrokenContentLinksInDb, findBrokenLinksInDb } from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
@@ -187,10 +187,28 @@ export async function POST(request: NextRequest) {
 
     const [created] = await db.select().from(blogPosts).where(eq(blogPosts.id, id)).limit(1);
 
-    let warnings: { brokenLinks: string[] } | undefined;
+    // Broken-link warnings — flagged, not rejected (the analyst's 2026-05-24
+    // ask said "rejects or flags"; we go with flag-only to match existing
+    // PUT behavior and avoid surprising authoring flows). brokenLinks is
+    // legacy /blog/ refs only; brokenContentLinks covers all four target
+    // types (EVENT/VENDOR/VENUE/BLOG_POST) and catches the analyst's four
+    // observed patterns: prefix-suffix year swap, fabricated name-venue
+    // slugs, ordinal prefixes, and singular-path typos.
+    let warnings:
+      | {
+          brokenLinks?: string[];
+          brokenContentLinks?: Array<{ targetType: string; targetSlug: string }>;
+        }
+      | undefined;
     try {
-      const broken = await findBrokenLinksInDb(db, data.body);
-      if (broken.length > 0) warnings = { brokenLinks: broken };
+      const [brokenBlog, brokenContent] = await Promise.all([
+        findBrokenLinksInDb(db, data.body),
+        findBrokenContentLinksInDb(db, data.body),
+      ]);
+      const out: NonNullable<typeof warnings> = {};
+      if (brokenBlog.length > 0) out.brokenLinks = brokenBlog;
+      if (brokenContent.length > 0) out.brokenContentLinks = brokenContent;
+      if (Object.keys(out).length > 0) warnings = out;
     } catch {
       /* non-fatal */
     }
