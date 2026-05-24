@@ -157,9 +157,11 @@ describe("POST /api/auth/register", () => {
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("VENDOR");
-    // user + vendor + verificationTokens (the email-verification token row
-    // was added when verification flow shipped — see register/route.ts:102).
-    expect(mockDb.insert).toHaveBeenCalledTimes(3);
+    // user + user_roles + vendor + verificationTokens. The user_roles
+    // insert was added in the dual-role-foundation PR — it mirrors
+    // the primary role into the many-to-many table so dual-role
+    // checks via hasRole() / session.user.roles[] honor it.
+    expect(mockDb.insert).toHaveBeenCalledTimes(4);
   });
 
   it("successfully registers a promoter with companyName", async () => {
@@ -182,8 +184,9 @@ describe("POST /api/auth/register", () => {
 
     expect(response.status).toBe(201);
     expect(data.user.role).toBe("PROMOTER");
-    // user + promoter + verificationTokens (see register/route.ts:102).
-    expect(mockDb.insert).toHaveBeenCalledTimes(3);
+    // user + user_roles + promoter + verificationTokens. user_roles
+    // mirror added in dual-role-foundation PR.
+    expect(mockDb.insert).toHaveBeenCalledTimes(4);
   });
 
   it("returns 400 for invalid role", async () => {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { users, promoters, vendors, verificationTokens } from "@/lib/db/schema";
+import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { createSlug, unsafeSlug } from "@/lib/utils";
 import { and, eq, isNull } from "drizzle-orm";
@@ -89,6 +89,12 @@ export async function POST(request: NextRequest) {
       name,
       role,
     });
+
+    // Mirror the chosen role into user_roles so dual-role-aware code
+    // paths see this grant. userId is freshly minted above, so no
+    // (user_id, role) conflict is possible — no onConflictDoNothing
+    // needed here. Claim endpoints DO need it for idempotent re-claims.
+    await db.insert(userRoles).values({ userId, role, grantedAt: new Date() });
 
     if (role === "PROMOTER" && companyName) {
       await db.insert(promoters).values({

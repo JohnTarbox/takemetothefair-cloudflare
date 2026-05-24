@@ -160,17 +160,34 @@ export function Header() {
                         {item.name}
                       </Link>
                     ))}
-                    {(session.user.role === "ADMIN" || session.user.role === "PROMOTER") && (
+                    {/* Role-gated nav items now honor the multi-role
+                        session.user.roles array (drizzle/0089). A
+                        dual-role user (e.g., VENDOR + PROMOTER) sees
+                        BOTH dashboard links simultaneously, no
+                        switcher. ADMIN is mutually-exclusive in
+                        practice — but if an admin ever held VENDOR or
+                        PROMOTER additionally, all three would render. */}
+                    {session.user.roles?.includes("ADMIN") && (
                       <Link
-                        href={session.user.role === "ADMIN" ? "/admin" : "/promoter/events"}
+                        href="/admin"
                         className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <Calendar className="w-4 h-4 mr-2" />
-                        {session.user.role === "ADMIN" ? "Admin Panel" : "My Events"}
+                        Admin Panel
                       </Link>
                     )}
-                    {session.user.role === "VENDOR" && (
+                    {session.user.roles?.includes("PROMOTER") && (
+                      <Link
+                        href="/promoter/events"
+                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        onClick={() => setUserMenuOpen(false)}
+                      >
+                        <Calendar className="w-4 h-4 mr-2" />
+                        My Events
+                      </Link>
+                    )}
+                    {session.user.roles?.includes("VENDOR") && (
                       <Link
                         href="/vendor/profile"
                         className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"

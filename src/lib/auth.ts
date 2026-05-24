@@ -19,7 +19,18 @@ declare module "next-auth" {
       email: string;
       name?: string | null;
       image?: string | null;
+      /**
+       * Primary role — back-compat with the ~100 existing callers that
+       * do `session.user.role === X` checks. Reads from `users.role`.
+       * PR 2 will sweep these to use `roles` + hasRole().
+       */
       role: UserRole;
+      /**
+       * All granted roles. Source of truth is the `user_roles` table.
+       * Always contains at least the primary role (backfilled in
+       * drizzle/0089). Dual-role users have multiple entries.
+       */
+      roles: UserRole[];
     };
   }
 
@@ -32,7 +43,24 @@ declare module "next-auth/jwt" {
   interface JWT {
     id: string;
     role: UserRole;
+    roles: UserRole[];
   }
+}
+
+/**
+ * Check whether the signed-in user has been granted a particular role.
+ * Reads from the array side (user_roles) so dual-role users are honored.
+ * Returns false on an unauthenticated session.
+ *
+ * Use this for any new gate/UI check. Existing callers using
+ * `session.user.role === X` keep working off the primary role and will
+ * be migrated in PR 2.
+ */
+export function hasRole(
+  session: { user?: { roles?: UserRole[] } } | null | undefined,
+  role: UserRole
+): boolean {
+  return !!session?.user?.roles?.includes(role);
 }
 
 function toHex(buffer: ArrayBuffer): string {
@@ -147,10 +175,7 @@ function createAuthConfig(): NextAuthConfig {
             return null;
           }
 
-          const isValid = await verifyPassword(
-            credentials.password as string,
-            user.passwordHash
-          );
+          const isValid = await verifyPassword(credentials.password as string, user.passwordHash);
 
           if (!isValid) {
             return null;
@@ -223,7 +248,7 @@ function createAuthConfig(): NextAuthConfig {
         const existingAccount = await db.query.accounts.findFirst({
           where: and(
             eq(schema.accounts.provider, account.provider),
-            eq(schema.accounts.providerAccountId, account.providerAccountId),
+            eq(schema.accounts.providerAccountId, account.providerAccountId)
           ),
         });
 
@@ -250,9 +275,7 @@ function createAuthConfig(): NextAuthConfig {
         }
 
         // Extract profile image (Google uses "picture", Facebook uses "image")
-        const profileImage = (profile.picture as string)
-          ?? (profile.image as string)
-          ?? null;
+        const profileImage = (profile.picture as string) ?? (profile.image as string) ?? null;
 
         if (!existingUser) {
           // Create new user
@@ -264,6 +287,15 @@ function createAuthConfig(): NextAuthConfig {
             image: profileImage,
             role: "USER",
             emailVerified: new Date(),
+          });
+          // Mirror the primary role into user_roles. userId is freshly
+          // generated so no conflict is possible. New OAuth signups
+          // start as USER; they pick up additional roles later via
+          // email-match self-service claim or admin grant.
+          await db.insert(schema.userRoles).values({
+            userId,
+            role: "USER",
+            grantedAt: new Date(),
           });
           await db.insert(schema.accounts).values({
             userId,
@@ -312,6 +344,23 @@ function createAuthConfig(): NextAuthConfig {
             });
             token.role = (dbUser?.role as UserRole) || "USER";
           }
+          // Load granted roles from user_roles. Always includes at least
+          // the primary role thanks to the drizzle/0089 backfill. The
+          // fallback to `[token.role]` covers the (defensive) case where
+          // the row is missing — never silently downgrade a user to
+          // "no roles."
+          try {
+            const db = getCloudflareDb();
+            const grants = await db
+              .select({ role: schema.userRoles.role })
+              .from(schema.userRoles)
+              .where(eq(schema.userRoles.userId, user.id));
+            const roles = grants.map((g) => g.role as UserRole);
+            if (!roles.includes(token.role as UserRole)) roles.push(token.role as UserRole);
+            token.roles = roles;
+          } catch {
+            token.roles = [token.role as UserRole];
+          }
         }
         return token;
       },
@@ -319,6 +368,7 @@ function createAuthConfig(): NextAuthConfig {
         if (session.user && token.id) {
           session.user.id = token.id as string;
           session.user.role = token.role as UserRole;
+          session.user.roles = (token.roles as UserRole[] | undefined) ?? [token.role as UserRole];
         }
         return session;
       },
@@ -360,5 +410,7 @@ export const signIn: SignInType = ((...args: Parameters<SignInType>) => {
 // Typed signOut function
 export const signOut: SignOutType = ((...args: Parameters<SignOutType>) => {
   const instance = initAuth();
-  return (instance.signOut as (...args: Parameters<SignOutType>) => ReturnType<SignOutType>)(...args);
+  return (instance.signOut as (...args: Parameters<SignOutType>) => ReturnType<SignOutType>)(
+    ...args
+  );
 }) as SignOutType;

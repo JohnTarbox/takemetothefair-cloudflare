@@ -256,6 +256,37 @@ export default async function VendorDetailPage({ params }: Props) {
   const isAdmin = session?.user?.role === "ADMIN";
   const isOwner = !!session?.user?.id && session.user.id === vendor.userId;
 
+  // Direct-claim eligibility (PR 1) — when the signed-in visitor's
+  // verified email matches the vendor's contact_email, the CTA renders
+  // a one-click claim button instead of the standard register-redirect.
+  // Server-side check: we need users.email_verified, which the session
+  // doesn't carry — read it from D1 once for the small set of users
+  // who could plausibly be eligible (session present, contact_email
+  // present, looks similar).
+  let eligibleForDirectClaim = false;
+  if (
+    !vendor.claimed &&
+    session?.user?.id &&
+    session.user.email &&
+    vendor.contactEmail &&
+    session.user.email.trim().toLowerCase() === vendor.contactEmail.trim().toLowerCase()
+  ) {
+    try {
+      const db = getCloudflareDb();
+      const [verifyRow] = await db
+        .select({ emailVerified: users.emailVerified })
+        .from(users)
+        .where(eq(users.id, session.user.id))
+        .limit(1);
+      eligibleForDirectClaim = !!verifyRow?.emailVerified;
+    } catch {
+      // If the verification lookup fails, fall back to the standard
+      // claim flow rather than tempting fate with a one-click button
+      // that might 401/403 on the server side.
+      eligibleForDirectClaim = false;
+    }
+  }
+
   const linkedBlogPosts = await getDirectlyLinkedBlogPosts(
     getCloudflareDb(),
     "VENDOR",
@@ -562,7 +593,11 @@ export default async function VendorDetailPage({ params }: Props) {
             )}
 
             {!vendor.claimed && !isOwner && !isAdmin && (
-              <ClaimListingCTA businessName={vendor.businessName} vendorSlug={vendor.slug} />
+              <ClaimListingCTA
+                businessName={vendor.businessName}
+                vendorSlug={vendor.slug}
+                eligibleForDirectClaim={eligibleForDirectClaim}
+              />
             )}
 
             <Card>
