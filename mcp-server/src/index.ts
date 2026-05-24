@@ -917,6 +917,98 @@ async function handleInboundEmailsApi(
   return null;
 }
 
+/**
+ * Internal RPC-style endpoints called by the Pages app via HTTPS +
+ * X-Internal-Key. Why this exists: Cloudflare Pages does not wire the
+ * `[[queues.producers]]` block from wrangler.toml to the runtime queue
+ * registry (the `deployment_configs.queue_producers` field populates,
+ * but the queue's actual producer list stays empty). The MCP Worker
+ * DOES have a working producer binding for EMAIL_JOBS, so Pages calls
+ * here and we send the message on its behalf. Adds ~50-100ms HTTP hop
+ * compared to a direct queue.send, but the actual SMTP/CF Email Sending
+ * step is async anyway so user-visible flows are unaffected.
+ *
+ * Auth: same X-Internal-Key gate as the other handle*Api helpers.
+ */
+async function handleInternalApi(request: Request, env: Env, url: URL): Promise<Response | null> {
+  const internalKey = request.headers.get("x-internal-key");
+  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // POST /api/admin/internal/enqueue-email — proxy for Pages' enqueueEmail().
+  if (url.pathname === "/api/admin/internal/enqueue-email" && request.method === "POST") {
+    if (!env.EMAIL_JOBS) {
+      // Should never happen in production — the MCP wrangler.toml has the
+      // binding. Defensive return so a misconfigured env doesn't silently
+      // drop messages.
+      await logError(env.DB, {
+        level: "warn",
+        source: "mcp:internal-api",
+        message: "EMAIL_JOBS binding missing on MCP Worker; cannot proxy enqueue",
+      });
+      return jsonResponse({ error: "email_jobs_binding_missing" }, 500);
+    }
+
+    let body: {
+      to?: unknown;
+      subject?: unknown;
+      html?: unknown;
+      text?: unknown;
+      from?: unknown;
+      source?: unknown;
+    };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+
+    // Required fields: to, subject, html, text. `from` and `source` are
+    // optional (source defaults to a hint string so the stub-fallback
+    // sweep can still attribute Pages-originated calls).
+    if (
+      typeof body.to !== "string" ||
+      typeof body.subject !== "string" ||
+      typeof body.html !== "string" ||
+      typeof body.text !== "string"
+    ) {
+      return jsonResponse(
+        { error: "missing_required_fields", required: ["to", "subject", "html", "text"] },
+        400
+      );
+    }
+    const from = typeof body.from === "string" ? body.from : undefined;
+    const source = typeof body.source === "string" ? body.source : "pages-proxy";
+
+    try {
+      await env.EMAIL_JOBS.send({
+        to: body.to,
+        subject: body.subject,
+        html: body.html,
+        text: body.text,
+        from,
+        source,
+      });
+    } catch (e) {
+      await logError(env.DB, {
+        source: "mcp:internal-api",
+        message: "EMAIL_JOBS.send threw in enqueue-email proxy",
+        error: e,
+        context: { to: body.to, subject: body.subject, source },
+      });
+      return jsonResponse({ error: "queue_send_failed" }, 502);
+    }
+
+    return jsonResponse({ ok: true });
+  }
+
+  return null;
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -1087,6 +1179,11 @@ export default {
 
     if (url.pathname.startsWith("/api/admin/inbound-emails/")) {
       const response = await handleInboundEmailsApi(request, env, url);
+      if (response) return response;
+    }
+
+    if (url.pathname.startsWith("/api/admin/internal/")) {
+      const response = await handleInternalApi(request, env, url);
       if (response) return response;
     }
 
