@@ -4,7 +4,8 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users } from "@/lib/db/schema";
 import { createClaimToken } from "@/lib/vendor-claim-token";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { vendorClaimVerificationTemplate } from "@/lib/email/templates";
 import { logError } from "@/lib/logger";
 
@@ -58,7 +59,7 @@ export async function POST() {
       businessName: vendor.businessName,
       verifyUrl,
     });
-    await sendEmail(db, { to: user.email, ...tpl });
+    await enqueueEmail({ to: user.email, ...tpl, source: "vendor.claim-initiate" });
 
     return NextResponse.json({ ok: true });
   } catch (e) {

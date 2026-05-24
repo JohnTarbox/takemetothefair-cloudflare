@@ -9,6 +9,16 @@ export interface SendEmailArgs {
   html: string;
   text: string;
   from?: string;
+  /**
+   * Optional caller identifier — surfaces in error_logs context so a stub
+   * row tells you WHICH endpoint stubbed. Drove the 2026-05-24
+   * email-outage diagnosis: 30 days of stubs landed at level=info with
+   * no source-of-call breadcrumb, so the impact analysis had to be
+   * reconstructed from subject-line guessing. Callers that go through
+   * `enqueueEmail` already carry a source field — this propagates it
+   * through the synchronous fallback path.
+   */
+  source?: string;
 }
 
 export type SendResult =
@@ -90,13 +100,21 @@ export async function sendEmail(
     return { ok: false, provider: "resend", error: result.error };
   }
 
+  // Bumped from info to warn after the 2026-04-25 → 2026-05-24 silent
+  // outage. Every transactional email since that date was stubbed
+  // because RESEND_API_KEY wasn't set on Pages AND the EMAIL_JOBS queue
+  // binding wasn't wired up (the producer never reached the consumer
+  // that actually delivers via CF Email Sending). info-level meant
+  // nothing alerted; warn surfaces in the standard error_logs dashboards
+  // and trips the new /api/admin/email-stub-check sweep.
   await logError(db, {
-    level: "info",
-    message: `[email:stub] ${args.subject} → ${args.to}`,
+    level: "warn",
+    message: `[email:stub] ${args.subject} → ${args.to}${args.source ? ` (source=${args.source})` : ""}`,
     source: "email:stub",
     context: {
       to: args.to,
       subject: args.subject,
+      callerSource: args.source ?? null,
       text: args.text,
       html: args.html,
     },

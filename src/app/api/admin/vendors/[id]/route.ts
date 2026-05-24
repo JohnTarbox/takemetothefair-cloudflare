@@ -17,7 +17,8 @@ import { createSlug, appendSlugSegment, unsafeSlug, type Slug } from "@/lib/util
 import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 import { markActedAllForTarget } from "@/lib/recommendations/engine";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
@@ -323,7 +324,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
             vendorSlug: finalSlug,
             siteUrl: getSiteUrl(),
           });
-          await sendEmail(db, { to: ownerUser.email, ...tpl });
+          await enqueueEmail({
+            to: ownerUser.email,
+            ...tpl,
+            source: "admin.vendor-claim-confirm",
+          });
         }
       }
     }

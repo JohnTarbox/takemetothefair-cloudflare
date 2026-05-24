@@ -18,7 +18,7 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
-import { sendEmail } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
 import { unsafeSlug } from "@/lib/utils";
@@ -105,16 +105,25 @@ Reply directly to ${parsed.data.senderEmail} to respond.`;
 <a href="https://meetmeatthefair.com/vendors/${escapeHtml(slug)}">your MMATF profile</a>.
 Reply directly to ${escapeHtml(parsed.data.senderEmail)} to respond.</p>`;
 
-    const result = await sendEmail(db, {
-      to: v.contactEmail,
-      subject,
-      text,
-      html,
-    });
-
-    if (!result.ok) {
-      // sendEmail logs internally; return generic error so we don't leak
-      // anything about provider/config.
+    // Enqueue rather than direct-send. The queue consumer delivers via
+    // CF Email Sending with retries. Failures past max_retries go to
+    // DLQ for admin inspection — submitter sees success here either way.
+    try {
+      await enqueueEmail({
+        to: v.contactEmail,
+        subject,
+        text,
+        html,
+        source: "vendor.contact-form",
+      });
+    } catch (e) {
+      await logError(db, {
+        level: "warn",
+        message: "Failed to enqueue vendor contact form email",
+        error: e,
+        source: "api/vendors/[slug]/contact",
+        context: { slug },
+      });
       return NextResponse.json({ error: "send_failed" }, { status: 502 });
     }
 

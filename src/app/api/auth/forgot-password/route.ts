@@ -5,7 +5,8 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, passwordResetTokens } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { passwordResetTemplate } from "@/lib/email/templates";
 
 export const runtime = "edge";
@@ -56,21 +57,27 @@ export async function POST(request: NextRequest) {
     const resetUrl = `${getSiteUrl(request)}/reset-password/${token}`;
     const tpl = passwordResetTemplate({ resetUrl, name: user.name });
 
-    const result = await sendEmail(db, {
-      to: user.email,
-      subject: tpl.subject,
-      html: tpl.html,
-      text: tpl.text,
-    });
-
-    if (!result.ok) {
+    // Enqueue rather than direct-send. The queue consumer (MCP worker)
+    // delivers via CF Email Sending and retries on transient failure.
+    // Direct sendEmail() bypassed the queue and silently stubbed when
+    // RESEND_API_KEY was absent on Pages (2026-04-25 → 2026-05-24 outage).
+    try {
+      await enqueueEmail({
+        to: user.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+        source: "auth.forgot-password",
+      });
+    } catch (e) {
       await logError(db, {
         level: "warn",
-        message: "Password reset email dispatch failed",
+        message: "Failed to enqueue password reset email",
+        error: e,
         source: "api/auth/forgot-password",
-        context: { email, provider: result.provider, error: result.error },
+        context: { email },
       });
-      // Still return GENERIC_OK — token is in DB and admin can see the stub log
+      // Still return GENERIC_OK — token is in DB, queue error is admin-visible
     }
 
     return GENERIC_OK;

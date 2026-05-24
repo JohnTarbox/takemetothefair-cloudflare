@@ -46,9 +46,11 @@ export async function enqueueEmail(args: SendEmailArgs & { source: string }): Pr
   }
 
   // Fallback: send synchronously. logError-on-failure is internal to
-  // sendEmail so callers don't need to handle errors.
+  // sendEmail so callers don't need to handle errors. Propagate `source`
+  // so a stub-fallback row in error_logs identifies the original caller
+  // (e.g., "auth.register") rather than appearing context-less.
   const db = getCloudflareDb();
-  await sendEmail(db, args);
+  await sendEmail(db, { ...args, source: args.source });
 }
 
 /**

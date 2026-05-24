@@ -15,7 +15,8 @@ import {
   type ContentLinkRef,
   type ContentLinkTargetType,
 } from "@/lib/blog-links";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { promoterBlogMentionTemplate } from "@/lib/email/templates";
 import { logError } from "@/lib/logger";
 
@@ -258,8 +259,22 @@ async function fireBlogMentionNotifications(
       eventUrl: `${siteUrl}/events/${r.eventSlug}`,
     });
 
-    const result = await sendEmail(db, { to, subject, html, text });
-    if (!result.ok) continue;
+    // Enqueue rather than direct-send. The queue consumer delivers via
+    // CF Email Sending with built-in retries; on a transient failure
+    // the message stays in flight rather than silently dropping. Stamp
+    // notified_at on enqueue success — the link row only re-fires if
+    // explicitly unstamped or the message is replayed from DLQ.
+    try {
+      await enqueueEmail({
+        to,
+        subject,
+        html,
+        text,
+        source: "content-links-sync.promoter-mention",
+      });
+    } catch {
+      continue;
+    }
 
     await db
       .update(contentLinks)
