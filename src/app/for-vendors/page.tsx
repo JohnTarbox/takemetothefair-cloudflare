@@ -153,6 +153,13 @@ export default function ForVendorsPage() {
             Browse Events
           </Link>
         </div>
+        <p className="text-sm text-gray-500 mt-6">
+          Want a walkthrough?{" "}
+          <Link href="/vendor-guide" className="font-medium text-royal hover:text-navy underline">
+            Read the Vendor Guide
+          </Link>{" "}
+          — how to claim or create a listing, verify your email, and edit your profile.
+        </p>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -244,6 +245,13 @@ export default function VendorProfilePage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Vendor Profile</h1>
           <p className="mt-1 text-gray-600">Manage your business information</p>
+          <p className="mt-1 text-sm text-gray-500">
+            New here?{" "}
+            <Link href="/vendor-guide" className="font-medium text-royal hover:text-navy underline">
+              Read the Vendor Guide
+            </Link>{" "}
+            for a walkthrough of editing your profile and applying to events.
+          </p>
         </div>
         <div className="flex items-center gap-3 text-sm">
           {autosave.status === "saving" && <span className="text-stone-600">Saving…</span>}
