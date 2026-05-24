@@ -448,9 +448,16 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
   // ── delete_blog_post ────────────────────────────────────────────
   server.tool(
     "delete_blog_post",
-    "Permanently delete a blog post by slug. Admin only.",
+    "Permanently delete a blog post by slug. Pass `successor_slug` to install a 301 redirect from the deleted slug to a different living post (the consolidation case — the deleted URL will redirect via blog_slug_history instead of 404ing). content_links rows authored by or pointing at the deleted post are cascade-removed. Admin only.",
     {
       slug: z.string().min(1).describe("Slug of the blog post to delete"),
+      successor_slug: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Optional slug of a living blog post that the deleted URL should 301-redirect to. Used during consolidation (two posts merged into one). The successor must already exist; the delete fails if it does not."
+        ),
     },
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
@@ -466,15 +473,16 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       }
 
       try {
-        const response = await fetch(
-          `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,
-          {
-            method: "DELETE",
-            headers: {
-              "X-Internal-Key": env.INTERNAL_API_KEY,
-            },
-          }
-        );
+        const url = new URL(`/api/blog-posts/${encodeURIComponent(params.slug)}`, env.MAIN_APP_URL);
+        if (params.successor_slug) {
+          url.searchParams.set("successor", params.successor_slug);
+        }
+        const response = await fetch(url.toString(), {
+          method: "DELETE",
+          headers: {
+            "X-Internal-Key": env.INTERNAL_API_KEY,
+          },
+        });
 
         if (!response.ok) {
           const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
@@ -489,8 +497,18 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           };
         }
 
+        // Surface the redirect target from the API so the caller knows
+        // the slug-history row was installed (or wasn't, if no
+        // successor was requested).
+        const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
         return {
-          content: [jsonContent({ deleted: true, slug: params.slug })],
+          content: [
+            jsonContent({
+              deleted: true,
+              slug: params.slug,
+              ...(body.redirect_to ? { redirect_to: body.redirect_to } : {}),
+            }),
+          ],
         };
       } catch (error) {
         return {

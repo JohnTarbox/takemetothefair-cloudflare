@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { blogPosts, contentLinks, users } from "@/lib/db/schema";
+import { blogPosts, blogSlugHistory, contentLinks, users } from "@/lib/db/schema";
 import { isAuthorized } from "@/lib/api-auth";
 import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
@@ -151,7 +151,29 @@ export async function PUT(request: NextRequest, { params }: Params) {
       updateData.publishDate = data.publishDate ? new Date(data.publishDate) : null;
     }
 
-    await db.update(blogPosts).set(updateData).where(eq(blogPosts.id, existing.id));
+    // Record slug-rename history before the update lands, so a request to
+    // the OLD slug arriving in the gap between this write and the read
+    // (or after, once propagation completes) 301s through the middleware
+    // to the new slug rather than 404ing. Batched with the UPDATE so an
+    // FK-violation in the history insert rolls the whole rename back.
+    const slugChanged = typeof updateData.slug === "string" && updateData.slug !== existing.slug;
+    const updateStatement = db
+      .update(blogPosts)
+      .set(updateData)
+      .where(eq(blogPosts.id, existing.id));
+    if (slugChanged) {
+      await db.batch([
+        db.insert(blogSlugHistory).values({
+          blogPostId: existing.id,
+          oldSlug: existing.slug,
+          newSlug: unsafeSlug(updateData.slug as string),
+          changedAt: new Date(),
+        }),
+        updateStatement,
+      ]);
+    } else {
+      await updateStatement;
+    }
 
     // Fetch the updated post with author info
     const [updated] = await db
@@ -238,6 +260,14 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   const db = getCloudflareDb();
   const { slug } = await params;
+  // Optional ?successor=<slug> — for the consolidation case (the Paradise
+  // City pattern). When set, we record a blog_slug_history row pointing
+  // the deleted slug at the successor BEFORE deleting the original, so
+  // the URL 301s instead of 404ing. blog_post_id on the history row is
+  // the successor's id so the ON DELETE CASCADE behaves sensibly: if the
+  // successor is later deleted, the inherited redirect dies with it
+  // (correctly — at that point we'd want a 410, not a 301-to-nowhere).
+  const successorSlug = new URL(request.url).searchParams.get("successor");
 
   if (!(await isAuthorized(request))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -245,13 +275,39 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
   try {
     const [existing] = await db
-      .select({ id: blogPosts.id })
+      .select({ id: blogPosts.id, slug: blogPosts.slug })
       .from(blogPosts)
       .where(eq(blogPosts.slug, unsafeSlug(slug)))
       .limit(1);
 
     if (!existing) {
       return NextResponse.json({ error: "Blog post not found" }, { status: 404 });
+    }
+
+    // Resolve the successor up-front so a bad successor slug fails the
+    // whole delete rather than orphaning the redirect attempt.
+    let successorId: string | null = null;
+    let successorCanonicalSlug: string | null = null;
+    if (successorSlug) {
+      const [successor] = await db
+        .select({ id: blogPosts.id, slug: blogPosts.slug })
+        .from(blogPosts)
+        .where(eq(blogPosts.slug, unsafeSlug(successorSlug)))
+        .limit(1);
+      if (!successor) {
+        return NextResponse.json(
+          { error: "Successor blog post not found", successor: successorSlug },
+          { status: 400 }
+        );
+      }
+      if (successor.id === existing.id) {
+        return NextResponse.json(
+          { error: "Successor cannot be the same post being deleted" },
+          { status: 400 }
+        );
+      }
+      successorId = successor.id;
+      successorCanonicalSlug = successor.slug;
     }
 
     // Cascade-delete content_links rows in both directions: rows authored
@@ -261,17 +317,38 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     // non-existent source_id. content_links has no foreign keys, so the
     // cleanup must be application-level. Batched for atomicity per
     // feedback_destructive_delete_needs_transaction.md.
-    await db.batch([
+    //
+    // When a successor is supplied, the blog_slug_history INSERT runs in
+    // the same batch — the redirect is installed atomically with the
+    // delete, so there's never a window where the URL 404s. The history
+    // row's blog_post_id points at the SUCCESSOR (not the doomed
+    // existing.id) which is why this insert can survive the
+    // delete-from-blog_posts on the same row.
+    const statements: Parameters<typeof db.batch>[0][number][] = [
       db.delete(contentLinks).where(eq(contentLinks.sourceId, existing.id)),
       db
         .delete(contentLinks)
         .where(
           and(eq(contentLinks.targetType, "BLOG_POST"), eq(contentLinks.targetId, existing.id))
         ),
-      db.delete(blogPosts).where(eq(blogPosts.id, existing.id)),
-    ]);
+    ];
+    if (successorId && successorCanonicalSlug) {
+      statements.push(
+        db.insert(blogSlugHistory).values({
+          blogPostId: successorId,
+          oldSlug: existing.slug,
+          newSlug: unsafeSlug(successorCanonicalSlug),
+          changedAt: new Date(),
+        })
+      );
+    }
+    statements.push(db.delete(blogPosts).where(eq(blogPosts.id, existing.id)));
+    await db.batch(statements as unknown as Parameters<typeof db.batch>[0]);
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      ...(successorCanonicalSlug ? { redirect_to: successorCanonicalSlug } : {}),
+    });
   } catch (error) {
     await logError(db, {
       message: "Error deleting blog post",

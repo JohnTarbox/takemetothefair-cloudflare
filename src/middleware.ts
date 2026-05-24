@@ -2,12 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc } from "drizzle-orm";
-import { vendors, events, eventSlugHistory } from "@/lib/db/schema";
+import { vendors, events, eventSlugHistory, blogPosts, blogSlugHistory } from "@/lib/db/schema";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import { unsafeSlug } from "@/lib/utils";
 
 /**
- * Middleware handles four pre-route concerns that must NOT be cached:
+ * Middleware handles five pre-route concerns that must NOT be cached:
  *
  *   1. IndexNow keyfile  — `/<key>.txt` served from site root for the
  *      IndexNow path-scope rule (see comment block below).
@@ -24,7 +24,12 @@ import { unsafeSlug } from "@/lib/utils";
  *      5 hops). Same caching argument as vendors: the page renderer's
  *      `notFound()` becomes a cached 200 under ISR, so middleware is the
  *      only place that can reliably set non-200 status post-rename.
- *   4. Claude read-only Bearer method gate — for any request to /admin/* or
+ *   4. Blog slug-rename / consolidation redirect — `/blog/<slug>`. When the
+ *      slug doesn't resolve to a live post, walk blog_slug_history (max 5
+ *      hops) and 301 to the canonical slug. Covers both rename (title
+ *      change regenerates slug — PUT /api/blog-posts/[slug]) and
+ *      consolidation (DELETE ...?successor=<slug>) cases.
+ *   5. Claude read-only Bearer method gate — for any request to /admin/* or
  *      /api/admin/* with `Authorization: Bearer <CLAUDE_READONLY_TOKEN>`,
  *      enforce that the method is one of GET/HEAD/OPTIONS. Anything else
  *      gets a 403 at the edge before any route handler runs. The actual
@@ -56,6 +61,9 @@ export const config = {
     // pages like /events/maine, not category pages, not /events/past, etc.
     // Those are handled by their own static routes — see app/events/).
     "/events/:slug",
+    // Blog detail pages (single slug only; not /blog itself, not /blog/tag/*,
+    // not /blog/feed.xml — feed.xml is excluded by name below).
+    "/blog/:slug",
     // Admin pages + admin API routes — for the Claude read-only Bearer
     // method gate. Matcher does NOT cover /admin or /api/admin themselves
     // (only `/<seg>/*` shapes), so the gate doesn't fire for the listing
@@ -85,6 +93,12 @@ const EVENT_STATIC_SUBROUTES = new Set([
   "markets",
   "farmers-markets",
 ]);
+
+// Static blog sub-routes that share the /blog/<slug> shape but must NOT be
+// intercepted by the blog slug check. `feed.xml` is the RSS feed served by
+// app/blog/feed.xml/route.ts; any future static blog routes (e.g. an
+// /blog/archive page) should be added here.
+const BLOG_STATIC_SUBROUTES = new Set(["feed.xml"]);
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -221,6 +235,67 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next();
     } catch {
       // DB error — let the page handler take over.
+      return NextResponse.next();
+    }
+  }
+
+  // ── /blog/<slug> ───────────────────────────────────────────────
+  // Slug-rename / consolidation redirect. If the slug resolves to a live
+  // blog post, fall through to the page renderer. If not, walk
+  // blog_slug_history (up to 5 hops) and 301 to the canonical slug.
+  // Static subroutes like feed.xml are explicitly excluded.
+  if (pathname.startsWith("/blog/")) {
+    const slug = pathname.slice("/blog/".length);
+    if (!slug || slug.includes("/") || BLOG_STATIC_SUBROUTES.has(slug)) {
+      return NextResponse.next();
+    }
+
+    const d1 = env.DB as D1Database | undefined;
+    if (!d1) return NextResponse.next();
+    const db = drizzle(d1);
+
+    try {
+      // Live post at this slug → render normally.
+      const [post] = await db
+        .select({ id: blogPosts.id })
+        .from(blogPosts)
+        .where(eq(blogPosts.slug, unsafeSlug(slug)))
+        .limit(1);
+      if (post) return NextResponse.next();
+
+      // No post → walk slug history. Same shape as the events branch
+      // above (max 5 hops, dedupe to break cycles).
+      let cursor = slug;
+      const seen = new Set<string>([cursor]);
+      for (let hop = 0; hop < 5; hop++) {
+        const [historyRow] = await db
+          .select({ newSlug: blogSlugHistory.newSlug })
+          .from(blogSlugHistory)
+          .where(eq(blogSlugHistory.oldSlug, unsafeSlug(cursor)))
+          .orderBy(desc(blogSlugHistory.changedAt))
+          .limit(1);
+        if (!historyRow || seen.has(historyRow.newSlug)) break;
+        cursor = historyRow.newSlug;
+        seen.add(cursor);
+      }
+      if (cursor !== slug) {
+        // Verify the terminus is a live blog post before 301-ing.
+        // (Status filter intentionally absent: a DRAFT post would still
+        // 301 from its old slug, then the page renderer enforces
+        // admin-only visibility.)
+        const [target] = await db
+          .select({ id: blogPosts.id })
+          .from(blogPosts)
+          .where(eq(blogPosts.slug, unsafeSlug(cursor)))
+          .limit(1);
+        if (target) {
+          const url = request.nextUrl.clone();
+          url.pathname = `/blog/${cursor}`;
+          return NextResponse.redirect(url, 301);
+        }
+      }
+      return NextResponse.next();
+    } catch {
       return NextResponse.next();
     }
   }
