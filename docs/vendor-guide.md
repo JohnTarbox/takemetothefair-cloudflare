@@ -16,20 +16,58 @@ If you see a page that looks like yours (e.g., the listing was created
 by us during event coverage or imported from a fair's vendor roster),
 **don't create a duplicate**. Use the **"Claim this listing"** button
 on your vendor page. It opens a signup form with your business name
-pre-filled.
+pre-filled. Sign up with the email you want your account on, then
+verify it (see Section 2 below).
 
-After you submit:
+What happens next depends on which email is already on file for the
+listing. There are three cases.
 
-1. You'll get a **verification email** at the address you signed up
-   with. Click the link inside.
-2. From your dashboard or the vendor profile page, you'll see a small
-   "Claim my listing" widget. Click the button — that triggers a
-   **second email** that confirms you actually control the address.
-3. Click the link in the claim-confirmation email. Your listing now
-   shows a "Claimed" badge.
+#### Case 1 — Fast path: your email is already the listing's contact email
 
-You need to click **both** emails. The first proves the email belongs
-to you; the second binds the listing to your account.
+If the email you signed up with **matches the contact email already on
+the listing**, claim is **one click** — no second email needed. Once
+you've verified your address (Section 2), go to your vendor page or
+your dashboard's "Claim my listing" widget and the button reads
+**"Claim this listing now"**. Click it. The "Claimed" badge appears on
+your public page on the next load.
+
+This is the fast path because the email-verification step you just did
+also proves you control the email that's listed as the business
+contact — both proofs collapse into one.
+
+#### Case 2 — Standard path: a different email is on file as the business contact
+
+If the listing has a contact email on file that's different from your
+signup email (a personal account email vs. an `info@yourbusiness.com`,
+for example), proving ownership requires access to the business's
+listed mailbox:
+
+1. From your dashboard or vendor profile, click **"Send me a
+   confirmation email"** in the "Claim my listing" widget.
+2. The confirmation email is sent to the **business's contact email on
+   file** — not your signup email. The page tells you which mailbox
+   (masked): `We sent a confirmation to in***@yourbusiness.com`.
+3. Open that mailbox. Click the link in the email.
+4. Your listing now shows a "Claimed" badge.
+
+If you don't have access to that mailbox, the claim won't complete on
+this path — see Case 3.
+
+#### Case 3 — No contact email on file: ask support
+
+If the listing has no contact email on file (common for older listings
+imported from public fair rosters), neither of the above paths can
+verify business ownership. The "Send me a confirmation email" button
+returns a message like:
+
+> This listing has no contact email on file, so we can't send a
+> verification to verify business ownership. Please contact support —
+> an admin can approve the claim manually.
+
+Email us via the contact link in the footer. Include the listing URL
+and any way we can confirm you represent the business (a business
+domain email, registration documents, prior MMATF correspondence). An
+admin will approve and grant you the listing manually.
 
 ### Path B — Your business isn't listed yet
 
@@ -163,9 +201,17 @@ in your profile, the URL changes too, and the old URL 301-redirects to
 the new one — old links keep working.
 
 **Someone else "claimed" my business listing.** Reach out to us. The
-claim flow requires email-control proof of the email an account was
-registered with, but it doesn't verify that the email belongs to the
-business owner. We can investigate disputed claims case-by-case.
+claim flow normally requires the claimer to have access to either the
+email already on file as the business contact (Case 2 above) or — if
+no contact email is on file — an admin's manual approval (Case 3).
+That makes the most common forms of false-claim hard, but we can
+investigate disputed claims case-by-case if something slipped through.
+
+**I clicked "Claim this listing" and the page says it has no contact
+email on file.** That's Case 3 above. The listing was imported from a
+public fair roster without an associated business mailbox, so neither
+of the automated flows can verify ownership. Email support — an admin
+can approve manually after out-of-band verification.
 
 **My listing shows "Not Claimed."** That means no one has signed up
 and confirmed ownership of it yet. Use the "Claim this listing" button
