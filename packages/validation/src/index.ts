@@ -135,7 +135,21 @@ export const vendorCreateSchema = z.object({
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
   // Business Details
-  yearEstablished: z.number().int().min(1800).max(new Date().getFullYear()).optional().nullable(),
+  // Upper bound evaluated per-validation via .refine() rather than
+  // .max(getFullYear()), which would freeze the cap to whatever year
+  // it was when the module first loaded. In Cloudflare Workers cold
+  // starts this can lock to 1970 (epoch) if module init runs before
+  // the isolate has performed any I/O, producing a confusing
+  // "expected to be <= 1970" error from a 2026 form submit.
+  yearEstablished: z
+    .number()
+    .int()
+    .min(1800)
+    .optional()
+    .nullable()
+    .refine((v) => v == null || v <= new Date().getFullYear(), {
+      message: "Year established cannot be in the future",
+    }),
   paymentMethods: z.array(z.string()).optional().default([]),
   licenseInfo: z.string().max(500).optional().nullable(),
   insuranceInfo: z.string().max(500).optional().nullable(),
@@ -445,7 +459,21 @@ export const vendorProfileUpdateSchema = z.object({
   zip: z.string().max(VALIDATION.ZIP_MAX_LENGTH).optional().nullable(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
-  yearEstablished: z.number().int().min(1800).max(new Date().getFullYear()).optional().nullable(),
+  // Upper bound evaluated per-validation via .refine() rather than
+  // .max(getFullYear()), which would freeze the cap to whatever year
+  // it was when the module first loaded. In Cloudflare Workers cold
+  // starts this can lock to 1970 (epoch) if module init runs before
+  // the isolate has performed any I/O, producing a confusing
+  // "expected to be <= 1970" error from a 2026 form submit.
+  yearEstablished: z
+    .number()
+    .int()
+    .min(1800)
+    .optional()
+    .nullable()
+    .refine((v) => v == null || v <= new Date().getFullYear(), {
+      message: "Year established cannot be in the future",
+    }),
   paymentMethods: z.array(z.string()).optional(),
   licenseInfo: z.string().max(500).optional().nullable(),
   insuranceInfo: z.string().max(500).optional().nullable(),
