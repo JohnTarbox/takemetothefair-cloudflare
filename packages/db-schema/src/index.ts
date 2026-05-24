@@ -18,6 +18,11 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash"),
   name: text("name"),
+  // Primary role — kept for back-compat with the ~100 existing
+  // `session.user.role === X` consumers. The canonical source of truth
+  // for "what roles does this user have" is `user_roles` (drizzle/0089),
+  // exposed via `session.user.roles[]` and the hasRole() helper. PR 2
+  // (planned) will migrate the remaining consumers to use roles[].
   role: text("role", { enum: ["ADMIN", "PROMOTER", "VENDOR", "USER"] })
     .default("USER")
     .notNull(),
@@ -27,6 +32,47 @@ export const users = sqliteTable("users", {
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
+
+/**
+ * Many-to-many role grants. A user can hold multiple roles
+ * (e.g., VENDOR + PROMOTER for someone who runs a craft business AND
+ * organizes a small show). Backfilled from users.role 1:1 in
+ * drizzle/0089 so every existing user starts with exactly one grant
+ * matching their primary role.
+ *
+ * Granting paths:
+ *  - Email-match self-service claim: when a verified user clicks
+ *    "Claim this listing" and the entity's contact_email matches
+ *    their own, the claim API writes both the entity update AND a
+ *    user_roles row for the corresponding role.
+ *  - Admin override: planned MCP `set_user_roles` tool for cases
+ *    self-service doesn't cover.
+ *
+ * UNIQUE(user_id, role) makes re-grants idempotent. CASCADE on
+ * user_id deletion wipes the grants; SET NULL on granted_by keeps
+ * the audit row when the granter is deleted.
+ */
+export const userRoles = sqliteTable(
+  "user_roles",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["USER", "VENDOR", "PROMOTER", "ADMIN"] }).notNull(),
+    grantedAt: integer("granted_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    grantedBy: text("granted_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => ({
+    uniqueUserRole: uniqueIndex("user_roles_user_role_unique").on(t.userId, t.role),
+    userIdIdx: index("idx_user_roles_user_id").on(t.userId),
+    roleIdx: index("idx_user_roles_role").on(t.role),
+  })
+);
 
 // Venues table
 export const venues = sqliteTable(

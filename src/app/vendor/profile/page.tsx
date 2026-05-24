@@ -239,6 +239,8 @@ export default function VendorProfilePage() {
       />
       <VendorClaimWidget
         claimed={profile.claimed}
+        vendorContactEmail={profile.contactEmail}
+        vendorSlug={profile.slug}
         onClaimed={() => setProfile((p) => (p ? { ...p, claimed: true } : p))}
       />
       <div className="flex items-center justify-between mb-8 gap-4">
