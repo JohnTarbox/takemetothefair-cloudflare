@@ -657,9 +657,20 @@ export const newsletterSubscribers = sqliteTable(
     confirmed: integer("confirmed", { mode: "boolean" }).default(false).notNull(),
     unsubscribed: integer("unsubscribed", { mode: "boolean" }).default(false).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // SHA-256 hex digest of the random 32-byte confirmation token. The raw
+    // token only exists in the confirmation email URL — see
+    // src/lib/email/newsletter-confirm-token.ts. NULL once the subscription
+    // is confirmed (token consumed and cleared).
+    confirmationTokenHash: text("confirmation_token_hash"),
+    // Confirmation token expiry — 24h after issue. NULL when no token is
+    // outstanding.
+    confirmationExpires: integer("confirmation_expires", { mode: "timestamp" }),
   },
   (table) => ({
     emailIdx: index("idx_newsletter_email").on(table.email),
+    confirmationTokenHashIdx: index("idx_newsletter_confirmation_token_hash").on(
+      table.confirmationTokenHash
+    ),
   })
 );
 
