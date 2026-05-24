@@ -13,6 +13,19 @@ const nextConfig = {
       },
     ],
   },
+  async redirects() {
+    return [
+      // Singular `/event/*` is a recurring authoring typo (the canonical
+      // path is the plural `/events/*`). Without this rule the singular
+      // path 404s; with it, every variant 301s into the correct page.
+      // Covers the bare `/event` as well as nested segments.
+      {
+        source: "/event/:path*",
+        destination: "/events/:path*",
+        statusCode: 301,
+      },
+    ];
+  },
   async headers() {
     const securityHeaders = [
       { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" },
