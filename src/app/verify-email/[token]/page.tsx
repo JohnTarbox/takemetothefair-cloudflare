@@ -3,6 +3,7 @@ import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { validateAndConsumeVerificationToken } from "@/lib/email/verify-token";
+import { ResendVerificationButton } from "@/components/auth/ResendVerificationButton";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -56,14 +57,18 @@ export default async function VerifyEmailPage({ params }: Props) {
                   : "This verification link isn't valid. It may have already been used."}
               </p>
               <p className="text-sm text-gray-500">
-                Sign in and request a new verification email from the banner at the top of the page.
+                Enter the email you signed up with — we&apos;ll send a fresh link.
               </p>
-              <Link
-                href="/login"
-                className="inline-block text-sm text-navy hover:underline font-medium"
-              >
-                Go to sign in
-              </Link>
+              <div className="flex justify-center">
+                <ResendVerificationButton label="Send a new link" />
+              </div>
+              <p className="text-sm text-gray-500 pt-2">
+                Already verified?{" "}
+                <Link href="/login" className="text-navy hover:underline font-medium">
+                  Sign in
+                </Link>
+                .
+              </p>
             </div>
           )}
         </CardContent>
