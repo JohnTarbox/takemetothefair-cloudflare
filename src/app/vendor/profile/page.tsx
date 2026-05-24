@@ -200,7 +200,33 @@ export default function VendorProfilePage() {
         setMessage("Profile updated successfully");
         fetchProfile();
       } else {
-        setMessage("Failed to update profile");
+        // Surface the server's actual error so we don't paper over the
+        // real reason with a generic "Failed to update profile". The
+        // route returns either {error: "email_unverified", message, verifyUrl}
+        // (403) or {error: "field: msg, ..."} (validation 400) or a
+        // plain {error: string}. Fall back to the generic message only
+        // if the body isn't parseable.
+        try {
+          const body = (await res.json()) as {
+            error?: string;
+            message?: string;
+            verifyUrl?: string;
+          };
+          if (body.error === "email_unverified") {
+            setMessage(
+              body.message ||
+                "Please verify your email before saving changes. Check your inbox for the verification link, or request a new one from your dashboard banner."
+            );
+          } else if (body.message) {
+            setMessage(body.message);
+          } else if (body.error) {
+            setMessage(body.error);
+          } else {
+            setMessage("Failed to update profile");
+          }
+        } catch {
+          setMessage("Failed to update profile");
+        }
       }
     } catch {
       setMessage("An error occurred");
