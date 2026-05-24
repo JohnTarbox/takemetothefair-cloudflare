@@ -97,6 +97,8 @@ export async function POST(request: NextRequest) {
     await db.insert(userRoles).values({ userId, role, grantedAt: new Date() });
 
     if (role === "PROMOTER" && companyName) {
+      // promoters has no claimed/claimedAt/claimedBy columns (only
+      // vendors does) — ownership is implied solely by userId match.
       await db.insert(promoters).values({
         id: crypto.randomUUID(),
         userId,
@@ -137,7 +139,12 @@ export async function POST(request: NextRequest) {
             // .update() through Drizzle, so re-read after the write.
             await db
               .update(vendors)
-              .set({ userId })
+              .set({
+                userId,
+                claimed: true,
+                claimedAt: new Date(),
+                claimedBy: userId,
+              })
               .where(and(eq(vendors.id, target.id), eq(vendors.claimed, false)));
             const [confirm] = await db
               .select({ userId: vendors.userId })
@@ -151,11 +158,18 @@ export async function POST(request: NextRequest) {
         }
       }
       if (!claimedExistingRow) {
+        // Same rationale as the PROMOTER branch — signup minted this row
+        // for this user, so mark it claimed now. Otherwise the vendor
+        // page hides the Claim CTA (isOwner=true) but also never
+        // confirms ownership (claimed=0).
         await db.insert(vendors).values({
           id: crypto.randomUUID(),
           userId,
           businessName,
           slug: createSlug(businessName),
+          claimed: true,
+          claimedAt: new Date(),
+          claimedBy: userId,
         });
       }
     }
