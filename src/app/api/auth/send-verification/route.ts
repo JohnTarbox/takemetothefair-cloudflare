@@ -6,7 +6,8 @@ import { users, verificationTokens } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { emailVerificationTemplate } from "@/lib/email/templates";
 
 export const runtime = "edge";
@@ -62,19 +63,26 @@ export async function POST(request: NextRequest) {
     const verifyUrl = `${getSiteUrl(request)}/verify-email/${token}`;
     const tpl = emailVerificationTemplate({ verifyUrl, name: user.name });
 
-    const result = await sendEmail(db, {
-      to: user.email,
-      subject: tpl.subject,
-      html: tpl.html,
-      text: tpl.text,
-    });
-
-    if (!result.ok) {
+    // Enqueue rather than direct-send. The queue consumer (MCP worker)
+    // delivers via CF Email Sending and handles retries (max_retries=3
+    // then DLQ). Direct sendEmail() bypassed the queue and stubbed
+    // silently when RESEND_API_KEY was absent on Pages — exactly the
+    // gap that produced the 2026-04-25 → 2026-05-24 silent outage.
+    try {
+      await enqueueEmail({
+        to: user.email,
+        subject: tpl.subject,
+        html: tpl.html,
+        text: tpl.text,
+        source: "auth.send-verification",
+      });
+    } catch (e) {
       await logError(db, {
         level: "warn",
-        message: "Verification email dispatch failed",
+        message: "Failed to enqueue verification email",
+        error: e,
         source: "api/auth/send-verification",
-        context: { email: targetEmail, provider: result.provider, error: result.error },
+        context: { email: targetEmail },
       });
     }
 

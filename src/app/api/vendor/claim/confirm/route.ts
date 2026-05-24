@@ -6,7 +6,8 @@ import { adminActions, users, vendors } from "@/lib/db/schema";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { consumeClaimToken } from "@/lib/vendor-claim-token";
-import { sendEmail, getSiteUrl } from "@/lib/email/send";
+import { getSiteUrl } from "@/lib/email/send";
+import { enqueueEmail } from "@/lib/queues/producers";
 import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
@@ -87,7 +88,7 @@ export async function GET(request: NextRequest) {
           vendorSlug: vendor.slug,
           siteUrl: getSiteUrl(),
         });
-        await sendEmail(db, { to: user.email, ...tpl });
+        await enqueueEmail({ to: user.email, ...tpl, source: "vendor.claim-confirm" });
       }
       if (vendor) {
         const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
