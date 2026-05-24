@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { enqueueEmail } from "@/lib/queues/producers";
+import { targetUserIsVerified } from "@/lib/api-auth";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
 import { unsafeSlug } from "@/lib/utils";
@@ -58,6 +59,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const rows = await db
       .select({
         id: vendors.id,
+        userId: vendors.userId,
         businessName: vendors.businessName,
         contactEmail: vendors.contactEmail,
         enhancedProfile: vendors.enhancedProfile,
@@ -77,6 +79,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     }
 
     if (!v.contactEmail) {
+      return NextResponse.json({ error: "contact_not_available" }, { status: 400 });
+    }
+
+    // Gate forwarding on the vendor account holder's email verification.
+    // Without this, an unverified password-signup who's been granted
+    // Enhanced Profile (admin oversight slip) would have inbound
+    // messages forwarded to a `contactEmail` that nobody's proven
+    // control of. Returns the same `contact_not_available` error shape
+    // as the no-enhanced-profile path so it doesn't enumerate which
+    // vendors are verified vs. not. Defense in depth — Enhanced grants
+    // should imply verification, but explicit is better than implicit.
+    if (!(await targetUserIsVerified(v.userId))) {
       return NextResponse.json({ error: "contact_not_available" }, { status: 400 });
     }
 

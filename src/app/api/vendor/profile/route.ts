@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -43,10 +44,15 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   const db = getCloudflareDb();
-  const session = await auth();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // Gate vendor profile EDIT on email verification. Read (GET above)
+  // remains open — only writes require proof of email control. This
+  // closes the gap where an unverified password-signup could create a
+  // vendor row at registration and immediately edit anyone-else's
+  // claimable listing data without ever clicking the verification
+  // link. OAuth signups are auto-verified at user-create time so
+  // they pass this gate transparently.
+  const gate = await requireVerifiedSession();
+  if (!gate.ok) return gate.response;
 
   try {
     const validation = await validateRequestBody(request, vendorProfileUpdateSchema);
@@ -103,12 +109,12 @@ export async function PATCH(request: NextRequest) {
     if (licenseInfo !== undefined) updateData.licenseInfo = licenseInfo;
     if (insuranceInfo !== undefined) updateData.insuranceInfo = insuranceInfo;
 
-    await db.update(vendors).set(updateData).where(eq(vendors.userId, session.user.id));
+    await db.update(vendors).set(updateData).where(eq(vendors.userId, gate.userId));
 
     const updatedVendor = await db
       .select()
       .from(vendors)
-      .where(eq(vendors.userId, session.user.id))
+      .where(eq(vendors.userId, gate.userId))
       .limit(1);
 
     if (updatedVendor[0]) {
@@ -118,7 +124,7 @@ export async function PATCH(request: NextRequest) {
         targetId: updatedVendor[0].id,
         source: "vendor_self",
         status: "success",
-        actorUserId: session.user.id,
+        actorUserId: gate.userId,
         fieldsChanged: Object.keys(updateData),
       });
     }
