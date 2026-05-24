@@ -655,7 +655,7 @@ export const contentLinks = sqliteTable(
       .$defaultFn(() => crypto.randomUUID()),
     sourceType: text("source_type", { enum: ["BLOG_POST"] }).notNull(),
     sourceId: text("source_id").notNull(),
-    targetType: text("target_type", { enum: ["EVENT", "VENDOR", "VENUE"] }).notNull(),
+    targetType: text("target_type", { enum: ["EVENT", "VENDOR", "VENUE", "BLOG_POST"] }).notNull(),
     targetSlug: text("target_slug").notNull(),
     targetId: text("target_id"),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),

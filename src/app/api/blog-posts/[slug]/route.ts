@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { blogPosts, users } from "@/lib/db/schema";
+import { blogPosts, contentLinks, users } from "@/lib/db/schema";
 import { isAuthorized } from "@/lib/api-auth";
 import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
@@ -254,7 +254,22 @@ export async function DELETE(request: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Blog post not found" }, { status: 404 });
     }
 
-    await db.delete(blogPosts).where(eq(blogPosts.id, existing.id));
+    // Cascade-delete content_links rows in both directions: rows authored
+    // by this post (source_id) and rows pointing at this post as a
+    // BLOG_POST target (target_id). Without this, the Paradise City
+    // consolidation in May 2026 left 3 orphan rows pointing at a
+    // non-existent source_id. content_links has no foreign keys, so the
+    // cleanup must be application-level. Batched for atomicity per
+    // feedback_destructive_delete_needs_transaction.md.
+    await db.batch([
+      db.delete(contentLinks).where(eq(contentLinks.sourceId, existing.id)),
+      db
+        .delete(contentLinks)
+        .where(
+          and(eq(contentLinks.targetType, "BLOG_POST"), eq(contentLinks.targetId, existing.id))
+        ),
+      db.delete(blogPosts).where(eq(blogPosts.id, existing.id)),
+    ]);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -41,6 +41,16 @@ export interface SyncResult {
 export interface SyncOptions {
   /** Whether to fire promoter blog-mention emails for new EVENT links. */
   notify?: boolean;
+  /**
+   * Slug of the blog post being synced. When provided, any extracted
+   * `/blog/<sourceSlug>` reference (a self-link) is filtered out before
+   * writing to content_links. Callers that already know the post's slug
+   * (the standard write path, plus the reconciliation endpoint) should
+   * pass it; older callers that don't will simply not get the self-link
+   * filter applied — a self-link row is harmless (resolved to its own
+   * id) but is noise in coverage stats.
+   */
+  sourceSlug?: string;
 }
 
 /**
@@ -60,15 +70,32 @@ export async function syncContentLinks(
   body: string | null | undefined,
   opts: SyncOptions = {}
 ): Promise<SyncResult> {
-  const referenced = extractContentLinks(body);
+  // Filter self-links at the extract boundary so they never enter the
+  // sync diff. A blog post referencing its own /blog/<slug> URL would
+  // otherwise produce a row pointing at itself, which is noise in
+  // coverage stats and a footgun for any future "what does this link
+  // to" query that doesn't bother to exclude self-edges.
+  const rawReferenced = extractContentLinks(body);
+  const referenced = opts.sourceSlug
+    ? rawReferenced.filter(
+        (r) => !(r.targetType === "BLOG_POST" && r.targetSlug === opts.sourceSlug)
+      )
+    : rawReferenced;
 
   // Resolve slugs → ids in one query per entity type.
   const targetIdsByTypeSlug = new Map<string, string>(); // "TYPE|slug" → id
   await Promise.all(
-    (["EVENT", "VENDOR", "VENUE"] as const).map(async (type) => {
+    (["EVENT", "VENDOR", "VENUE", "BLOG_POST"] as const).map(async (type) => {
       const slugs = referenced.filter((r) => r.targetType === type).map((r) => r.targetSlug);
       if (slugs.length === 0) return;
-      const table = type === "EVENT" ? events : type === "VENDOR" ? vendors : venues;
+      const table =
+        type === "EVENT"
+          ? events
+          : type === "VENDOR"
+            ? vendors
+            : type === "VENUE"
+              ? venues
+              : blogPosts;
       const rows = await db
         .select({ id: table.id, slug: table.slug })
         .from(table)

@@ -6,8 +6,23 @@ import { jsonContent, unsafeSlug } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
+interface Env {
+  MAIN_APP_URL?: string;
+  INTERNAL_API_KEY?: string;
+}
+
+// Original `list_entities_without_blog_coverage` / `get_blog_coverage`
+// take only the three entity types as parameters (callers ask "which
+// events/vendors/venues are uncovered?"). BLOG_POST is a content-link
+// target type but isn't a coverage subject in those tools.
 const ENTITY_TYPES = ["EVENT", "VENDOR", "VENUE"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
+
+// `get_blog_links_in_post` returns ALL link target types, including
+// BLOG_POST (blog-to-blog internal references). Separate union to
+// avoid widening ENTITY_TYPES above and accidentally surfacing
+// BLOG_POST as a coverage-subject in the wrong tool.
+type LinkTargetType = EntityType | "BLOG_POST";
 
 interface UncoveredRow {
   type: EntityType;
@@ -21,7 +36,7 @@ interface UncoveredRow {
  * Content-link MCP tools. Admin-only: coverage reporting surfaces gaps in
  * editorial coverage, which we don't want exposed to vendors/promoters.
  */
-export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthContext) {
+export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
   if (auth.role !== "ADMIN") return;
 
   // ── list_entities_without_blog_coverage ──────────────────────────
@@ -167,7 +182,7 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
   // ── get_blog_links_in_post ──────────────────────────────────────
   server.tool(
     "get_blog_links_in_post",
-    "Given a blog post slug, return the events/vendors/venues it links to. Resolves target names where possible; unresolved slugs appear with target_id=null. Admin only.",
+    "Given a blog post slug, return the events/vendors/venues/blog posts it links to. Resolves target names where possible; unresolved slugs appear with target_id=null. Admin only.",
     {
       slug: z.string().min(1),
     },
@@ -191,10 +206,15 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
         .where(and(eq(contentLinks.sourceType, "BLOG_POST"), eq(contentLinks.sourceId, post.id)));
 
       // Bucket ids by target type so we can resolve names with one query each.
-      const idsByType: Record<EntityType, string[]> = { EVENT: [], VENDOR: [], VENUE: [] };
+      const idsByType: Record<LinkTargetType, string[]> = {
+        EVENT: [],
+        VENDOR: [],
+        VENUE: [],
+        BLOG_POST: [],
+      };
       for (const link of links) {
         if (!link.targetId) continue;
-        const t = link.targetType as EntityType;
+        const t = link.targetType as LinkTargetType;
         idsByType[t].push(link.targetId);
       }
 
@@ -218,6 +238,13 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
           .select({ id: venues.id, name: venues.name })
           .from(venues)
           .where(inArray(venues.id, idsByType.VENUE));
+        for (const r of rows) nameById.set(r.id, r.name);
+      }
+      if (idsByType.BLOG_POST.length > 0) {
+        const rows = await db
+          .select({ id: blogPosts.id, name: blogPosts.title })
+          .from(blogPosts)
+          .where(inArray(blogPosts.id, idsByType.BLOG_POST));
         for (const r of rows) nameById.set(r.id, r.name);
       }
 
@@ -306,6 +333,103 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
           }),
         ],
       };
+    }
+  );
+
+  // ── rebuild_content_links ───────────────────────────────────────
+  // Thin proxy over POST /api/admin/content-links/rebuild. The actual
+  // re-sync (orphan sweep + per-post syncContentLinks) lives in the main
+  // app where syncContentLinks already runs on every update_blog_post.
+  // We expose it via MCP so admins can re-reconcile without dropping to
+  // curl. Idempotent; safe to call repeatedly.
+  server.tool(
+    "rebuild_content_links",
+    "Rebuild content_links from current blog_posts.body. Fixes stale rows (target_id pointing at a renamed entity), backfills missing rows (posts created before migration 0031), and sweeps orphan rows (source_id pointing at a deleted blog post). Idempotent — a no-op when everything is already correct. Pages 50 posts per call; pass next_cursor back as cursor to continue. Pass slug:'<post-slug>' to rebuild just one post. Admin only.",
+    {
+      slug: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "If provided, rebuild this specific blog post's links and skip the bulk pass + orphan sweep. Useful for narrow debugging."
+        ),
+      cursor: z
+        .string()
+        .optional()
+        .describe(
+          "Resume token returned by a previous call as next_cursor. Omit for a fresh bulk pass (orphan sweep runs only on the first call)."
+        ),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe(
+          "Override the default batch size (50). Hard cap is 200 to stay inside Cloudflare's 30s function budget."
+        ),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [
+            jsonContent({
+              error: "config",
+              message:
+                "rebuild_content_links requires MAIN_APP_URL and INTERNAL_API_KEY in the MCP server environment.",
+            }),
+          ],
+          isError: true,
+        };
+      }
+
+      const url = `${env.MAIN_APP_URL}/api/admin/content-links/rebuild`;
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "X-Internal-Key": env.INTERNAL_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(params),
+        });
+      } catch (e) {
+        return {
+          content: [
+            jsonContent({
+              error: "fetch_failed",
+              message: `Failed to reach main app: ${e instanceof Error ? e.message : String(e)}`,
+            }),
+          ],
+          isError: true,
+        };
+      }
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = (await response.json()) as Record<string, unknown>;
+      } catch {
+        return {
+          content: [
+            jsonContent({
+              error: "bad_response",
+              status: response.status,
+              message: "Main app returned non-JSON body",
+            }),
+          ],
+          isError: true,
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          content: [jsonContent({ error: "rebuild_failed", status: response.status, ...parsed })],
+          isError: true,
+        };
+      }
+
+      return { content: [jsonContent(parsed)] };
     }
   );
 }

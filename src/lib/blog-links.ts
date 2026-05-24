@@ -8,9 +8,11 @@ import type { Slug } from "@/lib/utils";
 const BLOG_LINK_RE = /\/blog\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
 
 // Entity-aware content link extraction — see extractContentLinks below.
-const CONTENT_LINK_RE = /\/(events|vendors|venues)\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
+// `blog` is included so blog-to-blog internal links are captured by the
+// same index that tracks event/vendor/venue references.
+const CONTENT_LINK_RE = /\/(events|vendors|venues|blog)\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
 
-export type ContentLinkTargetType = "EVENT" | "VENDOR" | "VENUE";
+export type ContentLinkTargetType = "EVENT" | "VENDOR" | "VENUE" | "BLOG_POST";
 
 export interface ContentLinkRef {
   targetType: ContentLinkTargetType;
@@ -64,7 +66,13 @@ export function extractContentLinks(body: string | null | undefined): ContentLin
     // Filter out event listing routes
     if (kind === "events" && EVENT_LISTING_SLUGS.has(slug)) continue;
     const targetType: ContentLinkTargetType =
-      kind === "events" ? "EVENT" : kind === "vendors" ? "VENDOR" : "VENUE";
+      kind === "events"
+        ? "EVENT"
+        : kind === "vendors"
+          ? "VENDOR"
+          : kind === "venues"
+            ? "VENUE"
+            : "BLOG_POST";
     const key = `${targetType}|${slug}`;
     if (seen.has(key)) continue;
     seen.add(key);

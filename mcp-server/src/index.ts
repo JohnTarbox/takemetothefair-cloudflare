@@ -227,7 +227,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         groups.blog = diff(before);
 
         before = snapshot();
-        registerContentLinksTools(this.server, db, auth);
+        registerContentLinksTools(this.server, db, auth, this.env);
         groups.contentLinks = diff(before);
       }
     }
@@ -411,7 +411,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerAdminTools(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
-      registerContentLinksTools(server, db, auth);
+      registerContentLinksTools(server, db, auth, env);
     }
   }
 
