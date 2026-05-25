@@ -19,10 +19,13 @@ export type Tier = "T1" | "T2" | "T3";
 
 export const TIER_BY_RULE_KEY: Record<string, Tier> = {
   // T1: revenue
-  enhanced_profile_cohort: "T1",
   standards_eligible_for_claim_outreach: "T1",
   claimed_ready_for_enhanced_upsell: "T1",
   enhanced_profile_renewals: "T1",
+  // Note: enhanced_profile_cohort was T1 until 2026-05-25. Repurposed
+  // as reachable-unclaimed-with-upcoming-event outreach; the action is
+  // claim conversion, not direct Enhanced Profile sale. Falls through
+  // to T3 default (most-conservative bucket).
 
   // T2: SEO defense
   hijacked_domain_detection: "T2",

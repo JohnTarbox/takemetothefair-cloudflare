@@ -3,10 +3,16 @@ import { tierFor, opportunityScore, TIER_META } from "../tiers";
 
 describe("§10.3 tier classification", () => {
   it("maps T1 revenue rules", () => {
-    expect(tierFor("enhanced_profile_cohort")).toBe("T1");
     expect(tierFor("standards_eligible_for_claim_outreach")).toBe("T1");
     expect(tierFor("claimed_ready_for_enhanced_upsell")).toBe("T1");
     expect(tierFor("enhanced_profile_renewals")).toBe("T1");
+  });
+
+  it("enhanced_profile_cohort falls through to T3 after 2026-05-25 repurpose", () => {
+    // Was T1 until repurposed from "no-logo cohort marketing" to
+    // "claim outreach for event participants" — the action is claim
+    // conversion, not direct Enhanced Profile sale.
+    expect(tierFor("enhanced_profile_cohort")).toBe("T3");
   });
 
   it("maps T2 SEO defense rules", () => {

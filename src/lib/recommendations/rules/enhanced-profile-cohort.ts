@@ -1,31 +1,38 @@
 /**
- * Vendors that are confirmed at upcoming events but haven't activated Enhanced
- * Profile and have no logo. These are the highest-leverage cohort candidates:
- * already engaged with the platform, missing visual identity, and would benefit
- * most from Enhanced Profile features.
+ * Unclaimed vendors with an upcoming confirmed event AND a contact_email on
+ * file. These are the highest-leverage claim-outreach targets: they're
+ * actively participating in events soon (timeliness signal) and we have a
+ * direct line to the business (reachability).
+ *
+ * Repurposed 2026-05-25. The prior rule filtered on "no logo" + upcoming
+ * event + no Enhanced Profile, which is broken: 99.8% of vendors have no
+ * logo (the filter is a tautology) and the implied Enhanced Profile
+ * activation path doesn't exist for unclaimed vendors — they have to claim
+ * first. New shape: unclaimed + upcoming event + reachable, which IS the
+ * claim-outreach funnel. Re-tiered out of T1 revenue (the action surfaces
+ * outreach, not direct revenue) — defaults to T3 via tiers.ts omission.
+ *
+ * Coexists with standards_eligible_for_claim_outreach (which prioritizes by
+ * profile completeness via linked-user email) — this rule prioritizes by
+ * upcoming-event participation, which is a different timing signal.
  */
 
-import { and, eq, gt, isNull, or } from "drizzle-orm";
+import { and, eq, gt, isNull, ne, or } from "drizzle-orm";
 import { eventVendors, events, vendors } from "@/lib/db/schema";
 import type { ItemMatch, RuleDefinition } from "../engine";
 
 export const enhancedProfileCohortRule: RuleDefinition = {
   ruleKey: "enhanced_profile_cohort",
-  title: "Activate Enhanced Profile for vendors with upcoming events and no logo",
+  title: "Reachable unclaimed vendors with upcoming events",
   rationaleTemplate:
-    "{n} vendors are confirmed at upcoming events but have no logo. Prime cohort candidates for Enhanced Profile activation.",
+    "{n} unclaimed vendors are confirmed at upcoming events and have a contact_email on file. Outreach now — while they're actively participating — converts the claim, which unlocks the Enhanced Profile upsell.",
   severity: "yellow",
-  category: "revenue",
+  category: "outreach",
   autoResolve: true,
   async run(db): Promise<ItemMatch[]> {
-    // Two queries + in-memory intersection. We previously used inArray() on
-    // the upcoming-vendor id set, but D1 caps SQL parameters at 100 and the
-    // set is ~260 entries in production — every scan since the cohort grew
-    // past 100 has thrown "D1_ERROR: too many SQL variables" (issue #149).
-    //
-    // The non-inArray filters narrow vendors to ~600 candidates today (no
-    // enhanced profile + missing logo + not deleted); we hash-join against
-    // the upcoming set in JS. Both halves are well within the 30s budget.
+    // Two queries + in-memory intersection. inArray() against ~260 ids
+    // would exceed D1's 100-parameter cap; the upcoming set is small
+    // enough to hash-join in JS.
     const upcomingRows = await db
       .selectDistinct({ vendorId: eventVendors.vendorId })
       .from(eventVendors)
@@ -36,6 +43,9 @@ export const enhancedProfileCohortRule: RuleDefinition = {
     );
     if (upcomingIds.size === 0) return [];
 
+    // Reachable + unclaimed + not deleted. contact_email is the dedicated
+    // outreach field (distinct from the linked-user email — a vendor row
+    // can be unclaimed but still have a contact_email from prior intake).
     const candidates = await db
       .select({
         id: vendors.id,
@@ -44,18 +54,19 @@ export const enhancedProfileCohortRule: RuleDefinition = {
         vendorType: vendors.vendorType,
         city: vendors.city,
         state: vendors.state,
+        contactEmail: vendors.contactEmail,
       })
       .from(vendors)
       .where(
         and(
-          eq(vendors.enhancedProfile, false),
-          or(isNull(vendors.logoUrl), eq(vendors.logoUrl, "")),
-          isNull(vendors.deletedAt)
+          eq(vendors.claimed, false),
+          isNull(vendors.deletedAt),
+          or(ne(vendors.contactEmail, ""), isNull(vendors.contactEmail))
         )
       );
 
     return candidates
-      .filter((c) => upcomingIds.has(c.id))
+      .filter((c) => upcomingIds.has(c.id) && c.contactEmail && c.contactEmail.trim().length > 0)
       .map((r) => ({
         targetType: "vendor",
         targetId: r.id,
@@ -64,6 +75,7 @@ export const enhancedProfileCohortRule: RuleDefinition = {
           slug: r.slug,
           vendorType: r.vendorType,
           location: [r.city, r.state].filter(Boolean).join(", "),
+          outreachEmail: r.contactEmail,
         },
       }));
   },
