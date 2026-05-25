@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
@@ -7,7 +6,6 @@ import { eq } from "drizzle-orm";
 import {
   createSlug,
   computePublicDates,
-  decodeHtmlEntities,
   dollarsToCents,
   appendSlugSegment,
   unsafeSlug,
@@ -24,6 +22,7 @@ import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
+import { submitEventSchema } from "./schema";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -31,58 +30,6 @@ export const runtime = "edge";
 
 // The stable ID for the Community Suggestions promoter
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
-
-const eventDaySchema = z.object({
-  date: z.string(), // YYYY-MM-DD
-  openTime: z.string(), // HH:MM
-  closeTime: z.string(), // HH:MM
-  notes: z.string().optional(),
-  closed: z.boolean().optional(),
-  vendorOnly: z.boolean().optional(),
-});
-
-const submitEventSchema = z.object({
-  name: z.string().min(1, "Event name is required").transform(decodeHtmlEntities),
-  description: z.string().transform(decodeHtmlEntities).nullable().optional(),
-  startDate: z.string().nullable().optional(),
-  endDate: z.string().nullable().optional(),
-  startTime: z.string().nullable().optional(), // HH:MM format
-  endTime: z.string().nullable().optional(), // HH:MM format
-  hoursVaryByDay: z.boolean().optional(),
-  hoursNotes: z.string().transform(decodeHtmlEntities).nullable().optional(),
-  venueId: z.string().uuid().nullable().optional(), // Link to existing venue if confirmed
-  venueName: z.string().transform(decodeHtmlEntities).nullable().optional(),
-  venueAddress: z.string().nullable().optional(),
-  venueCity: z.string().nullable().optional(),
-  venueState: z.string().nullable().optional(),
-  ticketUrl: z.string().nullable().optional(),
-  ticketPriceMin: z.number().nullable().optional(),
-  ticketPriceMax: z.number().nullable().optional(),
-  imageUrl: z.string().nullable().optional(),
-  categories: z.array(z.string()).nullable().optional(),
-  // Vendor decision-support fields
-  vendorFeeMin: z.number().nullable().optional(),
-  vendorFeeMax: z.number().nullable().optional(),
-  vendorFeeNotes: z.string().transform(decodeHtmlEntities).nullable().optional(),
-  indoorOutdoor: z.enum(["INDOOR", "OUTDOOR", "MIXED"]).nullable().optional(),
-  estimatedAttendance: z.number().int().nullable().optional(),
-  eventScale: z.enum(["SMALL", "MEDIUM", "LARGE", "MAJOR"]).nullable().optional(),
-  applicationUrl: z.string().nullable().optional(),
-  walkInsAllowed: z.boolean().nullable().optional(),
-  sourceUrl: z.string().url().optional(),
-  suggesterEmail: z.string().email().optional().or(z.literal("")),
-  jsonLd: z.record(z.string(), z.unknown()).optional(),
-  turnstileToken: z.string().optional(), // Turnstile verification token
-  eventDays: z.array(eventDaySchema).optional(), // Per-day schedule
-  // Recurring / multi-date support. When `specificDates` is provided the
-  // submit pipeline expands it into eventDays rows (one per date) and sets
-  // `discontinuousDates=true` on the resulting event row. Mutually
-  // compatible with an explicit `eventDays` payload — eventDays wins.
-  discontinuousDates: z.boolean().optional(),
-  specificDates: z.array(z.string()).optional(),
-  submittedByUserId: z.string().optional(), // User who submitted (auto-filled for authenticated users)
-  source: z.enum(["community", "vendor", "email"]).optional(), // Submission source
-});
 
 export async function POST(request: NextRequest) {
   // Internal callers (MCP Worker email handler, future cross-service hooks)
