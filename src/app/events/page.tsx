@@ -36,11 +36,12 @@ import { sanitizeLikeInput } from "@/lib/utils";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
+import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
-export const metadata: Metadata = {
+const BASE_METADATA: Metadata = {
   title: "Upcoming Fairs & Festivals | Meet Me at the Fair",
   description:
     "Browse upcoming fairs, festivals, and community events. Filter by category, state, and more.",
@@ -69,6 +70,36 @@ export const metadata: Metadata = {
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
+
+// Emit `robots: noindex,follow` on filtered listings that resolve to
+// zero results. These pages return HTTP 200 with a "no events match"
+// UI which Google's crawler treats as a soft 404 — they dilute crawl
+// budget and overall quality signals. Unfiltered /events is never
+// noindex'd (it's the canonical listing). The count query mirrors
+// public-filter conditions only (no myEvents/favorites — those
+// require auth and never appear in indexable URLs).
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SearchParams>;
+}): Promise<Metadata> {
+  const resolved = await searchParams;
+  if (!hasPublicFilters(resolved)) return BASE_METADATA;
+  try {
+    const db = getCloudflareDb();
+    const matchCount = await countPublicFilteredEvents(db, resolved);
+    if (matchCount > 0) return BASE_METADATA;
+    return {
+      ...BASE_METADATA,
+      robots: { index: false, follow: true },
+    };
+  } catch {
+    // If the count probe errors, fall back to indexable — better to
+    // let Google see the page than to noindex by accident on a
+    // transient D1 hiccup. The page handler has its own try/catch.
+    return BASE_METADATA;
+  }
+}
 
 interface SearchParams {
   query?: string;
