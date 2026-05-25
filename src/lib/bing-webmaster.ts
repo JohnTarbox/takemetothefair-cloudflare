@@ -505,3 +505,26 @@ export async function getIndexNowQuota(
     };
   });
 }
+
+// ── Sitemap submission ──────────────────────────────────────────────
+
+/**
+ * Re-submit a sitemap to Bing Webmaster via the SubmitFeed endpoint.
+ * Distinct from IndexNow (which is for individual content URLs) — this is
+ * the explicit "go re-fetch my sitemap" signal that mirrors GSC's
+ * `submitSitemap`. Useful after segmented-sitemap-index changes where
+ * Bing's `get_bing_sitemaps` shows null submission timestamps.
+ *
+ * The API returns 200 OK with an empty body on success; errors bubble up
+ * through bingFetch's BingApiError.
+ */
+export async function submitFeed(env: BingEnv, feedUrl: string): Promise<{ feedUrl: string }> {
+  if (!feedUrl || !/^https?:\/\//i.test(feedUrl)) {
+    throw new BingConfigError(`Invalid feedUrl: ${feedUrl}`);
+  }
+  await bingFetch<unknown>(env, "SubmitFeed", {
+    method: "POST",
+    body: { siteUrl: SITE_URL, feedUrl },
+  });
+  return { feedUrl };
+}
