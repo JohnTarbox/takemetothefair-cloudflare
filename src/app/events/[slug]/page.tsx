@@ -51,6 +51,7 @@ import { EventSchema } from "@/components/seo/EventSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { EventFAQSection } from "@/components/events/EventFAQSection";
+import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { ShareButtons } from "@/components/ShareButtons";
@@ -679,6 +680,12 @@ export default async function EventDetailPage({ params }: Props) {
           })()}
 
           <EventFAQSection items={faqItems} />
+
+          <SameDayEventsButton
+            slug={event.slug}
+            startDate={event.startDate}
+            endDate={event.endDate}
+          />
 
           {event.eventVendors.length > 0 &&
             (() => {
