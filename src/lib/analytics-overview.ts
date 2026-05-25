@@ -163,6 +163,11 @@ export type RecommendationsSummaryCard = {
   redCount: number;
   yellowCount: number;
   blueCount: number;
+  // Actionable subset: red items (always urgent) + yellow items in T1/T2
+  // tier rules (high-impact opportunities). Excludes T3 yellow which is
+  // content-quality noise at scale (~3.5k items). The card surfaces this
+  // as the headline number; the raw totalItems goes in the footer.
+  actionableCount: number;
 };
 
 // §10.3 widgets ────────────────────────────────────────────────
@@ -502,12 +507,21 @@ async function loadRecommendationsSummary(db: Db): Promise<RecommendationsSummar
   let red = 0;
   let yellow = 0;
   let blue = 0;
+  let actionable = 0;
   const ruleIds = new Set<string>();
   for (const it of items) {
     ruleIds.add(it.ruleId);
-    if (it.severity === "red") red++;
-    else if (it.severity === "yellow") yellow++;
-    else if (it.severity === "blue") blue++;
+    if (it.severity === "red") {
+      red++;
+      actionable++;
+    } else if (it.severity === "yellow") {
+      yellow++;
+      // T3 yellow = content-quality noise; T1/T2 yellow = high-impact.
+      const tier = tierFor(it.ruleKey);
+      if (tier === "T1" || tier === "T2") actionable++;
+    } else if (it.severity === "blue") {
+      blue++;
+    }
   }
   const maxSeverity: "red" | "yellow" | "blue" | null =
     red > 0 ? "red" : yellow > 0 ? "yellow" : blue > 0 ? "blue" : null;
@@ -518,6 +532,7 @@ async function loadRecommendationsSummary(db: Db): Promise<RecommendationsSummar
     redCount: red,
     yellowCount: yellow,
     blueCount: blue,
+    actionableCount: actionable,
   };
 }
 

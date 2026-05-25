@@ -269,11 +269,28 @@ async function OverviewTab({ window }: { window: WindowKey }) {
 
       <ActivityFeedCard activity={snapshot.activity} />
 
+      <KpiStatusLegend />
+
       <p className="text-xs text-gray-500 mt-4">
         Window: {window} · Generated {formatTimestampForServer(snapshot.generatedAt)} · Page-level
         cache up to 10 min on each underlying source
       </p>
     </>
+  );
+}
+
+function KpiStatusLegend() {
+  // Legend for the badge glyphs used on KPI cards (KPI_STATE_STYLES).
+  // Surfaces meanings of ◯ / ⚠ / ⛔ / 🕒 so the dashboard isn't a puzzle
+  // for first-time viewers.
+  return (
+    <div className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+      <span className="font-medium text-gray-700">KPI status:</span>
+      <span aria-label="On target">◯ on target</span>
+      <span aria-label="Below target">⚠ below target</span>
+      <span aria-label="Action required">⛔ action required</span>
+      <span aria-label="Data feed stale">🕒 data feed stale</span>
+    </div>
   );
 }
 
@@ -953,7 +970,9 @@ function RecentActivityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">Recent activity ({fmt(c.count)} this week)</CardTitle>
+        <CardTitle className="text-sm">
+          Admin actions ({fmt(c.count)} last 7 days · source: admin_actions)
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {c.actions.length === 0 ? (
@@ -1049,10 +1068,10 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
-                Recommendations
+                Recommendations (actionable)
               </p>
               <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
-                {fmt(c.totalItems)}
+                {fmt(c.actionableCount)}
               </p>
               <div className="mt-2 text-xs">
                 {c.totalItems === 0 ? (
@@ -1060,7 +1079,8 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
                 ) : (
                   <>
                     <span className="text-gray-500">
-                      across {fmt(c.totalRules)} rule{c.totalRules === 1 ? "" : "s"}
+                      red + T1/T2 yellow · {fmt(c.totalItems)} total across {fmt(c.totalRules)} rule
+                      {c.totalRules === 1 ? "" : "s"}
                     </span>
                     <div className="mt-1 flex gap-2">
                       {c.redCount > 0 && (
@@ -1245,7 +1265,8 @@ function ActivityFeedCard({ activity }: { activity: ActivityEntry[] }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="w-4 h-4 text-gray-500" /> Recent activity
+          <Activity className="w-4 h-4 text-gray-500" /> Activity feed (current window · mixed
+          sources)
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
