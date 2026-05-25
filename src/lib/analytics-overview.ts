@@ -223,6 +223,7 @@ export type BrandVsNonBrandCard =
       non_brand_clicks: number;
       non_brand_impressions: number;
       brand_share: number; // 0..1
+      windowDays: number;
     }
   | { ok: false; reason: string };
 
@@ -386,7 +387,7 @@ export async function loadOverviewSnapshot(
     loadActivity(db, sinceDate),
     loadSiteCtr(env, days),
     loadConversionRate(db, env, 7),
-    loadBrandVsNonBrand(env),
+    loadBrandVsNonBrand(env, days),
     loadSitemapQuality(db),
     loadTimeToIndex(db),
     loadThisWeeksActions(db, lastWeekDate),
@@ -1121,9 +1122,28 @@ async function loadAccountEngagement(
   };
 }
 
-async function loadBrandVsNonBrand(env: ScEnv): Promise<BrandVsNonBrandCard> {
+async function loadBrandVsNonBrand(env: ScEnv, days: number): Promise<BrandVsNonBrandCard> {
+  // Honor the dashboard window. Without this, the card always read 28d
+  // (getSiteSearchQueries default), creating the analyst-flagged
+  // discrepancy where SearchVisibility shows 25 clicks @ 7d but
+  // brand+non-brand summed to 53 clicks @ 28d on the same page.
   try {
-    const result = await getSiteSearchQueries(env, { rowLimit: 500 });
+    const presetByDays: Record<number, "last_7d" | "last_28d" | "last_90d"> = {
+      7: "last_7d",
+      28: "last_28d",
+      30: "last_28d",
+      90: "last_90d",
+    };
+    const preset = presetByDays[days];
+    const dateRange = preset
+      ? { preset }
+      : (() => {
+          const today = new Date();
+          const start = new Date(today.getTime() - days * 86400 * 1000);
+          const fmt = (d: Date) => d.toISOString().slice(0, 10);
+          return { startDate: fmt(start), endDate: fmt(today) };
+        })();
+    const result = await getSiteSearchQueries(env, { rowLimit: 500, dateRange });
     let brand_clicks = 0;
     let brand_impressions = 0;
     let non_brand_clicks = 0;
@@ -1147,6 +1167,7 @@ async function loadBrandVsNonBrand(env: ScEnv): Promise<BrandVsNonBrandCard> {
       non_brand_clicks,
       non_brand_impressions,
       brand_share: total_clicks > 0 ? brand_clicks / total_clicks : 0,
+      windowDays: days,
     };
   } catch (e) {
     if (e instanceof ScConfigError || e instanceof ScApiError) {

@@ -219,46 +219,48 @@ async function OverviewTab({ window }: { window: WindowKey }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
           title="Search visibility (last 30 days)"
-          subtitle="Daily Google search clicks"
+          subtitle="Daily Google search clicks · source: GSC"
           points={snapshot.searchVisibilitySparkline}
           colorClass="stroke-violet-600"
           fillClass="fill-violet-100"
         />
         <SparklineCard
           title="Conversions (last 30 days)"
-          subtitle="Daily outbound ticket + application clicks"
+          subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
           points={snapshot.conversionsSparkline}
           colorClass="stroke-blue-600"
           fillClass="fill-blue-100"
         />
         <SparklineCard
           title="Publishing activity (last 30 days)"
-          subtitle="Successful IndexNow submissions per day"
+          subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.publishingSparkline}
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
         />
       </div>
 
-      {/* §10.3 90-day KPI strip */}
+      {/* §10.3 90-day KPI strip. If 30d total equals 90d total, the older
+          60 days of the source table are empty (data is younger than 90d),
+          not a window-handling bug — query is parameterized on days=90. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <SparklineCard
-          title="Search visibility (90 days)"
-          subtitle="Daily Google search clicks · longer trend"
+          title="Search visibility (last 90 days)"
+          subtitle="Daily Google search clicks · source: GSC"
           points={snapshot.kpiStrip90d.searchVisibility}
           colorClass="stroke-violet-600"
           fillClass="fill-violet-100"
         />
         <SparklineCard
-          title="Conversions (90 days)"
-          subtitle="Daily outbound ticket + application clicks · longer trend"
+          title="Conversions (last 90 days)"
+          subtitle="Daily outbound ticket + application clicks · source: D1 analytics_events"
           points={snapshot.kpiStrip90d.conversions}
           colorClass="stroke-blue-600"
           fillClass="fill-blue-100"
         />
         <SparklineCard
-          title="Publishing activity (90 days)"
-          subtitle="Successful IndexNow submissions per day · longer trend"
+          title="Publishing activity (last 90 days)"
+          subtitle="Successful IndexNow submissions per day · source: D1 indexnow_submissions"
           points={snapshot.kpiStrip90d.publishing}
           colorClass="stroke-emerald-600"
           fillClass="fill-emerald-100"
@@ -771,7 +773,7 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   }
   return (
     <KpiCard
-      title="Brand vs non-brand (Google)"
+      title={`Brand vs non-brand (last ${c.windowDays}d, Google)`}
       value={fmtPct(c.brand_share, 0)}
       icon={<TrendingUp className="w-5 h-5 text-blue-600" />}
       iconColor="bg-blue-100"
