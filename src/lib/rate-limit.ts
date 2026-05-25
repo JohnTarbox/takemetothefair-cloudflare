@@ -118,6 +118,15 @@ export const RATE_LIMITS = {
     authenticatedLimit: 10,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // "Other events on these dates" widget on /events/[slug]. Lazy-fired
+  // from a user button click, so well-behaved traffic is far below
+  // these caps; the cap is here to prevent a misbehaving client from
+  // spamming the endpoint.
+  "events-same-day": {
+    anonymousLimit: 60,
+    authenticatedLimit: 120,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
 } as const;
 
 export type RateLimitEndpoint = keyof typeof RATE_LIMITS;
