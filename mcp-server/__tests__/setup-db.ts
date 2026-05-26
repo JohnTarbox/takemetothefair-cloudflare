@@ -99,6 +99,8 @@ const SCHEMA_SQL = `
     status TEXT NOT NULL DEFAULT 'DRAFT',
     view_count INTEGER DEFAULT 0,
     source_name TEXT,
+    source_domain TEXT,
+    ingestion_method TEXT,
     source_url TEXT,
     source_id TEXT,
     sync_enabled INTEGER DEFAULT 1,

@@ -343,3 +343,9 @@ export * from "./source-tier";
 // both surfaces agree on which source (column / markdown / none) is driving
 // a post's FAQPage JSON-LD emission. See CLAUDE.md "Blog FAQ schema".
 export * from "./blog-faq-source";
+
+// Source provenance classifier — splits the historically-overloaded
+// events.source_name into source_domain + ingestion_method so per-source
+// reliability scoring can read clean columns rather than parse free-form
+// labels at query time. Analyst backlog Item 1 (2026-05-26).
+export * from "./source-classification";

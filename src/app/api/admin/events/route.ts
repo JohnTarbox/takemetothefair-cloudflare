@@ -15,6 +15,7 @@ import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { classifySource } from "@/lib/source-classification";
 import { parseDateOnly } from "@/lib/datetime";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
@@ -171,6 +172,7 @@ export async function POST(request: NextRequest) {
     });
     const finalStatus = gateResult.route === "PENDING_REVIEW" ? "PENDING" : data.status;
     const gateFlagsJson = gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
+    const sourceClassification = classifySource(data.sourceName, data.sourceUrl);
 
     await db.insert(events).values({
       id: eventId,
@@ -198,6 +200,9 @@ export async function POST(request: NextRequest) {
       status: finalStatus,
       gateFlags: gateFlagsJson,
       sourceName: data.sourceName,
+      sourceDomain: sourceClassification.sourceDomain,
+      // Admin POST is by definition admin_manual when no source signal exists.
+      ingestionMethod: sourceClassification.ingestionMethod ?? "admin_manual",
       sourceUrl: data.sourceUrl,
       sourceId: data.sourceId,
       vendorFeeMinCents: dollarsToCents(data.vendorFeeMin),

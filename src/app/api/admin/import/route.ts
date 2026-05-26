@@ -19,6 +19,7 @@ import {
 } from "@/lib/url-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { evaluateGates } from "@/lib/event-date-gates";
+import { classifySource } from "@/lib/source-classification";
 
 // Helper function to find or create a venue
 // Matches on BOTH name (slug) AND city to avoid matching venues with same name in different cities
@@ -536,6 +537,13 @@ export async function POST(request: Request) {
           status: finalStatus,
           gateFlags: gateFlagsJson,
           sourceName: eventData.sourceName,
+          // Bulk-import is the direct_scrape path — sourceName is a scraper
+          // identifier (e.g. "mainefairs.net") and sourceUrl is the
+          // event-detail URL. classifier handles both.
+          sourceDomain: classifySource(eventData.sourceName, eventData.sourceUrl).sourceDomain,
+          ingestionMethod:
+            classifySource(eventData.sourceName, eventData.sourceUrl).ingestionMethod ??
+            "direct_scrape",
           sourceUrl: eventData.sourceUrl,
           sourceId: eventData.sourceId,
           syncEnabled: true,
