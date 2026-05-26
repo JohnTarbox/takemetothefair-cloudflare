@@ -204,12 +204,18 @@ export async function POST(request: NextRequest) {
     }
 
     if (!apply) {
+      // Phase 2: when the dimension probe succeeded, surface the actual
+      // measurement so an admin running the dry-run can sanity-check the
+      // distribution before --apply.
+      const dimsLabel = gate.dimensions
+        ? `${gate.dimensions.width}x${gate.dimensions.height}`
+        : "dims unknown";
       outcomes.push({
         event_id: ev.id,
         source_url: sourceUrl,
         outcome: "would_update",
         image_url: candidate.url,
-        reason: `${candidate.source} · ${gate.contentType} · ${gate.contentLength === -1 ? "unknown size" : `${gate.contentLength} bytes`}`,
+        reason: `${candidate.source} · ${gate.contentType} · ${dimsLabel} · ${gate.contentLength === -1 ? "unknown size" : `${gate.contentLength} bytes`}`,
       });
       continue;
     }
