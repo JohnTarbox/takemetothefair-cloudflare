@@ -248,6 +248,18 @@ export interface DateGateInput {
    *  check (preserves backwards compat for callers that don't yet
    *  pass scale). */
   eventScale?: string | null | undefined;
+  /** True when the event represents a recurring/periodic series
+   *  (every-other-Saturday market, biweekly hamfest, etc.). When set,
+   *  the duration-too-long-for-scale check is bypassed — a long
+   *  start→end span is the expected season-span shape, not a malformed
+   *  single event. Pass alongside eventDaysCount; either signal alone
+   *  suffices. */
+  discontinuousDates?: boolean | null | undefined;
+  /** Count of associated event_days rows. ≥3 rows is treated as
+   *  authoritative evidence the event is a multi-occurrence series and
+   *  the duration check is bypassed (mirrors discontinuousDates). At
+   *  ingest time event_days may not exist yet; pass the flag instead. */
+  eventDaysCount?: number | null | undefined;
 }
 
 export type DateGateResult = { ok: true } | { ok: false; reasons: string[] };
@@ -358,18 +370,29 @@ export function dateLooksImplausible(input: DateGateInput): DateGateResult {
     reasons.push("end_date_in_past");
   }
 
+  // Recurring-event exemption (analyst 2026-05-26 follow-up to PR #209):
+  // a legitimately periodic series (Artisans' Market in Unity — biweekly
+  // May–Dec, the three Farmington farmers markets — weekly season spans)
+  // SHOULD have a long start→end span; that span is the season, not a
+  // malformed single event. Either signal is sufficient evidence:
+  //   - discontinuousDates flag set at ingest, OR
+  //   - ≥3 event_days rows already persisted (admin PATCH path).
+  const isRecurringSeries = input.discontinuousDates === true || (input.eventDaysCount ?? 0) >= 3;
+
   if (
     input.startDate &&
     input.endDate &&
     input.endDate.getTime() - input.startDate.getTime() > MAX_DURATION_MS_NON_MAJOR &&
-    input.eventScale !== "MAJOR"
+    input.eventScale !== "MAJOR" &&
+    !isRecurringSeries
   ) {
     // Multi-week storage of an event with no MAJOR scale tag. Most often
     // this is a recurring weekly market or seasonal series row that got
     // ingested as a single event with start=first occurrence and end=
     // last occurrence (Rhododendron Festival 11-day case, "open every
     // Saturday May–October" pattern). True multi-week single events
-    // (e.g., state fairs) tag MAJOR and bypass this check.
+    // (e.g., state fairs) tag MAJOR and bypass this check; recurring
+    // series tag discontinuousDates or carry ≥3 event_days.
     reasons.push("duration_too_long_for_scale");
   }
 
@@ -393,6 +416,12 @@ export interface IngestEvaluationInput {
    *  like state fairs tag MAJOR). Omit for backwards compat with
    *  callers that don't yet pass scale. */
   eventScale?: string | null | undefined;
+  /** True for recurring/periodic series (biweekly markets, season-spanning
+   *  events). Bypasses the duration-too-long gate. See DateGateInput. */
+  discontinuousDates?: boolean | null | undefined;
+  /** Count of associated event_days rows. ≥3 also bypasses the
+   *  duration-too-long gate. See DateGateInput. */
+  eventDaysCount?: number | null | undefined;
 }
 
 export interface IngestEvaluationResult {
@@ -430,6 +459,8 @@ export function evaluateGates(input: IngestEvaluationInput): IngestEvaluationRes
     applicationDeadline: input.applicationDeadline,
     description: input.description,
     eventScale: input.eventScale,
+    discontinuousDates: input.discontinuousDates,
+    eventDaysCount: input.eventDaysCount,
   });
   if (!dateCheck.ok) reasons.push(...dateCheck.reasons);
 
