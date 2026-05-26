@@ -7,11 +7,25 @@
 // Handles three entity kinds (events / blog / vendors). Static and listing
 // pages pass through unchanged. Walks the chain max 5 hops with cycle
 // detection, mirroring the middleware's slug-history walker.
+//
+// Liveness check (analyst 2026-05-26): after resolving through history, we
+// verify the final slug actually exists as a current canonical row. If it
+// doesn't (event deleted / never existed / page renamed beyond what slug-
+// history captured), the path is "stale" — GSC is still reporting clicks
+// on a URL the site no longer serves. Callers can drop stale items so the
+// actionable queue isn't polluted with already-fixed work.
 
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { desc, eq } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
-import { blogSlugHistory, eventSlugHistory, vendorSlugHistory } from "@/lib/db/schema";
+import {
+  blogPosts,
+  blogSlugHistory,
+  events,
+  eventSlugHistory,
+  vendors,
+  vendorSlugHistory,
+} from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
 
 const MAX_HOPS = 5;
@@ -50,10 +64,54 @@ async function walkHistory(
   return cursor;
 }
 
-export async function resolveGscPath(db: Db, path: string | null): Promise<string | null> {
-  if (!path) return path;
+async function canonicalSlugExists(
+  db: Db,
+  kind: ParsedPath["kind"],
+  slug: string
+): Promise<boolean> {
+  const branded = unsafeSlug(slug);
+  if (kind === "events") {
+    const [row] = await db
+      .select({ id: events.id })
+      .from(events)
+      .where(eq(events.slug, branded))
+      .limit(1);
+    return Boolean(row);
+  }
+  if (kind === "blog") {
+    const [row] = await db
+      .select({ id: blogPosts.id })
+      .from(blogPosts)
+      .where(eq(blogPosts.slug, branded))
+      .limit(1);
+    return Boolean(row);
+  }
+  const [row] = await db
+    .select({ id: vendors.id })
+    .from(vendors)
+    .where(eq(vendors.slug, branded))
+    .limit(1);
+  return Boolean(row);
+}
+
+export type GscPathStatus = "live" | "renamed" | "stale" | "non-entity" | "empty";
+
+export interface GscPathResolution {
+  /** Resolved path. For stale entries this is still the most-resolved form
+   *  (so admin sees what GSC is reporting); callers should drop on status. */
+  path: string | null;
+  status: GscPathStatus;
+}
+
+/** Resolve a GSC-reported path. Returns a structured result so callers can
+ *  distinguish live / renamed / stale and decide whether to surface or drop.
+ *  Stale = the entity at the resolved slug no longer exists, meaning GSC is
+ *  reporting clicks on a URL the site no longer canonical-serves. */
+export async function resolveGscPath(db: Db, path: string | null): Promise<GscPathResolution> {
+  if (!path) return { path, status: "empty" };
   const parsed = parsePath(path);
-  if (!parsed) return path;
+  if (!parsed) return { path, status: "non-entity" };
+
   const table =
     parsed.kind === "events"
       ? eventSlugHistory
@@ -61,6 +119,13 @@ export async function resolveGscPath(db: Db, path: string | null): Promise<strin
         ? blogSlugHistory
         : vendorSlugHistory;
   const resolved = await walkHistory(db, table, parsed.slug);
-  if (resolved === parsed.slug) return path;
-  return `/${parsed.kind}/${resolved}`;
+  const resolvedPath = `/${parsed.kind}/${resolved}`;
+
+  const exists = await canonicalSlugExists(db, parsed.kind, resolved);
+  if (!exists) return { path: resolvedPath, status: "stale" };
+
+  return {
+    path: resolvedPath,
+    status: resolved === parsed.slug ? "live" : "renamed",
+  };
 }

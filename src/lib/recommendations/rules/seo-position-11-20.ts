@@ -55,10 +55,16 @@ export const seoPosition1120Rule: RuleDefinition = {
       )
       .sort((a, b) => b.impressions - a.impressions);
 
+    // Resolve historical GSC paths to live canonical slugs by walking
+    // slug-history. The engine's stale-path filter (canonical-paths.ts)
+    // then drops items whose resolved path still doesn't match a current
+    // entity — handles the "entity deleted" case. Items whose slug was
+    // renamed survive here because resolveGscPath returns the renamed
+    // path, which the engine's checker recognizes as live.
     return await Promise.all(
       matches.map(async (q) => {
         const topPage = q.topPages[0];
-        const resolvedPath = await resolveGscPath(db, topPage?.path ?? null);
+        const resolution = await resolveGscPath(db, topPage?.path ?? null);
         return {
           targetType: "gsc_query",
           // Slugify the query for stable DB id (queries are already short strings).
@@ -67,7 +73,8 @@ export const seoPosition1120Rule: RuleDefinition = {
             query: q.query,
             impressions: q.impressions,
             position: Number(q.position.toFixed(1)),
-            topPagePath: resolvedPath,
+            topPagePath: resolution.path,
+            topPagePathStatus: resolution.status,
             topPageImpressions: topPage?.impressions ?? null,
           },
         };
