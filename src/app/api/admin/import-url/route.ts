@@ -16,6 +16,7 @@ import { geocodeAddress } from "@/lib/google-maps";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { evaluateGates } from "@/lib/event-date-gates";
+import { classifySource } from "@/lib/source-classification";
 
 export const runtime = "edge";
 
@@ -251,6 +252,11 @@ export async function POST(request: NextRequest) {
       status: finalStatus,
       gateFlags: gateFlagsJson,
       sourceName: "url-import",
+      // URL-import is admin-driven paste; classifier picks up the actual
+      // origin domain from sourceUrl (so the dashboard groups by real
+      // publisher) and labels the method as admin_manual.
+      sourceDomain: classifySource("url-import", sourceUrl).sourceDomain,
+      ingestionMethod: classifySource("url-import", sourceUrl).ingestionMethod ?? "admin_manual",
       sourceUrl: sourceUrl || null,
       sourceId: sourceUrl ? createSlug(sourceUrl) : newEventId,
       syncEnabled: false,

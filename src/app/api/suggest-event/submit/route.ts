@@ -19,6 +19,7 @@ import { auth } from "@/lib/auth";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
+import { classifySource } from "@/lib/source-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
@@ -327,6 +328,12 @@ export async function POST(request: NextRequest) {
       gateFlags: gateFlagsJson,
       lifecycleStatus: eventLifecycle,
       sourceName,
+      // Three suggest_event variants (vendor / email / community) map to
+      // three distinct ingestion methods via the classifier's label table.
+      // sourceDomain comes from data.sourceUrl when the submitter included one.
+      sourceDomain: classifySource(sourceName, data.sourceUrl).sourceDomain,
+      ingestionMethod:
+        classifySource(sourceName, data.sourceUrl).ingestionMethod ?? "community_suggestion",
       sourceUrl: data.sourceUrl || null,
       sourceId: data.sourceUrl ? createSlug(data.sourceUrl) : newEventId,
       syncEnabled: false,

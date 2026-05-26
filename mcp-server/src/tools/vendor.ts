@@ -18,7 +18,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
-import { evaluateGates } from "@takemetothefair/utils";
+import { evaluateGates, classifySource } from "@takemetothefair/utils";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
@@ -842,6 +842,10 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // TENTATIVE-lifecycle (dates unconfirmed at submission time).
         lifecycleStatus: "TENTATIVE",
         sourceName: "vendor-submission",
+        sourceDomain: classifySource("vendor-submission", params.source_url).sourceDomain,
+        ingestionMethod:
+          classifySource("vendor-submission", params.source_url).ingestionMethod ??
+          "vendor_submission",
         sourceUrl: params.source_url || null,
         sourceId: params.source_url
           ? params.source_url

@@ -181,8 +181,20 @@ export const events = sqliteTable(
       .default("DRAFT")
       .notNull(),
     viewCount: integer("view_count").default(0),
-    // External source tracking for synced events
-    sourceName: text("source_name"), // e.g., "mainefairs.net"
+    // External source tracking for synced events. Three fields:
+    //   - sourceName: legacy free-form label (kept for back-compat reads);
+    //     historically mixed origin domains + ingestion methods + notes.
+    //   - sourceDomain: canonical origin domain (lowercased, no www, no path).
+    //     Populated by src/lib/source-classification.ts at write time.
+    //   - ingestionMethod: enum-ish — direct_scrape / email_submission /
+    //     vendor_submission / community_suggestion / web_research /
+    //     admin_manual / aggregator_import. Drives per-method reliability
+    //     scoring without parsing sourceName at query time.
+    // See drizzle/0090_events_source_split.sql for the migration that adds
+    // the two new columns; backfill runs via the admin sweep endpoint.
+    sourceName: text("source_name"), // legacy label, e.g. "mainefairs.net"
+    sourceDomain: text("source_domain"), // canonical hostname only
+    ingestionMethod: text("ingestion_method"), // enum (see comment above)
     sourceUrl: text("source_url"), // URL of the event on the source site
     sourceId: text("source_id"), // Unique identifier from the source (e.g., slug or ID)
     syncEnabled: integer("sync_enabled", { mode: "boolean" }).default(true),
