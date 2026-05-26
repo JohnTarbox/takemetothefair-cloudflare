@@ -915,7 +915,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         params.application_deadline !== undefined ||
         params.event_scale !== undefined ||
         params.source_url !== undefined ||
-        params.source_name !== undefined;
+        params.source_name !== undefined ||
+        params.discontinuous_dates !== undefined;
 
       let gateFlagsWarning: string[] | null = null;
       if (gateRelevantChanging) {
@@ -948,6 +949,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           params.source_name !== undefined
             ? params.source_name
             : ((evRow.sourceName as string | null | undefined) ?? null);
+        // Recurring-series signals for duration-too-long-for-scale exemption
+        // (analyst 2026-05-26): biweekly markets and season-spanning events
+        // legitimately have long start→end spans. Either signal suffices.
+        const mergedDiscontinuous =
+          params.discontinuous_dates !== undefined
+            ? params.discontinuous_dates
+            : ((evRow.discontinuousDates as boolean | null | undefined) ?? null);
+        const [{ count: eventDaysCount } = { count: 0 }] = await db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(eventDays)
+          .where(eq(eventDays.eventId, event.id));
 
         const gateResult = evaluateGates({
           name: params.name ?? (evRow.name as string | null | undefined) ?? null,
@@ -958,6 +970,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           applicationDeadline: mergedApplicationDeadline,
           description: mergedDescription,
           eventScale: mergedEventScale,
+          discontinuousDates: mergedDiscontinuous,
+          eventDaysCount: eventDaysCount ?? 0,
         });
 
         if (gateResult.route === "PENDING_REVIEW") {

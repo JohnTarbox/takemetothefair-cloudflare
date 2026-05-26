@@ -501,6 +501,45 @@ describe("evaluateGates — PR-3 additions (2026-05-18 analyst spec)", () => {
     expect(r.reasons).not.toContain("duration_too_long_for_scale");
   });
 
+  it("does NOT flag recurring events via discontinuousDates (Artisans' Market case)", () => {
+    // Biweekly Saturday market May 23 → Dec 19 = ~210 day span,
+    // legitimately recurring. Pre-2026-05-26 this was a false positive
+    // on the duration gate. The discontinuousDates flag exempts the
+    // span from the duration check.
+    const r = evaluateGates({
+      name: "Artisans' Market in Unity",
+      startDate: new Date("2026-05-23T12:00:00Z"),
+      endDate: new Date("2026-12-19T12:00:00Z"),
+      discontinuousDates: true,
+    });
+    expect(r.reasons).not.toContain("duration_too_long_for_scale");
+  });
+
+  it("does NOT flag recurring events when ≥3 event_days exist", () => {
+    // Admin-PATCH path: discontinuousDates flag may not be set yet, but
+    // the event_days table already has multiple rows. Either signal
+    // alone is enough.
+    const r = evaluateGates({
+      name: "Saturday Farmers Market",
+      startDate: new Date("2026-05-02T12:00:00Z"),
+      endDate: new Date("2026-10-31T12:00:00Z"),
+      eventDaysCount: 27,
+    });
+    expect(r.reasons).not.toContain("duration_too_long_for_scale");
+  });
+
+  it("still flags a single-occurrence event with 2 event_days but no recurring signal", () => {
+    // 2-day weekend event mis-stored as a 30-day span — eventDaysCount=2
+    // is BELOW the threshold (≥3) so the gate should still fire.
+    const r = evaluateGates({
+      name: "Annual Weekend Bazaar",
+      startDate: new Date("2026-06-01T12:00:00Z"),
+      endDate: new Date("2026-07-01T12:00:00Z"),
+      eventDaysCount: 2,
+    });
+    expect(r.reasons).toContain("duration_too_long_for_scale");
+  });
+
   // -------------- Multi-row PDF flag --------------
   it("flags multi-row PDFs from concordnh.gov", () => {
     const r = evaluateGates({

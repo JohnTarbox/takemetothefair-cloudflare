@@ -10,7 +10,7 @@ import {
   eventDays,
   eventSlugHistory,
 } from "@/lib/db/schema";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, sql } from "drizzle-orm";
 import { createSlug, computePublicDates, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -128,6 +128,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         sourceName: events.sourceName,
         applicationDeadline: events.applicationDeadline,
         eventScale: events.eventScale,
+        discontinuousDates: events.discontinuousDates,
       })
       .from(events)
       .where(eq(events.id, id))
@@ -273,7 +274,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       data.startDate !== undefined ||
       data.endDate !== undefined ||
       data.applicationDeadline !== undefined ||
-      data.eventScale !== undefined;
+      data.eventScale !== undefined ||
+      data.discontinuousDates !== undefined ||
+      data.eventDays !== undefined;
 
     let gateFlagsWarning: string[] | null = null;
     if (gateRelevantChanging) {
@@ -294,6 +297,26 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       const mergedEventScale =
         data.eventScale !== undefined ? data.eventScale : currentEvent.eventScale;
 
+      // Recurring-series signals for the duration-too-long-for-scale exemption
+      // (analyst 2026-05-26 follow-up). Prefer the incoming PATCH values; fall
+      // back to the persisted state. event_days count: use the incoming array
+      // when present (admin is about to rewrite the rows); otherwise query
+      // the current count to honor existing series.
+      const mergedDiscontinuous =
+        data.discontinuousDates !== undefined
+          ? data.discontinuousDates
+          : ((currentEvent as { discontinuousDates?: boolean | null }).discontinuousDates ?? null);
+      let mergedEventDaysCount: number;
+      if (data.eventDays !== undefined) {
+        mergedEventDaysCount = data.eventDays?.length ?? 0;
+      } else {
+        const [{ count } = { count: 0 }] = await db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(eventDays)
+          .where(eq(eventDays.eventId, id));
+        mergedEventDaysCount = count ?? 0;
+      }
+
       const gateResult = evaluateGates({
         name: data.name ?? currentEvent.name,
         sourceUrl: currentEvent.sourceUrl,
@@ -303,6 +326,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         applicationDeadline: mergedApplicationDeadline,
         description: mergedDescription,
         eventScale: mergedEventScale,
+        discontinuousDates: mergedDiscontinuous,
+        eventDaysCount: mergedEventDaysCount,
       });
 
       if (gateResult.route === "PENDING_REVIEW") {
