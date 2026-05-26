@@ -51,13 +51,16 @@ export const lowCtrPagesRule: RuleDefinition = {
       .sort((a, b) => b.impressions - a.impressions)
       .slice(0, 100);
 
-    // Resolve historical GSC paths to live canonical slugs so cards link to
-    // the current URL rather than a 301-redirected one. Cheap: at most one
-    // slug-history lookup per surfaced match (≤100).
+    // Resolve historical GSC paths to live canonical slugs by walking
+    // slug-history. The engine's stale-path filter (canonical-paths.ts)
+    // then drops items whose resolved path still doesn't match a current
+    // entity (deletion or rename beyond what slug-history captured). A
+    // renamed-but-live slug survives both filters because resolveGscPath
+    // returns the new path, which the engine sees as valid.
     return await Promise.all(
       matches.map(async (q) => {
         const topPage = q.topPages[0];
-        const resolvedPath = await resolveGscPath(db, topPage?.path ?? null);
+        const resolution = await resolveGscPath(db, topPage?.path ?? null);
         return {
           targetType: "gsc_query",
           targetId: q.query.toLowerCase().slice(0, 200),
@@ -67,7 +70,8 @@ export const lowCtrPagesRule: RuleDefinition = {
             clicks: q.clicks,
             ctr: Number((q.ctr * 100).toFixed(2)),
             position: Number(q.position.toFixed(1)),
-            topPagePath: resolvedPath,
+            topPagePath: resolution.path,
+            topPagePathStatus: resolution.status,
             topPageImpressions: topPage?.impressions ?? null,
           },
         };
