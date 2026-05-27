@@ -194,6 +194,23 @@ ${attachmentNote}${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    case "no-url-prose-failed": {
+      // Used when classifier said free_text (no URL) AND extractor ran on
+      // the body AND the result didn't carry enough fields. The user did
+      // include details; the soft ask is "give us the structured fields"
+      // rather than the dismissive "please send a link." See GH #244.
+      const hasAttachments = !!params.hasAttachments;
+      const attachmentNote = hasAttachments
+        ? "We don't process attachments yet, so any details in a flyer image or PDF would need to be in the email body or a link.\n\n"
+        : "";
+      return `Thanks for emailing Meet Me at the Fair!
+
+We received your event details but couldn't reliably pull out the key fields. Could you reply with the event name, start date, and location (venue or address)? If there's an official page for the event — a Facebook event, ticket site, or organizer page — a link works too.
+
+${attachmentNote}${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "extract-failed": {
       const url = (params.url as string | undefined) ?? "the page you linked";
       return `Thanks for emailing Meet Me at the Fair!

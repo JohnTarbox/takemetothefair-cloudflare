@@ -399,6 +399,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               // rows).
               "ok-multi",
               "no-url",
+              // GH #244 — distinct from "no-url" because the user did
+              // include prose; both still benefit from the "was this what
+              // you wanted?" feedback widget. Per memory feedback note on
+              // RECEIPT_WIDGET_KINDS missing from PR-E.
+              "no-url-prose-failed",
               "already-exists",
               "extract-failed",
               "submit-failed",
@@ -623,17 +628,29 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       }
     }
 
-    // B2 free-text branch — fires when there's no URL but the classifier
-    // identified the body as a usable prose event description. Falls
-    // through to the standard "no-url" reply when sub_intent is anything
-    // else (or empty), so emails without a URL AND without prose context
-    // still get the "please include a link" ack.
-    if (!rowSnapshot.parsedUrl) {
-      const isFreeText = rowSnapshot.classifiedSubIntent === "free_text";
-      const hasBodyText = (rowSnapshot.bodyTextExcerpt ?? "").trim().length > 20;
+    // B2 free-text branch — fires when there's no real event URL but the
+    // classifier identified the body as a usable prose event description.
+    //
+    // Classifier override (GH #244, 2026-05-26): treat as no-URL even when
+    // pickPrimaryUrl found a URL, IF the classifier flagged the email as
+    // free_text. pickPrimaryUrl can latch onto signature/footer hrefs in
+    // HTML bodies — when classifier said "no event URL here," trust it
+    // over the regex. The analyst's case: full event prose in body, a
+    // signature link in the HTML → workflow used to route through the
+    // URL-fetch path and reply with the "couldn't extract from the page
+    // you linked" template even though the user pasted full details.
+    const isFreeText = rowSnapshot.classifiedSubIntent === "free_text";
+    const hasBodyText = (rowSnapshot.bodyTextExcerpt ?? "").trim().length > 20;
+    const noUrlOrFreeText = !rowSnapshot.parsedUrl || isFreeText;
+    if (noUrlOrFreeText) {
+      // Track whether we actually attempted prose extraction so the
+      // fallback reply distinguishes "tried, didn't extract enough" from
+      // "nothing to try." Drives `no-url-prose-failed` vs `no-url` below.
+      let attemptedProse = false;
       if (isFreeText && hasBodyText) {
+        attemptedProse = true;
         // Best-effort: if extraction fails to produce a viable event, we
-        // fall back to the no-url reply rather than send a confusing
+        // fall back to the prose-failed reply rather than send a confusing
         // partial result. The minimum-fields gate inside the workflow
         // (name + (startDate OR venueName)) catches near-empty outputs.
         try {
@@ -658,13 +675,15 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             );
           }
         } catch {
-          // Workers AI extract failed on prose — fall through to no-url
-          // reply. The original submission row still exists for admin
-          // triage via /admin/inbound-emails.
+          // Workers AI extract failed on prose — fall through to the
+          // prose-failed reply (closes GH #244's wrong-template path).
+          // The inbound_emails row still exists for admin triage via
+          // /admin/inbound-emails.
         }
       }
+      const replyKind: ReplyKind = attemptedProse ? "no-url-prose-failed" : "no-url";
       return {
-        replyKind: "no-url",
+        replyKind,
         replyParams: { subject, hasAttachments: rowSnapshot.attachmentCount > 0 },
         status: "replied",
       };

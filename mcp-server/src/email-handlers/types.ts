@@ -43,6 +43,16 @@ export type ReplyKind =
   // widgets are a follow-up.
   | "ok-multi"
   | "no-url"
+  // Fired when the submission had no real event URL but DID include
+  // prose event details in the body, the B2 free-text extractor ran,
+  // and the result didn't carry enough fields (name + start_date or
+  // venue_name) to land as a PENDING event. Distinct from `no-url`
+  // because the user already supplied details — asking them to "reply
+  // with a URL" is dismissive. Distinct from `extract-failed` because
+  // there was no URL to reference. Closes GH #244. drizzle/0079 covers
+  // the inbound_emails persistence so the row still exists for admin
+  // review even though the auto-reply was a soft fail.
+  | "no-url-prose-failed"
   | "extract-failed"
   | "submit-failed"
   | "already-exists"
