@@ -126,6 +126,7 @@ const SCHEMA_SQL = `
     previous_end_date INTEGER,
     gate_flags TEXT,
     approval_notified_at INTEGER,
+    og_image_sweep_attempted_at INTEGER,
     created_at INTEGER,
     updated_at INTEGER
   );
