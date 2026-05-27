@@ -1351,6 +1351,13 @@ export const inboundEmails = sqliteTable(
      *  - `reply_kind = 'already-exists'` → the EXISTING event matched
      *  NULL when no event is involved (no-url, extract-failed, etc.). */
     resultingEventId: text("resulting_event_id"),
+    /** Idempotency marker for the "your submission was salvaged" admin-
+     *  triggered notification (Item 19 / drizzle/0091). Set by
+     *  src/lib/salvage-notification.ts after the EMAIL_JOBS push so
+     *  re-running the salvage admin action doesn't double-email the
+     *  submitter. NULL = never salvaged (or sweep failed before reaching
+     *  the marker). Mirrors events.approval_notified_at semantics. */
+    salvageNotifiedAt: integer("salvage_notified_at", { mode: "timestamp" }),
     /** Which fetch path produced the URL content:
      *  - `'standard'`           — default fetch with browser UA succeeded
      *  - `'browser-rendering'`  — standard fetch failed (403/4xx/timeout),

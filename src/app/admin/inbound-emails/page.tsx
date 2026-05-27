@@ -142,6 +142,9 @@ export default function AdminInboundEmailsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
+  // Item 19 (2026-05-25) — admin-driven manual-salvage notification flow.
+  const [salvaging, setSalvaging] = useState<string | null>(null);
+  const [salvageError, setSalvageError] = useState<string | null>(null);
   const [sendersOpen, setSendersOpen] = useState(false);
   const [stats, setStats] = useState<ClassifierStats | null>(null);
   const [reclassifying, setReclassifying] = useState<string | null>(null);
@@ -287,6 +290,49 @@ export default function AdminInboundEmailsPage() {
       setReclassifyError(err instanceof Error ? err.message : String(err));
     } finally {
       setReclassifying(null);
+    }
+  };
+
+  // Item 19 (2026-05-25) — admin manually creates events from a failed
+  // inbound email and notifies the submitter. Prompt asks for comma-
+  // separated event UUIDs; backend validates each exists, links them to
+  // the inbound row, and queues one summary email via salvage-notification.ts.
+  const handleSalvage = async (messageRowId: string) => {
+    const entered = window.prompt(
+      "Salvage: enter event UUID(s) created from this email (comma-separated, in display order).\nExample: 72de289f-..., 9424df85-...\nThe submitter will receive one email listing all events."
+    );
+    if (!entered) return;
+    const eventIds = entered
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+    if (eventIds.length === 0) return;
+    setSalvaging(messageRowId);
+    setSalvageError(null);
+    try {
+      const res = await fetch(`/api/admin/inbound-emails/${messageRowId}/salvage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_ids: eventIds }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        notify_outcome?: string;
+        events_in_email?: number;
+      };
+      if (!res.ok) {
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      window.alert(
+        body.notify_outcome === "sent"
+          ? `Linked ${body.events_in_email} event(s) and emailed the submitter.`
+          : `Linked, but notification was ${body.notify_outcome}.`
+      );
+      await fetchRows();
+    } catch (err) {
+      setSalvageError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSalvaging(null);
     }
   };
 
@@ -505,6 +551,11 @@ export default function AdminInboundEmailsPage() {
           Decide failed: {decideError}
         </div>
       )}
+      {salvageError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
+          Salvage failed: {salvageError}
+        </div>
+      )}
       {reclassifyError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded">
           Reclassify failed: {reclassifyError}
@@ -598,6 +649,26 @@ export default function AdminInboundEmailsPage() {
                                   }`}
                                 />
                                 Retry
+                              </Button>
+                            )}
+                            {/* Item 19 — manual salvage: admin paste event IDs
+                                they hand-created from this email, submitter
+                                gets one notification listing them all. */}
+                            {canRetry && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                type="button"
+                                disabled={salvaging === row.id}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleSalvage(row.id);
+                                }}
+                                title="Manually link events you created from this email and notify the submitter"
+                              >
+                                <Check className="w-3 h-3 mr-1" />
+                                {salvaging === row.id ? "Salvaging…" : "Salvage"}
                               </Button>
                             )}
                             {canDecide && (
