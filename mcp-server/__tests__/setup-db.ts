@@ -331,6 +331,7 @@ const SCHEMA_SQL = `
     flagged_for_review INTEGER NOT NULL DEFAULT 0,
     parent_email_id TEXT,
     recovery_attempt_n INTEGER NOT NULL DEFAULT 0,
+    salvage_notified_at INTEGER,
     created_at INTEGER NOT NULL
   );
 
