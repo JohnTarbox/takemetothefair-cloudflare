@@ -16,7 +16,7 @@
  * Auth: admin session OR X-Internal-Key.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { eq, isNull, or, sql } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
@@ -63,10 +63,12 @@ export async function POST(request: NextRequest) {
 
   const db = getCloudflareDb();
   try {
-    // Rows still missing one of the two new columns. The OR guards against
-    // partially-backfilled state (e.g., a prior run set sourceDomain but
-    // not ingestionMethod for rows where the URL was parseable but the
-    // method couldn't be inferred until a code update).
+    // Unclassified rows are the ones with null ingestion_method. source_domain
+    // may legitimately be null on classified rows too (admin_manual events
+    // with no URL), so keying the WHERE on ingestion_method alone is the
+    // accurate "needs backfill" signal. The classifier always returns a
+    // non-null method (defaults to admin_manual), so every UPDATE here
+    // clears the candidate condition — no re-selection loops.
     const candidates = await db
       .select({
         id: events.id,
@@ -74,24 +76,22 @@ export async function POST(request: NextRequest) {
         sourceUrl: events.sourceUrl,
       })
       .from(events)
-      .where(or(isNull(events.sourceDomain), isNull(events.ingestionMethod)))
+      .where(isNull(events.ingestionMethod))
       .limit(limit);
 
     const outcomes: Outcome[] = [];
     let written = 0;
     for (const row of candidates) {
       const classification = classifySource(row.sourceName, row.sourceUrl);
-      const changed =
-        classification.sourceDomain !== null || classification.ingestionMethod !== null;
       outcomes.push({
         id: row.id,
         sourceName: row.sourceName,
         sourceUrl: row.sourceUrl,
         sourceDomain: classification.sourceDomain,
         ingestionMethod: classification.ingestionMethod,
-        changed,
+        changed: true,
       });
-      if (apply && changed) {
+      if (apply) {
         await db
           .update(events)
           .set({
@@ -139,10 +139,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const db = getCloudflareDb();
+  // ingestion_method is the canonical "has been classified" marker; see
+  // the POST handler's WHERE clause for why source_domain alone isn't.
   const [{ remaining = 0 } = { remaining: 0 }] = await db
     .select({ remaining: sql<number>`COUNT(*)` })
     .from(events)
-    .where(or(isNull(events.sourceDomain), isNull(events.ingestionMethod)));
+    .where(isNull(events.ingestionMethod));
   const [{ total = 0 } = { total: 0 }] = await db
     .select({ total: sql<number>`COUNT(*)` })
     .from(events);
