@@ -61,6 +61,29 @@ describe("buildReply — submit-intent kinds (legacy)", () => {
     expect(msg.text).toMatch(/URL|link/);
   });
 
+  it("no-url-prose-failed asks for structured fields, NOT for a URL (GH #244)", () => {
+    // Distinct from "no-url" because the user pasted full event details;
+    // the reply should ask for the missing fields rather than "send a link."
+    const msg = buildReply("no-url-prose-failed", "a@x.com", {
+      subject: "Community Creations craft fair",
+      hasAttachments: false,
+    });
+    expect(msg.text).toMatch(/event name|start date|location|venue/i);
+    // Must NOT use the wrong-template "page you linked" phrasing.
+    expect(msg.text).not.toMatch(/page you linked/i);
+    // Should still mention a link is acceptable as an alternative,
+    // since linking the official page is the highest-fidelity path.
+    expect(msg.text).toMatch(/link|page/i);
+  });
+
+  it("no-url-prose-failed notes attachment-handling when relevant", () => {
+    const msg = buildReply("no-url-prose-failed", "a@x.com", {
+      subject: "event flyer",
+      hasAttachments: true,
+    });
+    expect(msg.text).toMatch(/flyer image|PDF|attachments/i);
+  });
+
   it("extract-failed mentions the URL that failed", () => {
     const msg = buildReply("extract-failed", "a@x.com", {
       subject: "fair",
