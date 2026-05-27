@@ -42,6 +42,23 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 - Always confirm before write operations that affect production resources
 - `execute()` is not pre-approved — each call prompts for confirmation
 
+## Runtime & Worker Topology
+
+The site runs as **two separate deploy artifacts on the `meetmeatthefair.com` zone**. They never share a route — they live on different hostnames. Get this wrong and you'll mis-plan migrations or chase phantom route collisions.
+
+| Artifact       | Hostname                     | What it is                                                                                                                                                                                                          | Routing                                                                                                                                                           |
+| -------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Main app**   | `meetmeatthefair.com` (apex) | Next.js via `@cloudflare/next-on-pages`, deployed to the Pages project `takemetothefair`. Serves every page/API route **including all `sitemap*.xml`** (Next.js route handlers in `src/app/sitemap*.xml/route.ts`). | Pages-native routing. No `[[routes]]` block in `wrangler.toml`.                                                                                                   |
+| **MCP Worker** | `mcp.meetmeatthefair.com`    | `meetmeatthefair-mcp` Worker (source in `mcp-server/`). MCP API + inbound/outbound email + Workflows + crons.                                                                                                       | `[[routes]] pattern = "mcp.meetmeatthefair.com"`, `custom_domain = true` in `mcp-server/wrangler.toml`. **A separate hostname, NOT a wildcard path on the apex.** |
+
+**Cross-artifact contract (these are easy to miss):**
+
+- The main app is a **Queue producer** for `EMAIL_JOBS` and `INDEXNOW_PINGS` (`wrangler.toml`); the **MCP Worker is the consumer**. Producer queue names must match the consumer's exactly or messages drop silently (no email, no IndexNow ping).
+- All **Workflows** (`inbound-email`, `recommendations-scan`, `event-date-drift`, `schema-org-sync`) and all **cron**-like work live in the MCP Worker, because **Pages cannot bind Workflows** (Cloudflare rejects `[[workflows]]` in a Pages `wrangler.toml` at config-validation — this caused a 30-min deploy lock-up once). The main app has **no cron triggers**.
+- The main app reaches the MCP Worker over **HTTP + `INTERNAL_API_KEY`**, not a Service Binding.
+
+**Historical note — sitemap hotfix Worker (no longer in the serving path):** During the 2026-04-25 sitemap incident, a one-off Worker was deployed with a **trailing-wildcard apex route** (`meetmeatthefair.com/sitemap.xml*`) to override the Pages Function — a wildcard Worker route beats a Pages Function for the same path on Cloudflare's tiebreak, where an exact-match route loses. That Worker is no longer serving (the sitemap is back on Next.js; verify with `curl -sI https://meetmeatthefair.com/sitemap.xml` → `x-matched-path: /sitemap.xml` present, no `X-Sitemap-Source` header). The wildcard-vs-Pages precedence behavior itself is real and reproducible — keep it in mind for incident hotfixes, and **list zone Worker routes as a pre-flight** before any Pages→Workers migration to confirm no dangling apex route contends with the cutover.
+
 ## Build & Development Commands
 
 ```bash
