@@ -346,3 +346,37 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ summary, outcomes });
 }
+
+// Cheap progress endpoint for the admin UI. Returns the count of APPROVED
+// events that would land in the next POST's candidate set — same predicate
+// as the SELECT above. Plus a total-APPROVED denominator so the dashboard
+// can show "X of Y events imageless."
+export async function GET(request: NextRequest) {
+  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+  const authResult = await authorize(request, env);
+  if (!authResult.ok) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: authResult.status });
+  }
+  const db = getCloudflareDb();
+  const [{ remaining = 0 } = { remaining: 0 }] = await db
+    .select({ remaining: sql<number>`COUNT(*)` })
+    .from(events)
+    .where(
+      and(
+        eq(events.status, "APPROVED"),
+        or(isNull(events.imageUrl), eq(events.imageUrl, "")),
+        isNotNull(events.sourceUrl),
+        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`
+      )
+    );
+  const [{ totalApproved = 0 } = { totalApproved: 0 }] = await db
+    .select({ totalApproved: sql<number>`COUNT(*)` })
+    .from(events)
+    .where(eq(events.status, "APPROVED"));
+  return NextResponse.json({
+    remaining: remaining ?? 0,
+    totalApproved: totalApproved ?? 0,
+    pctImageless:
+      totalApproved > 0 ? Math.round(((remaining ?? 0) / totalApproved) * 1000) / 10 : null,
+  });
+}
