@@ -37,7 +37,10 @@ export const INGESTION_METHODS: readonly IngestionMethod[] = [
 
 export interface SourceClassification {
   sourceDomain: string | null;
-  ingestionMethod: IngestionMethod | null;
+  /** Always set — classifier defaults to admin_manual when no other signal
+   *  matches. This is what the backfill WHERE clause checks against to
+   *  decide if a row has been classified yet. */
+  ingestionMethod: IngestionMethod;
 }
 
 // Known source_name strings that map directly to ingestion methods. Built
@@ -127,24 +130,30 @@ function hostnameFromUrl(url: string | null | undefined): string | null {
 }
 
 /** Decide ingestion_method from the sourceName label, falling back to the
- *  domain when the label looks like a hostname. */
+ *  domain when the label looks like a hostname. Never returns null —
+ *  rows with no source signal at all default to admin_manual since the
+ *  most common cause is an admin-created row from before source tracking
+ *  was wired up. Returning a value keeps the backfill loop from
+ *  re-selecting these rows forever (the WHERE clause keys on null
+ *  ingestion_method as the "unclassified" sentinel). */
 function inferIngestionMethod(
   sourceName: string | null | undefined,
   sourceDomain: string | null
-): IngestionMethod | null {
+): IngestionMethod {
   if (sourceName) {
     const key = sourceName.trim().toLowerCase();
     if (METHOD_BY_NAME[key]) return METHOD_BY_NAME[key];
   }
-  // No method label, but we have a domain — classify by whether the
-  // domain is a known aggregator host.
+  // Have a domain — classify by whether the domain is a known aggregator.
   if (sourceDomain) {
     if (AGGREGATOR_HOSTS.has(sourceDomain)) return "aggregator_import";
     return "direct_scrape";
   }
-  // No label, no domain — admin must have created this manually.
-  if (sourceName) return "admin_manual";
-  return null;
+  // No domain. Anything with a freeform name (e.g. "St. John Valley
+  // Chamber of Commerce") or with literally no source info at all is
+  // an admin-created row — the analyst's "freeform annotation" bucket
+  // and the pre-source-tracking historical rows both land here.
+  return "admin_manual";
 }
 
 export function classifySource(

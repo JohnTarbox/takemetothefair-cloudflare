@@ -70,10 +70,17 @@ describe("classifySource — analyst backlog Item 1 (2026-05-26)", () => {
     expect(r.sourceDomain).toBe("joycescraftshows.com");
   });
 
-  it("returns null/null for empty inputs", () => {
+  it("defaults to admin_manual for empty inputs (never returns null method)", () => {
+    // Empty source info → most commonly an admin-created or pre-source-
+    // tracking row. Defaulting to admin_manual instead of null keeps the
+    // backfill WHERE clause from re-selecting the row forever.
     expect(classifySource(null, null)).toEqual({
       sourceDomain: null,
-      ingestionMethod: null,
+      ingestionMethod: "admin_manual",
+    });
+    expect(classifySource("", "")).toEqual({
+      sourceDomain: null,
+      ingestionMethod: "admin_manual",
     });
   });
 
