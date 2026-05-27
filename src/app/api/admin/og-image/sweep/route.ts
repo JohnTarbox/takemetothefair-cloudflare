@@ -25,7 +25,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
-import { and, asc, eq, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import {
@@ -98,10 +98,15 @@ export async function POST(request: NextRequest) {
 
   const db = getCloudflareDb();
 
-  // Candidate set: APPROVED events with no image AND a source_url. APPROVED-
-  // only because filling in pending/rejected events would burn budget on
-  // images that may never go public. The source_url IS NOT NULL gate skips
-  // self-submitted events that have no provenance to re-fetch.
+  // Candidate set: APPROVED events with no image AND a source_url AND
+  // never previously attempted by this sweep. The
+  // og_image_sweep_attempted_at IS NULL gate (drizzle/0092) is the loop
+  // fix: without it, every call re-selects the first N imageless events,
+  // and if those all skip on Phase 2a gates (no og:image, dead URL,
+  // dimension reject) the sweep advances zero rows. The marker is
+  // written below regardless of outcome — successful UPDATE of image_url
+  // would also drop the row from the predicate via the imageUrl check,
+  // but the timestamp catches the skip path too.
   const candidates = await db
     .select({
       id: events.id,
@@ -115,7 +120,8 @@ export async function POST(request: NextRequest) {
         eq(events.status, "APPROVED"),
         or(isNull(events.imageUrl), eq(events.imageUrl, "")),
         isNotNull(events.sourceUrl),
-        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`
+        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`,
+        isNull(events.ogImageSweepAttemptedAt)
       )
     )
     .orderBy(asc(events.id))
@@ -332,6 +338,18 @@ export async function POST(request: NextRequest) {
     });
   }
 
+  // Loop fix (drizzle/0092): mark every processed event so the next
+  // SELECT doesn't re-pick the same set. Dry-runs deliberately do NOT
+  // mark — preview should be re-runnable without burning the candidate
+  // pool. Successful updates already drop out via the imageUrl filter
+  // but we set the marker for them too so the column reflects "last
+  // attempted" uniformly across outcomes.
+  if (apply && candidates.length > 0) {
+    const now = new Date();
+    const ids = candidates.map((c) => c.id);
+    await db.update(events).set({ ogImageSweepAttemptedAt: now }).where(inArray(events.id, ids));
+  }
+
   const summary = {
     apply,
     scanned: candidates.length,
@@ -358,6 +376,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: authResult.status });
   }
   const db = getCloudflareDb();
+  // Mirror the POST SELECT exactly so `remaining` matches what the next
+  // POST will actually pick up. After drizzle/0092 the "remaining"
+  // semantics are "imageless AND has source_url AND never attempted" —
+  // attempted-but-skipped rows fall out and don't inflate the count.
   const [{ remaining = 0 } = { remaining: 0 }] = await db
     .select({ remaining: sql<number>`COUNT(*)` })
     .from(events)
@@ -366,7 +388,23 @@ export async function GET(request: NextRequest) {
         eq(events.status, "APPROVED"),
         or(isNull(events.imageUrl), eq(events.imageUrl, "")),
         isNotNull(events.sourceUrl),
-        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`
+        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`,
+        isNull(events.ogImageSweepAttemptedAt)
+      )
+    );
+  // Also report the count of attempted-but-still-imageless rows so admin
+  // can see how many were burned on the Phase 2a gates (would benefit
+  // from Phase 2b's dead-URL fallback once that lands).
+  const [{ attemptedSkipped = 0 } = { attemptedSkipped: 0 }] = await db
+    .select({ attemptedSkipped: sql<number>`COUNT(*)` })
+    .from(events)
+    .where(
+      and(
+        eq(events.status, "APPROVED"),
+        or(isNull(events.imageUrl), eq(events.imageUrl, "")),
+        isNotNull(events.sourceUrl),
+        sql`TRIM(IFNULL(${events.sourceUrl}, '')) != ''`,
+        isNotNull(events.ogImageSweepAttemptedAt)
       )
     );
   const [{ totalApproved = 0 } = { totalApproved: 0 }] = await db
@@ -375,6 +413,7 @@ export async function GET(request: NextRequest) {
     .where(eq(events.status, "APPROVED"));
   return NextResponse.json({
     remaining: remaining ?? 0,
+    attemptedSkipped: attemptedSkipped ?? 0,
     totalApproved: totalApproved ?? 0,
     pctImageless:
       totalApproved > 0 ? Math.round(((remaining ?? 0) / totalApproved) * 1000) / 10 : null,

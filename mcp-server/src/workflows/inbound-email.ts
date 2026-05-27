@@ -689,7 +689,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       };
     }
 
-    const url = rowSnapshot.parsedUrl;
+    // Control-flow guarantee: the noUrlOrFreeText if-block above returns
+    // when parsedUrl is null. TS doesn't narrow through the derived
+    // boolean, so assert here. Closes a typecheck regression from PR #253
+    // (the classifier-override change made the narrowing less direct).
+    const url = rowSnapshot.parsedUrl as string;
 
     const fetched = await step.do(
       "submit/fetch-url",

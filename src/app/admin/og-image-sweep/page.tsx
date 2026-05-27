@@ -23,6 +23,11 @@ export const runtime = "edge";
 
 interface ProgressResponse {
   remaining: number;
+  /** Imageless events that the sweep already attempted at least once
+   *  and skipped (no og:image, dead URL, dimension reject, etc.). These
+   *  won't be re-selected by Apply batch — they need Phase 2b's web-
+   *  search fallback or a manual upload to become non-imageless. */
+  attemptedSkipped?: number;
   totalApproved: number;
   pctImageless: number | null;
 }
@@ -120,7 +125,13 @@ export default function OgImageSweepPage() {
                 <p className="text-3xl font-bold text-gray-900 tabular-nums">
                   {progress.remaining.toLocaleString()}
                 </p>
-                <p className="text-xs text-gray-500">imageless candidates</p>
+                <p className="text-xs text-gray-500">never-attempted candidates</p>
+              </div>
+              <div>
+                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                  {(progress.attemptedSkipped ?? 0).toLocaleString()}
+                </p>
+                <p className="text-xs text-gray-500">attempted &amp; skipped</p>
               </div>
               <div>
                 <p className="text-3xl font-bold text-gray-900 tabular-nums">

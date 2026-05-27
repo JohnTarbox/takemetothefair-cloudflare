@@ -224,6 +224,15 @@ export const events = sqliteTable(
     // only fires when this is NULL AND status='APPROVED' AND
     // suggester_email IS NOT NULL. See src/lib/approval-notification.ts.
     approvalNotifiedAt: integer("approval_notified_at", { mode: "timestamp" }),
+    // "Tried, don't re-select" marker for the og:image sweep (drizzle/0092).
+    // Set on every iteration of POST /api/admin/og-image/sweep regardless
+    // of outcome (updated / would_update / skipped_*). The SELECT filters
+    // on `IS NULL` so each event is attempted exactly once — without this
+    // the sweep loops forever on the first N events when they all skip
+    // the Phase 2a gates (Item 13 follow-up after the 0% yield preview
+    // surfaced the loop). To retry an attempted event after Phase 2b's
+    // dead-URL fallback lands, NULL the column for the target rows.
+    ogImageSweepAttemptedAt: integer("og_image_sweep_attempted_at", { mode: "timestamp" }),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
