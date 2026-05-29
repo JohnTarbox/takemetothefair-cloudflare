@@ -50,6 +50,7 @@ import {
   SPAM_QUARANTINE_THRESHOLD,
 } from "./intent-classifier.js";
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
+import { isDenylistedHost } from "./url-denylist.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -471,13 +472,23 @@ function cleanUrl(raw: string): string | null {
 }
 
 export function pickPrimaryUrl(text: string, html: string): string | null {
+  // Tracking/redirect hosts (Mailchimp click-trackers, URL shorteners,
+  // ESP wrappers) are filtered via url-denylist.ts before they can
+  // become `parsedUrl`. Forwarded marketing emails surface those
+  // before the actual event link; treating one as the event URL
+  // caused analyst K1 (2026-05-29 PM) — the AI extractor returned
+  // zero events from a Mailchimp redirect page and the sender got an
+  // `extract-failed` reply even though her body had name + date in
+  // plain text. With the denylisted URL skipped, either the next
+  // real URL wins OR (more commonly with forwards) parsedUrl ends up
+  // null and the message routes to the free-text branch.
   for (const m of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
     const cleaned = cleanUrl(m[0]);
-    if (cleaned) return cleaned;
+    if (cleaned && !isDenylistedHost(cleaned)) return cleaned;
   }
   for (const m of html.matchAll(/href=["']([^"']+)["']/g)) {
     const cleaned = cleanUrl(m[1]);
-    if (cleaned) return cleaned;
+    if (cleaned && !isDenylistedHost(cleaned)) return cleaned;
   }
   return null;
 }
@@ -494,11 +505,14 @@ export function pickPrimaryUrl(text: string, html: string): string | null {
  * the returned length to the cap.
  */
 export function extractAllUrls(text: string, html: string, cap: number = 10): string[] {
+  // Same denylist filter as pickPrimaryUrl — see that function's comment
+  // block. Critical for multi-URL submissions too: B1 fan-out shouldn't
+  // try to fetch a Mailchimp click-tracker as one of its N URLs.
   const seen = new Set<string>();
   const out: string[] = [];
   for (const m of text.matchAll(/https?:\/\/[^\s<>"']+/g)) {
     const cleaned = cleanUrl(m[0]);
-    if (cleaned && !seen.has(cleaned)) {
+    if (cleaned && !isDenylistedHost(cleaned) && !seen.has(cleaned)) {
       seen.add(cleaned);
       out.push(cleaned);
       if (out.length >= cap) return out;
@@ -506,7 +520,7 @@ export function extractAllUrls(text: string, html: string, cap: number = 10): st
   }
   for (const m of html.matchAll(/href=["']([^"']+)["']/g)) {
     const cleaned = cleanUrl(m[1]);
-    if (cleaned && !seen.has(cleaned)) {
+    if (cleaned && !isDenylistedHost(cleaned) && !seen.has(cleaned)) {
       seen.add(cleaned);
       out.push(cleaned);
       if (out.length >= cap) return out;
