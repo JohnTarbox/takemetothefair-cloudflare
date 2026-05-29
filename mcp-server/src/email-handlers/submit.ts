@@ -80,6 +80,19 @@ export interface SubmitExtractResult {
    *  Forwarded to the workflow's mark-done step which persists it to
    *  inbound_emails.extraction_method (drizzle/0083). */
   extractionMethod: "json-ld" | "ai" | "free-text";
+  /** Total events the extractor detected on the page. Almost always 1
+   *  (single-event submission). When >1, the workflow surfaces the
+   *  count in the reply so the submitter knows we noticed the other
+   *  events on the landing page even though we only ingested the
+   *  first as a PENDING row — analyst D1 (2026-05-29) Phase 1.
+   *
+   *  Phase 2 will fan out into N PENDING events (one per detected
+   *  event) — bigger workflow surgery deferred. */
+  totalEventsDetected: number;
+  /** Names of additional events the extractor detected (max 5).
+   *  Surfaced in the reply when totalEventsDetected > 1 so the sender
+   *  sees specifically which events we noticed but didn't ingest. */
+  additionalEventNames: string[];
 }
 
 /**
@@ -296,11 +309,25 @@ export async function submitExtract(
   // confidence for every field.
   const event = body.events[0];
   const extractId = event._extractId;
+  // Multi-event landing pages (analyst D1, 2026-05-29 Phase 1): pass the
+  // detected count through so the workflow can mention it in the reply.
+  // Names of the un-ingested events (max 5) help the operator AND the
+  // sender see specifically what we noticed but didn't take.
+  const totalEventsDetected = body.events.length;
+  const additionalEventNames =
+    totalEventsDetected > 1
+      ? body.events
+          .slice(1, 6)
+          .map((e) => (typeof e.name === "string" && e.name.length > 0 ? e.name : null))
+          .filter((n): n is string => n !== null)
+      : [];
   return {
     url: fetched.url,
     event,
     fieldConfidence: extractId && body.confidence ? body.confidence[extractId] : undefined,
     extractionMethod: body.extractionMethod ?? "ai",
+    totalEventsDetected,
+    additionalEventNames,
   };
 }
 
@@ -360,11 +387,24 @@ export async function submitFreeTextExtract(
   }
   const event = body.events[0];
   const extractId = event._extractId;
+  // Free-text path: B2 body-only submissions occasionally extract 2+
+  // events when the body mentions multiple ("we'll be at X on Jan 5 and
+  // Y on Feb 10"). Same Phase 1 visibility as the URL path.
+  const totalEventsDetected = body.events.length;
+  const additionalEventNames =
+    totalEventsDetected > 1
+      ? body.events
+          .slice(1, 6)
+          .map((e) => (typeof e.name === "string" && e.name.length > 0 ? e.name : null))
+          .filter((n): n is string => n !== null)
+      : [];
   return {
     url: "",
     event,
     fieldConfidence: extractId && body.confidence ? body.confidence[extractId] : undefined,
     extractionMethod: "free-text",
+    totalEventsDetected,
+    additionalEventNames,
   };
 }
 

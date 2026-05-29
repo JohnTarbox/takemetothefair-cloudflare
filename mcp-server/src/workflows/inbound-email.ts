@@ -863,6 +863,14 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // Surface which fields the extractor was unsure about so the
         // MEDIUM/LOW templates can name them.
         unsureFields: summarizeUnsureFields(extracted.fieldConfidence),
+        // Multi-event landing page (analyst D1 Phase 1, 2026-05-29):
+        // when the extractor pulled multiple events off the same
+        // page, tell the sender we noticed them and offer the manual
+        // path. Phase 2 (separate PR) will fan out into N PENDING
+        // events automatically.
+        additionalEventsDetected:
+          extracted.totalEventsDetected > 1 ? extracted.totalEventsDetected - 1 : 0,
+        additionalEventNames: extracted.additionalEventNames,
       },
       status: "replied",
       resultingEventId: submitted.id,

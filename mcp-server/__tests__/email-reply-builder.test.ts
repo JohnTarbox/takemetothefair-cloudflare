@@ -56,6 +56,54 @@ describe("buildReply — submit-intent kinds (legacy)", () => {
     expect(msg.text).not.toMatch(/attachment/i);
   });
 
+  // Analyst D1 Phase 1 (2026-05-29): when the extractor pulled
+  // multiple events off one URL we ingest events[0] and let the
+  // sender know about the rest in the reply.
+  it("ok appends multi-event note when additionalEventsDetected > 0", () => {
+    const msg = buildReply("ok", "a@x.com", {
+      eventName: "Sandy River Farmers Market",
+      additionalEventsDetected: 2,
+      additionalEventNames: ["Saturday Farmers Market", "Winter Farmers Market"],
+    });
+    expect(msg.text).toMatch(/2 other events/);
+    expect(msg.text).toMatch(/Saturday Farmers Market/);
+    expect(msg.text).toMatch(/Winter Farmers Market/);
+    expect(msg.text).toMatch(/reply with their names/i);
+  });
+
+  it("ok pluralizes correctly for additionalEventsDetected === 1", () => {
+    const msg = buildReply("ok", "a@x.com", {
+      eventName: "Spring Fair",
+      additionalEventsDetected: 1,
+      additionalEventNames: ["Fall Fair"],
+    });
+    expect(msg.text).toMatch(/1 other event\b/);
+    // Should be singular ("event"), not "events".
+    expect(msg.text).not.toMatch(/1 other events/);
+  });
+
+  it("ok skips multi-event note when additionalEventsDetected === 0", () => {
+    const msg = buildReply("ok", "a@x.com", {
+      eventName: "Solo Event",
+      additionalEventsDetected: 0,
+      additionalEventNames: [],
+    });
+    expect(msg.text).not.toMatch(/other event/i);
+    expect(msg.text).not.toMatch(/additional/i);
+  });
+
+  it("ok caps the surfaced names at 3 and notes the overflow", () => {
+    const msg = buildReply("ok", "a@x.com", {
+      eventName: "Market #1",
+      additionalEventsDetected: 5,
+      additionalEventNames: ["#2", "#3", "#4", "#5", "#6"],
+    });
+    expect(msg.text).toMatch(/5 other events/);
+    expect(msg.text).toMatch(/"#2", "#3", "#4"/);
+    expect(msg.text).toMatch(/2 more/);
+    expect(msg.text).not.toMatch(/"#5"/);
+  });
+
   it("no-url asks the sender to include a link", () => {
     const msg = buildReply("no-url", "a@x.com", { subject: "event idea" });
     expect(msg.text).toMatch(/URL|link/);
