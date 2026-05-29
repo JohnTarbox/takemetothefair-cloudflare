@@ -18,11 +18,12 @@
  */
 
 import Link from "next/link";
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, inboundEmails } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { extractDomain } from "@/lib/url-classification";
 
 export const runtime = "edge";
 export const revalidate = 300; // 5-min ISR — these numbers don't churn fast
@@ -44,6 +45,12 @@ interface SourceRow {
   // Composite concern score: percentage of events that show ANY quality
   // issue. Used for sort order; higher = worse.
   concernPct: number;
+  // Analyst J4 (2026-05-29 PM). Per-source 30-day yield. Populated only
+  // for email_submission rows — the one ingestion path with clean
+  // "attempted" tracking via inbound_emails. NULL elsewhere; tooltip
+  // on the column header clarifies the per-path coverage. Number is
+  // percent: 67.5 means 27 ingested out of 40 attempts.
+  yield30dPct: number | null;
 }
 
 async function loadSourceQuality(filterMethod: string | null): Promise<SourceRow[]> {
@@ -85,6 +92,54 @@ async function loadSourceQuality(filterMethod: string | null): Promise<SourceRow
     driftByKey.set(key, r.unresolvedDrift ?? 0);
   }
 
+  // Analyst J4 (2026-05-29 PM): per-source 30-day yield for the email-
+  // submission ingestion path. yield = ingested ÷ attempted. Numerator
+  // comes from events (already in baseRows.total filtered to last 30d
+  // below); denominator comes from inbound_emails attempts in the same
+  // window. inbound_emails doesn't carry source_domain — derive JS-side
+  // from inbound_emails.parsedUrl via extractDomain (the helper used by
+  // url classification elsewhere). 30d window is bounded (~hundreds of
+  // rows at current volume); page is 5-min ISR cached so the per-render
+  // scan cost is negligible.
+  const thirtyDaysAgoSeconds = Math.floor(Date.now() / 1000) - 30 * 86400;
+  const emailAttemptsRows = await db
+    .select({ parsedUrl: inboundEmails.parsedUrl })
+    .from(inboundEmails)
+    .where(
+      and(
+        eq(inboundEmails.intent, "submit"),
+        gte(inboundEmails.receivedAt, sql`${thirtyDaysAgoSeconds}`)
+      )
+    );
+  const attemptedByDomain = new Map<string, number>();
+  for (const row of emailAttemptsRows) {
+    const dom = extractDomain(row.parsedUrl);
+    if (!dom) continue;
+    attemptedByDomain.set(dom, (attemptedByDomain.get(dom) ?? 0) + 1);
+  }
+
+  // Numerator for yield: same 30d window of events whose
+  // ingestion_method='email_submission'. Separate query (rather than
+  // re-using baseRows) because baseRows isn't filtered by date.
+  const emailIngestedRows = await db
+    .select({
+      sourceDomain: events.sourceDomain,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(events)
+    .where(
+      and(
+        eq(events.ingestionMethod, "email_submission"),
+        gte(events.createdAt, sql`${thirtyDaysAgoSeconds}`)
+      )
+    )
+    .groupBy(events.sourceDomain);
+  const ingestedByDomain = new Map<string, number>();
+  for (const r of emailIngestedRows) {
+    if (!r.sourceDomain) continue;
+    ingestedByDomain.set(r.sourceDomain, Number(r.count ?? 0));
+  }
+
   const rows: SourceRow[] = baseRows
     .filter((r) => (r.total ?? 0) >= MIN_EVENTS_FOR_SCORING)
     .filter((r) => filterMethod == null || r.ingestionMethod === filterMethod)
@@ -97,6 +152,17 @@ async function loadSourceQuality(filterMethod: string | null): Promise<SourceRow
       const unresolvedDrift = driftByKey.get(key) ?? 0;
       const concerns = rejected + cancelled + gateFlagged + unresolvedDrift;
       const concernPct = total > 0 ? Math.round((concerns / total) * 1000) / 10 : 0;
+      // J4 yield_30d — only meaningful for email_submission rows. NULL
+      // elsewhere so the column renders "—" and the operator doesn't
+      // mistake silence for 0%. Attempted < 1 → null too (can't divide).
+      let yield30dPct: number | null = null;
+      if (r.ingestionMethod === "email_submission" && r.sourceDomain) {
+        const attempted = attemptedByDomain.get(r.sourceDomain) ?? 0;
+        const ingested = ingestedByDomain.get(r.sourceDomain) ?? 0;
+        if (attempted > 0) {
+          yield30dPct = Math.round((ingested / attempted) * 1000) / 10;
+        }
+      }
       return {
         sourceDomain: r.sourceDomain,
         ingestionMethod: r.ingestionMethod,
@@ -107,6 +173,7 @@ async function loadSourceQuality(filterMethod: string | null): Promise<SourceRow
         imageless: r.imageless ?? 0,
         unresolvedDrift,
         concernPct,
+        yield30dPct,
       };
     })
     .sort((a, b) => b.concernPct - a.concernPct || b.total - a.total);
@@ -225,6 +292,12 @@ export default async function SourceQualityPage({
                   <th className="px-4 py-2 font-medium text-right">flagged</th>
                   <th className="px-4 py-2 font-medium text-right">drift</th>
                   <th className="px-4 py-2 font-medium text-right">imageless</th>
+                  <th
+                    className="px-4 py-2 font-medium text-right"
+                    title="Yield = (events ingested ÷ inbound_emails attempts) per source over the last 30 days. Only populated for email_submission rows — other ingestion paths don't track per-source attempts. Analyst J4 (2026-05-29 PM)."
+                  >
+                    yield 30d
+                  </th>
                   <th className="px-4 py-2 font-medium text-right">concern</th>
                 </tr>
               </thead>
@@ -255,6 +328,13 @@ export default async function SourceQualityPage({
                     <Num value={r.gateFlagged} pct={pct(r.gateFlagged, r.total)} />
                     <Num value={r.unresolvedDrift} pct={pct(r.unresolvedDrift, r.total)} />
                     <Num value={r.imageless} pct={pct(r.imageless, r.total)} muted />
+                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      {r.yield30dPct == null ? (
+                        <span className="text-gray-400">—</span>
+                      ) : (
+                        <span>{r.yield30dPct}%</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <ConcernBadge pct={r.concernPct} />
                     </td>
