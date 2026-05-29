@@ -20,7 +20,7 @@
 import Link from "next/link";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, eventDateDriftFindings } from "@/lib/db/schema";
+import { events, eventDateDriftFindings, inboundEmails } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -273,11 +273,156 @@ export default async function SourceQualityPage({
         </CardContent>
       </Card>
 
+      <ExtractionMethodCard />
+
       <p className="text-xs text-gray-500">
         Concern % = (rejected + cancelled + gate-flagged + unresolved-drift) / total. Imageless rate
         shown separately — it&apos;s a coverage gap, not a quality flag.
       </p>
     </div>
+  );
+}
+
+/**
+ * Analyst A2 (2026-05-29) — per-source extraction_method breakdown.
+ *
+ * Distinguishes "extractor failing on a good source" from "low-quality
+ * source" by surfacing which extraction strategy actually produced
+ * each event. Today this data only exists for email submissions
+ * (inbound_emails.extraction_method, drizzle/0083); direct_scrape /
+ * url_import / community_suggestion paths don't persist the strategy
+ * at the row level, so they're out of scope here.
+ *
+ * Joined via inbound_emails.resulting_event_id → events.id so we can
+ * group by the event's source_domain (the row the page already
+ * surfaces in the main table). One pass, one GROUP BY.
+ */
+interface ExtractionRow {
+  sourceDomain: string | null;
+  extractionMethod: string | null;
+  count: number;
+}
+
+async function loadExtractionMix(): Promise<ExtractionRow[]> {
+  const db = getCloudflareDb();
+  const rows = await db
+    .select({
+      sourceDomain: events.sourceDomain,
+      extractionMethod: inboundEmails.extractionMethod,
+      count: sql<number>`COUNT(*)`,
+    })
+    .from(inboundEmails)
+    .innerJoin(events, eq(events.id, inboundEmails.resultingEventId))
+    .where(and(isNotNull(inboundEmails.extractionMethod), isNotNull(events.sourceDomain)))
+    .groupBy(events.sourceDomain, inboundEmails.extractionMethod);
+  return rows.map((r) => ({
+    sourceDomain: r.sourceDomain,
+    extractionMethod: r.extractionMethod,
+    count: Number(r.count ?? 0),
+  }));
+}
+
+async function ExtractionMethodCard() {
+  const rows = await loadExtractionMix();
+
+  // Pivot to one entry per source_domain with a method→count map.
+  interface PivotRow {
+    sourceDomain: string | null;
+    total: number;
+    methods: Record<string, number>;
+  }
+  const pivotMap = new Map<string, PivotRow>();
+  const methodTotals = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.sourceDomain ?? "(no domain)";
+    const method = r.extractionMethod ?? "(none)";
+    const existing = pivotMap.get(key) ?? {
+      sourceDomain: r.sourceDomain,
+      total: 0,
+      methods: {},
+    };
+    existing.methods[method] = (existing.methods[method] ?? 0) + r.count;
+    existing.total += r.count;
+    pivotMap.set(key, existing);
+    methodTotals.set(method, (methodTotals.get(method) ?? 0) + r.count);
+  }
+  const pivoted = [...pivotMap.values()].sort((a, b) => b.total - a.total);
+
+  // Column order — most common method first so the eye sweeps the
+  // hottest path. Falls back to alphabetical for ties.
+  const methodColumns = [...methodTotals.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k]) => k);
+
+  return (
+    <Card>
+      <CardHeader>
+        <h2 className="font-semibold text-gray-900">
+          Email-submission extractor mix
+          <span className="ml-2 text-xs font-normal text-gray-500">
+            (inbound_emails only — other ingestion paths don&apos;t persist extraction_method per
+            row)
+          </span>
+        </h2>
+      </CardHeader>
+      <CardContent className="p-0">
+        {pivoted.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-gray-500">
+            No email submissions with a recorded extraction method yet. Submit one to
+            <code>submit@meetmeatthefair.com</code> and rerun the dashboard.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200 text-left text-gray-600">
+                <tr>
+                  <th className="px-4 py-2 font-medium">source_domain</th>
+                  {methodColumns.map((m) => (
+                    <th key={m} className="px-4 py-2 font-medium text-right font-mono text-xs">
+                      {m}
+                    </th>
+                  ))}
+                  <th className="px-4 py-2 font-medium text-right">total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pivoted.map((r) => (
+                  <tr
+                    key={r.sourceDomain ?? "(no domain)"}
+                    className="border-b border-gray-100 hover:bg-gray-50"
+                  >
+                    <td className="px-4 py-2 font-mono text-gray-900">
+                      {r.sourceDomain ?? <span className="text-gray-400">(no domain)</span>}
+                    </td>
+                    {methodColumns.map((m) => (
+                      <td key={m} className="px-4 py-2 text-right tabular-nums text-gray-700">
+                        {r.methods[m] ?? 0}
+                      </td>
+                    ))}
+                    <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">
+                      {r.total}
+                    </td>
+                  </tr>
+                ))}
+                {/* Totals row — helps distinguish a 10-event source with
+                    50% json-ld from a 100-event source with 5%. */}
+                <tr className="bg-gray-50 border-t border-gray-300 font-medium">
+                  <td className="px-4 py-2 text-gray-700">total</td>
+                  {methodColumns.map((m) => (
+                    <td key={m} className="px-4 py-2 text-right tabular-nums text-gray-900">
+                      {methodTotals.get(m) ?? 0}
+                    </td>
+                  ))}
+                  <td className="px-4 py-2 text-right tabular-nums text-gray-900">
+                    {[...methodTotals.values()].reduce((a, b) => a + b, 0)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
