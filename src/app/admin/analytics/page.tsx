@@ -1366,7 +1366,14 @@ async function RecommendationsTab() {
   type Tier = import("@/lib/recommendations/tiers").Tier;
 
   const db = getCloudflareDb();
-  const [items, scanState] = await Promise.all([getActiveItems(db), getScanState(db)]);
+  const [rawItems, scanState] = await Promise.all([getActiveItems(db), getScanState(db)]);
+
+  // Resolve gsc_query items' topPagePath through slug-history at render
+  // time so renamed-but-live slugs surface their CURRENT path instead of
+  // the pre-rename one captured in the stored payload (analyst 2026-05-29
+  // cross-cutting fix). The helper is a no-op for non-gsc items.
+  const { resolveActiveItemPaths } = await import("@/lib/recommendations/resolve-active-items");
+  const items = await resolveActiveItemPaths(db, rawItems);
 
   type Sev = "red" | "yellow" | "blue";
   type Item = (typeof items)[number];
@@ -1477,6 +1484,18 @@ async function RecommendationsTab() {
     ) {
       return item.payload.path;
     }
+    // gsc_query items don't have a public detail page — surface a deep
+    // link to the page the query is hitting instead. Prefer the
+    // render-time resolved path (slug-history-aware) over the stored
+    // payload.topPagePath; "stale" status falls through to no-link.
+    if (item.targetType === "gsc_query") {
+      const resolved =
+        "resolvedTopPagePath" in item && typeof item.resolvedTopPagePath === "string"
+          ? item.resolvedTopPagePath
+          : null;
+      const resolvedStatus = "resolvedTopPageStatus" in item ? item.resolvedTopPageStatus : null;
+      if (resolved && resolvedStatus !== "stale") return resolved;
+    }
     return null;
   }
 
@@ -1521,7 +1540,30 @@ async function RecommendationsTab() {
     if (item.targetType === "gsc_query") {
       const pos = typeof p.position === "number" ? `pos ${p.position}` : null;
       const impr = typeof p.impressions === "number" ? `${p.impressions} impr` : null;
-      return [pos, impr].filter(Boolean).join(" · ") || null;
+      // Show the path Google's reporting on. Prefer the render-time
+      // resolved (slug-history-aware) value; if it differs from the
+      // stored payload value, mark it "(renamed)" so the operator
+      // knows the suggestion still points at a live page even though
+      // the original GSC report didn't.
+      const resolved =
+        "resolvedTopPagePath" in item && typeof item.resolvedTopPagePath === "string"
+          ? item.resolvedTopPagePath
+          : null;
+      const stored = typeof p.topPagePath === "string" ? p.topPagePath : null;
+      let pathStr: string | null = null;
+      if (resolved) {
+        const status = "resolvedTopPageStatus" in item ? item.resolvedTopPageStatus : null;
+        if (status === "renamed" && stored && stored !== resolved) {
+          pathStr = `${resolved} (renamed from ${stored})`;
+        } else if (status === "stale") {
+          pathStr = `${resolved} (stale)`;
+        } else {
+          pathStr = resolved;
+        }
+      } else if (stored) {
+        pathStr = stored;
+      }
+      return [pathStr, pos, impr].filter(Boolean).join(" · ") || null;
     }
     return null;
   }
