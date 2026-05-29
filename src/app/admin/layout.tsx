@@ -30,6 +30,7 @@ const adminNav = [
   { name: "Vendors", href: "/admin/vendors", icon: Store },
   { name: "Vendor Claim", href: "/admin/vendor-claim-leaderboard", icon: Store },
   { name: "Promoters", href: "/admin/promoters", icon: Megaphone },
+  { name: "Promoter Quality", href: "/admin/promoter-quality", icon: Megaphone },
   { name: "Users", href: "/admin/users", icon: Users },
   { name: "Submissions", href: "/admin/submissions", icon: ClipboardList },
   { name: "Inbound Emails", href: "/admin/inbound-emails", icon: Inbox },
