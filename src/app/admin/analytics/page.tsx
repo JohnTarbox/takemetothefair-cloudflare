@@ -267,7 +267,27 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         />
       </div>
 
-      <ActivityFeedCard activity={snapshot.activity} />
+      {/* Analyst cross-cutting fix (2026-05-29): split activity feed into
+          two cards. Two audiences, two decision types:
+          - User-side: conversion events (outbound_ticket_click,
+            outbound_application_click) tell us "is the catalog actually
+            driving clicks?" — relevant to content + outreach decisions.
+          - Operator-side: admin actions + IndexNow pings show what the
+            ops team is doing or what auto-pipelines are firing —
+            relevant to triage + workflow decisions.
+          Mixing them masked low-volume signals on either side. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <ActivityFeedCard
+          title="User activity"
+          subtitle="Visitor clicks on ticket / application URLs"
+          activity={snapshot.activity.filter((a) => a.kind === "conversion")}
+        />
+        <ActivityFeedCard
+          title="Operator activity"
+          subtitle="Admin actions + high-priority IndexNow"
+          activity={snapshot.activity.filter((a) => a.kind === "admin" || a.kind === "indexnow")}
+        />
+      </div>
 
       <KpiStatusLegend />
 
@@ -1260,14 +1280,22 @@ function Sparkline({
   );
 }
 
-function ActivityFeedCard({ activity }: { activity: ActivityEntry[] }) {
+function ActivityFeedCard({
+  activity,
+  title = "Activity feed",
+  subtitle,
+}: {
+  activity: ActivityEntry[];
+  title?: string;
+  subtitle?: string;
+}) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="w-4 h-4 text-gray-500" /> Activity feed (current window · mixed
-          sources)
+          <Activity className="w-4 h-4 text-gray-500" /> {title}
         </CardTitle>
+        {subtitle && <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>}
       </CardHeader>
       <CardContent className="p-0">
         {activity.length === 0 ? (
