@@ -84,6 +84,38 @@ describe("submitFetch — retry contract", () => {
     const result = await submitFetch(ENV, "https://example.org");
     expect(result.content.length).toBeLessThanOrEqual(100_000);
   });
+
+  // Analyst C2 Phase 1 (2026-05-29): PDF detection at the fetch route
+  // surfaces fetchMethod='pdf_unsupported' alongside a PDF-specific
+  // userMessage. submitFetch routes this to a distinct `fetch-pdf:`
+  // error prefix so the workflow's mark-done step can persist
+  // fetch_method='pdf_unsupported' for analytics. Without the prefix
+  // the row would be miscounted in the "both fetch paths failed"
+  // cohort, which masks PDF as a real (and growing) ingestion shape.
+  it("throws fetch-pdf prefix when upstream reports fetchMethod=pdf_unsupported", async () => {
+    mockFetch(() =>
+      Response.json({
+        success: false,
+        error:
+          "This URL points to a PDF. We can't parse PDFs yet — please reply with the event details pasted as text.",
+        fetchMethod: "pdf_unsupported",
+      })
+    );
+    const err = await submitFetch(ENV, "https://example.org/application.pdf").catch((e) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(err.message).toMatch(/^fetch-pdf:/);
+    expect(err.message).toContain("PDF");
+  });
+
+  it("keeps generic fetch-upstream prefix when fetchMethod is absent/failed", async () => {
+    // Regression guard: only fetchMethod==='pdf_unsupported' switches to
+    // the fetch-pdf prefix. Generic upstream failures must stay on the
+    // fetch-upstream branch so existing failure-mode counts don't shift.
+    mockFetch(() => Response.json({ success: false, error: "blocked by robots" }));
+    const err = await submitFetch(ENV, "https://example.org").catch((e) => e);
+    expect(err).toBeInstanceOf(NonRetryableError);
+    expect(err.message).toMatch(/^fetch-upstream:/);
+  });
 });
 
 describe("submitExtract — retry contract", () => {

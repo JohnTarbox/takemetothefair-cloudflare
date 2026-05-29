@@ -186,4 +186,62 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
     expect(body.success).toBe(false);
     expect(body.fetchMethod).toBe("failed");
   });
+
+  // Analyst C2 Phase 1 (2026-05-29). PDF detection: surface a tailored
+  // user message AND a distinct fetchMethod value so the workflow can
+  // route to a PDF-specific email reply and the inbound_emails table
+  // records the failure mode separately from generic both-paths-failed.
+  // Browser Rendering escalation is suppressed because BR's /content
+  // endpoint returns rendered HTML, not extracted PDF text — escalating
+  // would burn billable browser-time on a path that can't recover.
+  it("detects PDF by Content-Type and returns fetchMethod='pdf_unsupported'", async () => {
+    global.fetch = vi.fn(
+      async () =>
+        new Response("%PDF-1.4\nbinary", {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        })
+    );
+
+    const res = await GET(makeRequest("https://example.com/event-flyer"));
+    const body = (await res.json()) as {
+      success: boolean;
+      fetchMethod?: string;
+      error?: string;
+    };
+
+    expect(body.success).toBe(false);
+    expect(body.fetchMethod).toBe("pdf_unsupported");
+    expect(body.error).toMatch(/PDF/i);
+    // Critical: do NOT escalate to Browser Rendering on PDF — exactly
+    // one fetch call. Burning BR minutes on a path that can't recover
+    // would defeat the whole point of the early-detect.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("detects PDF by .pdf URL extension when Content-Type is octet-stream", async () => {
+    // Many town/rec servers return application/octet-stream for PDFs;
+    // catch those too. The extension regex tolerates query strings and
+    // fragments (?token=abc, #page=3).
+    global.fetch = vi.fn(
+      async () =>
+        new Response("%PDF-1.4\nbinary", {
+          status: 200,
+          headers: { "content-type": "application/octet-stream" },
+        })
+    );
+
+    const res = await GET(
+      makeRequest("https://belgrademaine.gov/craft_fair_2026_application.pdf?download=1")
+    );
+    const body = (await res.json()) as {
+      success: boolean;
+      fetchMethod?: string;
+      error?: string;
+    };
+
+    expect(body.success).toBe(false);
+    expect(body.fetchMethod).toBe("pdf_unsupported");
+    expect(body.error).toMatch(/PDF/i);
+  });
 });

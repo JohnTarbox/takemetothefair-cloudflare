@@ -61,6 +61,24 @@ async function fetchStandard(url: string, signal: AbortSignal): Promise<FetchOut
   }
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+    // PDF gets its own code because it's the most common email-submission
+    // failure mode the analyst flagged (C2, 2026-05-29) — town-rec
+    // application PDFs, program PDFs, etc. The workflow uses this code
+    // to fire a tailored reply ("we can't parse PDFs yet, paste the
+    // event details") instead of the generic "URL doesn't work" reply.
+    // Detect either by Content-Type or by .pdf URL extension; the latter
+    // catches servers that return application/octet-stream for PDFs.
+    const isPdfContentType = contentType.includes("application/pdf");
+    const isPdfExtension = /\.pdf(?:$|[?#])/i.test(url);
+    if (isPdfContentType || isPdfExtension) {
+      return {
+        ok: false,
+        status: response.status,
+        error: "pdf-unsupported",
+        userMessage:
+          "This URL points to a PDF. We can't parse PDFs yet — please reply with the event details pasted as text (dates, venue, hours, fees), or send the linked event page if one exists.",
+      };
+    }
     return {
       ok: false,
       status: response.status,
@@ -163,6 +181,10 @@ function shouldEscalate(outcome: FetchOutcome): boolean {
   if (outcome.ok) return false;
   if (outcome.error === "timeout") return true;
   if (outcome.error === "content-type") return false;
+  // PDF detected — Browser Rendering /content returns HTML, not the
+  // text-extracted PDF body, so escalation can't recover this. Surface
+  // the dedicated reply instead.
+  if (outcome.error === "pdf-unsupported") return false;
   if (outcome.status === null) return true; // network error
   return outcome.status === 401 || outcome.status === 403 || outcome.status === 429;
 }
@@ -289,9 +311,13 @@ export async function GET(request: NextRequest) {
       }
     } else {
       // No escalation (404, non-HTML content-type, etc.) — surface
-      // standard-fetch user message as-is.
+      // standard-fetch user message as-is. PDF gets its own fetchMethod
+      // value so /admin/inbound-emails (and the analyst's fetch_method
+      // analytics card) can distinguish "we got a PDF" from generic
+      // failures, and the workflow can route to the tailored reply.
+      const fetchMethod = standard.error === "pdf-unsupported" ? "pdf_unsupported" : "failed";
       return NextResponse.json(
-        { success: false, error: standard.userMessage, fetchMethod: "failed" },
+        { success: false, error: standard.userMessage, fetchMethod },
         { status: 200 }
       );
     }
