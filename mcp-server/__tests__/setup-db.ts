@@ -131,6 +131,18 @@ const SCHEMA_SQL = `
     updated_at INTEGER
   );
 
+  CREATE TABLE event_date_drift_findings (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    stored_start_date INTEGER NOT NULL,
+    canonical_start_date INTEGER,
+    drift_days INTEGER NOT NULL,
+    canonical_url TEXT,
+    canonical_html_excerpt TEXT,
+    checked_at INTEGER NOT NULL,
+    resolved_at INTEGER
+  );
+
   CREATE TABLE vendors (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL UNIQUE,
