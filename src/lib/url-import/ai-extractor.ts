@@ -83,6 +83,79 @@ EXAMPLE - if the page says "Springfield County Fair, June 12-15, 2025, Springfie
 
 JSON array response:`;
 
+/**
+ * Two-section variant of buildMultiEventPrompt for email submissions
+ * (analyst D1, 2026-05-29 PM). Adds an EMAIL BODY (PRIMARY) section
+ * BEFORE the webpage content; the AI is instructed to prefer dates
+ * from the body over dates from the linked page. Linked pages are
+ * often vendor-application forms whose displayed dates are stale
+ * season templates; the body usually has the real upcoming date.
+ */
+const buildMultiEventPromptWithEmailBody = (
+  content: string,
+  contextInfo: string,
+  emailBody: string
+) => `Extract ALL events from this email submission. The sender included BOTH a body message and a linked webpage; you must combine them carefully. Return a JSON array of events.
+
+EMAIL BODY (PRIMARY — when the sender's body and the linked page disagree about a date, prefer this section. The linked page may show a vendor-application form or season template with stale dates):
+${emailBody}
+
+LINKED PAGE CONTENT (secondary — supporting context for venue, fees, categories, etc; treat date fields here as suspect if the body specifies different ones):
+${content}
+
+LINKED PAGE METADATA (may be stale — many sites' SEO meta tags lag the current page body by months or years; treat as a hint, not ground truth):
+${contextInfo}
+
+CRITICAL DATE-PRIORITY RULES:
+- When the EMAIL BODY mentions a specific upcoming date (e.g., "Saturday, August 15, 2026"), use it as startDate even if the LINKED PAGE CONTENT lists a different date.
+- The exception is when the body's date is clearly a placeholder ("TBD", "date pending", "see website"); then fall back to the linked page.
+- When both sources agree on a date, use that date with high confidence.
+- When ONLY the linked page mentions a date (no date in body), use the linked page's date but treat it as lower-confidence (it may be a season-start template).
+
+---
+Return a JSON array where each event has these fields (use null for fields not found):
+
+[
+  {
+    "name": "event title/name",
+    "description": "full event description (max 2000 chars)",
+    "startDate": "YYYY-MM-DD format",
+    "endDate": "YYYY-MM-DD format",
+    "startTime": "HH:MM (24-hour) or null - opening time",
+    "endTime": "HH:MM (24-hour) or null - closing time",
+    "hoursVaryByDay": true/false - whether hours differ on different days,
+    "hoursNotes": "any notes about hours or per-day variations",
+    "specificDates": ["YYYY-MM-DD", ...] or null,
+    "venueName": "venue or location name",
+    "venueAddress": "street address",
+    "venueCity": "city",
+    "venueState": "2-letter state code (Maine=ME)",
+    "isStatewide": true/false,
+    "stateCode": "2-letter state code",
+    "ticketUrl": "URL for tickets",
+    "ticketPriceMin": number or null,
+    "ticketPriceMax": number or null,
+    "imageUrl": "image URL",
+    "categories": ["category1", ...] or null - MUST be from this exact list: ${EVENT_CATEGORIES.filter((c) => c !== "Other").join(", ")}, Other,
+    "vendorFeeMin": number or null,
+    "vendorFeeMax": number or null,
+    "vendorFeeNotes": "details about vendor/booth fees",
+    "indoorOutdoor": "INDOOR" or "OUTDOOR" or "MIXED" or null,
+    "estimatedAttendance": number or null,
+    "applicationUrl": "URL for vendor applications",
+    "walkInsAllowed": true/false/null
+  }
+]
+
+IMPORTANT RULES:
+1. Find ALL events mentioned in the body AND the linked page - there may be 1, 5, 10, or more.
+2. Each event listing is a separate object in the array.
+3. Convert ALL dates to YYYY-MM-DD format and ALL times to HH:MM 24-hour format.
+4. If the body announces specific upcoming dates AND the linked page has a different recurring pattern, prefer the body's dates.
+5. If only ONE event exists, still return it as an array with one element.
+
+JSON array response:`;
+
 const buildUserPrompt = (
   content: string,
   contextInfo: string
@@ -220,11 +293,20 @@ export async function extractEventData(
 /**
  * Extract MULTIPLE events from content using Cloudflare Workers AI
  * This is the preferred method for URL import as pages may contain multiple events
+ *
+ * D1 (analyst, 2026-05-29 PM): when `emailBody` is non-empty, the prompt is
+ * built with TWO labeled sections — email body marked PRIMARY for dates,
+ * fetched URL content secondary. The linked page may be a vendor-
+ * application form whose displayed date is a stale season template
+ * ("Every other Saturday beginning 4/11/2026") and the body usually
+ * carries the real upcoming date. Past-date guard at
+ * suggest-event/submit/route.ts:185 remains as a safety net.
  */
 export async function extractMultipleEvents(
   ai: Ai,
   content: string,
-  metadata: PageMetadata
+  metadata: PageMetadata,
+  emailBody?: string
 ): Promise<{ events: ExtractedEvent[]; confidence: EventConfidence }> {
   // Build context with metadata if available
   let contextInfo = "";
@@ -250,7 +332,10 @@ export async function extractMultipleEvents(
   const truncatedContent =
     content.length > 20000 ? content.substring(0, 20000) + "\n[Content truncated...]" : content;
 
-  const userPrompt = buildMultiEventPrompt(truncatedContent, contextInfo);
+  const userPrompt =
+    emailBody && emailBody.trim().length > 0
+      ? buildMultiEventPromptWithEmailBody(truncatedContent, contextInfo, emailBody)
+      : buildMultiEventPrompt(truncatedContent, contextInfo);
 
   // Call Workers AI with Llama 3.1 8B using messages format
   console.warn("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);

@@ -22,6 +22,14 @@ const extractRequestSchema = z.object({
       jsonLdEvents: z.array(z.record(z.string(), z.unknown())).nullable().optional(),
     })
     .optional(),
+  // Analyst D1 (2026-05-29 PM). Optional email body for two-section
+  // prompt structure when an email submission carries both a URL and
+  // body prose with dates. The AI extractor prefers body dates over
+  // the linked page's when both are present; the linked page is often
+  // a vendor-application form whose displayed date is a stale season
+  // template ("Every other Saturday beginning 4/11/2026"). Capped at
+  // 8KB before reaching the prompt — same budget as content.
+  emailBody: z.string().max(8000).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -52,7 +60,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { content, metadata } = validation.data;
+    const { content, metadata, emailBody } = validation.data;
 
     // JSON-LD priority extraction: if the fetched page emitted complete-
     // enough schema.org Event node(s), skip the AI call entirely and return
@@ -108,11 +116,15 @@ export async function POST(request: NextRequest) {
 
     const ai = getCloudflareAi();
 
-    // Call AI extraction for multiple events
+    // Call AI extraction for multiple events. Pass emailBody as a fourth
+    // arg (analyst D1, 2026-05-29 PM); when non-empty the extractor
+    // structures the prompt with two labeled sections — email body
+    // marked PRIMARY for dates, fetched URL content secondary.
     const { events, confidence } = await extractMultipleEvents(
       ai,
       content,
-      (metadata || {}) as PageMetadata
+      (metadata || {}) as PageMetadata,
+      emailBody
     );
 
     // Removed pre-2026-05-22 ticketUrl defaulting block. Defaulting the
