@@ -208,10 +208,18 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
         jsonLd?: unknown;
         fetchMethod?: "standard" | "browser-rendering";
       }
-    | { success: false; error: string; fetchMethod?: "failed" }
+    | { success: false; error: string; fetchMethod?: "failed" | "pdf_unsupported" }
     | null;
   if (!body || !body.success) {
     const upstream = body && "error" in body ? body.error : "no-body";
+    // PDF gets a distinct error prefix so the workflow's mark-done step
+    // can persist fetch_method='pdf_unsupported' for analytics (drizzle/
+    // 0078). The userMessage is already PDF-specific and flows through
+    // to the reply via the existing fetch-upstream error path.
+    // Analyst C2 (2026-05-29 backlog), Phase 1 visibility.
+    if (body && body.fetchMethod === "pdf_unsupported") {
+      throw new NonRetryableError(`fetch-pdf: ${upstream}`);
+    }
     throw new NonRetryableError(`fetch-upstream: ${upstream}`);
   }
   return {

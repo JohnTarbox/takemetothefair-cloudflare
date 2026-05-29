@@ -531,8 +531,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // prefix so the analytics query still counts the both-paths-failed
     // cohort. Other failure modes (extract/submit) leave fetch_method
     // NULL because we don't know which fetch path got us here.
-    const inferredFetchMethod =
-      caughtError && caughtError.startsWith("fetch-") ? "failed" : (result.fetchMethod ?? null);
+    // PDF detection at the fetch route emits `fetch-pdf: <message>`
+    // (analyst C2 Phase 1, 2026-05-29). Surface as its own fetch_method
+    // value so /admin/source-quality + analyst's planned A5/F1 dashboard
+    // can count PDF-rejected submissions separately from generic
+    // both-paths-failed cohort. Phase 2 will replace this with actual
+    // PDF text extraction.
+    let inferredFetchMethod: "standard" | "browser-rendering" | "failed" | "pdf_unsupported" | null;
+    if (caughtError && caughtError.startsWith("fetch-pdf:")) {
+      inferredFetchMethod = "pdf_unsupported";
+    } else if (caughtError && caughtError.startsWith("fetch-")) {
+      inferredFetchMethod = "failed";
+    } else {
+      inferredFetchMethod = result.fetchMethod ?? null;
+    }
     await step.do(
       "mark-done",
       { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
