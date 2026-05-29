@@ -1322,6 +1322,38 @@ function ActivityIcon({ kind }: { kind: ActivityEntry["kind"] }) {
 
 // ─── Recommendations tab ────────────────────────────────────────────
 
+/** Threshold above which a rule's last-scanned timestamp is flagged red.
+ *  Pre-5/19 the scan-all loop chronically timed out and 12 of 26 rules
+ *  hadn't scanned for days. Crons run hourly; >24h means something is
+ *  silently broken. Analyst A1 (2026-05-29). */
+const SCAN_STALE_THRESHOLD_HOURS = 24;
+
+function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
+  if (!lastScannedAt) {
+    return (
+      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border bg-red-50 text-red-800 border-red-300">
+        never scanned
+      </span>
+    );
+  }
+  const hoursAgo = (Date.now() - lastScannedAt.getTime()) / 3_600_000;
+  const isStale = hoursAgo > SCAN_STALE_THRESHOLD_HOURS;
+  const label =
+    hoursAgo < 1
+      ? `scanned ${Math.max(1, Math.round(hoursAgo * 60))}m ago`
+      : hoursAgo < 24
+        ? `scanned ${Math.round(hoursAgo)}h ago`
+        : `scanned ${Math.round(hoursAgo / 24)}d ago`;
+  const cls = isStale
+    ? "bg-red-50 text-red-800 border-red-300"
+    : "bg-gray-50 text-gray-600 border-gray-200";
+  return (
+    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
 async function RecommendationsTab() {
   const { getActiveItems, getScanState } = await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
@@ -1349,6 +1381,12 @@ async function RecommendationsTab() {
     severity: Sev;
     tier: Tier;
     totalMatchCount: number;
+    /** Most-recent successful scan for this rule. Drives the per-card
+     *  staleness badge (>24h → red). Denormalized via getActiveItems so
+     *  no extra query is needed here. Null when the rule has never
+     *  scanned (in practice covered by the failedRules banner since
+     *  never-scanned rules don't produce items, but kept defensively). */
+    lastScannedAt: Date | null;
     items: Item[];
   };
   const ruleGroups = new Map<string, RuleGroup>();
@@ -1363,6 +1401,7 @@ async function RecommendationsTab() {
         severity: it.severity as Sev,
         tier: tierFor(it.ruleKey),
         totalMatchCount: it.ruleTotalMatchCount,
+        lastScannedAt: it.ruleLastScannedAt,
         items: [],
       };
       ruleGroups.set(it.ruleId, g);
@@ -1605,7 +1644,10 @@ async function RecommendationsTab() {
                             <p className="text-sm text-gray-700 mt-1.5 ml-6">
                               {rationaleFor(group)}
                             </p>
-                            <p className="text-xs text-gray-400 mt-1 ml-6">rule {group.ruleKey}</p>
+                            <p className="text-xs text-gray-400 mt-1 ml-6 flex items-center gap-2 flex-wrap">
+                              <span>rule {group.ruleKey}</span>
+                              <ScanFreshnessBadge lastScannedAt={group.lastScannedAt} />
+                            </p>
                           </div>
                           <div className="shrink-0">
                             <RecommendationBulkActions
@@ -1656,6 +1698,50 @@ async function RecommendationsTab() {
           </div>
         );
       })}
+
+      {/* Scan freshness — every enabled rule, including ones with zero
+          current matches. Catches the chronic case the analyst flagged:
+          rules that never finished a scan are invisible above because
+          they produce no items, but they're still in the queue. Sorted
+          stale-first so red rows are immediately visible. */}
+      {scanState.allRules.length > 0 && (
+        <Card className="mt-8">
+          <CardHeader>
+            <CardTitle className="text-sm">
+              Scan freshness ({scanState.allRules.length} enabled rule
+              {scanState.allRules.length === 1 ? "" : "s"})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1 text-xs">
+              {[...scanState.allRules]
+                .sort((a, b) => {
+                  const aMs = a.lastScannedAt ? a.lastScannedAt.getTime() : 0;
+                  const bMs = b.lastScannedAt ? b.lastScannedAt.getTime() : 0;
+                  // Stale first: NULL ranks oldest, then ascending time
+                  // means most-stale at the top.
+                  if (aMs === bMs) return a.ruleKey.localeCompare(b.ruleKey);
+                  return aMs - bMs;
+                })
+                .map((r) => (
+                  <li key={r.ruleId} className="flex items-center justify-between gap-3 py-0.5">
+                    <span className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="font-mono text-gray-700 truncate">{r.ruleKey}</span>
+                      {r.hasError && (
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border bg-red-50 text-red-800 border-red-300 shrink-0">
+                          last scan errored
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0">
+                      <ScanFreshnessBadge lastScannedAt={r.lastScannedAt} />
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       <p className="text-xs text-gray-500 mt-6">
         Active items refresh on scan or when an item&apos;s match expires the 7-day window.

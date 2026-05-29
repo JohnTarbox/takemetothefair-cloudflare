@@ -178,6 +178,14 @@ export type ActiveItem = {
   // affected by dismissals). Denormalized onto each row for convenience; the
   // UI groups items by rule and reads this once per group.
   ruleTotalMatchCount: number;
+  /** Per-rule scan-freshness timestamp denormalized from
+   *  recommendation_rules.last_scanned_at. The rule-card UI uses this to
+   *  badge stale-data rules (>24h since their last successful scan) so
+   *  the operator doesn't act on silently-truncated data. Null when the
+   *  rule has never completed a scan. Per `feedback_ms_seconds_divergence_*`
+   *  Drizzle returns this as a real Date because the column uses
+   *  mode:"timestamp" (seconds-epoch). */
+  ruleLastScannedAt: Date | null;
   targetType: string;
   targetId: string | null;
   payload: Record<string, unknown> | null;
@@ -518,6 +526,7 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
       severity: recommendationRules.severity,
       category: recommendationRules.category,
       totalMatchCount: recommendationRules.totalMatchCount,
+      ruleLastScannedAt: recommendationRules.lastScannedAt,
       targetType: recommendationItems.targetType,
       targetId: recommendationItems.targetId,
       payloadJson: recommendationItems.payloadJson,
@@ -566,6 +575,7 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
       severity: r.severity as Severity,
       category: r.category,
       ruleTotalMatchCount: r.totalMatchCount ?? 0,
+      ruleLastScannedAt: r.ruleLastScannedAt,
       targetType: r.targetType,
       targetId: r.targetId,
       payload,
@@ -661,6 +671,18 @@ export type ScanState = {
     error: string;
     lastScannedAt: Date | null;
   }>;
+  /** Every enabled rule's last-scanned timestamp — including rules with
+   *  zero current matches. The Recommendations panel uses this for the
+   *  "Scan freshness" summary so rules that have NEVER scanned (chronic
+   *  first-run timeouts before the 5/19 fix surfaced 12 of 26 in this
+   *  state) are still visible. Sorted by rule_key. */
+  allRules: Array<{
+    ruleId: string;
+    ruleKey: string;
+    title: string;
+    lastScannedAt: Date | null;
+    hasError: boolean;
+  }>;
 };
 
 export async function getScanState(db: Db): Promise<ScanState> {
@@ -677,6 +699,7 @@ export async function getScanState(db: Db): Promise<ScanState> {
 
   let lastSuccessfulScanAt: Date | null = null;
   const failedRules: ScanState["failedRules"] = [];
+  const allRules: ScanState["allRules"] = [];
   for (const r of rows) {
     if (r.lastScannedAt && (!lastSuccessfulScanAt || r.lastScannedAt > lastSuccessfulScanAt)) {
       lastSuccessfulScanAt = r.lastScannedAt;
@@ -690,7 +713,15 @@ export async function getScanState(db: Db): Promise<ScanState> {
         lastScannedAt: r.lastScannedAt,
       });
     }
+    allRules.push({
+      ruleId: r.id,
+      ruleKey: r.ruleKey,
+      title: r.title,
+      lastScannedAt: r.lastScannedAt,
+      hasError: !!r.lastScanError,
+    });
   }
   failedRules.sort((a, b) => a.ruleKey.localeCompare(b.ruleKey));
-  return { lastSuccessfulScanAt, failedRules };
+  allRules.sort((a, b) => a.ruleKey.localeCompare(b.ruleKey));
+  return { lastSuccessfulScanAt, failedRules, allRules };
 }
