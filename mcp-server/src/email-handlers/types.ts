@@ -93,7 +93,10 @@ export type FinalStatus = "replied" | "forwarded";
  * step.do() return types satisfy `Serializable<T>`, which excludes
  * arbitrary `unknown`.
  */
-export type ReplyParamValue = string | number | boolean | null;
+// string[] added for analyst D1 Phase 1 (additionalEventNames in the
+// success reply). Arrays of primitives serialize cleanly through the
+// Serializable<T> step boundary; arrays of objects don't.
+export type ReplyParamValue = string | number | boolean | null | string[];
 export type ReplyParams = Record<string, ReplyParamValue>;
 
 /**

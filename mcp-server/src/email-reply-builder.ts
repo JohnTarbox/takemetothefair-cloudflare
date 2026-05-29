@@ -28,6 +28,34 @@ const SUPPORT_LINE = "If you didn't mean to email us, you can ignore this messag
 const SIGN_OFF = "— Meet Me at the Fair";
 
 /**
+ * Multi-event landing-page note (analyst D1 Phase 1, 2026-05-29). When
+ * the extractor pulled multiple events off one URL but the submit
+ * pipeline only ingested the first as PENDING, surface a paragraph so
+ * the sender knows we noticed the others and offers the path to fix.
+ * Phase 2 (separate PR) will fan out into N PENDING events.
+ *
+ * Returns empty string when count <= 0 — caller can append
+ * unconditionally without a wrapping guard.
+ */
+function buildAdditionalEventsNote(params: ReplyParams): string {
+  const count =
+    typeof params.additionalEventsDetected === "number" ? params.additionalEventsDetected : 0;
+  if (count <= 0) return "";
+  const names = Array.isArray(params.additionalEventNames)
+    ? (params.additionalEventNames as string[])
+    : [];
+  const sample = names
+    .slice(0, 3)
+    .map((n) => `"${n}"`)
+    .join(", ");
+  const tail =
+    sample.length > 0
+      ? ` We noticed these additional events on the same page: ${sample}${names.length > 3 ? `, and ${names.length - 3} more` : ""}.`
+      : "";
+  return `\n\nWe also detected ${count} other event${count === 1 ? "" : "s"} on that page that we didn't ingest this time.${tail} If you'd like the others added too, please reply with their names and dates and we'll line them up.`;
+}
+
+/**
  * Build the outbound auto-reply for `replyKind`. Throws on null kind —
  * the workflow's send-reply step short-circuits before calling.
  */
@@ -88,9 +116,10 @@ function renderText(kind: Exclude<ReplyKind, null>, params: ReplyParams): string
       const attachmentNote = hasAttachments
         ? "\n\nNote: We don't process attachments yet. If your message had images or PDFs, please keep them handy in case our team has questions during review."
         : "";
+      const multiEventNote = buildAdditionalEventsNote(params);
       return `Thanks for submitting "${eventName}" to Meet Me at the Fair!
 
-Your submission is being reviewed by our team. Approved events typically appear within 24 hours.${attachmentNote}
+Your submission is being reviewed by our team. Approved events typically appear within 24 hours.${attachmentNote}${multiEventNote}
 
 ${SUPPORT_LINE}
 
