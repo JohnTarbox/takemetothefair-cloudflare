@@ -25,11 +25,10 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, contentLinks, gscInspectionState } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { blogFaqSource, type BlogFaqSource } from "@takemetothefair/utils";
+import { classifyIndexState, type IndexState } from "@/lib/gsc-index-state";
 
 export const runtime = "edge";
 export const revalidate = 300;
-
-type IndexState = "indexed" | "discovered_not_indexed" | "crawled_not_indexed" | "unknown";
 
 interface PostRow {
   id: string;
@@ -72,23 +71,6 @@ const SORT_VALUES: SortKey[] = [
   "faqSource",
   "indexState",
 ];
-
-/** Classify GSC's `lastVerdict` + `lastCoverageState` into the four
- *  buckets the admin cares about. `lastVerdict` of PASS/SUCCESS means
- *  indexed regardless of coverageState; otherwise the coverageState
- *  string pattern decides. */
-function classifyIndexState(
-  lastVerdict: string | null,
-  lastCoverageState: string | null
-): IndexState {
-  if (lastVerdict && (lastVerdict === "PASS" || lastVerdict === "SUCCESS")) return "indexed";
-  if (!lastCoverageState) return "unknown";
-  const cs = lastCoverageState.toLowerCase();
-  if (cs.includes("indexed") && !cs.includes("not indexed")) return "indexed";
-  if (cs.includes("discovered") && cs.includes("not indexed")) return "discovered_not_indexed";
-  if (cs.includes("crawled") && cs.includes("not indexed")) return "crawled_not_indexed";
-  return "unknown";
-}
 
 async function loadRows(): Promise<PostRow[]> {
   const db = getCloudflareDb();
