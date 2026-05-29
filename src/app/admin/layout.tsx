@@ -35,6 +35,7 @@ const adminNav = [
   { name: "Duplicates", href: "/admin/duplicates", icon: GitMerge },
   { name: "Blog Coverage", href: "/admin/coverage", icon: FileText },
   { name: "Blog Posts", href: "/admin/blog", icon: FileText },
+  { name: "Stuck URLs", href: "/admin/stuck-urls", icon: BarChart3 },
   { name: "Analytics", href: "/admin/analytics", icon: BarChart3 },
   { name: "Database", href: "/admin/database", icon: Database },
   { name: "Error Logs", href: "/admin/logs", icon: FileWarning },
