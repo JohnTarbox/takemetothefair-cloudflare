@@ -716,13 +716,38 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       () => submitFetch(this.env, url)
     );
 
-    const extracted = await step.do(
-      "submit/ai-extract",
-      // limit:1 — audit doc found Workers AI load-timeouts don't recover
-      // on tight retries; submitExtract throws NonRetryableError anyway.
-      { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
-      () => submitExtract(this.env, fetched)
-    );
+    // K1 (analyst, 2026-05-29 PM): when AI extraction on the fetched URL
+    // returns zero events, fall back to extracting from the email body
+    // itself rather than replying extract-failed. Catches the case where
+    // the parsedUrl was a tracking redirect or registration page that
+    // slipped the host denylist (url-denylist.ts). The fallback is
+    // step-scoped so its retry budget is independent of the failed URL-
+    // extract step; the existing mark-done logic records
+    // extraction_method='free-text' on the inbound_emails row, which
+    // distinguishes the fallback path from a clean URL extract for the
+    // /admin/source-quality dashboard.
+    let extracted;
+    try {
+      extracted = await step.do(
+        "submit/ai-extract",
+        // limit:1 — audit doc found Workers AI load-timeouts don't recover
+        // on tight retries; submitExtract throws NonRetryableError anyway.
+        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        () => submitExtract(this.env, fetched)
+      );
+    } catch (e) {
+      const isZeroEvents =
+        e instanceof NonRetryableError &&
+        typeof e.message === "string" &&
+        e.message.startsWith("extract-upstream: zero-events");
+      const bodyText = rowSnapshot.bodyTextExcerpt;
+      if (!isZeroEvents || !bodyText || bodyText.trim().length === 0) throw e;
+      extracted = await step.do(
+        "submit/free-text-fallback",
+        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
+        () => submitFreeTextExtract(this.env, bodyText)
+      );
+    }
 
     return await this.submitExtractedEvent(
       step,

@@ -210,6 +210,60 @@ describe("computeRateLimit — per-sender tier policy", () => {
   });
 });
 
+// K1 host-denylist regressions (analyst 2026-05-29 PM). Forwarded
+// Mailchimp newsletters and other ESP-wrapped emails carry tracking-
+// redirect URLs (https://us.list-manage.com/...) before the actual
+// event URL. Without the denylist, the workflow's URL-fetch branch
+// fetched the tracker page, got zero events, and replied extract-
+// failed. With the denylist, the tracker URL is skipped: either the
+// next real URL wins, or parsedUrl ends up null and the message
+// routes to the free-text branch (which extracts cleanly from the
+// body the sender actually wrote).
+describe("pickPrimaryUrl — K1 host denylist", () => {
+  it("skips a Mailchimp click-tracker (us.list-manage.com) when a real URL follows", () => {
+    const text =
+      "Register: https://us.list-manage.com/track/click?u=abc&id=def\n" +
+      "More: https://winthroparts.org/festival";
+    expect(pickPrimaryUrl(text, "")).toBe("https://winthroparts.org/festival");
+  });
+
+  it("returns null when only a denylisted URL is present (forces free-text branch)", () => {
+    const text = "Please register: https://us.list-manage.com/track/click?u=abc";
+    expect(pickPrimaryUrl(text, "")).toBeNull();
+  });
+
+  it("skips bit.ly / t.co / tinyurl regardless of order", () => {
+    expect(
+      pickPrimaryUrl("RSVP: https://bit.ly/abc — details https://winthroparts.org/x", "")
+    ).toBe("https://winthroparts.org/x");
+  });
+
+  it("skips denylisted href in HTML body too", () => {
+    const html =
+      '<a href="https://us.list-manage.com/track/abc">Register</a>' +
+      '<a href="https://realfair.example.com/2026">Real event page</a>';
+    expect(pickPrimaryUrl("", html)).toBe("https://realfair.example.com/2026");
+  });
+});
+
+describe("extractAllUrls — K1 host denylist (multi-URL fan-out)", () => {
+  it("excludes denylisted hosts from the multi-URL output", () => {
+    const text =
+      "Three events:\n" +
+      "https://us.list-manage.com/track/abc\n" +
+      "https://winthroparts.org/aug-15\n" +
+      "https://bit.ly/x\n" +
+      "https://otherfair.example.com/sep-3";
+    const out = extractAllUrls(text, "", 10);
+    expect(out).toEqual(["https://winthroparts.org/aug-15", "https://otherfair.example.com/sep-3"]);
+  });
+
+  it("returns an empty list when only denylisted URLs are present", () => {
+    const text = "https://us.list-manage.com/track/a\nhttps://t.co/b\nhttps://mailchi.mp/c";
+    expect(extractAllUrls(text, "", 10)).toEqual([]);
+  });
+});
+
 // buildReply tests moved to __tests__/email-reply-builder.test.ts after
 // the multi-intent refactor — that file owns the templates now and the
 // signature changed from (ctx) to (kind, to, params).
