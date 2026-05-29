@@ -247,6 +247,17 @@ const SCHEMA_SQL = `
     status TEXT
   );
 
+  CREATE TABLE vendor_outreach_attempts (
+    id TEXT PRIMARY KEY,
+    vendor_id TEXT NOT NULL,
+    attempt_started_at INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    outcome TEXT,
+    outcome_at INTEGER,
+    notes TEXT,
+    created_by TEXT
+  );
+
   CREATE TABLE enrichment_log (
     id TEXT PRIMARY KEY,
     target_type TEXT NOT NULL,
