@@ -54,6 +54,9 @@ import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerEmailSenderTools } from "./admin-email-senders.js";
+import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.js";
+import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
+import { registerSourceQualityTool } from "./admin-source-quality.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -126,6 +129,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // upload_image_bytes. Generic across event/vendor/venue. Phase 1 stores
   // bytes as-is; Phase 2 will add server-side optimization.
   registerUploadImageBytesTool(server, auth, env);
+
+  // Analyst F1 (2026-05-29): MCP wrappers for three highest-leverage
+  // admin endpoints added in the 5/26 mega-shipment. Each one lets Claude
+  // drive an operation that previously required a NextAuth-session
+  // browser hop. Inputs follow the same parameter shapes the analyst's
+  // backlog item asked for.
+  registerSalvageInboundEmailTool(server, auth, env);
+  registerOgImageSweepTool(server, auth, env);
+  registerSourceQualityTool(server, db, auth);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
