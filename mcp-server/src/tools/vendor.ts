@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, lte, sql } from "drizzle-orm";
+import { eq, and, or, lte, sql } from "drizzle-orm";
 import { vendors, events, eventVendors, promoters, venues } from "../schema.js";
 import {
   parseJsonArray,
@@ -657,11 +657,34 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         const venueCity = (params.venue_city || "").toLowerCase().trim();
         const venueState = (params.venue_state || "").toUpperCase().trim();
 
-        // Search for existing venue by slug (same pattern as scraper import)
+        // Search for existing venue by slug OR by normalized name. The
+        // name-equality fallback catches pre-canonical rows whose stored
+        // slug doesn't round-trip through current createSlug — e.g.
+        // "Earth Expo & Convention Center at Mohegan Sun" is stored with
+        // slug "earth-expo-convention-center-at-mohegan-sun" (legacy
+        // generator stripped "&"), but canonical createSlug produces
+        // "earth-expo-and-convention-center-at-mohegan-sun" (slugify
+        // expands "&" to "and"). Slug-only matching missed the row and
+        // silently created 3 duplicate Earth Expo venues during a CT
+        // discovery session 2026-05-26. Schema-level entity decoding via
+        // sanitizeProse already covers `&amp;`-style inputs; this guards
+        // the orthogonal "stored slug pre-dates current generator" case.
+        const normalizedVenueName = params.venue_name.trim().toLowerCase();
         const existingVenues = await db
-          .select({ id: venues.id, name: venues.name, city: venues.city, state: venues.state })
+          .select({
+            id: venues.id,
+            name: venues.name,
+            slug: venues.slug,
+            city: venues.city,
+            state: venues.state,
+          })
           .from(venues)
-          .where(eq(venues.slug, unsafeSlug(venueSlug)));
+          .where(
+            or(
+              eq(venues.slug, unsafeSlug(venueSlug)),
+              sql`LOWER(TRIM(${venues.name})) = ${normalizedVenueName}`
+            )
+          );
 
         let matched = false;
 
@@ -695,9 +718,14 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         }
 
         if (!matched) {
-          // Create new venue — generate unique slug
+          // Create new venue — generate unique slug. Only disambiguate
+          // when the canonical slug *actually* collides — a name-only
+          // match found by the OR clause above can have a different stored
+          // slug (legacy generator), in which case `venueSlug` is still
+          // free and the simple form is preferred.
           let finalVenueSlug = venueSlug;
-          if (existingVenues.length > 0) {
+          const slugCollides = existingVenues.some((v) => v.slug === unsafeSlug(venueSlug));
+          if (slugCollides) {
             finalVenueSlug = venueCity
               ? appendSlugSegment(venueSlug, createSlug(venueCity))
               : appendSlugSegment(venueSlug, crypto.randomUUID().substring(0, 8));
