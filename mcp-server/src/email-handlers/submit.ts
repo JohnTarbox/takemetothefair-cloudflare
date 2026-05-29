@@ -258,10 +258,20 @@ export async function submitFetch(env: HandlerEnv, url: string): Promise<SubmitF
  *     AI load-timeouts don't recover on tight retries (same colo, same
  *     overloaded model). One shot, surface the upstream error to the
  *     workflow's catch.
+ *
+ * emailBody (analyst D1, 2026-05-29 PM): when an email submission carries
+ * BOTH a URL and a body that mentions specific dates, the body's dates
+ * are usually more authoritative than the linked page's (the linked page
+ * is often a vendor-application form with a season-start template date).
+ * Passed through to the AI extractor's two-section prompt which marks
+ * the email body as PRIMARY and the fetched URL content as secondary.
+ * Empty string when there's no usable email body (free-text path uses
+ * submitFreeTextExtract instead, not this function).
  */
 export async function submitExtract(
   env: HandlerEnv,
-  fetched: SubmitFetchResult
+  fetched: SubmitFetchResult,
+  emailBody: string = ""
 ): Promise<SubmitExtractResult> {
   let res: Response;
   try {
@@ -277,6 +287,9 @@ export async function submitExtract(
           ogImage: fetched.ogImage,
           jsonLd: fetched.jsonLdSerialized ? JSON.parse(fetched.jsonLdSerialized) : null,
         },
+        // Optional: forwarded only when non-empty so older /extract
+        // route deploys (pre-D1) ignore the field gracefully.
+        ...(emailBody.trim().length > 0 ? { emailBody: emailBody.slice(0, 8000) } : {}),
       }),
     });
   } catch (err) {

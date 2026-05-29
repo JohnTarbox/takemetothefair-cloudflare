@@ -174,6 +174,71 @@ describe("submitExtract — retry contract", () => {
     expect(captured).not.toBeNull();
     expect(captured!.metadata?.jsonLd).toEqual([{ "@type": "Event", name: "X" }]);
   });
+
+  // Analyst D1 (2026-05-29 PM). When the workflow plumbs an email body
+  // alongside the fetched URL content, the body must reach the /extract
+  // endpoint so the AI's two-section prompt fires. Without this, the
+  // jotform vendor-application's stale season-start date wins over the
+  // sender's body-quoted upcoming date.
+  it("forwards a non-empty emailBody to the extract API when provided", async () => {
+    let captured: { emailBody?: string } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        captured =
+          init && typeof init.body === "string"
+            ? (JSON.parse(init.body) as { emailBody?: string })
+            : null;
+        return Response.json({ success: true, events: [{ name: "ok" }], count: 1 });
+      })
+    );
+    const body =
+      "Hi! We'd love to get the Artisans' Market in Unity on your site. " +
+      "Saturday, May 23, 2026 from 9am-2pm. Thanks!";
+    await submitExtract(ENV, FETCHED, body);
+    expect(captured).not.toBeNull();
+    expect(captured!.emailBody).toBe(body);
+  });
+
+  it("omits emailBody field when caller passes empty string", async () => {
+    // Older deploys ignore unknown fields anyway, but omitting the field
+    // entirely keeps the payload minimal for the common URL-import
+    // case where there's no email context.
+    let captured: { emailBody?: unknown } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        captured =
+          init && typeof init.body === "string"
+            ? (JSON.parse(init.body) as { emailBody?: unknown })
+            : null;
+        return Response.json({ success: true, events: [{ name: "ok" }], count: 1 });
+      })
+    );
+    await submitExtract(ENV, FETCHED, "");
+    expect(captured).not.toBeNull();
+    expect("emailBody" in captured!).toBe(false);
+  });
+
+  it("caps emailBody at 8000 chars before sending", async () => {
+    // Protects the AI prompt token budget — a vendor pasting a huge
+    // sales-pitch shouldn't blow past the model's context window.
+    let captured: { emailBody?: string } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        captured =
+          init && typeof init.body === "string"
+            ? (JSON.parse(init.body) as { emailBody?: string })
+            : null;
+        return Response.json({ success: true, events: [{ name: "ok" }], count: 1 });
+      })
+    );
+    const huge = "x".repeat(10_000);
+    await submitExtract(ENV, FETCHED, huge);
+    expect(captured).not.toBeNull();
+    expect(captured!.emailBody?.length).toBe(8000);
+  });
 });
 
 describe("submitEvent — retry contract", () => {

@@ -635,7 +635,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           subject,
           rowSnapshot.fromAddress,
           rowSnapshot.attachmentCount > 0,
-          overflowed
+          overflowed,
+          rowSnapshot.bodyTextExcerpt ?? ""
         );
       }
     }
@@ -726,6 +727,12 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // extraction_method='free-text' on the inbound_emails row, which
     // distinguishes the fallback path from a clean URL extract for the
     // /admin/source-quality dashboard.
+    //
+    // D1 (analyst, 2026-05-29 PM): the primary path passes bodyTextExcerpt
+    // through to submitExtract so the AI can prefer body dates over the
+    // linked page's (e.g. jotform vendor-application's season-start
+    // template date). bodyTextExcerpt can be null on some intent paths
+    // — coerce to empty string for older-deploy-compat.
     let extracted;
     try {
       extracted = await step.do(
@@ -733,7 +740,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         // limit:1 — audit doc found Workers AI load-timeouts don't recover
         // on tight retries; submitExtract throws NonRetryableError anyway.
         { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "30 seconds" },
-        () => submitExtract(this.env, fetched)
+        () => submitExtract(this.env, fetched, rowSnapshot.bodyTextExcerpt ?? "")
       );
     } catch (e) {
       const isZeroEvents =
@@ -930,7 +937,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     subject: string,
     fromAddress: string,
     hasAttachments: boolean,
-    overflowed: boolean
+    overflowed: boolean,
+    // D1 (analyst, 2026-05-29 PM): pass the email body in so the
+    // per-URL submitExtract calls can prefer body dates over the
+    // per-page form's dates. Empty string when no body.
+    emailBody: string = ""
   ): Promise<HandlerResult> {
     interface UrlOutcome {
       url: string;
@@ -962,7 +973,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
             timeout: "30 seconds",
           },
-          () => submitExtract(this.env, fetched)
+          // D1 (analyst, 2026-05-29 PM): same body-priority pass-through
+          // as the single-URL path. Email body is plumbed through as
+          // the function arg.
+          () => submitExtract(this.env, fetched, emailBody)
         );
         const dedup = await step.do(
           `${labelPrefix}/check-duplicate`,
