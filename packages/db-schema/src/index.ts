@@ -1224,6 +1224,50 @@ export const enrichmentLog = sqliteTable(
   ]
 );
 
+// Vendor outreach attempts (analyst J1, 2026-05-29 PM). Log substrate for
+// the /admin/vendor-claim-leaderboard (PR #268) outreach workflow. Once
+// outcomes accumulate, the leaderboard's composite score can incorporate
+// a prior_claim_outcome_signal (similar-shape vendors that claimed → boost;
+// similar-shape vendors that rejected → demote). Append-only by design:
+// one row per attempt; outcomes update the same row (outcome + outcome_at
+// columns) when the channel produces a result. drizzle/0093.
+//
+// Modelled on enrichmentLog above — same append-then-update shape, same
+// FK-cascade-on-vendor-delete behavior. Differs in that outcome enum is
+// channel-agnostic (sent/opened/replied/claimed/rejected/no_response/
+// bounced) rather than the success/failure/skipped trio.
+export const vendorOutreachAttempts = sqliteTable(
+  "vendor_outreach_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    vendorId: text("vendor_id")
+      .notNull()
+      .references(() => vendors.id, { onDelete: "cascade" }),
+    attemptStartedAt: integer("attempt_started_at", { mode: "timestamp" }).notNull(),
+    channel: text("channel", {
+      enum: ["email", "phone", "in_person", "other"],
+    }).notNull(),
+    // Outcome can be null on a freshly-opened attempt (operator logged
+    // "I sent the email; will update when she replies"). UPDATE later
+    // when the channel produces a result.
+    outcome: text("outcome", {
+      enum: ["sent", "opened", "replied", "claimed", "rejected", "no_response", "bounced"],
+    }),
+    outcomeAt: integer("outcome_at", { mode: "timestamp" }),
+    notes: text("notes"),
+    // user_id of the operator that logged the attempt. Nullable so MCP
+    // /Cowork-driven outreach can run without a logged-in user later
+    // (analyst note: outreach automation is a follow-up not in v1 scope).
+    createdBy: text("created_by"),
+  },
+  (t) => [
+    index("idx_vendor_outreach_attempts_vendor_id").on(t.vendorId),
+    index("idx_vendor_outreach_attempts_started").on(t.attemptStartedAt),
+  ]
+);
+
 // §10.2 per-URL time-to-index cycle tracking (drizzle/0057). One row per
 // IndexNow submission; firstCrawlAt + lagSeconds are populated by the sweep
 // that joins against gscInspectionState.lastCrawlTime. Powers §10.3 median.

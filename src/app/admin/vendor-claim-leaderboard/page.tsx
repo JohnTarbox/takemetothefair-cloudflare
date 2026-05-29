@@ -31,10 +31,11 @@
  */
 
 import Link from "next/link";
-import { and, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { analyticsEvents, eventVendors, vendors } from "@/lib/db/schema";
+import { analyticsEvents, eventVendors, vendors, vendorOutreachAttempts } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LogOutreachButton } from "@/components/admin/log-outreach-button";
 
 export const runtime = "edge";
 export const revalidate = 300;
@@ -66,6 +67,12 @@ interface LeaderboardRow {
     completeness: number;
     contactRichness: number;
   };
+  /** Outreach history populated by phase 4 (analyst J1). Lets the
+   *  operator avoid re-attempting an already-contacted vendor and see
+   *  what happened last time. */
+  outreachCount: number;
+  lastOutreachAt: Date | null;
+  lastOutreachOutcome: string | null;
 }
 
 async function loadLeaderboard(): Promise<LeaderboardRow[]> {
@@ -137,6 +144,55 @@ async function loadLeaderboard(): Promise<LeaderboardRow[]> {
     .groupBy(sql`json_extract(${analyticsEvents.properties}, '$.vendorSlug')`);
   const viewCountBySlug = new Map(viewCountRows.map((r) => [r.slug, Number(r.count ?? 0)]));
 
+  // Phase 4 (analyst J1, 2026-05-29 PM): outreach attempts per vendor.
+  // Count of attempts + last attempt timestamp + last outcome surface on
+  // the leaderboard so the operator doesn't re-attempt a vendor that
+  // was already contacted, and sees what happened last time. Once
+  // outcomes accumulate, a prior_claim_outcome_signal can roll into the
+  // composite score (analyst's future note); v1 just surfaces the
+  // history without scoring it.
+  const outreachRows = await db
+    .select({
+      vendorId: vendorOutreachAttempts.vendorId,
+      count: sql<number>`COUNT(*)`,
+      lastAttemptAt: sql<number>`MAX(${vendorOutreachAttempts.attemptStartedAt})`,
+    })
+    .from(vendorOutreachAttempts)
+    .where(inArray(vendorOutreachAttempts.vendorId, vendorIds))
+    .groupBy(vendorOutreachAttempts.vendorId);
+  const outreachByVendor = new Map(
+    outreachRows.map((r) => [
+      r.vendorId,
+      {
+        count: Number(r.count ?? 0),
+        lastAttemptAt: r.lastAttemptAt ? new Date(Number(r.lastAttemptAt) * 1000) : null,
+      },
+    ])
+  );
+
+  // Secondary lookup: outcome of each vendor's MOST-RECENT attempt.
+  // Subquery would be cleaner in raw SQL but Drizzle's grouped-then-
+  // joined shape is awkward; two-pass is fine at ~29 vendors.
+  const lastOutcomeRows =
+    vendorIds.length === 0
+      ? []
+      : await db
+          .select({
+            vendorId: vendorOutreachAttempts.vendorId,
+            outcome: vendorOutreachAttempts.outcome,
+            attemptStartedAt: vendorOutreachAttempts.attemptStartedAt,
+          })
+          .from(vendorOutreachAttempts)
+          .where(inArray(vendorOutreachAttempts.vendorId, vendorIds))
+          .orderBy(desc(vendorOutreachAttempts.attemptStartedAt));
+  const lastOutcomeByVendor = new Map<string, string | null>();
+  for (const row of lastOutcomeRows) {
+    // First row per vendor wins because we ordered DESC by attempt time.
+    if (!lastOutcomeByVendor.has(row.vendorId)) {
+      lastOutcomeByVendor.set(row.vendorId, row.outcome ?? null);
+    }
+  }
+
   // Normalize each signal to 0..1 against the max in the set. Z-score
   // would be technically nicer but the leaderboard is for triage; a
   // proportional fraction is more intuitive when the operator reads
@@ -162,6 +218,7 @@ async function loadLeaderboard(): Promise<LeaderboardRow[]> {
       norm.viewCount * WEIGHT_VIEW_COUNT +
       norm.completeness * WEIGHT_COMPLETENESS +
       norm.contactRichness * WEIGHT_CONTACT_RICHNESS;
+    const outreach = outreachByVendor.get(v.id);
     return {
       id: v.id,
       slug: v.slug,
@@ -175,6 +232,9 @@ async function loadLeaderboard(): Promise<LeaderboardRow[]> {
       viewCount: views,
       score,
       breakdown: norm,
+      outreachCount: outreach?.count ?? 0,
+      lastOutreachAt: outreach?.lastAttemptAt ?? null,
+      lastOutreachOutcome: lastOutcomeByVendor.get(v.id) ?? null,
     };
   });
 
@@ -190,6 +250,29 @@ function scoreBadgeClasses(score: number): string {
   if (score >= 0.6) return "bg-green-50 text-green-800 border-green-300";
   if (score >= 0.3) return "bg-amber-50 text-amber-800 border-amber-300";
   return "bg-gray-50 text-gray-600 border-gray-200";
+}
+
+// Outcome chip colors mirror the operator's mental model: claimed=green,
+// rejected=neutral (not a problem to chase up; just no-go for now),
+// no_response/sent/opened=amber (in-flight, retry-able), bounced=red
+// (broken channel). analyst J1 — same color language we use in
+// /admin/inbound-emails for reply_kind chips.
+function outcomeBadgeClasses(outcome: string): string {
+  switch (outcome) {
+    case "claimed":
+      return "bg-green-50 text-green-800 border-green-300";
+    case "rejected":
+      return "bg-gray-50 text-gray-600 border-gray-200";
+    case "bounced":
+      return "bg-red-50 text-red-800 border-red-300";
+    case "replied":
+      return "bg-blue-50 text-blue-800 border-blue-200";
+    case "sent":
+    case "opened":
+    case "no_response":
+    default:
+      return "bg-amber-50 text-amber-800 border-amber-200";
+  }
 }
 
 export default async function VendorClaimLeaderboardPage() {
@@ -248,6 +331,8 @@ export default async function VendorClaimLeaderboardPage() {
                     <th className="px-4 py-2 font-medium text-right">views</th>
                     <th className="px-4 py-2 font-medium text-right">complete</th>
                     <th className="px-4 py-2 font-medium text-right">score</th>
+                    <th className="px-4 py-2 font-medium">last outreach</th>
+                    <th className="px-4 py-2 font-medium text-right">log</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -296,6 +381,26 @@ export default async function VendorClaimLeaderboardPage() {
                         >
                           {(r.score * 100).toFixed(1)}
                         </span>
+                      </td>
+                      <td className="px-4 py-2 text-xs text-gray-600">
+                        {r.outreachCount === 0 ? (
+                          <span className="text-gray-400">never</span>
+                        ) : (
+                          <span>
+                            {r.outreachCount}× · last{" "}
+                            {r.lastOutreachAt ? r.lastOutreachAt.toISOString().slice(0, 10) : "?"}
+                            {r.lastOutreachOutcome && (
+                              <span
+                                className={`ml-1 inline-block px-1 py-0.5 rounded text-[10px] font-medium border ${outcomeBadgeClasses(r.lastOutreachOutcome)}`}
+                              >
+                                {r.lastOutreachOutcome}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <LogOutreachButton vendorId={r.id} />
                       </td>
                     </tr>
                   ))}

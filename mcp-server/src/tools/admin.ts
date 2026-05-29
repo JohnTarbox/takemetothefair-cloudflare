@@ -57,6 +57,7 @@ import { registerEmailSenderTools } from "./admin-email-senders.js";
 import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.js";
 import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
+import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import {
   registerCitationTools,
   DENORM_FIELD_MAP as CITATION_DENORM_FIELD_MAP,
@@ -138,6 +139,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   registerSalvageInboundEmailTool(server, auth, env);
   registerOgImageSweepTool(server, auth, env);
   registerSourceQualityTool(server, db, auth);
+
+  // Analyst J1 (2026-05-29 PM): outreach-attempt logging substrate for
+  // /admin/vendor-claim-leaderboard. MCP-exposed so Cowork can log
+  // attempts without going through the browser UI.
+  registerLogVendorOutreachTool(server, db, auth);
 
   // ── list_all_events ────────────────────────────────────────────
   // Whitelist of event fields that can be filtered for NULL values
