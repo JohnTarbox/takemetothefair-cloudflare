@@ -474,4 +474,48 @@ describe("suggest_event", () => {
       .all();
     expect(rows).toHaveLength(1);
   });
+
+  // Inverse of the canonical-slug case above: a venue created BEFORE the
+  // canonical generator rolled out can have a stored slug that strips "&"
+  // entirely (legacy regex behavior). For canonical `createSlug` the same
+  // name produces "earth-expo-AND-convention-..." — so slug-only matching
+  // misses the row entirely and silently creates a duplicate.
+  //
+  // Bug surfaced 2026-05-26 in a CT discovery session: 3 duplicate
+  // "Earth Expo & Convention Center at Mohegan Sun" venues were created
+  // and had to be cleaned up. Fix is a name-equality fallback alongside
+  // the slug lookup in the venue resolver.
+  it("dedups against legacy-slug venue whose stored slug pre-dates current createSlug", async () => {
+    seedVenue({
+      id: "venue-existing-legacy-amp",
+      name: "Earth Expo & Convention Center at Mohegan Sun",
+      // Legacy slug: stored before slugify expanded "&" to "and". The
+      // current canonical createSlug for this name would emit
+      // "earth-expo-and-convention-center-at-mohegan-sun" instead.
+      slug: "earth-expo-convention-center-at-mohegan-sun",
+      city: "Uncasville",
+      state: "CT",
+    });
+    await vendorServer.invoke("suggest_event", {
+      name: "NE Christmas Festival 2026",
+      venue_name: "Earth Expo & Convention Center at Mohegan Sun",
+      venue_city: "Uncasville",
+      venue_state: "CT",
+      start_date: "2026-12-05",
+      force_create: true,
+    });
+    // venue-create MUST NOT fire — the legacy-slug row should be matched
+    // by the name-equality fallback in the resolver.
+    expect(mock.calls.map((c) => c.source).sort()).toEqual(["event-create"]);
+
+    const rows = db
+      .select({ id: venues.id, slug: venues.slug })
+      .from(venues)
+      .where(eq(venues.name, "Earth Expo & Convention Center at Mohegan Sun"))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("venue-existing-legacy-amp");
+    // The legacy slug stays — fix should not rewrite existing rows.
+    expect(rows[0].slug).toBe("earth-expo-convention-center-at-mohegan-sun");
+  });
 });
