@@ -11,7 +11,8 @@ import {
   type ScEnv,
   type SearchQueryRow,
 } from "@/lib/search-console";
-import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
+import { DateRangeError, parseAnalyticsParams, resolveDateRange } from "@/lib/analytics-params";
+import { getOutboundClicksForEventSlug } from "@/lib/event-outbound-clicks";
 import { unsafeSlug } from "@/lib/utils";
 
 export const runtime = "edge";
@@ -94,7 +95,33 @@ export async function GET(request: NextRequest) {
       throw err;
     });
 
-    const [analytics, searchQueries] = await Promise.all([ga4Promise, scPromise]);
+    // Analyst A5 (2026-05-29): first-party outbound-click aggregation.
+    // GA4 has the page view; only the D1 beacon has the click. Surface
+    // the totals + top destinations alongside GA4 metrics so per-event
+    // conversion is in one place. Defaults to the same 28-day preset
+    // GA4 uses when no explicit range is requested.
+    const resolved = resolveDateRange(params.dateRange, { defaultPreset: "last_28d" });
+    const clicksPromise = getOutboundClicksForEventSlug(
+      db,
+      event.slug,
+      new Date(`${resolved.startDate}T00:00:00Z`),
+      // endDate exclusive — add one day to make the SC/GA4-style
+      // inclusive endDate equivalent for the SQLite < comparison.
+      new Date(new Date(`${resolved.endDate}T00:00:00Z`).getTime() + 86400_000)
+    ).catch(() => ({
+      ticketClicks: 0,
+      applicationClicks: 0,
+      totalClicks: 0,
+      topDestinations: [],
+      windowStartIso: resolved.startDate,
+      windowEndIso: resolved.endDate,
+    }));
+
+    const [analytics, searchQueries, outboundClicks] = await Promise.all([
+      ga4Promise,
+      scPromise,
+      clicksPromise,
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -113,6 +140,7 @@ export async function GET(request: NextRequest) {
       },
       analytics,
       searchQueries,
+      outboundClicks,
     });
   } catch (error) {
     if (error instanceof DateRangeError) {
