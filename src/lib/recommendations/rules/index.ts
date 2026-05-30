@@ -36,6 +36,7 @@ import { confirmPastEventOccurrenceRule } from "./confirm-past-event-occurrence"
 import { eventDateDriftRule } from "./event-date-drift";
 import { eventsPendingReviewRule } from "./events-pending-review";
 import { eventsLegacyGateCandidatesRule } from "./events-legacy-gate-candidates";
+import { memoryRuleConversionStatusRule } from "./memory-rule-conversion-status";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -83,4 +84,8 @@ export const ALL_RULES: RuleDefinition[] = [
   // Retroactive scanner — APPROVED events that pre-date the 2026-05-16 gate
   // rollout (or have drifted since) and would now route to PENDING_REVIEW.
   eventsLegacyGateCandidatesRule,
+  // Memory-rule conversion backlog (analyst Item 5f, 2026-05-30). Tier-3
+  // process surface — reads from a hand-curated static list in the rule's
+  // source file (memory lives on the fs, not in D1).
+  memoryRuleConversionStatusRule,
 ];
