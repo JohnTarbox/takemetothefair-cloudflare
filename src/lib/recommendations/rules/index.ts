@@ -26,6 +26,7 @@ import { stubsReadyForEnrichmentRule } from "./stubs-ready-for-enrichment";
 import { standardsEligibleForClaimOutreachRule } from "./standards-eligible-for-claim-outreach";
 import { claimedReadyForEnhancedUpsellRule } from "./claimed-ready-for-enhanced-upsell";
 import { lowCtrPagesRule } from "./low-ctr-pages";
+import { page1ZeroClickQueriesRule } from "./page-1-zero-click-queries";
 import { slugQualityDriftRule } from "./slug-quality-drift";
 import { hijackedDomainDetectionRule } from "./hijacked-domain-detection";
 import { cannibalizationDetectionRule } from "./cannibalization-detection";
@@ -58,6 +59,11 @@ export const ALL_RULES: RuleDefinition[] = [
   // SEO + data-quality rules from doc §10.4 (PR L). Note: page_2_close_calls
   // is doc-listed but already shipped as seoPosition1120Rule above.
   lowCtrPagesRule,
+  // Page-1 zero-click queries (analyst Item 2, Phase 2 spec, 2026-05-30).
+  // Complement to low_ctr_pages: catches the harsher "zero clicks despite
+  // page-1 rank" failure mode that needs a fundamental snippet rewrite,
+  // not a tweak. 7-day window vs 28-day on low-ctr — recent regressions.
+  page1ZeroClickQueriesRule,
   slugQualityDriftRule,
   hijackedDomainDetectionRule,
   cannibalizationDetectionRule,
