@@ -32,7 +32,7 @@
  *   - dismissed_until IS NULL OR dismissed_until < now (snooze expired)
  */
 
-import { and, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
 import { errorLogs, recommendationItems, recommendationRules } from "@/lib/db/schema";
@@ -583,6 +583,46 @@ export async function getActiveItems(db: Db): Promise<ActiveItem[]> {
       lastSeenAt: r.lastSeenAt,
     };
   });
+}
+
+/**
+ * Per-rule "open count as of N days ago" — drives the WoW trend column on
+ * the Recommendations tab (analyst Item 10 split, 2026-05-30).
+ *
+ * An item is considered "open at asOf" if:
+ *   - firstSeenAt <= asOf (existed at the cutoff), AND
+ *   - (actedAt IS NULL OR actedAt > asOf) — still unresolved at the cutoff
+ *
+ * Dismissals are NOT excluded here: a snoozed item still counts as an open
+ * problem from the operator's perspective; the trend tells you whether the
+ * underlying issue queue is shrinking or growing, regardless of UI hides.
+ *
+ * Returns a Map keyed by ruleId. Rules with zero open items at asOf are
+ * absent from the map (caller treats absence as 0).
+ *
+ * Cheap: one SQL with COUNT(*) GROUP BY rule_id and an indexed range on
+ * firstSeenAt. No new schema.
+ */
+export async function getOpenMatchCountsAsOf(db: Db, asOf: Date): Promise<Map<string, number>> {
+  const rows = await db
+    .select({
+      ruleId: recommendationItems.ruleId,
+      n: sql<number>`COUNT(*)`,
+    })
+    .from(recommendationItems)
+    .where(
+      and(
+        lte(recommendationItems.firstSeenAt, asOf),
+        or(
+          isNull(recommendationItems.actedAt),
+          sql`${recommendationItems.actedAt} > ${Math.floor(asOf.getTime() / 1000)}`
+        )
+      )
+    )
+    .groupBy(recommendationItems.ruleId);
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(r.ruleId, Number(r.n));
+  return out;
 }
 
 // Snooze-forever sentinel: a date far past anything we'd see in practice but

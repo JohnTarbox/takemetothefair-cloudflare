@@ -1383,7 +1383,8 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
 }
 
 async function RecommendationsTab() {
-  const { getActiveItems, getScanState } = await import("@/lib/recommendations/engine");
+  const { getActiveItems, getScanState, getOpenMatchCountsAsOf } =
+    await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
   const { RecommendationBulkActions } =
     await import("@/components/admin/recommendation-bulk-actions");
@@ -1394,7 +1395,16 @@ async function RecommendationsTab() {
   type Tier = import("@/lib/recommendations/tiers").Tier;
 
   const db = getCloudflareDb();
-  const [rawItems, scanState] = await Promise.all([getActiveItems(db), getScanState(db)]);
+  // Analyst Item 10 (split, 2026-05-30): per-rule WoW trend column. The
+  // 7d-ago snapshot is computed at query time from recommendation_items —
+  // no schema change needed. Single COUNT(*) GROUP BY plus filter on
+  // firstSeenAt + actedAt; cheap enough to run on every render.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000);
+  const [rawItems, scanState, weekAgoCounts] = await Promise.all([
+    getActiveItems(db),
+    getScanState(db),
+    getOpenMatchCountsAsOf(db, sevenDaysAgo),
+  ]);
 
   // Resolve gsc_query items' topPagePath through slug-history at render
   // time so renamed-but-live slugs surface their CURRENT path instead of
@@ -1840,6 +1850,35 @@ async function RecommendationsTab() {
                                   ? `${count} of ${group.totalMatchCount} affected`
                                   : `${count} affected`}
                               </span>
+                              {(() => {
+                                // Analyst Item 10 (split, 2026-05-30) WoW chip:
+                                // delta vs. open-count 7 days ago. Direction
+                                // colored from the operator's perspective —
+                                // ↓ (shrinking queue) = green, ↑ (growing) =
+                                // amber, no change = gray dash. Hidden when
+                                // both counts are 0 (avoids 0-vs-0 noise on
+                                // freshly-shipped rules).
+                                const prev = weekAgoCounts.get(group.ruleId) ?? 0;
+                                const delta = count - prev;
+                                if (prev === 0 && count === 0) return null;
+                                const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "—";
+                                const sign = delta > 0 ? "+" : "";
+                                const trendClass =
+                                  delta > 0
+                                    ? "text-amber-700 bg-amber-50 border-amber-200"
+                                    : delta < 0
+                                      ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                                      : "text-gray-600 bg-gray-50 border-gray-200";
+                                return (
+                                  <span
+                                    className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${trendClass}`}
+                                    title={`Week-over-week: ${prev} open 7d ago → ${count} now`}
+                                  >
+                                    {arrow}
+                                    {delta === 0 ? "" : `${sign}${delta}`}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <p className="text-sm text-gray-700 mt-1.5 ml-6">
                               {rationaleFor(group)}
