@@ -25,6 +25,7 @@ import { SITEMAP_MIN_COMPLETENESS } from "@takemetothefair/utils";
 import { getMaxGa4DateWithUsers, getOrganicSessions, type Ga4Env } from "@/lib/ga4";
 import { getMaxGscDataDate, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
 import { classifyKpi, KPI_NAMES, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
+import { dispatchKpiAlert } from "@/lib/kpi-alerts";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -420,6 +421,14 @@ export async function recomputeKpiStates(
   const now = new Date();
   const insertRows: Array<typeof kpiStateHistory.$inferInsert> = [];
   const auditRows: Array<typeof adminActions.$inferInsert> = [];
+  // A3 (analyst Item 8, 2026-05-30): retain decisions so the post-insert
+  // alert dispatch can pull the transition info without recomputing.
+  const transitionEvents: Array<{
+    kpi: KpiName;
+    fromState: KpiState | null;
+    toState: KpiState;
+    value: number | null;
+  }> = [];
   let transitions = 0;
   let resolved = 0;
 
@@ -446,7 +455,15 @@ export async function recomputeKpiStates(
       meta: JSON.stringify({ ...v.meta, dataAgeSeconds: v.dataAgeSeconds }),
     });
 
-    if (decision.stateChangedFromPrevious) transitions += 1;
+    if (decision.stateChangedFromPrevious) {
+      transitions += 1;
+      transitionEvents.push({
+        kpi,
+        fromState: prev ? (prev.state as KpiState) : null,
+        toState: decision.state,
+        value: v.value,
+      });
+    }
     if (decision.isResolution && prev) {
       resolved += 1;
       auditRows.push({
@@ -470,6 +487,31 @@ export async function recomputeKpiStates(
   }
   if (auditRows.length > 0) {
     await db.insert(adminActions).values(auditRows);
+  }
+
+  // A3 (analyst Item 8, 2026-05-30): push notifications on threshold
+  // transitions. Fire AFTER the row insert so the debounce query inside
+  // dispatchKpiAlert can see the just-written row. Dispatch errors are
+  // swallowed inside the helper — a failed alert must not roll back the
+  // KPI recompute (the data is already canonical in kpi_state_history).
+  // GREEN resolutions are NOT alerted (audit row is sufficient); only
+  // RED/YELLOW/STALE entries get pushed downstream.
+  for (const t of transitionEvents) {
+    try {
+      await dispatchKpiAlert(db, {
+        kpiName: t.kpi,
+        fromState: t.fromState,
+        toState: t.toState,
+        value: t.value,
+        detectedAt: now,
+      });
+    } catch (err) {
+      // Belt-and-suspenders: dispatchKpiAlert already swallows internally,
+      // but if a future change introduces a throw path we don't want it
+      // breaking the recompute return.
+       
+      console.error(`[kpi-alerts] dispatch failed for ${t.kpi}:`, err);
+    }
   }
 
   return { written: insertRows.length, transitions, resolved };
