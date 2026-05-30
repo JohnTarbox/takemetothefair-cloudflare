@@ -1463,6 +1463,71 @@ async function RecommendationsTab() {
     .sort((a, b) => b.score - a.score)
     .slice(0, 10);
 
+  // Analyst Item 2 (2026-05-30): per-ITEM opportunities feed showing the
+  // 10 highest-leverage individual targets across all rules — different
+  // from the per-rule rollup above. Operator clicks a row and goes
+  // straight to "rewrite this title and meta description for THIS event"
+  // rather than "look at the low_ctr_pages bucket and pick one yourself."
+  //
+  // Limited to gsc_query items because they have the single-line format
+  // the spec calls for (query · impressions · clicks · position · action).
+  // Other item types have varied payloads that don't render cleanly in
+  // a uniform list — they remain visible via the per-rule grouping below.
+  // Sort key: impressions descending (impact proxy that works for both
+  // page_1_zero_click_queries and low_ctr_pages — clicks foregone is
+  // proportional to impressions × baseline-CTR-at-position).
+  interface PerItemOpportunity {
+    itemId: string;
+    ruleId: string;
+    ruleKey: string;
+    severity: Sev;
+    query: string;
+    impressions: number;
+    clicks: number;
+    position: number;
+    suggestedAction: string;
+    targetUrl: string | null;
+  }
+  const perItemOpportunities: PerItemOpportunity[] = items
+    .filter((it) => it.targetType === "gsc_query" && it.payload != null)
+    .map((it): PerItemOpportunity | null => {
+      const p = it.payload as Record<string, unknown>;
+      const query = typeof p.query === "string" ? p.query : null;
+      const impressions = typeof p.impressions === "number" ? p.impressions : null;
+      if (!query || impressions == null) return null;
+      const clicks = typeof p.clicks === "number" ? p.clicks : 0;
+      const position = typeof p.position === "number" ? p.position : 0;
+      const action =
+        typeof p.suggestedAction === "string"
+          ? p.suggestedAction
+          : it.ruleKey === "low_ctr_pages"
+            ? "Rewrite title and meta description"
+            : it.ruleKey === "seo_position_11_20"
+              ? "Boost internal links and refresh content"
+              : "Review opportunity";
+      const url =
+        "resolvedTopPagePath" in it && typeof it.resolvedTopPagePath === "string"
+          ? it.resolvedTopPagePath
+          : typeof p.topPagePath === "string"
+            ? p.topPagePath
+            : null;
+      return {
+        itemId: it.itemId,
+        ruleId: it.ruleId,
+        ruleKey: it.ruleKey,
+        severity: it.severity as Sev,
+        query,
+        impressions,
+        clicks,
+        position,
+        suggestedAction: action,
+        targetUrl: url,
+      };
+    })
+    .filter((x): x is PerItemOpportunity => x != null)
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 10);
+
   const severityMeta: Record<
     Sev,
     { label: string; cardBorder: string; badge: string; chip: string }
@@ -1643,11 +1708,76 @@ async function RecommendationsTab() {
         </div>
       )}
 
-      {/* §10.3 opportunities feed — top 10 across all tiers ordered by score. */}
+      {/* Analyst Item 2 (2026-05-30): per-ITEM opportunities feed —
+          top 10 individual gsc_query targets across all rules, sorted
+          by impressions (impact proxy). Operator clicks a row and goes
+          straight to a specific URL with a specific action; bridges
+          the gap between the Site CTR KPI ("rewrite event title /
+          description template" — abstract) and Monday work. Distinct
+          from the per-rule rollup below. */}
+      {perItemOpportunities.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Top opportunities (next 10 to work)</CardTitle>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Highest-impact individual queries across all SEO rules. Sorted by impressions —
+              biggest potential traffic recovery first.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1.5 text-sm">
+              {perItemOpportunities.map((o) => {
+                const sevMeta = severityMeta[o.severity];
+                return (
+                  <li key={o.itemId} className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2 min-w-0 flex-1">
+                      <span
+                        className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0 mt-0.5 ${sevMeta.chip}`}
+                      >
+                        {o.ruleKey === "page_1_zero_click_queries"
+                          ? "0-click"
+                          : o.ruleKey === "low_ctr_pages"
+                            ? "low CTR"
+                            : o.ruleKey === "seo_position_11_20"
+                              ? "page 2"
+                              : "SEO"}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-gray-900 truncate">{o.query}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {o.targetUrl && (
+                            <Link
+                              href={o.targetUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 hover:underline"
+                            >
+                              {o.targetUrl}
+                            </Link>
+                          )}
+                          {o.targetUrl && " · "}
+                          <span className="tabular-nums">
+                            {o.impressions} imp, {o.clicks} clicks, pos {o.position}
+                          </span>
+                          {" · "}
+                          <span className="text-gray-700">{o.suggestedAction}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* §10.3 opportunities feed — top 10 across all tiers ordered by score.
+          Per-RULE rollup. Complement to the per-ITEM feed above. */}
       {opportunities.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle>Opportunities feed (top {opportunities.length})</CardTitle>
+            <CardTitle>Top rules by impact ({opportunities.length})</CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-1.5 text-sm">
