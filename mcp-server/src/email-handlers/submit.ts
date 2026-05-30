@@ -80,19 +80,22 @@ export interface SubmitExtractResult {
    *  Forwarded to the workflow's mark-done step which persists it to
    *  inbound_emails.extraction_method (drizzle/0083). */
   extractionMethod: "json-ld" | "ai" | "free-text";
-  /** Total events the extractor detected on the page. Almost always 1
-   *  (single-event submission). When >1, the workflow surfaces the
-   *  count in the reply so the submitter knows we noticed the other
-   *  events on the landing page even though we only ingested the
-   *  first as a PENDING row — analyst D1 (2026-05-29) Phase 1.
-   *
-   *  Phase 2 will fan out into N PENDING events (one per detected
-   *  event) — bigger workflow surgery deferred. */
+  /** Total events the extractor detected on the page. Equal to
+   *  `events.length`; kept as a numeric mirror for the reply-template
+   *  signature where the field was first introduced (analyst D1 Phase 1,
+   *  2026-05-29). */
   totalEventsDetected: number;
   /** Names of additional events the extractor detected (max 5).
-   *  Surfaced in the reply when totalEventsDetected > 1 so the sender
-   *  sees specifically which events we noticed but didn't ingest. */
+   *  Phase-1 visibility field kept for the single-event reply path that
+   *  no longer fires when fan-out runs. Unused on the multi-event reply
+   *  (which lists outcomes per event via the ok-multi template). */
   additionalEventNames: string[];
+  /** All events the extractor detected, in source-order. C1 Phase 2
+   *  (analyst C1, 2026-05-30) — the workflow's fan-out branch reads from
+   *  this array and runs one dedup+submit cycle per entry, producing
+   *  N PENDING events for a multi-event landing page. `event` (= events[0])
+   *  is preserved for the single-event reply path and any older readers. */
+  events: ExtractedEvent[];
 }
 
 /**
@@ -341,6 +344,7 @@ export async function submitExtract(
     extractionMethod: body.extractionMethod ?? "ai",
     totalEventsDetected,
     additionalEventNames,
+    events: body.events,
   };
 }
 
@@ -418,6 +422,7 @@ export async function submitFreeTextExtract(
     extractionMethod: "free-text",
     totalEventsDetected,
     additionalEventNames,
+    events: body.events,
   };
 }
 

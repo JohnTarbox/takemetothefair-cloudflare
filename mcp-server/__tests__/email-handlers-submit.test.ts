@@ -140,6 +140,31 @@ describe("submitExtract — retry contract", () => {
     expect(result.event.name).toBe("Test Fair");
   });
 
+  // C1 Phase 2 (analyst, 2026-05-30): the workflow's multi-event fan-out
+  // branch reads from `result.events`. The single-event case must populate
+  // the array too so downstream code can iterate uniformly (length===1 is
+  // the no-fan-out path, length>1 triggers the fan-out).
+  it("populates events array with all detected entries on multi-event extract", async () => {
+    mockFetch(() =>
+      Response.json({
+        success: true,
+        events: [
+          { name: "Sandy River Farmers Market" },
+          { name: "Saturday Farmers Market" },
+          { name: "Winter Farmers Market" },
+        ],
+        count: 3,
+      })
+    );
+    const result = await submitExtract(ENV, FETCHED);
+    expect(result.events).toHaveLength(3);
+    expect(result.events[0].name).toBe("Sandy River Farmers Market");
+    expect(result.events[2].name).toBe("Winter Farmers Market");
+    // event === events[0] — preserved single-event path stays consistent.
+    expect(result.event.name).toBe(result.events[0].name);
+    expect(result.totalEventsDetected).toBe(3);
+  });
+
   it("throws NonRetryableError on any failure mode (no retries — audit doc)", async () => {
     mockFetch(() => new Response("error", { status: 500 }));
     const err = await submitExtract(ENV, FETCHED).catch((e) => e);
