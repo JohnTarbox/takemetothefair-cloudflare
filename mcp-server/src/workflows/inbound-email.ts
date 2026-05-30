@@ -787,6 +787,22 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     hasAttachments: boolean,
     fetchMethod: "standard" | "browser-rendering" | null
   ): Promise<HandlerResult> {
+    // C1 Phase 2 (analyst, 2026-05-30): multi-event landing pages
+    // (e.g. https://downtownfarmington.com/farmers-markets/ listing 3
+    // markets). Phase 1 (PR #267) surfaced the count + first-3 names in
+    // the reply but only ingested events[0]. This branch fans out to
+    // N PENDING events — one per detected entry — using the ok-multi
+    // reply template (same shape as B1 multi-URL).
+    if (extracted.events.length > 1) {
+      return await this.runMultiEventFanOut(
+        step,
+        extracted,
+        subject,
+        fromAddress,
+        hasAttachments,
+        fetchMethod
+      );
+    }
     // Duplicate-check before insert. Two-stage (exact source_url, then
     // name+date similarity ≥0.85 within ±7d) — sender of an already-
     // listed event gets the tailored "already-exists" reply pointing at
@@ -906,6 +922,141 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       },
       status: "replied",
       resultingEventId: submitted.id,
+      fetchMethod,
+      extractionMethod: extracted.extractionMethod,
+    };
+  }
+
+  /**
+   * C1 Phase 2 multi-event fan-out. Called from submitExtractedEvent when
+   * a SINGLE URL (or B2 free-text body) produced >1 events. Distinct from
+   * runMultiUrlPipeline — that one handles N URLs from the body, this
+   * handles N events extracted from one source. Same outcome-aggregation
+   * shape feeding the same ok-multi reply template.
+   *
+   * Per-event: rebuild a single-event-shaped extracted struct
+   * (`{...extracted, event: events[i]}`) and run the standard
+   * dedup-then-submit pair as their own step.do checkpoints. Each event
+   * gets its own duplicate-check (different name/date → no spurious
+   * collisions across events on the same page). Skips the B5 Phase 1
+   * dedup-tier audit per-event — same posture as runMultiUrlPipeline,
+   * since the multi-event dedup-hit case is rare and the existing log
+   * write isn't worth the added per-iteration overhead.
+   *
+   * resulting_event_id on the parent inbound_emails row is set to the
+   * FIRST created event id, mirroring the multi-URL behavior so admin
+   * has a useful jump-link. Parent/child inbound_emails lineage (one
+   * row per child event) is a separate follow-up — analyst noted as
+   * deferred. fetchMethod is forwarded so /admin/source-quality keeps
+   * accurate path attribution across the fanned-out events.
+   */
+  private async runMultiEventFanOut(
+    step: WorkflowStep,
+    extracted: import("../email-handlers/submit.js").SubmitExtractResult,
+    subject: string,
+    fromAddress: string,
+    hasAttachments: boolean,
+    fetchMethod: "standard" | "browser-rendering" | null
+  ): Promise<HandlerResult> {
+    interface EventOutcome {
+      eventName: string;
+      kind: "created" | "already-exists" | "submit-failed";
+      eventSlug?: string;
+      eventId?: string;
+    }
+    const outcomes: EventOutcome[] = [];
+    let firstCreatedEventId: string | null = null;
+
+    for (let i = 0; i < extracted.events.length; i++) {
+      const childEvent = extracted.events[i];
+      // Build a single-event-shaped struct so the existing submitCheck-
+      // Duplicate / submitEvent functions can reuse their current paths.
+      // url/fieldConfidence/extractionMethod are shared across all events
+      // from one source page so we carry them through verbatim.
+      const perEvent: import("../email-handlers/submit.js").SubmitExtractResult = {
+        ...extracted,
+        event: childEvent,
+      };
+      const labelPrefix = `submit/fanout[${i}]`;
+      try {
+        const dedup = await step.do(
+          `${labelPrefix}/check-duplicate`,
+          { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          () => submitCheckDuplicate(this.env, perEvent)
+        );
+        if (dedup.isDuplicate && dedup.existingEventSlug) {
+          outcomes.push({
+            eventName: dedup.existingEventName ?? childEvent.name,
+            kind: "already-exists",
+            eventSlug: dedup.existingEventSlug,
+            eventId: dedup.existingEventId,
+          });
+          continue;
+        }
+        const submitted = await step.do(
+          `${labelPrefix}/submit-event`,
+          {
+            retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+            timeout: "15 seconds",
+          },
+          () => submitEvent(this.env, perEvent, fromAddress)
+        );
+        outcomes.push({
+          eventName: submitted.eventName,
+          kind: "created",
+          eventSlug: submitted.slug,
+          eventId: submitted.id,
+        });
+        if (!firstCreatedEventId) firstCreatedEventId = submitted.id;
+      } catch (err) {
+        // Per-event failures degrade gracefully — other events still run.
+        // Unlike multi-URL there's no fetch-failed / extract-failed branch
+        // here; the extractor already returned all events successfully,
+        // so any failure during fan-out is a submit-side issue.
+        const msg = err instanceof Error ? err.message : String(err);
+        outcomes.push({
+          eventName: childEvent.name || `Event ${i + 1}`,
+          kind: "submit-failed",
+        });
+        // Log so /admin/diagnostics surfaces the failure pattern.
+        await logError(getDb(this.env.DB), {
+          source: "mcp:workflow:multi-event-fanout",
+          message: `submit failed for event ${i + 1}/${extracted.events.length}: ${msg}`,
+          error: err,
+        });
+      }
+    }
+
+    // Reuse the ok-multi template's bullet shape. Each event becomes one
+    // line — no URLs in the rendered text because every event shares the
+    // same source URL on a multi-event landing page.
+    const resultsText = outcomes
+      .map((o) => {
+        switch (o.kind) {
+          case "created":
+            return `✅ "${o.eventName}" — pending review`;
+          case "already-exists":
+            return `✅ "${o.eventName}" — already in our directory: https://meetmeatthefair.com/events/${o.eventSlug}`;
+          case "submit-failed":
+            return `❌ Couldn't save "${o.eventName}" — our team will follow up`;
+        }
+      })
+      .join("\n");
+
+    return {
+      replyKind: "ok-multi",
+      replyParams: {
+        subject,
+        eventCount: outcomes.length,
+        resultsText,
+        hasAttachments,
+        // Multi-event fan-out doesn't overflow at the URL-extraction layer
+        // (those are URLs, not extracted events). Keep the template field
+        // satisfied with false.
+        overflowed: false,
+      },
+      status: "replied",
+      resultingEventId: firstCreatedEventId,
       fetchMethod,
       extractionMethod: extracted.extractionMethod,
     };
