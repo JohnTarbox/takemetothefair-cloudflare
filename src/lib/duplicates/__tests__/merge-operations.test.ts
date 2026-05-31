@@ -318,6 +318,166 @@ describe("executeMerge", () => {
       expect(result.deletedId).toBe("duplicate-id");
     });
 
+    // K-bundle followup (2026-05-31). Verifies the source_url-transfer
+    // fix: when the duplicate has source_url/source_domain/etc populated
+    // but the keeper has them as NULL, mergeEvents copies them over so
+    // they're not lost when the dup is tombstoned. Hit twice in
+    // production during the bundle's dogfood (Kids Con + Bonny Eagle).
+    it("copies source_* fields from duplicate to keeper when keeper has NULL", async () => {
+      let batchCallCount = 0;
+      const updateSetCalls: Array<Record<string, unknown>> = [];
+
+      const db = {
+        select: vi.fn().mockImplementation(() => ({
+          from: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockResolvedValue([]),
+          })),
+        })),
+        update: vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockImplementation((vals: Record<string, unknown>) => {
+            updateSetCalls.push(vals);
+            return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          }),
+        })),
+        delete: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        insert: vi.fn().mockImplementation(() => ({
+          values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1)
+            return Promise.resolve([
+              [],
+              [],
+              // Keeper: NULL source fields — the gap-fill case.
+              [
+                {
+                  slug: "primary-event",
+                  viewCount: 100,
+                  sourceUrl: null,
+                  sourceDomain: null,
+                  sourceId: null,
+                  sourceName: null,
+                },
+              ],
+              // Duplicate: carries source attribution that the keeper lacks.
+              [
+                {
+                  slug: "duplicate-event",
+                  viewCount: 50,
+                  mergedInto: null,
+                  sourceUrl: "https://example.org/event",
+                  sourceDomain: "example.org",
+                  sourceId: "evt-123",
+                  sourceName: "Example.org",
+                },
+              ],
+            ]);
+          if (batchCallCount === 2)
+            return Promise.resolve([
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+            ]);
+          return Promise.resolve([
+            [{ id: "primary-id", slug: "primary-event" }],
+            [{ name: "Venue" }],
+            [{ companyName: "Promoter" }],
+            [{ count: 0 }],
+          ]);
+        }),
+      } as unknown;
+
+      await executeMerge(db as never, "events", "primary-id", "duplicate-id");
+
+      // The transfer UPDATE should appear in the captured .set() calls
+      // with the source_* fields from the duplicate. Order doesn't
+      // matter; the test asserts content, not position.
+      const transferUpdate = updateSetCalls.find(
+        (u) => "sourceUrl" in u && u.sourceUrl === "https://example.org/event"
+      );
+      expect(transferUpdate).toBeDefined();
+      expect(transferUpdate?.sourceDomain).toBe("example.org");
+      expect(transferUpdate?.sourceId).toBe("evt-123");
+      expect(transferUpdate?.sourceName).toBe("Example.org");
+    });
+
+    it("does NOT overwrite source_* fields when keeper already has them", async () => {
+      let batchCallCount = 0;
+      const updateSetCalls: Array<Record<string, unknown>> = [];
+
+      const db = {
+        select: vi.fn().mockImplementation(() => ({
+          from: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockResolvedValue([]),
+          })),
+        })),
+        update: vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockImplementation((vals: Record<string, unknown>) => {
+            updateSetCalls.push(vals);
+            return { where: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+          }),
+        })),
+        delete: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        insert: vi.fn().mockImplementation(() => ({
+          values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1)
+            return Promise.resolve([
+              [],
+              [],
+              // Keeper: already has source fields — should NOT be overwritten.
+              [
+                {
+                  slug: "primary-event",
+                  viewCount: 100,
+                  sourceUrl: "https://keeper.org/event",
+                  sourceDomain: "keeper.org",
+                  sourceId: "keeper-evt",
+                  sourceName: "Keeper.org",
+                },
+              ],
+              [
+                {
+                  slug: "duplicate-event",
+                  viewCount: 50,
+                  mergedInto: null,
+                  sourceUrl: "https://example.org/event",
+                  sourceDomain: "example.org",
+                  sourceId: "evt-123",
+                  sourceName: "Example.org",
+                },
+              ],
+            ]);
+          if (batchCallCount === 2) return Promise.resolve([{}, {}, {}, {}, {}]);
+          return Promise.resolve([
+            [{ id: "primary-id", slug: "primary-event" }],
+            [{ name: "Venue" }],
+            [{ companyName: "Promoter" }],
+            [{ count: 0 }],
+          ]);
+        }),
+      } as unknown;
+
+      await executeMerge(db as never, "events", "primary-id", "duplicate-id");
+
+      // No update call should carry a source_* key — the conditional
+      // gate-fill block skipped the whole UPDATE because the empty
+      // sourceTransferUpdates object yielded zero keys.
+      const transferUpdate = updateSetCalls.find((u) =>
+        ["sourceUrl", "sourceDomain", "sourceId", "sourceName"].some((k) => k in u)
+      );
+      expect(transferUpdate).toBeUndefined();
+    });
+
     // Each guard-throw test needs a `select` chain mock because Drizzle's
     // eager query-builder syntax (`db.batch([db.select().from().where(),
     // ...])`) evaluates the chain BEFORE the batch executor sees it. The
