@@ -449,11 +449,31 @@ export async function submitCheckDuplicate(
   env: HandlerEnv,
   extracted: SubmitExtractResult
 ): Promise<SubmitCheckDuplicateResult> {
-  const body: { sourceUrl?: string; name?: string; startDate?: string } = {
+  // K2 (analyst, 2026-05-31): forward venue strings so the dedup endpoint
+  // can match on (venue OR city+state) + date as PRIMARY signal. Previously
+  // this wire only sent {sourceUrl, name, startDate}, which made the email
+  // pipeline weaker than suggest_event / update_event: the Winthrop Arts
+  // Festival duplicate (PENDING 25ef60f0 vs APPROVED 4ee1de4a) slipped
+  // through Levenshtein-on-name. The /check-duplicate endpoint resolves
+  // venueId server-side via autoLinkVenue and joins through venues for
+  // the city+state fallback.
+  const body: {
+    sourceUrl?: string;
+    name?: string;
+    startDate?: string;
+    venueName?: string;
+    venueAddress?: string;
+    venueCity?: string;
+    venueState?: string;
+  } = {
     sourceUrl: extracted.url,
   };
   if (extracted.event.name) body.name = extracted.event.name;
   if (extracted.event.startDate) body.startDate = extracted.event.startDate;
+  if (extracted.event.venueName) body.venueName = extracted.event.venueName;
+  if (extracted.event.venueAddress) body.venueAddress = extracted.event.venueAddress;
+  if (extracted.event.venueCity) body.venueCity = extracted.event.venueCity;
+  if (extracted.event.venueState) body.venueState = extracted.event.venueState;
 
   let res: Response;
   try {
