@@ -55,3 +55,10 @@ next-env.d.ts
 
 # gvalidate output
 gvalidate-results/
+
+# Analyst-reply drafts staged at repo root before copying to Downloads.
+# Session-internal artifacts (private operator decisions, not committed code).
+ANALYST_REPLY_*.md
+
+# Local-only design discussions held outside committed docs/.
+docs/repo-privacy-tradeoff.md
