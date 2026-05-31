@@ -39,9 +39,9 @@ describe("getMergePreview", () => {
     it("throws error for unknown entity type", async () => {
       const db = createMockDb() as unknown;
 
-      await expect(
-        getMergePreview(db as never, "unknown" as never, "id1", "id2")
-      ).rejects.toThrow("Unknown entity type: unknown");
+      await expect(getMergePreview(db as never, "unknown" as never, "id1", "id2")).rejects.toThrow(
+        "Unknown entity type: unknown"
+      );
     });
   });
 
@@ -190,9 +190,9 @@ describe("executeMerge", () => {
     it("throws error for unknown entity type", async () => {
       const db = createMockDb() as unknown;
 
-      await expect(
-        executeMerge(db as never, "unknown" as never, "id1", "id2")
-      ).rejects.toThrow("Unknown entity type: unknown");
+      await expect(executeMerge(db as never, "unknown" as never, "id1", "id2")).rejects.toThrow(
+        "Unknown entity type: unknown"
+      );
     });
   });
 
@@ -222,7 +222,8 @@ describe("executeMerge", () => {
           // First batch: transfer events + get favorites
           if (batchCallCount === 1) return Promise.resolve([updateResults, [{ userId: "user-1" }]]);
           // Second batch: transfer/delete favorites
-          if (batchCallCount === 2) return Promise.resolve([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+          if (batchCallCount === 2)
+            return Promise.resolve([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
           // Third batch: get merged entity + count
           return Promise.resolve([[primaryVenue], [{ count: 5 }]]);
         }),
@@ -237,16 +238,35 @@ describe("executeMerge", () => {
   });
 
   describe("events merge", () => {
-    it("merges events and combines view counts", async () => {
-      const primaryEvent = { id: "primary-id", name: "Primary Event", viewCount: 100, venueId: "v1", promoterId: "p1" };
-      const duplicateEvent = { id: "duplicate-id", viewCount: 50 };
+    // K3 (analyst, 2026-05-31) — mergeEvents was rewritten to tombstone
+    // the duplicate (rename slug + insert slug history + status=REJECTED
+    // + merged_into=keeperId) instead of deleting it. The batch
+    // structure shifted accordingly:
+    //   Batch 1 (4 calls): primaryVendors, existingFavorites,
+    //                       primarySnap{slug,viewCount},
+    //                       duplicateSnap{slug,viewCount,mergedInto}
+    //   Batch 2 (5 calls): cleanup userFavorites, rename dup slug,
+    //                       insert slug_history, set dup REJECTED +
+    //                       merged_into, admin_actions insert
+    //   Batch 3 (4 calls): fetch merged entity + venue + promoter +
+    //                       eventVendor count (unchanged)
+    it("tombstones the duplicate (slug rename + REJECTED + admin_actions) and combines view counts", async () => {
+      const primaryEvent = {
+        id: "primary-id",
+        name: "Primary Event",
+        slug: "primary-event",
+        viewCount: 100,
+        venueId: "v1",
+        promoterId: "p1",
+      };
 
       let batchCallCount = 0;
 
       const db = {
+        // Outside-of-batch SELECT for the dupDayDates intermediate read.
         select: vi.fn().mockImplementation(() => ({
           from: vi.fn().mockImplementation(() => ({
-            where: vi.fn().mockResolvedValue([primaryEvent]),
+            where: vi.fn().mockResolvedValue([]),
           })),
         })),
         update: vi.fn().mockImplementation(() => ({
@@ -257,22 +277,29 @@ describe("executeMerge", () => {
         delete: vi.fn().mockImplementation(() => ({
           where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
         })),
+        insert: vi.fn().mockImplementation(() => ({
+          values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
         batch: vi.fn().mockImplementation(() => {
           batchCallCount++;
-          // First batch: get primary vendors, existing favorites, duplicate data
-          if (batchCallCount === 1) return Promise.resolve([
-            [{ vendorId: "vendor-1" }],
-            [{ userId: "user-1" }],
-            [duplicateEvent],
-          ]);
-          // Second batch: transfer vendors, update view count, transfer/delete favorites
-          if (batchCallCount === 2) return Promise.resolve([
-            { rowsAffected: 1 },
-            { rowsAffected: 1 },
-            { rowsAffected: 1 },
-            { rowsAffected: 1 },
-          ]);
-          // Third batch: get merged entity, venue, promoter, count
+          // Batch 1 — snapshots.
+          if (batchCallCount === 1)
+            return Promise.resolve([
+              [{ vendorId: "vendor-1" }],
+              [{ userId: "user-1" }],
+              [{ slug: "primary-event", viewCount: 100 }],
+              [{ slug: "duplicate-event", viewCount: 50, mergedInto: null }],
+            ]);
+          // Batch 2 — tombstone + cleanup + audit (5 ops).
+          if (batchCallCount === 2)
+            return Promise.resolve([
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+            ]);
+          // Batch 3 — final fetch.
           return Promise.resolve([
             [primaryEvent],
             [{ name: "Venue" }],
@@ -285,7 +312,62 @@ describe("executeMerge", () => {
       const result = await executeMerge(db as never, "events", "primary-id", "duplicate-id");
 
       expect(result.success).toBe(true);
+      // `deletedId` retained for backward compatibility with the
+      // MergeResponse contract even though the row is now tombstoned,
+      // not deleted. See the function docblock.
       expect(result.deletedId).toBe("duplicate-id");
+    });
+
+    // Each guard-throw test needs a `select` chain mock because Drizzle's
+    // eager query-builder syntax (`db.batch([db.select().from().where(),
+    // ...])`) evaluates the chain BEFORE the batch executor sees it. The
+    // chain returns query objects that the batch then resolves. The mock
+    // here just needs `select().from().where()` to not crash; the batch
+    // mock returns the snapshot data.
+    const selectChain = () => ({
+      select: vi.fn().mockImplementation(() => ({
+        from: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockResolvedValue([]),
+        })),
+      })),
+    });
+
+    it("refuses to merge an event into itself", async () => {
+      const db = {
+        ...selectChain(),
+        batch: vi
+          .fn()
+          .mockImplementation(() =>
+            Promise.resolve([
+              [],
+              [],
+              [{ slug: "x", viewCount: 0 }],
+              [{ slug: "x", viewCount: 0, mergedInto: null }],
+            ])
+          ),
+      } as unknown;
+      await expect(executeMerge(db as never, "events", "same-id", "same-id")).rejects.toThrow(
+        /same event/
+      );
+    });
+
+    it("refuses to merge into an already-merged duplicate", async () => {
+      const db = {
+        ...selectChain(),
+        batch: vi
+          .fn()
+          .mockImplementation(() =>
+            Promise.resolve([
+              [],
+              [],
+              [{ slug: "keeper", viewCount: 0 }],
+              [{ slug: "dup", viewCount: 0, mergedInto: "some-other-id" }],
+            ])
+          ),
+      } as unknown;
+      await expect(
+        executeMerge(db as never, "events", "keeper-id", "duplicate-id")
+      ).rejects.toThrow(/already merged/);
     });
   });
 
@@ -300,7 +382,8 @@ describe("executeMerge", () => {
           from: vi.fn().mockImplementation(() => ({
             where: vi.fn().mockImplementation(() => {
               selectCallCount++;
-              if (selectCallCount === 1) return Promise.resolve([{ eventId: "event-1" }, { eventId: "event-2" }]); // primary events
+              if (selectCallCount === 1)
+                return Promise.resolve([{ eventId: "event-1" }, { eventId: "event-2" }]); // primary events
               if (selectCallCount === 2) return Promise.resolve([{ userId: "user-1" }]); // existing favorites
               if (selectCallCount === 3) return Promise.resolve([primaryVendor]); // merged entity
               return Promise.resolve([{ count: 3 }]); // event vendor count
