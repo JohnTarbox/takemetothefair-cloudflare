@@ -557,7 +557,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         })
         .optional()
         .describe(
-          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline). When set, one citation row is inserted per tracked field touched."
+          "Provenance for tracked-field changes (estimated_attendance, vendor_fee_min/max, ticket_price_min/max, application_deadline, start_date, end_date, venue_id, name). When set, one citation row is inserted per tracked field touched. K4 (2026-05-31) extended this to the structural fields (dates/venue/name) — the highest-stakes data on the site MUST carry an auditable source URL."
         ),
     },
     async (params) => {

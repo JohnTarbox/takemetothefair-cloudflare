@@ -243,6 +243,115 @@ describe("create_event_citation", () => {
     })) as { isError: boolean };
     expect(result.isError).toBe(true);
   });
+
+  // K4 (analyst, 2026-05-31) — structural fields: start_date, end_date,
+  // venue_id, name. The DENORM_FIELD_MAP extension means citations on
+  // these fields now sync the denormalized column on insert, same as
+  // the numeric fields. The Saco/Rangeley/Litchfield date corrections
+  // and the Saco Arts→Downtown Saco venue rename are the canonical
+  // cases that triggered this.
+
+  it("syncs events.start_date when field_name=start_date", async () => {
+    const eventId = seedEvent();
+    const result = parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: eventId,
+        field_name: "start_date",
+        value: "2026-06-05",
+        source_url: "https://rangeleylakeschamber.com/events",
+        source_type: "official_website",
+      })
+    );
+    expect(result.event_column_updated).toBe("startDate");
+    expect(result.column_skip_reason).toBeNull();
+
+    const eventRow = await db.select().from(events).where(eq(events.id, eventId));
+    // Drizzle stores `mode: "timestamp"` columns as Date instances on
+    // read; just compare ISO date prefix.
+    expect(eventRow[0].startDate?.toISOString().slice(0, 10)).toBe("2026-06-05");
+  });
+
+  it("syncs events.end_date when field_name=end_date", async () => {
+    const eventId = seedEvent();
+    parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: eventId,
+        field_name: "end_date",
+        value: "2026-06-07",
+        source_url: "https://example.org",
+        source_type: "official_website",
+      })
+    );
+    const eventRow = await db.select().from(events).where(eq(events.id, eventId));
+    expect(eventRow[0].endDate?.toISOString().slice(0, 10)).toBe("2026-06-07");
+  });
+
+  it("syncs events.venue_id when field_name=venue_id (UUID form)", async () => {
+    const eventId = seedEvent();
+    const newVenueId = "aaaabbbb-cccc-dddd-eeee-ffff00001111";
+    const result = parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: eventId,
+        field_name: "venue_id",
+        value: newVenueId,
+        source_url: "https://example.org/announcement",
+        source_type: "press_release",
+      })
+    );
+    expect(result.event_column_updated).toBe("venueId");
+    const eventRow = await db.select().from(events).where(eq(events.id, eventId));
+    expect(eventRow[0].venueId).toBe(newVenueId);
+  });
+
+  it("rejects garbage venue_id values without clobbering the column", async () => {
+    const eventId = seedEvent();
+    const result = parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: eventId,
+        field_name: "venue_id",
+        value: "not-a-venue-id",
+        source_url: "https://example.org",
+        source_type: "other",
+      })
+    );
+    expect(result.event_column_updated).toBeNull();
+    expect(result.column_skip_reason).toBe("parse_failed");
+    // Citation row was still inserted (other keys are stored as
+    // citations only — see DENORM_FIELD_MAP docblock).
+    const rows = await db.select().from(eventDataCitations);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].fieldName).toBe("venue_id");
+  });
+
+  it("syncs events.name when field_name=name", async () => {
+    const eventId = seedEvent();
+    parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: eventId,
+        field_name: "name",
+        value: "Maine Antique Tractor Show 2026",
+        source_url: "https://maineantiquetractorclub.org",
+        source_type: "official_website",
+      })
+    );
+    const eventRow = await db.select().from(events).where(eq(events.id, eventId));
+    expect(eventRow[0].name).toBe("Maine Antique Tractor Show 2026");
+  });
+
+  it("rejects empty / whitespace-only name without clobbering the column", async () => {
+    const eventId = seedEvent();
+    const result = parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: eventId,
+        field_name: "name",
+        value: "   ",
+        source_url: "https://example.org",
+        source_type: "other",
+      })
+    );
+    expect(result.event_column_updated).toBeNull();
+    expect(result.column_skip_reason).toBe("parse_failed");
+  });
 });
 
 // list_event_citations ------------------------------------------------------

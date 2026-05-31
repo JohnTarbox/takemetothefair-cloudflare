@@ -65,6 +65,59 @@ const DENORM_FIELD_MAP: Record<string, DenormSpec> = {
       return isNaN(d.getTime()) ? undefined : d;
     },
   },
+  // K4 (analyst, 2026-05-31): structural fields — start_date, end_date,
+  // venue_id, name. These are the highest-stakes fields on the site
+  // ("trustworthy data" value prop), so corrections to them MUST carry
+  // an auditable source URL. The existing update_event tool at
+  // admin.ts:1072-1134 already iterates requestedFields and inserts a
+  // citation per field when params.citation is provided; registering
+  // these four entries here is the whole hook.
+  //
+  // Surfaced 5/31 during the June verification pass: Waterford date
+  // Jul 20 → 19, Rangeley Jun 4 → 5, Litchfield Jun 20 → 21, Saco Arts
+  // Festival → Downtown Saco, South Berwick → Central School Grounds.
+  // None of those corrections had a citation row attached because the
+  // map didn't recognize the field_name.
+  start_date: {
+    column: "startDate",
+    parse: (raw) => {
+      const d = new Date(raw);
+      return isNaN(d.getTime()) ? undefined : d;
+    },
+  },
+  end_date: {
+    column: "endDate",
+    parse: (raw) => {
+      const d = new Date(raw);
+      return isNaN(d.getTime()) ? undefined : d;
+    },
+  },
+  venue_id: {
+    column: "venueId",
+    // Accept UUID or legacy 32-char hex id (matches the K5 input
+    // relaxation across the citation tools — the venues.id column is
+    // plain TEXT and pre-UUID-era venues use the hex form).
+    parse: (raw) => {
+      const trimmed = raw.trim();
+      // Permissive: 32 hex chars (legacy) OR dashed UUID-ish (≥32 chars,
+      // hex with dashes). Stricter validation lives at the FK level.
+      if (/^[a-f0-9]{32}$/i.test(trimmed)) return trimmed;
+      if (/^[a-f0-9-]{36}$/i.test(trimmed)) return trimmed;
+      return undefined;
+    },
+  },
+  name: {
+    column: "name",
+    // Decoded for HTML entities at the schema-validation boundary
+    // (sanitizeProse in update_event, decodeHtmlEntities in
+    // create_event_citation). Here we just trim and reject empty
+    // strings so a NULL/whitespace value doesn't silently nuke the
+    // name column.
+    parse: (raw) => {
+      const trimmed = raw.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    },
+  },
 };
 
 function parseDollarsToCents(raw: string): number | undefined {
@@ -119,7 +172,7 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
         .min(1)
         .max(64)
         .describe(
-          "Free-text field key. Known keys that map to denormalized columns: estimated_attendance, vendor_fee_min, vendor_fee_max, ticket_price_min, ticket_price_max, application_deadline. Other keys are stored as citations only."
+          "Free-text field key. Known keys that map to denormalized columns and update on insert: estimated_attendance, vendor_fee_min, vendor_fee_max, ticket_price_min, ticket_price_max, application_deadline, start_date, end_date, venue_id, name. Other keys are stored as citations only (no column sync)."
         ),
       value: z
         .string()
