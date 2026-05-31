@@ -670,7 +670,19 @@ async function mergeEvents(
         and(eq(userFavorites.favoritableType, "EVENT"), eq(userFavorites.favoritableId, primaryId))
       ),
     db
-      .select({ slug: events.slug, viewCount: events.viewCount })
+      .select({
+        slug: events.slug,
+        viewCount: events.viewCount,
+        // K-bundle followup (2026-05-31): source fields read so the
+        // source_url-transfer step below can fill in any keeper NULLs
+        // from the duplicate. Without this, the K-bundle's first 4
+        // production merges (Winthrop / Kids Con / Bonny Eagle /
+        // ComicCon) dropped the duplicate's source_url silently.
+        sourceUrl: events.sourceUrl,
+        sourceDomain: events.sourceDomain,
+        sourceId: events.sourceId,
+        sourceName: events.sourceName,
+      })
       .from(events)
       .where(eq(events.id, primaryId)),
     db
@@ -678,6 +690,10 @@ async function mergeEvents(
         slug: events.slug,
         viewCount: events.viewCount,
         mergedInto: events.mergedInto,
+        sourceUrl: events.sourceUrl,
+        sourceDomain: events.sourceDomain,
+        sourceId: events.sourceId,
+        sourceName: events.sourceName,
       })
       .from(events)
       .where(eq(events.id, duplicateId)),
@@ -774,6 +790,35 @@ async function mergeEvents(
     .update(events)
     .set({ viewCount: sql`${events.viewCount} + ${duplicate.viewCount || 0}` })
     .where(eq(events.id, primaryId));
+
+  // K-bundle followup (analyst, 2026-05-31). Copy source-* fields from
+  // duplicate → keeper ONLY when the keeper's value is NULL. Hit twice
+  // in K-bundle dogfood (Kids Con + Bonny Eagle: keeper had no
+  // source_url but duplicate did; merging dropped the URL). Conservative
+  // by design — never overwrite an existing keeper value, never copy a
+  // NULL FROM the duplicate, and assemble the update set inline so an
+  // empty {} (keeper already populated) skips the round-trip.
+  const sourceTransferUpdates: Partial<{
+    sourceUrl: string;
+    sourceDomain: string;
+    sourceId: string;
+    sourceName: string;
+  }> = {};
+  if (!keeper.sourceUrl && duplicate.sourceUrl) {
+    sourceTransferUpdates.sourceUrl = duplicate.sourceUrl;
+  }
+  if (!keeper.sourceDomain && duplicate.sourceDomain) {
+    sourceTransferUpdates.sourceDomain = duplicate.sourceDomain;
+  }
+  if (!keeper.sourceId && duplicate.sourceId) {
+    sourceTransferUpdates.sourceId = duplicate.sourceId;
+  }
+  if (!keeper.sourceName && duplicate.sourceName) {
+    sourceTransferUpdates.sourceName = duplicate.sourceName;
+  }
+  if (Object.keys(sourceTransferUpdates).length > 0) {
+    await db.update(events).set(sourceTransferUpdates).where(eq(events.id, primaryId));
+  }
 
   // Transfer favorites with collision-avoidance (a single user can only
   // favorite the same event once). Move only the dup rows that don't

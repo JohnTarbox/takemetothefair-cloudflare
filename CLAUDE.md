@@ -197,6 +197,69 @@ Located in `src/lib/scrapers/`. Import events from external fair websites (maine
 4. JSON-LD structured data used when available for higher accuracy
 5. Date parsing handles multiple formats (ISO, "February 01, 2026", "1/15/25", etc.)
 
+## Dedup, merge, and provenance (K-bundle, 2026-05-31)
+
+Three coupled surfaces — shipped as PRs #280–#287 in May 2026 (drizzle/0094, 0095, 0096). When working in this area, know the data model BEFORE editing.
+
+### Dedup match key — `findDuplicate()`
+
+Source of truth: `src/lib/duplicates/find-duplicate.ts`. The 4-stage matcher used by the `/api/suggest-event/check-duplicate` route (and intended for the email pipeline's enrich-or-flag step once Part 5's behavior wiring lands):
+
+1. `exact_url` — `events.source_url` equality (short-circuit)
+2. `venue_date` — `autoLinkVenue` resolves a venueId; events at that venue within ±7d
+3. `city_state_date` — `events INNER JOIN venues` on city+state; ±7d (catches the Winthrop-shape case where two venue rows describe the same place)
+4. `similar_name_date` — Levenshtein > 0.85 on `normalizeName(name)` (legacy tiebreaker)
+
+`normalizeName()` lives in `src/lib/duplicates/normalize-name.ts` and strips leading ordinals (`38th `, `Annual `), trailing year (` 2026`), and punctuation.
+
+**Two existing MCP tools — `suggest_event` (vendor.ts:772-788) and `update_event` (admin.ts:861-911) — still use a different overlap-based dedup**. Rewiring them through `findDuplicate` is deferred per #285's commit message — they surface `warnings.possible_duplicates` rather than blocking, so the behavior change needs its own audit.
+
+### Merge — `merge_events` MCP tool + `mergeEvents()` core
+
+When two events are confirmed to be the same, `merge_events(keeper_event_id, duplicate_event_id)` (in `mcp-server/src/tools/admin-event-lifecycle.ts`, calling `/api/admin/duplicates/merge` over `X-Internal-Key`) preserves SEO equity:
+
+1. **Renames** the duplicate's slug to `<orig>-merged-<id8>` so the URL is free
+2. **Writes `event_slug_history`** (`oldSlug=<original-dup>, newSlug=<keeper>, eventId=keeperId`). Middleware (`src/middleware.ts:204-217`) walks this chain → 301 redirect from old slug to keeper.
+3. **Marks duplicate `status='REJECTED'`, `merged_into=keeperId`** — row stays as audit tombstone
+4. **Transfers FK children**: `event_vendors`, `event_days`, `event_data_citations`, `content_links` (target_type='EVENT'), `user_favorites`; `view_count` adds. Source-\* fields (`source_url`, `source_domain`, `source_id`, `source_name`) gap-fill from dup → keeper when keeper has NULL.
+5. **Writes `admin_actions(action='event.merge')`**
+
+Refuses if the duplicate is already merged (`merged_into IS NOT NULL`) or if ids are equal.
+
+### Provenance — `event_data_citations`
+
+Citations table tracks "source X said field Y = Z" for events. Updated 2026-05-31 to cover the structural fields too — `start_date`, `end_date`, `venue_id`, `name` in addition to the numeric `estimated_attendance` / fee / ticket-price / `application_deadline`. The denorm map at `mcp-server/src/tools/admin-citations.ts:36` is the allow-list.
+
+`update_event` accepts an optional `citation: { source_url, source_type, ... }` arg; when present and a tracked field changes, one citation row is auto-inserted per touched field, auto-superseding any prior `active` citation for the same `(event, field, year)` bucket.
+
+### Sweep canary — `/api/admin/duplicates/sweep`
+
+Daily-pollable endpoint (`src/app/api/admin/duplicates/sweep/route.ts`) returns APPROVED-event clusters that share `(venue_id, start_date)` or `(venues.city, venues.state, events.start_date)`. Subset-filtered server-side. **Doesn't auto-merge** — surfaces candidates for operator triage via `merge_events`. Cron canary for Slack alerts on growth is deferred per #287's commit.
+
+### Extractor robustness — deterministic salvage
+
+When `/api/admin/import-url/extract` calls Workers AI and gets zero events back, it falls through to a deterministic composer (`src/lib/url-import/deterministic/compose.ts`) that lifts name + date + venue from:
+
+- Add-to-calendar URL params (Google Calendar TEMPLATE, Outlook deeplink) — `calendar-link.ts`
+- Month-day-range regex over cleaned text (`JUNE 19-20, 2026`) — `date-regex.ts`
+- OG title / h1 / h2 / URL-slug — `og-name.ts`
+
+Gate: `name + (date OR venue)`. On pass, returns `extractionMethod: "thin"` which flips `inbound_emails.flagged_for_review=1` at the workflow's `mark-done` step. Telemetry columns `extract_fail_reason`, `content_sha256_first16`, `content_length_chars` on `inbound_emails` are populated by the workflow's `submit/persist-extract-context` step (after fetch, before AI extract).
+
+### Key column semantics
+
+| Column                               | Where        | Meaning                                                                                                                                                                                     |
+| ------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `events.merged_into`                 | drizzle/0095 | Set by `merge_events`. Row is a tombstone — its slug redirects to the keeper via slug-history.                                                                                              |
+| `events.possible_duplicate_of`       | drizzle/0096 | **Behavior wiring deferred (#286).** Intended for MEDIUM-confidence dedup matches from the email pipeline — flags PENDING for operator review. Today the column exists but nothing sets it. |
+| `inbound_emails.flagged_for_review`  | pre-existing | Now also set when `extractionMethod='thin'` (deterministic salvage).                                                                                                                        |
+| `inbound_emails.extract_fail_reason` | drizzle/0094 | Categorical: `zero-events` / `thin-content` / `parse-error` / `ai-timeout` / `other`. Set in the AI-extract catch.                                                                          |
+
+### Session-state gotchas
+
+- The MCP tool registry I see is frozen from session-start. After deploying a new MCP tool (like `merge_events`), it isn't in the `mcp__claude_ai_*` namespace until the next session. Mid-session, call it via direct curl using the `mmatf_` admin token (see `[[reference_admin_mcp_token]]`).
+- Prod D1 reads via `wrangler d1 execute --remote` are blocked by the auto-mode classifier even for SELECT. Use the Cloudflare Developer Platform MCP server's `d1_database_query` tool instead (see `[[feedback_prod_d1_blocked_via_wrangler]]`).
+
 ## Test Accounts (after seeding)
 
 - Admin: admin@takemetothefair.com / admin123
