@@ -243,6 +243,21 @@ export const events = sqliteTable(
     // plain text per the parentEmailId convention — the FK + ON DELETE
     // SET NULL semantics live in the SQL migration. */
     mergedInto: text("merged_into"),
+    // K2 part 5 (analyst, 2026-05-31) — possible-duplicate pointer
+    // (drizzle/0096). Set by the email pipeline's enrich-or-flag step
+    // when dedup found a MEDIUM-confidence match (city_state_date or
+    // similar_name_date), distinct from HIGH-confidence matches
+    // (exact_url, venue_date) which short-circuit to an already-exists
+    // reply. The flagged PENDING goes into the admin review queue at
+    // /admin/possible-duplicates; the operator either clears the
+    // pointer (confirm distinct) or calls merge_events with this row
+    // as the duplicate (confirm same).
+    //
+    // Behavior wiring is DEFERRED to a follow-up PR — this PR lands
+    // only the column so Part 6's sweep can reference it and a future
+    // workflow PR can set it. Self-FK at SQL level per the
+    // parentEmailId convention.
+    possibleDuplicateOf: text("possible_duplicate_of"),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
@@ -292,6 +307,12 @@ export const events = sqliteTable(
     index("idx_events_merged_into")
       .on(table.mergedInto)
       .where(sql`${table.mergedInto} IS NOT NULL`),
+    // K2 part 5 (drizzle/0096) — partial index supports the
+    // /admin/possible-duplicates queue + the Part 6 sweep's
+    // cross-check ("don't surface clusters that are already flagged").
+    index("idx_events_possible_duplicate_of")
+      .on(table.possibleDuplicateOf)
+      .where(sql`${table.possibleDuplicateOf} IS NOT NULL`),
   ]
 );
 

@@ -129,6 +129,9 @@ const SCHEMA_SQL = `
     og_image_sweep_attempted_at INTEGER,
     -- K3 (drizzle/0095, analyst, 2026-05-31) — merge tombstone pointer.
     merged_into TEXT,
+    -- K2 part 5 (drizzle/0096, analyst, 2026-05-31) — possible-duplicate
+    -- pointer for MEDIUM-confidence dedup matches.
+    possible_duplicate_of TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );
