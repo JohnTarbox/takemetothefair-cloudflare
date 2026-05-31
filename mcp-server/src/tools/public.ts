@@ -319,9 +319,13 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── list_event_vendors ─────────────────────────────────────────
   server.tool(
     "list_event_vendors",
-    "List vendors participating in an event (approved/confirmed only).",
+    "List vendors participating in an event (approved/confirmed only). Pass either event_id or event_slug — adjacent tools (get_event_lifecycle_history, list_event_citations, update_event_status) key on event_id, so accepting both keeps the MCP surface consistent.",
     {
-      event_slug: z.string().describe("Event slug"),
+      // K6 (analyst, 2026-05-31): accept event_id OR event_slug to match the
+      // rest of the event-tool surface. One must be provided; if both are,
+      // event_id wins. Avoids a forced slug round-trip mid-workflow.
+      event_id: z.string().min(1).optional().describe("Event ID (UUID or legacy hex)."),
+      event_slug: z.string().min(1).optional().describe("Event slug."),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
       offset: z
         .number()
@@ -330,12 +334,26 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe("Number of results to skip for pagination (default 0)"),
     },
     async (params) => {
-      // Find event by slug
-      const eventRows = await db
-        .select({ id: events.id, name: events.name })
-        .from(events)
-        .where(and(eq(events.slug, unsafeSlug(params.event_slug)), publicEventWhere()))
-        .limit(1);
+      if (!params.event_id && !params.event_slug) {
+        return {
+          content: [{ type: "text", text: "event_id or event_slug is required." }],
+          isError: true,
+        };
+      }
+
+      // Resolve event row. event_id wins over slug; both branches still gate on
+      // publicEventWhere() so this tool never leaks pending/rejected events.
+      const eventRows = params.event_id
+        ? await db
+            .select({ id: events.id, name: events.name })
+            .from(events)
+            .where(and(eq(events.id, params.event_id), publicEventWhere()))
+            .limit(1)
+        : await db
+            .select({ id: events.id, name: events.name })
+            .from(events)
+            .where(and(eq(events.slug, unsafeSlug(params.event_slug!)), publicEventWhere()))
+            .limit(1);
 
       if (eventRows.length === 0) {
         return { content: [{ type: "text", text: "Event not found." }], isError: true };
