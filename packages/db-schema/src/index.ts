@@ -233,6 +233,16 @@ export const events = sqliteTable(
     // surfaced the loop). To retry an attempted event after Phase 2b's
     // dead-URL fallback lands, NULL the column for the target rows.
     ogImageSweepAttemptedAt: integer("og_image_sweep_attempted_at", { mode: "timestamp" }),
+    // K3 (analyst, 2026-05-31) — merge tombstone pointer (drizzle/0095).
+    // Set by mergeEvents() when an operator collapses a duplicate into a
+    // keeper. The merge transaction also: renames the duplicate's slug to
+    // `<orig>-merged-<id8>`, writes an event_slug_history row so the
+    // original slug 301s to the keeper, and marks the duplicate's status
+    // = 'REJECTED'. Reads should treat `merged_into IS NOT NULL` as
+    // "this row is a tombstone, redirect to the keeper". Self-FK uses
+    // plain text per the parentEmailId convention — the FK + ON DELETE
+    // SET NULL semantics live in the SQL migration. */
+    mergedInto: text("merged_into"),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
@@ -276,6 +286,12 @@ export const events = sqliteTable(
     index("idx_events_state_code").on(table.stateCode),
     index("idx_events_completeness_score").on(table.completenessScore),
     index("idx_events_lifecycle_status").on(table.lifecycleStatus),
+    // K3 (drizzle/0095) — partial index for "show me events merged into X"
+    // queries + the admin_actions reverse lookup. Most events have NULL
+    // mergedInto so the partial keeps the index small.
+    index("idx_events_merged_into")
+      .on(table.mergedInto)
+      .where(sql`${table.mergedInto} IS NOT NULL`),
   ]
 );
 

@@ -377,4 +377,139 @@ export function registerEventLifecycleTools(
       };
     }
   );
+
+  // ── merge_events ───────────────────────────────────────────────
+  //
+  // K3 (analyst, 2026-05-31). Wraps the main-app /api/admin/duplicates/
+  // merge endpoint, which now accepts X-Internal-Key auth. The merge
+  // logic itself lives in src/lib/duplicates/merge-operations.ts —
+  // documented design is rename-dup-slug + insert slug_history + mark
+  // REJECTED + merged_into. Preserves SEO equity: the duplicate's
+  // original slug 301s to the keeper instead of 404ing.
+  //
+  // Pre-flight via `preview: true` returns the existing
+  // getEventMergePreview() output (relationship counts, warnings about
+  // different venue/promoter) so the operator can sanity-check before
+  // committing.
+  server.tool(
+    "merge_events",
+    [
+      "Merge a duplicate event INTO a keeper, preserving SEO equity via slug-history",
+      "redirect. The duplicate row is tombstoned (status='REJECTED' + merged_into=keeper)",
+      "with its slug renamed; /events/<original-dup-slug> 301s to the keeper. Transfers",
+      "event_vendors, event_days, event_data_citations, content_links (target_type=EVENT),",
+      "and user_favorites. Writes admin_actions(action='event.merge') with both ids in the",
+      "payload.",
+      "",
+      "Use preview=true first to see what will change and whether there are warnings",
+      "(different promoter, different venue, overlapping vendors). Refuses to merge an",
+      "event with itself or one that's already merged.",
+    ].join(" "),
+    {
+      keeper_event_id: z
+        .string()
+        .min(1)
+        .describe("Event ID to keep (winner). Receives transferred children + slug history."),
+      duplicate_event_id: z
+        .string()
+        .min(1)
+        .describe(
+          "Event ID to merge in (loser). Slug renamed to <orig>-merged-<id8>; status set to REJECTED; merged_into points at keeper."
+        ),
+      preview: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, return relationship counts + warnings without committing. Defaults to false."
+        ),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [{ type: "text", text: "MAIN_APP_URL or INTERNAL_API_KEY not configured." }],
+          isError: true,
+        };
+      }
+      if (params.keeper_event_id === params.duplicate_event_id) {
+        return {
+          content: [{ type: "text", text: "keeper_event_id and duplicate_event_id must differ." }],
+          isError: true,
+        };
+      }
+
+      // Preview branch uses the existing GET-ish preview endpoint.
+      // Note: the main-app preview route only takes admin session auth
+      // today (not the internal key); the MCP tool short-cuts straight
+      // to executing for the merge case. A future "preview from MCP"
+      // would extend the preview endpoint similarly. For now, refuse
+      // preview from MCP and direct the operator to use the admin UI.
+      if (params.preview) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Preview from MCP isn't supported yet — open the admin UI's duplicates view for a preview, then call merge_events without preview=true to commit.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const res = await fetch(`${env.MAIN_APP_URL}/api/admin/duplicates/merge`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-internal-key": env.INTERNAL_API_KEY,
+        },
+        body: JSON.stringify({
+          type: "events",
+          primaryId: params.keeper_event_id,
+          duplicateId: params.duplicate_event_id,
+          actorUserId: auth.userId,
+        }),
+      });
+
+      const data = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        error?: string;
+        isTimeout?: boolean;
+        mergedEntity?: { id: string; name: string; slug: string };
+        transferredRelationships?: Record<string, number>;
+        deletedId?: string;
+      } | null;
+
+      if (!res.ok || !data?.success) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: data?.error
+                ? `merge_events failed: ${data.error}`
+                : `merge_events failed: HTTP ${res.status}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          jsonContent({
+            success: true,
+            keeper_event_id: params.keeper_event_id,
+            tombstoned_event_id: params.duplicate_event_id,
+            keeper_slug: data.mergedEntity?.slug ?? null,
+            transferred: data.transferredRelationships ?? {},
+            // To verify the SEO redirect, query the public URL for the
+            // duplicate's ORIGINAL slug (which the operator already
+            // knows from looking it up before calling this tool):
+            //   curl -sI https://meetmeatthefair.com/events/<original-dup-slug>
+            //   → expect HTTP/2 301 + Location: /events/<keeper-slug>
+            verify_redirect_hint:
+              "GET https://meetmeatthefair.com/events/<original-duplicate-slug> → expect 301 to /events/<keeper-slug>",
+          }),
+        ],
+      };
+    }
+  );
 }

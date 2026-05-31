@@ -127,6 +127,8 @@ const SCHEMA_SQL = `
     gate_flags TEXT,
     approval_notified_at INTEGER,
     og_image_sweep_attempted_at INTEGER,
+    -- K3 (drizzle/0095, analyst, 2026-05-31) — merge tombstone pointer.
+    merged_into TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );

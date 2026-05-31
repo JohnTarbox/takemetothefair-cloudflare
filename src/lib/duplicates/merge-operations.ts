@@ -1,6 +1,19 @@
 import { eq, and, inArray, sql, notInArray } from "drizzle-orm";
 import type { Database } from "@/lib/db";
-import { venues, events, vendors, promoters, eventVendors, userFavorites } from "@/lib/db/schema";
+import {
+  venues,
+  events,
+  vendors,
+  promoters,
+  eventVendors,
+  userFavorites,
+  eventDays,
+  eventDataCitations,
+  eventSlugHistory,
+  contentLinks,
+  adminActions,
+} from "@/lib/db/schema";
+import { unsafeSlug } from "@takemetothefair/utils";
 import type {
   DuplicateEntityType,
   MergePreviewResponse,
@@ -33,19 +46,24 @@ export async function getMergePreview(
 }
 
 /**
- * Execute merge operation
+ * Execute merge operation.
+ *
+ * `actorUserId` (K3, 2026-05-31) — recorded in the admin_actions row that
+ * mergeEvents writes. Optional so existing venue/vendor/promoter paths
+ * (which don't audit through admin_actions yet) keep their signatures.
  */
 export async function executeMerge(
   db: Database,
   type: DuplicateEntityType,
   primaryId: string,
-  duplicateId: string
+  duplicateId: string,
+  actorUserId?: string | null
 ): Promise<MergeResponse> {
   switch (type) {
     case "venues":
       return mergeVenues(db, primaryId, duplicateId);
     case "events":
-      return mergeEvents(db, primaryId, duplicateId);
+      return mergeEvents(db, primaryId, duplicateId, actorUserId ?? null);
     case "vendors":
       return mergeVendors(db, primaryId, duplicateId);
     case "promoters":
@@ -597,15 +615,50 @@ async function getEventMergePreview(
   };
 }
 
+/**
+ * Merge a duplicate event INTO a keeper, preserving SEO equity.
+ *
+ * K3 (analyst, 2026-05-31) rewrote the original "delete the duplicate
+ * row" semantics into "tombstone + slug redirect" semantics because:
+ *
+ *   - eventSlugHistory.eventId has onDelete: cascade. Deleting the
+ *     duplicate would cascade-delete any slug-history rows pointing at
+ *     it, killing the 301 redirect we need to preserve.
+ *   - middleware.ts:179 returns 410 Gone for any REJECTED event at its
+ *     own slug, which would BEAT a slug-history 301. So leaving the
+ *     duplicate REJECTED at its original slug is also wrong.
+ *
+ * The K3 dance:
+ *   1. Rename the duplicate's slug to `<orig>-merged-<first-8-of-id>`
+ *      so the URL is free.
+ *   2. Insert event_slug_history (eventId=keeper, oldSlug=original-dup,
+ *      newSlug=keeper-slug). FK to keeper so any future cascade behaves.
+ *   3. Mark duplicate status='REJECTED', merged_into=keeperId. The row
+ *      stays around as an audit tombstone.
+ *   4. Transfer FK children: event_vendors, event_days, event_data_
+ *      citations, content_links (target_type='EVENT'), user_favorites.
+ *      view_count adds on the keeper.
+ *   5. Write admin_actions row with action='event.merge'.
+ *
+ * After this, /events/<original-dup-slug> walks the slug-history chain
+ * in middleware.ts → 301 to /events/<keeper-slug>. Tombstone row is
+ * queryable for audit (slug = `*-merged-*`) but not publicly visible
+ * (status='REJECTED' → middleware returns 410 at its renamed slug,
+ * which nothing links to).
+ */
 async function mergeEvents(
   db: Database,
   primaryId: string,
-  duplicateId: string
+  duplicateId: string,
+  actorUserId: string | null = null
 ): Promise<MergeResponse> {
   const transferred: RelationshipCounts = { eventVendors: 0, favorites: 0 };
 
-  // Batch 1: Get all needed data in parallel
-  const [primaryVendors, existingFavorites, duplicateData] = await db.batch([
+  // Batch 1: Load primary + duplicate snapshots + overlap-prep selects
+  // in parallel. We need keeper.slug for the slug-history row, dup.slug
+  // for the rename + history old_slug, and dup.viewCount for the sum-on-
+  // keeper.
+  const [primaryVendors, existingFavorites, primarySnap, duplicateSnap] = await db.batch([
     db
       .select({ vendorId: eventVendors.vendorId })
       .from(eventVendors)
@@ -616,15 +669,45 @@ async function mergeEvents(
       .where(
         and(eq(userFavorites.favoritableType, "EVENT"), eq(userFavorites.favoritableId, primaryId))
       ),
-    db.select({ viewCount: events.viewCount }).from(events).where(eq(events.id, duplicateId)),
+    db
+      .select({ slug: events.slug, viewCount: events.viewCount })
+      .from(events)
+      .where(eq(events.id, primaryId)),
+    db
+      .select({
+        slug: events.slug,
+        viewCount: events.viewCount,
+        mergedInto: events.mergedInto,
+      })
+      .from(events)
+      .where(eq(events.id, duplicateId)),
   ]);
 
   const primaryVendorIds = primaryVendors.map((v) => v.vendorId);
   const existingUserIds = existingFavorites.map((f) => f.userId);
-  const duplicate = duplicateData[0];
+  const keeper = primarySnap[0];
+  const duplicate = duplicateSnap[0];
 
-  // Batch 2: Delete overlapping records and transfer non-overlapping ones
-  // D1 has a limit on SQL bind variables, so batch large arrays
+  if (!keeper || !duplicate) {
+    throw new Error("mergeEvents: keeper or duplicate not found");
+  }
+  if (primaryId === duplicateId) {
+    throw new Error("mergeEvents: keeper and duplicate are the same event");
+  }
+  if (duplicate.mergedInto) {
+    throw new Error(`mergeEvents: duplicate ${duplicateId} is already merged`);
+  }
+
+  // K3 Step 1: rename the duplicate's slug to free the URL. Suffix is
+  // the first 8 chars of the duplicate id — small enough to be ugly
+  // (operators never link to it) and unique enough that a re-merge
+  // wouldn't collide on the slug UNIQUE constraint.
+  const originalDupSlug = duplicate.slug;
+  const renamedDupSlug = unsafeSlug(`${originalDupSlug}-merged-${duplicateId.slice(0, 8)}`);
+
+  // Transfer overlap-cleanup for event_vendors (D1 bound-param limit
+  // applies, hence the BATCH_SIZE chunking — see
+  // [[feedback_d1_batch_param_limit]]).
   if (primaryVendorIds.length > 0) {
     const BATCH_SIZE = 50;
     for (let i = 0; i < primaryVendorIds.length; i += BATCH_SIZE) {
@@ -635,22 +718,67 @@ async function mergeEvents(
     }
   }
 
-  // Transfer remaining event_vendors
+  // Transfer remaining event_vendors.
   const eventVendorResult = await db
     .update(eventVendors)
     .set({ eventId: primaryId })
     .where(eq(eventVendors.eventId, duplicateId));
   transferred.eventVendors = (eventVendorResult as { rowsAffected?: number }).rowsAffected || 0;
 
-  // Combine view counts if duplicate exists
-  if (duplicate) {
-    await db
-      .update(events)
-      .set({ viewCount: sql`${events.viewCount} + ${duplicate.viewCount || 0}` })
-      .where(eq(events.id, primaryId));
+  // K3 — transfer event_days, event_data_citations, and content_links.
+  // event_days has no DB-level UNIQUE on (eventId, date) but
+  // semantically two rows for the same day on the same event are wrong
+  // (we'd render a duplicated Saturday slot). Pre-delete dup rows that
+  // collide on date with a keeper row, mirroring the event_vendors
+  // overlap-cleanup pattern.
+  const dupDayDates = await db
+    .select({ date: eventDays.date })
+    .from(eventDays)
+    .where(eq(eventDays.eventId, primaryId));
+  if (dupDayDates.length > 0) {
+    const dates = dupDayDates.map((d) => d.date);
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < dates.length; i += BATCH_SIZE) {
+      const batch = dates.slice(i, i + BATCH_SIZE);
+      await db
+        .delete(eventDays)
+        .where(and(eq(eventDays.eventId, duplicateId), inArray(eventDays.date, batch)));
+    }
   }
+  await db.update(eventDays).set({ eventId: primaryId }).where(eq(eventDays.eventId, duplicateId));
 
-  // Transfer favorites (only those not already favorited by same user)
+  await db
+    .update(eventDataCitations)
+    .set({ eventId: primaryId })
+    .where(eq(eventDataCitations.eventId, duplicateId));
+
+  // content_links: blog mentions of the duplicate event. Update both
+  // targetId AND targetSlug to point at the keeper — preserves the
+  // "blog X links to event Y" relationship through the merge. Older
+  // legacy content_links may have a targetSlug but null targetId; the
+  // slug-history walker in middleware.ts handles the redirect at read
+  // time, but pointing the row at the keeper here is the more useful
+  // canonical fix.
+  await db
+    .update(contentLinks)
+    .set({ targetId: primaryId, targetSlug: keeper.slug })
+    .where(and(eq(contentLinks.targetType, "EVENT"), eq(contentLinks.targetId, duplicateId)));
+  // Also catch legacy rows that have the duplicate's slug but null id.
+  await db
+    .update(contentLinks)
+    .set({ targetId: primaryId, targetSlug: keeper.slug })
+    .where(and(eq(contentLinks.targetType, "EVENT"), eq(contentLinks.targetSlug, originalDupSlug)));
+
+  // Combine view counts — keeper.viewCount += duplicate.viewCount.
+  await db
+    .update(events)
+    .set({ viewCount: sql`${events.viewCount} + ${duplicate.viewCount || 0}` })
+    .where(eq(events.id, primaryId));
+
+  // Transfer favorites with collision-avoidance (a single user can only
+  // favorite the same event once). Move only the dup rows that don't
+  // collide with an existing keeper-favorite for the same user; delete
+  // the rest in the cleanup batch.
   if (existingUserIds.length > 0) {
     const favoriteResult = await db
       .update(userFavorites)
@@ -676,8 +804,15 @@ async function mergeEvents(
     transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
   }
 
-  // Batch 3: Cleanup and final fetch
+  // K3 Steps 1-3 + cleanup, in one db.batch so the slug rename + history
+  // insert + status update are atomic. Order matters: the rename must
+  // commit BEFORE the history row is inserted, so eventSlugHistory's
+  // unique-on-(oldSlug) (if present in production schema) doesn't trip.
+  // We insert with eventId = primaryId (the keeper) so future cascade-
+  // deletes of the keeper would take the history with them — which is
+  // intentional: if the keeper is gone, the redirect target is gone too.
   await db.batch([
+    // Drop any remaining user_favorites on the duplicate that collided.
     db
       .delete(userFavorites)
       .where(
@@ -686,10 +821,44 @@ async function mergeEvents(
           eq(userFavorites.favoritableId, duplicateId)
         )
       ),
-    db.delete(events).where(eq(events.id, duplicateId)),
+    // Step 1: rename the duplicate's slug to free the URL.
+    db.update(events).set({ slug: renamedDupSlug }).where(eq(events.id, duplicateId)),
+    // Step 2: insert the slug-history row so /events/<original-dup-slug>
+    // → 301 → /events/<keeper-slug> via middleware.ts.
+    db.insert(eventSlugHistory).values({
+      eventId: primaryId,
+      oldSlug: originalDupSlug,
+      newSlug: keeper.slug,
+      changedAt: new Date(),
+      changedBy: actorUserId,
+    }),
+    // Step 3: mark the duplicate REJECTED + record the merged-into
+    // pointer. Status REJECTED at the renamed slug → middleware returns
+    // 410 Gone (nothing links to the renamed slug, so this is silent).
+    db
+      .update(events)
+      .set({ status: "REJECTED", mergedInto: primaryId, updatedAt: new Date() })
+      .where(eq(events.id, duplicateId)),
+    // Step 5: admin_actions audit row.
+    db.insert(adminActions).values({
+      action: "event.merge",
+      actorUserId,
+      targetType: "event",
+      targetId: primaryId,
+      payloadJson: JSON.stringify({
+        duplicateId,
+        duplicateSlugOriginal: originalDupSlug,
+        duplicateSlugRenamed: renamedDupSlug,
+        keeperSlug: keeper.slug,
+        transferred,
+      }),
+      createdAt: new Date(),
+    }),
   ]);
 
-  // Batch 4: Get merged entity data
+  // Final fetch: return the merged keeper with its venue + promoter
+  // join. Same shape the original mergeEvents returned for backwards
+  // compatibility with any UI that consumes MergeResponse.
   const [mergedResults, venueResults, promoterResults, countResults] = await db.batch([
     db.select().from(events).where(eq(events.id, primaryId)),
     db
@@ -720,6 +889,9 @@ async function mergeEvents(
       _count: { eventVendors: eventVendorCount?.count || 0 },
     },
     transferredRelationships: transferred,
+    // `deletedId` is now misnamed — the row isn't deleted, it's
+    // tombstoned. Kept for the existing MergeResponse contract; the
+    // admin UI doesn't behaviorally depend on the row being gone.
     deletedId: duplicateId,
   };
 }
