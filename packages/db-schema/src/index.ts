@@ -1469,6 +1469,27 @@ export const inboundEmails = sqliteTable(
      *  (root-caused 2026-05-19 hamxposition.org NonRetryableError loop).
      *  Added drizzle/0082. */
     recoveryAttemptN: integer("recovery_attempt_n").notNull().default(0),
+    /** Categorical failure reason for submit-intent rows whose AI extract
+     *  was reached but didn't yield a usable event. Values:
+     *    - `'zero-events'`  — AI returned success with empty events[]
+     *    - `'thin-content'` — content sent to AI was <500 chars after strip
+     *    - `'parse-error'`  — AI response wasn't parseable JSON
+     *    - `'ai-timeout'`   — Workers AI didn't respond within budget
+     *    - `'other'`        — anything else; check the `error` column
+     *  NULL on success and on rows that never reached AI extract
+     *  (json-ld bypass, no-url early return, fetch failure).
+     *  Added drizzle/0094 — analyst K7 Tier 1, 2026-05-31. */
+    extractFailReason: text("extract_fail_reason"),
+    /** First 16 hex chars of SHA-256 of the content fed to AI extraction.
+     *  Cheap cluster key so /admin/source-quality can identify pages that
+     *  consistently fail (same hash, repeated failures). NULL on pre-K7
+     *  rows + on paths that don't fetch HTML. Added drizzle/0094. */
+    contentSha256First16: text("content_sha256_first16"),
+    /** Length in chars of content fed to AI extraction. Lets dashboards
+     *  separate thin-content failures (page returned <2KB of usable text)
+     *  from rich-content extract failures (the AI just couldn't parse the
+     *  layout). NULL on pre-K7 rows. Added drizzle/0094. */
+    contentLengthChars: integer("content_length_chars"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (t) => [
@@ -1476,6 +1497,12 @@ export const inboundEmails = sqliteTable(
     index("idx_inbound_emails_intent").on(t.intent),
     index("idx_inbound_emails_status").on(t.status),
     index("idx_inbound_emails_from").on(t.fromAddress),
+    // Partial index supporting "which content hashes consistently fail"
+    // queries on /admin/source-quality. Most inbound rows have NULL hash
+    // so the partial keeps the index small. Added drizzle/0094.
+    index("idx_inbound_emails_content_hash")
+      .on(t.contentSha256First16)
+      .where(sql`${t.contentSha256First16} IS NOT NULL`),
     // Partial-unique on message_id (NULLs are exempt — SQLite already
     // treats them as distinct, but spelled explicitly via WHERE for
     // clarity). Added 0073 for inbound idempotency.
