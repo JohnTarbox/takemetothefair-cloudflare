@@ -109,7 +109,11 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
     "create_event_citation",
     "Record provenance for a single event field value (e.g. estimated_attendance=260000 cited on fryeburgfair.org). Stores the cited value verbatim as text; optionally updates the denormalized events column to match. Auto-supersedes the prior `active` citation for the same (event, field, year). Admin only.",
     {
-      event_id: z.string().uuid().describe("Event ID"),
+      // K5 (analyst, 2026-05-31): accept legacy 32-char hex ids alongside dashed
+      // UUIDs to match `get_event_lifecycle_history` and friends. The DB column
+      // is TEXT so the stricter Zod check was the only barrier; relaxing it lets
+      // citations be attached to events imported before the UUID convention.
+      event_id: z.string().min(1).describe("Event UUID (or legacy 32-char hex id)."),
       field_name: z
         .string()
         .min(1)
@@ -270,7 +274,12 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
     "list_event_citations",
     "List citations, optionally filtered by event, field, state, or year. Defaults to only active citations; pass include_all_states=true to include the full history.",
     {
-      event_id: z.string().uuid().optional().describe("Filter to one event"),
+      // K5: accept UUID OR legacy 32-char hex id. Matched to `get_event_lifecycle_history`.
+      event_id: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Filter to one event (UUID or legacy 32-char hex id)."),
       field_name: z.string().optional().describe("Filter to one field key"),
       state: z
         .enum(STATE_VALUES)
@@ -496,7 +505,8 @@ export function registerCitationTools(server: McpServer, db: Db, auth: AuthConte
       citations: z
         .array(
           z.object({
-            event_id: z.string().uuid(),
+            // K5: accept UUID OR legacy 32-char hex id (same as create_event_citation).
+            event_id: z.string().min(1),
             field_name: z.string().min(1).max(64),
             value: z.string().min(1).max(500),
             source_url: z.string().url(),

@@ -18,6 +18,7 @@ import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from
 import { registerAdminTools } from "../src/tools/admin.js";
 import { adminActions, eventDataCitations, events, promoters } from "../src/schema.js";
 import { and, eq } from "drizzle-orm";
+import { unsafeSlug } from "@takemetothefair/utils";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 const ENV = { MAIN_APP_URL: "https://meetmeatthefair.com", INTERNAL_API_KEY: "test-key" };
@@ -307,6 +308,36 @@ describe("list_event_citations", () => {
       })
     );
     expect(result.count).toBe(2);
+  });
+
+  // K5 (analyst, 2026-05-31): legacy 32-char hex ids from pre-UUID imports
+  // (Rangeley Birding Festival was the canonical case) must be accepted by
+  // both create_event_citation and list_event_citations. The DB column is TEXT,
+  // so the only barrier was the Zod .uuid() check.
+  it("accepts legacy 32-char hex event ids alongside UUID-format ids", async () => {
+    const legacyHexId = "072b1507a6f5affebdcd22bf3915ce64";
+    const eventId = seedEvent({
+      id: legacyHexId,
+      slug: unsafeSlug("rangeley-birding-festival-2026"),
+    });
+    expect(eventId).toBe(legacyHexId);
+
+    parseJson(
+      await server.invoke("create_event_citation", {
+        event_id: legacyHexId,
+        field_name: "estimated_attendance",
+        value: "500",
+        source_url: "https://example.com/rangeley",
+        source_type: "official_website",
+        year: 2026,
+      })
+    );
+
+    const result = parseJson(
+      await server.invoke("list_event_citations", { event_id: legacyHexId })
+    );
+    expect(result.count).toBe(1);
+    expect(result.citations[0].value).toBe("500");
   });
 });
 
