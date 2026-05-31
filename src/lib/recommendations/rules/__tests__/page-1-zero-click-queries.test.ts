@@ -145,7 +145,7 @@ describe("page_1_zero_click_queries — filter contract", () => {
 
   it("returns empty list on GSC API error", async () => {
     const { ScApiError } = await import("@/lib/search-console");
-    vi.mocked(getSiteSearchQueries).mockRejectedValue(new ScApiError("rate-limited"));
+    vi.mocked(getSiteSearchQueries).mockRejectedValue(new ScApiError(429, "rate-limited"));
     const matches = await page1ZeroClickQueriesRule.run(MOCK_DB);
     expect(matches).toEqual([]);
   });
