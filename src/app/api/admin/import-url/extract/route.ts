@@ -6,6 +6,7 @@ import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { expandCadence } from "@/lib/url-import/cadence-expander";
+import { composeDeterministicExtract } from "@/lib/url-import/deterministic/compose";
 import { logError } from "@/lib/logger";
 
 export const runtime = "edge";
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { content, metadata, emailBody } = validation.data;
+    const { content, url, metadata, emailBody } = validation.data;
 
     // JSON-LD priority extraction: if the fetched page emitted complete-
     // enough schema.org Event node(s), skip the AI call entirely and return
@@ -158,6 +159,47 @@ export async function POST(request: NextRequest) {
       });
       if (expanded.length >= 2) {
         event.specificDates = expanded;
+      }
+    }
+
+    // K7 Tier 1 (analyst, 2026-05-31) — deterministic salvage path. When
+    // the AI returned zero events but the page has structured calendar
+    // links OR a clear month-day-range heading + name, synthesize a single
+    // thin extraction so the workflow flags the inbound row for human
+    // review instead of hard-failing. Surfaced by inbound fe65fb77 (moose
+    // lottery): scrapeable Elementor page, no JSON-LD, AI silent. The
+    // page's <h1>+<h2> would have given us name + June 19-20 range with
+    // zero AI cost. See src/lib/url-import/deterministic/compose.ts for
+    // the gate (name + (date OR venue)).
+    //
+    // Returns extractionMethod='thin' so the mark-done step on the MCP
+    // server can set inbound_emails.flagged_for_review=1 + the reply uses
+    // the LOW-confidence "queued for review" template (driven by sparse
+    // field confidence from the composer).
+    if (events.length === 0) {
+      // `content` is already cleaned text on the URL-fetch path (fetch
+      // route calls extractTextFromHtml before sending). That means the
+      // calendar-link sub-extractor won't find <a href> tags here — it
+      // still runs in case the caller (e.g. body-text submissions) passes
+      // raw HTML verbatim. For the moose-lottery canonical case we rely
+      // on metadata.title + findDateRange over the cleaned text, which
+      // suffices for "name + date" gate satisfaction. Deferred to Tier 2:
+      // thread raw HTML through SubmitFetchResult so the calendar-link
+      // path can fire on URL-fetched pages too.
+      const salvaged = composeDeterministicExtract(
+        content,
+        content,
+        metadata as PageMetadata | undefined,
+        url
+      );
+      if (salvaged.events.length > 0) {
+        return NextResponse.json({
+          success: true,
+          events: salvaged.events,
+          confidence: salvaged.confidence,
+          count: salvaged.events.length,
+          extractionMethod: "thin",
+        });
       }
     }
 

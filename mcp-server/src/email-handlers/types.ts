@@ -124,8 +124,11 @@ export interface HandlerResult {
   /** Which extraction strategy produced the event. Only set for submit
    *  intent; null/undefined for other intents (no extraction happens).
    *  Persisted to inbound_emails.extraction_method at mark-done. See
-   *  drizzle/0083. */
-  extractionMethod?: "json-ld" | "ai" | "free-text" | "mixed" | null;
+   *  drizzle/0083.
+   *  'thin' added 2026-05-31 (K7 Tier 1): deterministic salvage path —
+   *  triggers inbound_emails.flagged_for_review=1 at mark-done so the
+   *  operator review queue picks it up. */
+  extractionMethod?: "json-ld" | "ai" | "free-text" | "mixed" | "thin" | null;
 }
 
 /**

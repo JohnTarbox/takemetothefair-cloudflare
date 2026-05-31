@@ -98,6 +98,39 @@ type Env = {
 const SOURCE = "mcp:workflow:inbound-email";
 const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
 
+/**
+ * Classify an error thrown by the AI extract step into the small bucket
+ * persisted to inbound_emails.extract_fail_reason (drizzle/0094, K7.4).
+ *
+ * Why a fixed taxonomy: `error` already carries the full message text,
+ * which is good for triage but terrible for GROUP BY on the source-
+ * quality dashboard. This collapses the variability into 5 buckets that
+ * lend themselves to "what's broken this week" queries.
+ *
+ * Bucket meanings:
+ *   - 'zero-events'  : AI returned success with an empty events[]
+ *   - 'thin-content' : content sent to AI was <500 chars after strip
+ *   - 'parse-error'  : AI response wasn't parseable JSON
+ *   - 'ai-timeout'   : Workers AI didn't respond within budget
+ *   - 'other'        : anything else; check `error` column for detail
+ *
+ * Pattern-matches on the NonRetryableError messages produced by
+ * submitExtract (`extract-upstream: zero-events`, `extract-network:`,
+ * `extract-<status>`).
+ */
+function classifyExtractFailure(e: unknown): string {
+  if (!(e instanceof Error) || typeof e.message !== "string") return "other";
+  const msg = e.message;
+  if (msg.startsWith("extract-upstream: zero-events")) return "zero-events";
+  if (msg.startsWith("extract-upstream: thin-content")) return "thin-content";
+  // Workers AI load timeouts surface as 'extract-network: timeout' or as
+  // a step-level timeout that doesn't reach our catch. The network
+  // bucket covers the former.
+  if (msg.startsWith("extract-network:") && /timeout|timed.?out/i.test(msg)) return "ai-timeout";
+  if (msg.startsWith("extract-upstream: ") && /parse|json/i.test(msg)) return "parse-error";
+  return "other";
+}
+
 /** Dispatch table for non-submit, non-new_event intents. The submit
  *  pipeline (and its classifier alias `new_event`) is orchestrated
  *  directly in run() because its three external calls each need to
@@ -559,10 +592,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             resultingEventId: result.resultingEventId ?? null,
             fetchMethod: inferredFetchMethod,
             // extraction_method tracking (drizzle/0083). Only populated on
-            // submit-intent successful extracts (json-ld / ai). On failure
-            // paths or non-submit intents the field stays null — matches
-            // pre-PR-B rows and keeps "did extraction even run?" queryable.
+            // submit-intent successful extracts (json-ld / ai / thin). On
+            // failure paths or non-submit intents the field stays null —
+            // matches pre-PR-B rows and keeps "did extraction even run?"
+            // queryable.
             extractionMethod: result.extractionMethod ?? null,
+            // K7 Tier 1 (analyst, 2026-05-31): thin extractions (AI silent
+            // but deterministic salvage produced a partial event) flip
+            // flagged_for_review so /admin/inbound-emails surfaces them as
+            // a review queue. We only SET the flag here — never clear it —
+            // so an operator-set flag on a non-thin row survives.
+            ...(result.extractionMethod === "thin" ? { flaggedForReview: 1 } : {}),
           })
           .where(eq(inboundEmails.id, messageRowId));
       }
@@ -717,6 +757,44 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       () => submitFetch(this.env, url)
     );
 
+    // K7.4 (analyst, 2026-05-31): persist what we're about to send to the
+    // AI extractor BEFORE the AI call, so we can tell what the AI saw
+    // even when extraction fails. drizzle/0094 added the three columns —
+    // content_length_chars + content_sha256_first16 cluster identical
+    // pages on /admin/source-quality so the operator can see "this URL's
+    // extracted content has failed 12 times with the same hash."
+    // Wrapped in try/catch INSIDE the step body so a transient D1 hiccup
+    // on the audit write doesn't fail the whole pipeline — telemetry is
+    // not load-bearing. Per [[feedback_workflow_cosmetic_steps_failsoft]].
+    await step.do(
+      "submit/persist-extract-context",
+      { retries: { limit: 1, delay: "2 seconds", backoff: "constant" }, timeout: "5 seconds" },
+      async () => {
+        try {
+          const enc = new TextEncoder().encode(fetched.content);
+          const hashBuf = await crypto.subtle.digest("SHA-256", enc);
+          const hashHex = Array.from(new Uint8Array(hashBuf))
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join("")
+            .slice(0, 16);
+          const db = getDb(this.env.DB);
+          await db
+            .update(inboundEmails)
+            .set({
+              contentLengthChars: fetched.content.length,
+              contentSha256First16: hashHex,
+            })
+            .where(eq(inboundEmails.id, messageRowId));
+        } catch (err) {
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:persist-extract-context",
+            message: "extract-context persist failed",
+            error: err,
+          });
+        }
+      }
+    );
+
     // K1 (analyst, 2026-05-29 PM): when AI extraction on the fetched URL
     // returns zero events, fall back to extracting from the email body
     // itself rather than replying extract-failed. Catches the case where
@@ -743,6 +821,33 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         () => submitExtract(this.env, fetched, rowSnapshot.bodyTextExcerpt ?? "")
       );
     } catch (e) {
+      // K7.4 (analyst, 2026-05-31): classify the failure into a small
+      // bucket and persist to inbound_emails.extract_fail_reason so
+      // /admin/source-quality can show the failure-mode distribution
+      // separately from raw error strings (which are long, varied, and
+      // hard to GROUP BY). Best-effort write — if D1 hiccups here we
+      // still proceed to body fallback / rethrow.
+      const failReason = classifyExtractFailure(e);
+      await step.do(
+        "submit/persist-extract-fail-reason",
+        { retries: { limit: 1, delay: "2 seconds", backoff: "constant" }, timeout: "5 seconds" },
+        async () => {
+          try {
+            const db = getDb(this.env.DB);
+            await db
+              .update(inboundEmails)
+              .set({ extractFailReason: failReason })
+              .where(eq(inboundEmails.id, messageRowId));
+          } catch (writeErr) {
+            await logError(getDb(this.env.DB), {
+              source: "mcp:workflow:persist-extract-fail-reason",
+              message: "extract-fail-reason persist failed",
+              error: writeErr,
+            });
+          }
+        }
+      );
+
       const isZeroEvents =
         e instanceof NonRetryableError &&
         typeof e.message === "string" &&

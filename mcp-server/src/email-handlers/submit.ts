@@ -77,9 +77,14 @@ export interface SubmitExtractResult {
    *                   to skip the AI call entirely (PR-B path).
    *  - 'ai'         — fetch-then-AI-extract on a URL (default path).
    *  - 'free-text'  — no URL; body text fed directly to AI (PR-E B2 path).
+   *  - 'thin'       — AI returned zero events; deterministic salvage
+   *                   (calendar-link / month-day-range / OG title) produced
+   *                   a partial event. mark-done sets inbound_emails.
+   *                   flagged_for_review=1 on this path so the operator
+   *                   review queue picks it up. K7 Tier 1, 2026-05-31.
    *  Forwarded to the workflow's mark-done step which persists it to
    *  inbound_emails.extraction_method (drizzle/0083). */
-  extractionMethod: "json-ld" | "ai" | "free-text";
+  extractionMethod: "json-ld" | "ai" | "free-text" | "thin";
   /** Total events the extractor detected on the page. Equal to
    *  `events.length`; kept as a numeric mirror for the reply-template
    *  signature where the field was first introduced (analyst D1 Phase 1,
@@ -309,7 +314,9 @@ export async function submitExtract(
         events: (ExtractedEvent & { _extractId?: string })[];
         count: number;
         confidence?: Record<string, Record<string, "high" | "medium" | "low">>;
-        extractionMethod?: "json-ld" | "ai";
+        // 'thin' added 2026-05-31 (K7 Tier 1) — extract endpoint synthesizes
+        // a single event from deterministic signals when AI returns 0.
+        extractionMethod?: "json-ld" | "ai" | "thin";
       }
     | { success: false; error: string }
     | null;

@@ -356,6 +356,11 @@ const SCHEMA_SQL = `
     parent_email_id TEXT,
     recovery_attempt_n INTEGER NOT NULL DEFAULT 0,
     salvage_notified_at INTEGER,
+    -- K7.4 (analyst, 2026-05-31) — drizzle/0094 extract telemetry. See
+    -- packages/db-schema/src/index.ts inboundEmails for column doc comments.
+    extract_fail_reason TEXT,
+    content_sha256_first16 TEXT,
+    content_length_chars INTEGER,
     created_at INTEGER NOT NULL
   );
 
@@ -365,6 +370,9 @@ const SCHEMA_SQL = `
   CREATE INDEX idx_inbound_emails_reply_kind
     ON inbound_emails(reply_kind)
     WHERE reply_kind IS NOT NULL;
+  CREATE INDEX idx_inbound_emails_content_hash
+    ON inbound_emails(content_sha256_first16)
+    WHERE content_sha256_first16 IS NOT NULL;
 
   CREATE TABLE email_source_suggestions (
     id TEXT PRIMARY KEY,
