@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { parseJsonArray } from "@/types";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getStateColors } from "@/lib/state-colors";
+import { displayVenueName } from "@/lib/venue-display";
 
 interface VenueCardProps {
   venue: {
@@ -63,7 +64,9 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
       <Link href={`/venues/${venue.slug}`} className="block">
-        <div className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-gray-100" : stateColors.bg}`}>
+        <div
+          className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-gray-100" : stateColors.bg}`}
+        >
           {venue.imageUrl && !imgError ? (
             <Image
               src={venue.imageUrl}
@@ -81,7 +84,9 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           )}
           {venue.state && (!venue.imageUrl || imgError) && (
             <div className="absolute top-3 left-3">
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${stateColors.badge}`}>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${stateColors.badge}`}
+              >
                 {venue.state}
               </span>
             </div>
@@ -95,7 +100,11 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
         </div>
         <div className="p-4">
           <h3 className="font-semibold text-lg text-gray-900">
-            {venue.name}
+            {/* Cohort 8 (C9/U9) — fall back when venue.name looks like
+                a street address (created via URL import that copied the
+                address into the name field). Data-cleanup rule in
+                src/lib/recommendations/rules/venues-named-by-address.ts. */}
+            {displayVenueName(venue)}
           </h3>
           <div className="mt-2 space-y-1 text-sm text-gray-600">
             {addressParts && (
@@ -126,11 +135,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
                   {amenity}
                 </Badge>
               ))}
-              {amenities.length > 3 && (
-                <Badge variant="default">
-                  +{amenities.length - 3}
-                </Badge>
-              )}
+              {amenities.length > 3 && <Badge variant="default">+{amenities.length - 3}</Badge>}
             </div>
           )}
         </div>

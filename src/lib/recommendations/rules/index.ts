@@ -37,6 +37,7 @@ import { eventDateDriftRule } from "./event-date-drift";
 import { eventsPendingReviewRule } from "./events-pending-review";
 import { eventsLegacyGateCandidatesRule } from "./events-legacy-gate-candidates";
 import { memoryRuleConversionStatusRule } from "./memory-rule-conversion-status";
+import { venuesNamedByAddressRule } from "./venues-named-by-address";
 
 export const ALL_RULES: RuleDefinition[] = [
   vendorsNoDescriptionRule,
@@ -88,4 +89,9 @@ export const ALL_RULES: RuleDefinition[] = [
   // process surface — reads from a hand-curated static list in the rule's
   // source file (memory lives on the fs, not in D1).
   memoryRuleConversionStatusRule,
+  // Cohort 8 (C9/U9, 2026-06-01). Venues whose stored name looks like a
+  // raw street address (e.g. "18 Spring Street"). Display-side falls back
+  // to "Event venue in <City>, <State>" via displayVenueName; this rule
+  // surfaces the rows so the operator can rename via the venue edit form.
+  venuesNamedByAddressRule,
 ];
