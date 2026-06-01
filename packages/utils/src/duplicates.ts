@@ -225,3 +225,42 @@ export function getVendorComparisonString(vendor: {
 export function getPromoterComparisonString(promoter: { companyName: string | null }): string {
   return promoter.companyName || "unknown";
 }
+
+/**
+ * Map findDuplicate's matchType into a 2-tier confidence bucket that
+ * the inbound-email workflow uses to route dedup hits.
+ *
+ * Cohort 2 (analyst, 2026-06-01) — wires up the behavior side of K2
+ * part 5 (drizzle/0096 + events.possible_duplicate_of). Without this
+ * tier classification the workflow couldn't distinguish a strong
+ * dedup hit (exact_url, venue+date) from a weak one (same town + date
+ * window), so MEDIUM hits got routed to already-exists alongside the
+ * HIGH hits — burying genuinely-distinct events on busy Saturdays.
+ *
+ * Tier map:
+ *   HIGH   — exact_url, venue_date              → reply already-exists (current path)
+ *   MEDIUM — city_state_date, similar_name_date → create PENDING tagged
+ *            with possible_duplicate_of for operator triage
+ *
+ * `similar_name_date` is treated as MEDIUM rather than HIGH because
+ * the 0.85 Levenshtein threshold genuinely false-positives on
+ * near-name collisions (Spring Craft Fair / Spring Crafts Fair are
+ * different regional events but similarity 0.92).
+ *
+ * Lives in the shared utils package so both the main app's
+ * /api/suggest-event/check-duplicate route (future rewire) and the
+ * MCP workflow's dedup-routing step (mcp-server/src/workflows/
+ * inbound-email.ts) can import it from the same source.
+ */
+export type DedupTier = "high" | "medium";
+
+export function classifyDedupTier(matchType: string): DedupTier {
+  if (matchType === "exact_url" || matchType === "venue_date") {
+    return "high";
+  }
+  // city_state_date, similar_name_date — both surface for operator
+  // review rather than auto-routing to already-exists. Unknown strings
+  // fall to medium too: safer to PENDING-with-tag than to silently
+  // already-exists on an unrecognized match shape.
+  return "medium";
+}

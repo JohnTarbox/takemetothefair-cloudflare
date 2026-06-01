@@ -348,6 +348,9 @@ export async function POST(request: NextRequest) {
       eventScale: data.eventScale ?? null,
       applicationUrl: gatedApplicationUrl,
       walkInsAllowed: data.walkInsAllowed ?? null,
+      // Cohort 2 (2026-06-01) — populated when the inbound-email workflow
+      // detected a MEDIUM-confidence dedup hit. NULL on every other path.
+      possibleDuplicateOf: data.possibleDuplicateOf ?? null,
     });
 
     await recomputeEventCompleteness(db, newEventId);
