@@ -442,7 +442,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               )}
 
               {/* Last fetched info */}
-              <div className="mt-4 pt-4 border-t text-xs text-gray-400">
+              <div className="mt-4 pt-4 border-t text-xs text-gray-600">
                 Last fetched:{" "}
                 {schemaOrg.lastFetchedAt
                   ? new Date(schemaOrg.lastFetchedAt).toLocaleString()

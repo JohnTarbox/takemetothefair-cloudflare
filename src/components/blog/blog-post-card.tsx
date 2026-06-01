@@ -87,7 +87,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
                 </span>
               ))}
               {post.tags.length > 3 && (
-                <span className="text-xs text-gray-400">+{post.tags.length - 3}</span>
+                <span className="text-xs text-gray-600">+{post.tags.length - 3}</span>
               )}
             </div>
           )}

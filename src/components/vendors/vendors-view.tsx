@@ -191,7 +191,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <Store className="w-5 h-5 text-gray-400" />
+                            <Store className="w-5 h-5 text-gray-600" />
                           )}
                         </div>
                         <div>
@@ -225,7 +225,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                           </Badge>
                         )}
                         {!vendor.verified && !vendor.commercial && (
-                          <span className="text-xs text-gray-400">-</span>
+                          <span className="text-xs text-gray-600">-</span>
                         )}
                       </div>
                     </td>
@@ -242,7 +242,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                             href={vendor.website}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-gray-400 hover:text-gray-600"
+                            className="text-gray-600 hover:text-gray-600"
                             title="Vendor Website"
                           >
                             <ExternalLink className="w-4 h-4" />

@@ -401,7 +401,7 @@ export default function AdminInboundEmailsPage() {
                 >
                   {a.accuracyPct === null ? "—" : `${a.accuracyPct}%`}
                 </span>
-                <span className="text-gray-400">
+                <span className="text-gray-600">
                   ({a.uncorrected}/{a.total})
                 </span>
               </span>
@@ -473,7 +473,7 @@ export default function AdminInboundEmailsPage() {
                             {s.outOfArea && " ⚠"}
                           </span>
                         ) : (
-                          <span className="text-gray-400">—</span>
+                          <span className="text-gray-600">—</span>
                         )}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
@@ -857,7 +857,7 @@ export default function AdminInboundEmailsPage() {
                                       </span>
                                     )}
                                     {row.classifierVersion && (
-                                      <span className="font-mono text-gray-400">
+                                      <span className="font-mono text-gray-600">
                                         {row.classifierVersion}
                                       </span>
                                     )}

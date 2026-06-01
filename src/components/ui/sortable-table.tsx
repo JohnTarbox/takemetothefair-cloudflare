@@ -34,7 +34,7 @@ export function SortableHeader({
     >
       <div className="flex items-center gap-1">
         {label}
-        <span className="text-gray-400">
+        <span className="text-gray-600">
           {direction === "asc" ? (
             <ChevronUp className="w-4 h-4" />
           ) : direction === "desc" ? (
@@ -87,10 +87,7 @@ export function sortData<T>(
 }
 
 // Hook-like function to handle sort toggling
-export function getNextSortDirection(
-  currentConfig: SortConfig,
-  column: string
-): SortConfig {
+export function getNextSortDirection(currentConfig: SortConfig, column: string): SortConfig {
   if (currentConfig.column !== column) {
     return { column, direction: "asc" };
   }

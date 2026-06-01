@@ -278,7 +278,7 @@ export function ReviewStep({
                           );
                           onUpdateData({ specificDates: updated.length > 0 ? updated : null });
                         }}
-                        className="text-gray-400 hover:text-red-600 p-1 h-8 w-8"
+                        className="text-gray-600 hover:text-red-600 p-1 h-8 w-8"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -317,7 +317,7 @@ export function ReviewStep({
                   <ConfidenceBadge field="ticketPriceMin" confidence={confidence} />
                 </Label>
                 <div className="relative mt-1">
-                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
                   <Input
                     id="ticketPriceMin"
                     type="number"
@@ -339,7 +339,7 @@ export function ReviewStep({
                   <ConfidenceBadge field="ticketPriceMax" confidence={confidence} />
                 </Label>
                 <div className="relative mt-1">
-                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
                   <Input
                     id="ticketPriceMax"
                     type="number"

@@ -30,9 +30,7 @@ export default function Error({
           </div>
         </div>
 
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-          Something went wrong
-        </h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h1>
         <p className="text-gray-600 mb-4">
           We&apos;re sorry, but something unexpected happened while loading this page.
         </p>
@@ -77,11 +75,7 @@ export default function Error({
           </Link>
         </div>
 
-        {error.digest && (
-          <p className="mt-8 text-xs text-gray-400">
-            Error ID: {error.digest}
-          </p>
-        )}
+        {error.digest && <p className="mt-8 text-xs text-gray-600">Error ID: {error.digest}</p>}
       </div>
     </div>
   );

@@ -405,7 +405,7 @@ export function DailyScheduleInput({
                     size="sm"
                     onClick={() => handleRemoveDate(index)}
                     disabled={disabled}
-                    className="text-gray-400 hover:text-red-600 p-1 h-8 w-8"
+                    className="text-gray-600 hover:text-red-600 p-1 h-8 w-8"
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>

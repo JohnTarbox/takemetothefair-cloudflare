@@ -424,7 +424,7 @@ export default async function DashboardPage() {
             <div>
               <p className="font-medium text-gray-900">{session.user.name || "No name set"}</p>
               <p className="text-sm text-gray-500">{session.user.email}</p>
-              <p className="text-xs text-gray-400 mt-1 capitalize">
+              <p className="text-xs text-gray-600 mt-1 capitalize">
                 {session.user.role.toLowerCase()} Account
               </p>
             </div>

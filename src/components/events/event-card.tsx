@@ -297,7 +297,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                       className="object-cover"
                     />
                   ) : (
-                    <Store className="w-4 h-4 text-gray-400" />
+                    <Store className="w-4 h-4 text-gray-600" />
                   )}
                 </div>
               </Link>

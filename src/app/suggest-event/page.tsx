@@ -610,7 +610,7 @@ export default function SuggestEventPage() {
       {step !== "success" && (
         <div className="flex items-center gap-2 mb-6 text-sm">
           <span
-            className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-gray-400"}`}
+            className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-gray-600"}`}
           >
             <span
               className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "url-input" ? "bg-royal text-white" : ["review", "submitting"].includes(step) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
@@ -621,7 +621,7 @@ export default function SuggestEventPage() {
           </span>
           <div className="flex-1 h-px bg-gray-200" />
           <span
-            className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-gray-400"}`}
+            className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-gray-600"}`}
           >
             <span
               className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "review" ? "bg-royal text-white" : step === "submitting" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
@@ -632,7 +632,7 @@ export default function SuggestEventPage() {
           </span>
           <div className="flex-1 h-px bg-gray-200" />
           <span
-            className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-gray-400"}`}
+            className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-gray-600"}`}
           >
             <span
               className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-500`}
@@ -1159,7 +1159,7 @@ export default function SuggestEventPage() {
                     <div>
                       <Label htmlFor="ticketPriceMin">Min Price</Label>
                       <div className="relative mt-1">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
                         <Input
                           id="ticketPriceMin"
                           type="number"
@@ -1179,7 +1179,7 @@ export default function SuggestEventPage() {
                     <div>
                       <Label htmlFor="ticketPriceMax">Max Price</Label>
                       <div className="relative mt-1">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
                         <Input
                           id="ticketPriceMax"
                           type="number"

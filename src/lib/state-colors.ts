@@ -54,7 +54,7 @@ const STATE_NAME_TO_ABBR: Record<string, string> = {
 
 const DEFAULT_COLORS: StateColors = {
   bg: "bg-gray-100",
-  icon: "text-gray-400",
+  icon: "text-gray-600",
   badge: "bg-gray-100 text-gray-700",
 };
 
@@ -67,5 +67,9 @@ export function getStateColors(state: string | null | undefined): StateColors {
 export function getStateBadgeClass(state: string | null | undefined): string {
   if (!state) return DEFAULT_COLORS.badge;
   const upper = state.toUpperCase();
-  return STATE_COLORS[upper]?.badge ?? STATE_COLORS[STATE_NAME_TO_ABBR[upper]]?.badge ?? DEFAULT_COLORS.badge;
+  return (
+    STATE_COLORS[upper]?.badge ??
+    STATE_COLORS[STATE_NAME_TO_ABBR[upper]]?.badge ??
+    DEFAULT_COLORS.badge
+  );
 }

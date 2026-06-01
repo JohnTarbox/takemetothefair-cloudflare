@@ -40,7 +40,7 @@ export function EventFAQSection({ items }: EventFAQSectionProps) {
                 <span>{item.question}</span>
                 <span
                   aria-hidden="true"
-                  className="mt-0.5 text-gray-400 transition-transform group-open:rotate-45 select-none"
+                  className="mt-0.5 text-gray-600 transition-transform group-open:rotate-45 select-none"
                 >
                   +
                 </span>

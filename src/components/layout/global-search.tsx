@@ -112,7 +112,7 @@ export function GlobalSearch() {
   return (
     <div ref={containerRef} className="relative">
       <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg px-3 py-1.5 shadow-sm focus-within:ring-2 focus-within:ring-royal focus-within:border-transparent">
-        <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        <Search className="w-4 h-4 text-gray-600 flex-shrink-0" />
         <input
           ref={inputRef}
           type="text"
@@ -133,7 +133,7 @@ export function GlobalSearch() {
             setQuery("");
             setResults(null);
           }}
-          className="text-gray-400 hover:text-gray-600"
+          className="text-gray-600 hover:text-gray-600"
         >
           <X className="w-4 h-4" />
         </button>
@@ -156,7 +156,7 @@ export function GlobalSearch() {
             <div className="py-2">
               {results!.events.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     Events
                   </div>
                   {results!.events.map((event) => (
@@ -174,7 +174,7 @@ export function GlobalSearch() {
 
               {results!.venues.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider border-t border-gray-100 mt-1">
                     Venues
                   </div>
                   {results!.venues.map((venue) => (
@@ -201,7 +201,7 @@ export function GlobalSearch() {
 
               {results!.vendors.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider border-t border-gray-100 mt-1">
                     Vendors
                   </div>
                   {results!.vendors.map((vendor) => (
@@ -224,7 +224,7 @@ export function GlobalSearch() {
 
               {results!.blogPosts.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider border-t border-gray-100 mt-1">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider border-t border-gray-100 mt-1">
                     Blog
                   </div>
                   {results!.blogPosts.map((post) => (

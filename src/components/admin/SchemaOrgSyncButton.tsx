@@ -225,7 +225,7 @@ export function SchemaOrgSyncButton() {
                     {eventCount === 1 ? "" : "s"}…
                   </span>
                 </div>
-                {workflowId && <p className="text-xs text-gray-400">workflow id: {workflowId}</p>}
+                {workflowId && <p className="text-xs text-gray-600">workflow id: {workflowId}</p>}
               </div>
             )}
 
@@ -445,7 +445,7 @@ export function SchemaOrgSyncButton() {
               </Button>
             </div>
 
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-gray-600">
               Fetches schema.org Event markup from ticket URLs to keep event data in sync. Runs as a
               Cloudflare Workflow — durable per-event retry, no 30s response cap.
             </p>

@@ -50,7 +50,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
       <CardContent>
         {/* Search */}
         <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
           <Input
             placeholder="Search events..."
             value={searchQuery}
@@ -77,7 +77,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
                         {event.name}
                       </Link>
                       <Link href={`/events/${event.slug}`} target="_blank">
-                        <ExternalLink className="w-3 h-3 text-gray-400" />
+                        <ExternalLink className="w-3 h-3 text-gray-600" />
                       </Link>
                     </div>
                     <p className="text-sm text-gray-500">
@@ -104,7 +104,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
         )}
 
         {events.length > 0 && (
-          <p className="text-xs text-gray-400 mt-3 pt-3 border-t">
+          <p className="text-xs text-gray-600 mt-3 pt-3 border-t">
             Showing {filteredEvents.length} of {pluralize(events.length, "upcoming event")}
           </p>
         )}

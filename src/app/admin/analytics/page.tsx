@@ -1153,7 +1153,7 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
                   </span>
                 )}
                 {c.quotaError && (
-                  <span className="text-gray-400 ml-2 italic">· quota unavailable</span>
+                  <span className="text-gray-600 ml-2 italic">· quota unavailable</span>
                 )}
               </div>
             </div>
@@ -1259,7 +1259,7 @@ function Sparkline({
   });
 
   if (coords.length === 0) {
-    return <div className="text-xs text-gray-400 italic">No data yet.</div>;
+    return <div className="text-xs text-gray-600 italic">No data yet.</div>;
   }
 
   const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
@@ -1839,7 +1839,7 @@ async function RecommendationsTab() {
                         <div className="flex items-start justify-between gap-4 flex-wrap">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-gray-400 group-open:rotate-90 transition-transform inline-block">
+                              <span className="text-gray-600 group-open:rotate-90 transition-transform inline-block">
                                 ▶
                               </span>
                               <p className="text-sm font-semibold text-gray-900">{group.title}</p>
@@ -1883,7 +1883,7 @@ async function RecommendationsTab() {
                             <p className="text-sm text-gray-700 mt-1.5 ml-6">
                               {rationaleFor(group)}
                             </p>
-                            <p className="text-xs text-gray-400 mt-1 ml-6 flex items-center gap-2 flex-wrap">
+                            <p className="text-xs text-gray-600 mt-1 ml-6 flex items-center gap-2 flex-wrap">
                               <span>rule {group.ruleKey}</span>
                               <ScanFreshnessBadge lastScannedAt={group.lastScannedAt} />
                             </p>
@@ -2439,7 +2439,7 @@ async function GoogleTab() {
               indexed / submitted · {fmt(sitemapErrorCount)} errors · {fmt(sitemapWarningCount)}{" "}
               warnings
             </p>
-            <p className="text-xs text-gray-400 mt-2">
+            <p className="text-xs text-gray-600 mt-2">
               Indexed = URLs with PASS verdict in our URL Inspection sweep ({fmt(inspectedCount)}{" "}
               inspected). GSC Sitemaps API stopped reporting per-URL indexed counts in 2022.
             </p>
@@ -2704,7 +2704,7 @@ async function BingTab() {
                 ? `${fmt(quota.monthlyRemaining)} of ${fmt(quota.monthlyQuota)} monthly`
                 : "Unavailable"}
             </p>
-            <p className="text-xs text-gray-400 mt-2">
+            <p className="text-xs text-gray-600 mt-2">
               Bing Webmaster Tools URL submission API. Separate from indexnow.org pings — see the
               IndexNow tab for our submission log.
             </p>
