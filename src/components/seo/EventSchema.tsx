@@ -1,5 +1,6 @@
 import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from "@/lib/datetime";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
+import { displayVenueName } from "@/lib/venue-display";
 
 interface EventDay {
   date: string;
@@ -119,7 +120,12 @@ export function EventSchema({
   const location = venue
     ? {
         "@type": "Place",
-        name: venue.name,
+        // Cohort 8 follow-up (2026-06-01) — use the same display fallback
+        // as the venue detail page H1, so a street-address-named venue
+        // surfaces as "Event venue in {City}, {State}" in event JSON-LD
+        // rather than "18 Spring Street". Google Rich Results prefers a
+        // descriptive name over a street address.
+        name: displayVenueName(venue),
         address: {
           "@type": "PostalAddress",
           streetAddress: venue.address || undefined,

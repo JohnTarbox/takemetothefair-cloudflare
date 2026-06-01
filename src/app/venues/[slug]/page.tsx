@@ -28,6 +28,7 @@ import type { Metadata } from "next";
 import { logError } from "@/lib/logger";
 import { buildVenueMetaDescription } from "@/lib/seo-utils";
 import { decodeHtmlEntities, unsafeSlug } from "@/lib/utils";
+import { displayVenueName } from "@/lib/venue-display";
 import { VenueSchema } from "@/components/seo/VenueSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
@@ -97,7 +98,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Venue Not Found" };
   }
 
-  const name = decodeHtmlEntities(venue.name);
+  // Cohort 8 follow-up (2026-06-01) — wrap stored venue.name in
+  // displayVenueName() so meta tags + OG + Twitter card all show the
+  // "Event venue in {City}, {State}" fallback when the underlying name
+  // is a raw street address. Keeps SEO surfaces consistent with the H1.
+  // Stored venue.name still flows to slug lookups / DetailPageTracker
+  // analytics for continuity.
+  const name = decodeHtmlEntities(displayVenueName(venue));
   const title = `${name} | Meet Me at the Fair`;
   const description = buildVenueMetaDescription(venue);
   const url = `https://meetmeatthefair.com/venues/${venue.slug}`;
@@ -147,12 +154,21 @@ export default async function VenueDetailPage({ params }: Props) {
 
   const linkedBlogPosts = await getDirectlyLinkedBlogPosts(getCloudflareDb(), "VENUE", venue.id, 3);
 
+  // Cohort 8 follow-up (2026-06-01) — same display-name fallback used in
+  // metadata above, propagated through every SEO/JSON-LD surface on the
+  // page so search engines see the same name as users do in the H1.
+  const venueDisplayName = displayVenueName(venue);
+
   return (
     <>
+      {/* DetailPageTracker keeps the stored venue.name for analytics
+          continuity — renaming the row in the DB shouldn't break
+          historical analytics; the renderer falls back, the tracker
+          doesn't. */}
       <DetailPageTracker type="venue" slug={venue.slug} name={venue.name} />
       <ScrollDepthTracker pageType="venue-detail" />
       <VenueSchema
-        name={venue.name}
+        name={venueDisplayName}
         description={venue.description}
         imageUrl={venue.imageUrl}
         url={`https://meetmeatthefair.com/venues/${venue.slug}`}
@@ -175,13 +191,13 @@ export default async function VenueDetailPage({ params }: Props) {
         items={[
           { name: "Home", url: "https://meetmeatthefair.com" },
           { name: "Venues", url: "https://meetmeatthefair.com/venues" },
-          { name: venue.name, url: `https://meetmeatthefair.com/venues/${venue.slug}` },
+          { name: venueDisplayName, url: `https://meetmeatthefair.com/venues/${venue.slug}` },
         ]}
       />
       {venue.events.length > 0 && (
         <ItemListSchema
-          name={`Upcoming events at ${venue.name}`}
-          description={`Events scheduled at ${venue.name}`}
+          name={`Upcoming events at ${venueDisplayName}`}
+          description={`Events scheduled at ${venueDisplayName}`}
           items={venue.events.map((e) => ({
             name: e.name,
             url: `https://meetmeatthefair.com/events/${e.slug}`,
@@ -197,7 +213,7 @@ export default async function VenueDetailPage({ params }: Props) {
               <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
                 <Image
                   src={venue.imageUrl}
-                  alt={venue.name}
+                  alt={venueDisplayName}
                   fill
                   priority
                   sizes="(max-width: 1024px) 100vw, 66vw"
@@ -207,7 +223,10 @@ export default async function VenueDetailPage({ params }: Props) {
             )}
 
             <div>
-              <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{venue.name}</h1>
+              {/* Cohort 8 follow-up: same fallback as the venue-card H3 — keeps
+                  the detail page consistent with the listing page when the
+                  underlying name is a raw street address. */}
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{venueDisplayName}</h1>
               <p className="mt-2 text-lg text-gray-600 flex items-center gap-2">
                 <MapPin className="w-5 h-5" />
                 {venue.city}, {venue.state}
