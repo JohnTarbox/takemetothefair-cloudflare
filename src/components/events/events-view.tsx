@@ -240,15 +240,42 @@ function formatShortMonth(date: Date): string {
 
 function getEventsForDate(events: EventWithRelations[], date: Date): EventWithRelations[] {
   return events.filter((event) => {
-    // For discontinuous events, check against actual specific dates
+    // Discontinuous events with explicit per-day rows — render a chip
+    // on each actual occurrence date. Unchanged from before.
     if (event.discontinuousDates && event.eventDayDates?.length) {
       const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       return event.eventDayDates.includes(dateStr);
     }
-    // For continuous events, use date range
+    // Cohort 7 (C4/U4, 2026-06-01) — for continuous multi-day events
+    // (a 5-day fair, a 30-day market season with no event_days), render
+    // a chip ONLY on the first day of the span. Previously this branch
+    // returned true for every cell in the range, which flooded the
+    // calendar (one event rendered 63x in a single month, per the
+    // dev-email C4 finding — United Farmers Market case).
+    //
+    // A full Google-Calendar-style spanning bar is a follow-up — the
+    // mcw-calendar-grid render API doesn't expose cross-cell layout
+    // primitives, and the renderDayNumber/renderDayContent callbacks
+    // are per-cell. For now: one chip on the start date with the date
+    // range available via popover. Visual span is lost but flooding is
+    // gone, and accurate-per-occurrence rendering remains correct for
+    // event_days-backed events (the more common shape).
     const startDate = event.startDate ? new Date(event.startDate) : null;
+    if (!startDate) return false;
     const endDate = event.endDate ? new Date(event.endDate) : startDate;
-    return isDateInRange(date, startDate, endDate);
+    // If the cell is BEFORE the start or AFTER the end, definitely no.
+    if (!isDateInRange(date, startDate, endDate)) return false;
+    // If start == end (single-day event), the in-range check is
+    // sufficient — single chip on the single day.
+    if (!endDate || startDate.getTime() === endDate.getTime()) return true;
+    // Multi-day continuous: render only on the start date. Use
+    // year+month+day comparison to avoid timezone surprises (events
+    // store UTC, but the calendar cell `date` is constructed local).
+    return (
+      date.getFullYear() === startDate.getUTCFullYear() &&
+      date.getMonth() === startDate.getUTCMonth() &&
+      date.getDate() === startDate.getUTCDate()
+    );
   });
 }
 
