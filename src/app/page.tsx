@@ -214,7 +214,7 @@ export default async function HomePage() {
             <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-8 text-sm">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
-                  <Calendar className="w-4 h-4 text-amber" />
+                  <Calendar className="w-4 h-4 text-amber-fg" />
                 </div>
                 <span className="text-white font-medium">
                   {counts.upcomingEvents.toLocaleString()} upcoming event
@@ -223,7 +223,7 @@ export default async function HomePage() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
-                  <MapPin className="w-4 h-4 text-amber" />
+                  <MapPin className="w-4 h-4 text-amber-fg" />
                 </div>
                 <span className="text-white font-medium">
                   {counts.activeVenues.toLocaleString()} venue
@@ -232,7 +232,7 @@ export default async function HomePage() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
-                  <Users className="w-4 h-4 text-amber" />
+                  <Users className="w-4 h-4 text-amber-fg" />
                 </div>
                 <span className="text-white font-medium">
                   {counts.totalVendors.toLocaleString()} vendor

@@ -110,7 +110,9 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           {/* Date badge */}
           {monthAbbr && dayNum && (!event.imageUrl || imgError) && (
             <div className="absolute bottom-3 left-3 bg-white rounded-lg shadow-sm px-2.5 py-1.5 text-center leading-tight">
-              <div className="text-[10px] font-semibold text-amber tracking-wide">{monthAbbr}</div>
+              <div className="text-[10px] font-semibold text-amber-fg tracking-wide">
+                {monthAbbr}
+              </div>
               <div className="text-lg font-bold text-navy -mt-0.5">{dayNum}</div>
             </div>
           )}

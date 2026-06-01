@@ -31,6 +31,15 @@ const config: Config = {
           DEFAULT: "#E8960C",
           light: "#FFF3D6",
           dark: "#B5730A",
+          // Cohort 6 (analyst, 2026-06-01) — WCAG AA-safe foreground
+          // for amber text. amber.DEFAULT (#E8960C) measures 2.39:1
+          // on white — below the 4.5:1 floor — so this token splits
+          // the role: backgrounds keep DEFAULT (no design change),
+          // foreground text uses .fg (≈ 5.7:1 on white, 5.4:1 on
+          // cream #FAF7F2). amber.dark (#B5730A → 4.79:1) was the
+          // pre-existing escape hatch — keep it for badge/icon use
+          // where AA is satisfied. Use .fg for body / label text.
+          fg: "#8B5A05",
         },
         cream: "#FAF7F2",
         terracotta: {
