@@ -46,6 +46,22 @@ export default [
           message:
             "Use createSlug() from @takemetothefair/utils instead of inline /[^a-z0-9]+/ regex. The slugify library handles & → \"and\", apostrophes, and accented chars; this regex doesn't. See issue #120.",
         },
+        // Cohort 5 follow-up (2026-06-01) — flag raw <button><svg/></button>
+        // and <a><svg/></a> patterns. Cohort 5 (PR #293) shipped IconButton +
+        // IconLink primitives with REQUIRED aria-label via the type system;
+        // this rule catches the AST shape where someone hand-rolls a
+        // svg-only button outside the primitive. Doesn't catch Lucide-
+        // component children (<Trash2/> etc) because those render as
+        // JSXElement[openingElement.name.name='Trash2'], not 'svg' — a
+        // future enhancement could match by Capital-name convention but
+        // would need careful tuning. For now this catches the literal
+        // raw-svg case that the email originally flagged.
+        {
+          selector:
+            "JSXElement[openingElement.name.name=/^(button|a)$/] > JSXElement[openingElement.name.name='svg']",
+          message:
+            "Use IconButton (state changes) or IconLink (navigation) from @/components/ui/icon-button instead of raw <button><svg/> — the primitive enforces aria-label at the type level (WCAG 4.1.2) and a ≥24px hit area (WCAG 2.2 AA 2.5.8).",
+        },
       ],
     },
   },
