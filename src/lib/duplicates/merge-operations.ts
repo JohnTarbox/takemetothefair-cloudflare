@@ -1,4 +1,4 @@
-import { eq, and, inArray, sql, notInArray } from "drizzle-orm";
+import { eq, and, inArray, sql, notInArray, or, isNull } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -775,6 +775,55 @@ async function mergeEvents(
   // slug-history walker in middleware.ts handles the redirect at read
   // time, but pointing the row at the keeper here is the more useful
   // canonical fix.
+  //
+  // K9 (analyst, 2026-06-01). Pre-delete duplicate-side rows that would
+  // collide on UNIQUE(source_type, source_id, target_type, target_slug)
+  // when repointed to keeper.slug. Surfaced 2026-05-31 during the Bar
+  // Harbor Holiday Craft Fair merge — blog post 8ede7fd4 carried
+  // content_links to BOTH events; the blind UPDATE below would have
+  // produced a duplicate row and thrown D1_ERROR: UNIQUE constraint
+  // failed, rolling back the whole merge. Mirrors the event_days
+  // overlap-cleanup pattern at lines 750-763.
+  //
+  // The unique index is declared as a plain index() in the Drizzle
+  // schema (packages/db-schema/src/index.ts:808) but the migration
+  // drizzle/0086_widen_content_links_target_type.sql creates it as a
+  // UNIQUE INDEX, so the constraint is real at runtime — the typing
+  // gap is why tsc never caught it.
+  //
+  // We select keeper-side keys (rows where the link already points at
+  // keeper.slug), then delete any duplicate-side rows that share the
+  // same (sourceType, sourceId). A dup-side row matches via either the
+  // modern shape (targetId = duplicateId) or the legacy shape
+  // (targetId IS NULL AND targetSlug = originalDupSlug).
+  const keeperContentLinks = await db
+    .select({
+      sourceType: contentLinks.sourceType,
+      sourceId: contentLinks.sourceId,
+    })
+    .from(contentLinks)
+    .where(and(eq(contentLinks.targetType, "EVENT"), eq(contentLinks.targetSlug, keeper.slug)));
+  if (keeperContentLinks.length > 0) {
+    // One DELETE per collision pair. Each statement binds ~5 params
+    // (well under the D1 100-param cap per [[feedback_d1_batch_param_limit]])
+    // and the typical case is a single colliding blog post.
+    for (const { sourceType, sourceId } of keeperContentLinks) {
+      await db
+        .delete(contentLinks)
+        .where(
+          and(
+            eq(contentLinks.targetType, "EVENT"),
+            eq(contentLinks.sourceType, sourceType),
+            eq(contentLinks.sourceId, sourceId),
+            or(
+              eq(contentLinks.targetId, duplicateId),
+              and(isNull(contentLinks.targetId), eq(contentLinks.targetSlug, originalDupSlug))
+            )
+          )
+        );
+    }
+  }
+
   await db
     .update(contentLinks)
     .set({ targetId: primaryId, targetSlug: keeper.slug })
