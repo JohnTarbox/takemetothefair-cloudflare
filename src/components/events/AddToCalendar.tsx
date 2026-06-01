@@ -37,6 +37,14 @@ interface AddToCalendarProps {
   variant?: "button" | "link" | "icon";
   className?: string;
   eventDays?: EventDay[];
+  // Cohort 7 (C1/U1, 2026-06-01) — RFC 5545 RRULE for events whose
+  // recurrence isn't captured by event_days. Forwarded to the
+  // single-VEVENT ICS path so the user's calendar can expand
+  // occurrences itself. Rare today (~1/942 events) — the common
+  // recurring pattern uses event_days, which goes through the
+  // generateMultiDayICSDataUrl path below and emits one VEVENT per
+  // occurrence (no RRULE needed).
+  recurrenceRule?: string | null;
 }
 
 export function AddToCalendar({
@@ -49,6 +57,7 @@ export function AddToCalendar({
   variant = "button",
   className = "",
   eventDays = [],
+  recurrenceRule = null,
 }: AddToCalendarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -81,6 +90,9 @@ export function AddToCalendar({
     startDate: effectiveStartDate,
     endDate: effectiveEndDate,
     url,
+    // Cohort 7 — forward only when no event_days path is active.
+    // When eventDays drive the ICS, recurrenceRule would double up.
+    recurrenceRule: hasMultiDaySchedule ? null : recurrenceRule,
   };
 
   const googleUrl = generateGoogleCalendarUrl(eventParams);

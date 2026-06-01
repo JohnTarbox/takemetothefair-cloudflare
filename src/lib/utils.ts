@@ -132,6 +132,14 @@ interface CalendarEventParams {
   startDate: Date | string;
   endDate: Date | string;
   url?: string;
+  // Cohort 7 (C1/U1, 2026-06-01) — RFC 5545 RRULE string (e.g.
+  // "FREQ=WEEKLY;BYDAY=SA,SU;UNTIL=20260621T235959Z"). When supplied,
+  // emitted as an RRULE line in the VEVENT so the user's calendar
+  // (Apple Calendar / Outlook / Google) expands occurrences itself.
+  // Without this, a single VEVENT spanning a multi-week recurring
+  // series reads as one continuous block — not what the user wants
+  // for a weekend-only fair.
+  recurrenceRule?: string | null;
 }
 
 // Google's "dates" param uses compact ISO (YYYYMMDDTHHmmSSZ); strip
@@ -181,28 +189,35 @@ export function generateOutlookCalendarUrl(params: CalendarEventParams): string 
 }
 
 export function generateICSContent(params: CalendarEventParams): string {
-  const { title, description, location, startDate, endDate, url } = params;
+  const { title, description, location, startDate, endDate, url, recurrenceRule } = params;
 
   const eventDescription = url
     ? `${description || ""}\\n\\nMore info: ${url}`.trim()
     : description || "";
 
-  const icsContent = [
+  // Filter out empty strings so the array .join doesn't emit blank
+  // lines for the optional RRULE branch (some CalDAV servers reject
+  // blank lines mid-VEVENT).
+  const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Meet Me at the Fair//EN",
     "BEGIN:VEVENT",
     `DTSTART:${formatIcsUtc(startDate)}`,
     `DTEND:${formatIcsUtc(endDate)}`,
+    // Cohort 7 (C1/U1) — emit RRULE when recurrenceRule is supplied.
+    // The caller is responsible for producing a valid RFC 5545 rule
+    // string; we don't validate here.
+    recurrenceRule ? `RRULE:${recurrenceRule}` : "",
     `SUMMARY:${title}`,
     `DESCRIPTION:${eventDescription.replace(/\n/g, "\\n")}`,
     `LOCATION:${location || ""}`,
     `URL:${url || ""}`,
     "END:VEVENT",
     "END:VCALENDAR",
-  ].join("\r\n");
+  ].filter(Boolean);
 
-  return icsContent;
+  return lines.join("\r\n");
 }
 
 // Multi-day ICS generation for events with per-day schedules
