@@ -56,6 +56,15 @@ export type ReplyKind =
   | "extract-failed"
   | "submit-failed"
   | "already-exists"
+  // Cohort 2 (analyst, 2026-06-01) — MEDIUM-confidence dedup hit
+  // (matchType=city_state_date or similar_name_date). Created a
+  // PENDING event tagged with possible_duplicate_of, but the sender
+  // is told it MAY be a duplicate of an existing listing and that an
+  // operator will compare. Distinct from "already-exists" (HIGH-
+  // confidence: workflow short-circuits) and from "ok-medium" (low
+  // field confidence on a non-duplicate). Closes the K2-part-5
+  // behavior gap deferred from PR #286.
+  | "ok-medium-dup"
   // Terminal fail emitted by the stale-sweep when a row's
   // recovery_attempt_n exceeds the cap. Not produced by the workflow
   // itself — sent directly from inbound-email-stale-sweep.ts after

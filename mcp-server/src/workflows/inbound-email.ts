@@ -58,7 +58,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db.js";
 import { inboundEmails, adminActions } from "../schema.js";
 import { logError } from "../logger.js";
-import { classifyDomainTier, isHigherTier } from "@takemetothefair/utils";
+import { classifyDomainTier, isHigherTier, classifyDedupTier } from "@takemetothefair/utils";
 import type { EmailIntent } from "../email-intents.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";
@@ -427,6 +427,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               // ok-medium reply went out without voting links).
               "ok-medium",
               "ok-low",
+              // Cohort 2 (2026-06-01) — MEDIUM-confidence dedup reply.
+              // Sender benefits from the widget the same way ok-medium
+              // does (was-this-what-you-wanted feedback). Per
+              // [[feedback_receipt_widget_allowlist_when_adding_reply_kinds]].
+              "ok-medium-dup",
               // PR-M B1 multi-URL — one widget for the batch (per-event
               // widgets are a follow-up needing schema for per-URL child
               // rows).
@@ -922,70 +927,121 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     );
 
     if (dedup.isDuplicate && dedup.existingEventSlug) {
-      // B5 dedup-enrichment, Phase 1 (log-only). When the incoming source
-      // is a higher tier than the existing event's source_url, record an
-      // admin_actions audit row so we can review the would-have-enriched
-      // set over the first week of real traffic. Phase 2 flips the if-block
-      // to actually re-extract and overwrite the existing event's fields.
-      // Wrapped in its own step.do so a transient D1 hiccup on the audit
-      // write doesn't fail the whole already-exists reply path.
-      await step.do(
-        "submit/dedup-tier-audit",
-        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
-        async () => {
-          try {
-            const fromDomain = fromAddress.includes("@")
-              ? (fromAddress.split("@")[1]?.toLowerCase() ?? null)
-              : null;
-            const candidateTier = classifyDomainTier(extracted.url, {
-              contactEmailDomain: fromDomain,
-            });
-            const existingTier = classifyDomainTier(dedup.existingEventSourceUrl ?? null);
-            if (
-              dedup.existingEventId &&
-              isHigherTier(candidateTier, existingTier) &&
-              extracted.url
-            ) {
-              const db = getDb(this.env.DB);
-              await db.insert(adminActions).values({
-                action: "dedup.would_enrich",
-                actorUserId: null,
-                targetType: "event",
-                targetId: dedup.existingEventId,
-                payloadJson: JSON.stringify({
-                  matchType: dedup.matchType ?? "exact_url",
-                  existingSourceUrl: dedup.existingEventSourceUrl ?? null,
-                  existingTier,
-                  newSourceUrl: extracted.url,
-                  newTier: candidateTier,
-                  fromAddress,
-                }),
-                createdAt: new Date(),
+      // Cohort 2 (analyst, 2026-06-01). K2-part-5 behavior wiring. The
+      // dedup matchType comes from findDuplicate (src/lib/duplicates/
+      // find-duplicate.ts) and is bucketed:
+      //   HIGH   — exact_url, venue_date          → already-exists reply (existing)
+      //   MEDIUM — city_state_date, similar_name_date → fall through to
+      //            submit-event with possible_duplicate_of tagged; reply
+      //            ok-medium-dup so the sender knows it's queued for
+      //            operator triage. /admin/events PENDING queue surfaces
+      //            the candidate inline with a merge button.
+      //
+      // Falsy matchType (older deploy or unexpected return shape) defaults
+      // to MEDIUM via classifyDedupTier's safer-default branch — keeps the
+      // pre-fix behavior of NOT silently dropping the submission. Even
+      // safer for ambiguous cases.
+      const dedupTier = classifyDedupTier(dedup.matchType ?? "");
+
+      if (dedupTier === "high") {
+        // HIGH path — existing behavior unchanged. B5 Phase 1 dedup-tier
+        // audit (log-only, when incoming source out-ranks existing).
+        // Wrapped in its own step.do so a transient D1 hiccup on the
+        // audit write doesn't fail the already-exists reply.
+        await step.do(
+          "submit/dedup-tier-audit",
+          { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "5 seconds" },
+          async () => {
+            try {
+              const fromDomain = fromAddress.includes("@")
+                ? (fromAddress.split("@")[1]?.toLowerCase() ?? null)
+                : null;
+              const candidateTier = classifyDomainTier(extracted.url, {
+                contactEmailDomain: fromDomain,
+              });
+              const existingTier = classifyDomainTier(dedup.existingEventSourceUrl ?? null);
+              if (
+                dedup.existingEventId &&
+                isHigherTier(candidateTier, existingTier) &&
+                extracted.url
+              ) {
+                const db = getDb(this.env.DB);
+                await db.insert(adminActions).values({
+                  action: "dedup.would_enrich",
+                  actorUserId: null,
+                  targetType: "event",
+                  targetId: dedup.existingEventId,
+                  payloadJson: JSON.stringify({
+                    matchType: dedup.matchType ?? "exact_url",
+                    existingSourceUrl: dedup.existingEventSourceUrl ?? null,
+                    existingTier,
+                    newSourceUrl: extracted.url,
+                    newTier: candidateTier,
+                    fromAddress,
+                  }),
+                  createdAt: new Date(),
+                });
+              }
+            } catch (err) {
+              // Non-fatal — Phase 1 is observation only. A failed audit
+              // write must not block the already-exists reply.
+              await logError(getDb(this.env.DB), {
+                source: "mcp:workflow:dedup-tier-audit",
+                message: "dedup.would_enrich audit write failed",
+                error: err,
               });
             }
-          } catch (err) {
-            // Non-fatal — Phase 1 is observation only. A failed audit
-            // write must not block the already-exists reply.
-            await logError(getDb(this.env.DB), {
-              source: "mcp:workflow:dedup-tier-audit",
-              message: "dedup.would_enrich audit write failed",
-              error: err,
-            });
           }
-        }
+        );
+
+        return {
+          replyKind: "already-exists",
+          replyParams: {
+            subject,
+            eventName: dedup.existingEventName ?? extracted.event.name,
+            eventUrl: `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`,
+            matchType: dedup.matchType ?? "exact_url",
+            existingEventStatus: dedup.existingEventStatus ?? "",
+          },
+          status: "replied",
+          resultingEventId: dedup.existingEventId ?? null,
+          fetchMethod,
+          extractionMethod: extracted.extractionMethod,
+        };
+      }
+
+      // MEDIUM path. Fall through to submit-event with the
+      // possible_duplicate_of tag set; reply ok-medium-dup so the
+      // sender knows we noticed the possible overlap. Operator sees
+      // both rows side-by-side on /admin/events and decides.
+      //
+      // No B5 audit on this path — the audit covers "would have
+      // enriched" (HIGH-source-tier promotion of an existing row),
+      // which is orthogonal to MEDIUM dedup. If a future enrich-on-
+      // MEDIUM lands, it gets its own audit row.
+      const submittedMedium = await step.do(
+        "submit/submit-event",
+        {
+          retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+          timeout: "15 seconds",
+        },
+        () => submitEvent(this.env, extracted, fromAddress, dedup.existingEventId ?? null)
       );
 
       return {
-        replyKind: "already-exists",
+        replyKind: "ok-medium-dup",
         replyParams: {
           subject,
-          eventName: dedup.existingEventName ?? extracted.event.name,
-          eventUrl: `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`,
-          matchType: dedup.matchType ?? "exact_url",
-          existingEventStatus: dedup.existingEventStatus ?? "",
+          eventName: submittedMedium.eventName,
+          eventSlug: submittedMedium.slug,
+          candidateName: dedup.existingEventName ?? "an existing event",
+          candidateUrl: dedup.existingEventSlug
+            ? `https://meetmeatthefair.com/events/${dedup.existingEventSlug}`
+            : "",
+          matchType: dedup.matchType ?? "",
         },
         status: "replied",
-        resultingEventId: dedup.existingEventId ?? null,
+        resultingEventId: submittedMedium.id,
         fetchMethod,
         extractionMethod: extracted.extractionMethod,
       };
