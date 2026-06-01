@@ -200,7 +200,7 @@ export function AddToCalendar({
               >
                 {option.icon}
                 <span className="flex-1">{option.name}</span>
-                {option.note && <span className="text-xs text-gray-400">{option.note}</span>}
+                {option.note && <span className="text-xs text-gray-600">{option.note}</span>}
               </a>
             ))}
           </div>
@@ -242,7 +242,7 @@ export function AddToCalendar({
               >
                 {option.icon}
                 <span className="flex-1">{option.name}</span>
-                {option.note && <span className="text-xs text-gray-400">{option.note}</span>}
+                {option.note && <span className="text-xs text-gray-600">{option.note}</span>}
               </a>
             ))}
           </div>
@@ -285,7 +285,7 @@ export function AddToCalendar({
             >
               {option.icon}
               <span className="flex-1">{option.name}</span>
-              {option.note && <span className="text-xs text-gray-400">{option.note}</span>}
+              {option.note && <span className="text-xs text-gray-600">{option.note}</span>}
             </a>
           ))}
         </div>

@@ -193,7 +193,7 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                       <td className="py-3 px-4 text-sm text-gray-600">{venue.state || "-"}</td>
                       <td className="py-3 px-4 text-sm text-gray-600">
                         <div className="flex items-center gap-1">
-                          <Users className="w-4 h-4 text-gray-400" />
+                          <Users className="w-4 h-4 text-gray-600" />
                           {venue.capacity?.toLocaleString() || "-"}
                         </div>
                       </td>
@@ -221,7 +221,7 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                               href={venue.website}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-gray-400 hover:text-gray-600"
+                              className="text-gray-600 hover:text-gray-600"
                               title="Venue Website"
                             >
                               <ExternalLink className="w-4 h-4" />

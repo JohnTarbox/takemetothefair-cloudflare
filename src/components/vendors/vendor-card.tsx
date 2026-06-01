@@ -65,7 +65,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
                   onError={() => setLogoError(true)}
                 />
               ) : (
-                <Store className="w-8 h-8 text-gray-400" />
+                <Store className="w-8 h-8 text-gray-600" />
               )}
             </div>
           </Link>

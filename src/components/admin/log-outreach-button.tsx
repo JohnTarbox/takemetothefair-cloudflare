@@ -79,7 +79,7 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="text-gray-400 hover:text-gray-600"
+          className="text-gray-600 hover:text-gray-600"
           aria-label="Cancel"
         >
           ×

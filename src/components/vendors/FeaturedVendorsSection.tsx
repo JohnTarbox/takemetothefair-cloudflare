@@ -63,7 +63,7 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
                       className="object-cover"
                     />
                   ) : (
-                    <Store className="w-10 h-10 text-gray-400" />
+                    <Store className="w-10 h-10 text-gray-600" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">

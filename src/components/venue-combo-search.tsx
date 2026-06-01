@@ -47,15 +47,13 @@ export function VenueComboSearch({
   const selectedVenue = venues.find((v) => v.id === selectedVenueId);
 
   // Filter DB venues client-side
-  const filteredDbVenues = query.length >= 1
-    ? venues.filter((v) => {
-        const q = query.toLowerCase();
-        return (
-          v.name.toLowerCase().includes(q) ||
-          v.city.toLowerCase().includes(q)
-        );
-      })
-    : [];
+  const filteredDbVenues =
+    query.length >= 1
+      ? venues.filter((v) => {
+          const q = query.toLowerCase();
+          return v.name.toLowerCase().includes(q) || v.city.toLowerCase().includes(q);
+        })
+      : [];
 
   // Debounced Google autocomplete
   useEffect(() => {
@@ -67,9 +65,7 @@ export function VenueComboSearch({
     setLoadingGoogle(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/venues/google-autocomplete?q=${encodeURIComponent(query)}`
-        );
+        const res = await fetch(`/api/venues/google-autocomplete?q=${encodeURIComponent(query)}`);
         if (res.ok) {
           const data = (await res.json()) as { suggestions: AutocompleteSuggestion[] };
           setGoogleSuggestions(data.suggestions);
@@ -215,15 +211,13 @@ export function VenueComboSearch({
 
   return (
     <div className="space-y-2" ref={containerRef}>
-      <label className="block text-sm font-medium text-gray-700">
-        Venue (optional)
-      </label>
+      <label className="block text-sm font-medium text-gray-700">Venue (optional)</label>
 
       {/* Selected venue display */}
       {selectedVenue && !isOpen ? (
         <div className="flex items-center justify-between rounded-lg border border-gray-300 px-3 py-2 bg-gray-50">
           <div className="flex items-center gap-2 text-sm">
-            <MapPin className="w-4 h-4 text-gray-400" />
+            <MapPin className="w-4 h-4 text-gray-600" />
             <span className="font-medium">{selectedVenue.name}</span>
             <span className="text-gray-500">
               — {selectedVenue.city}, {selectedVenue.state}
@@ -233,14 +227,14 @@ export function VenueComboSearch({
             type="button"
             onClick={clearSelection}
             disabled={disabled}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-gray-600 hover:text-gray-600"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       ) : (
         <div className="relative">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">
             {loadingPlace ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
@@ -277,7 +271,7 @@ export function VenueComboSearch({
                 setPendingPlace(null);
                 inputRef.current?.focus();
               }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-600"
             >
               <X className="w-4 h-4" />
             </button>
@@ -300,7 +294,7 @@ export function VenueComboSearch({
                       onClick={() => selectDbVenue(v.id)}
                       className="w-full text-left px-3 py-2 hover:bg-brand-blue-light flex items-center gap-2 text-sm border-b border-gray-50"
                     >
-                      <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
+                      <MapPin className="w-4 h-4 text-gray-600 shrink-0" />
                       <span className="font-medium">{v.name}</span>
                       <span className="text-gray-500 text-xs">
                         {v.city}, {v.state}
@@ -316,9 +310,7 @@ export function VenueComboSearch({
                   <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 flex items-center gap-1.5">
                     <ExternalLink className="w-3 h-3" />
                     From Google
-                    {loadingGoogle && (
-                      <Loader2 className="w-3 h-3 animate-spin ml-auto" />
-                    )}
+                    {loadingGoogle && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
                   </div>
                   {googleSuggestions.map((s) => (
                     <button
@@ -329,13 +321,9 @@ export function VenueComboSearch({
                     >
                       <Plus className="w-4 h-4 mt-0.5 text-green-600 shrink-0" />
                       <div className="min-w-0">
-                        <div className="font-medium text-gray-900 truncate">
-                          {s.mainText}
-                        </div>
+                        <div className="font-medium text-gray-900 truncate">{s.mainText}</div>
                         {s.secondaryText && (
-                          <div className="text-xs text-gray-500 truncate">
-                            {s.secondaryText}
-                          </div>
+                          <div className="text-xs text-gray-500 truncate">{s.secondaryText}</div>
                         )}
                       </div>
                     </button>
@@ -352,11 +340,12 @@ export function VenueComboSearch({
         <div className="rounded-lg border border-green-200 bg-green-50 p-3 space-y-2">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-green-900">
-                {pendingPlace.name}
-              </p>
+              <p className="text-sm font-medium text-green-900">{pendingPlace.name}</p>
               <p className="text-xs text-green-700">
-                {pendingPlace.formattedAddress || [pendingPlace.address, pendingPlace.city, pendingPlace.state].filter(Boolean).join(", ")}
+                {pendingPlace.formattedAddress ||
+                  [pendingPlace.address, pendingPlace.city, pendingPlace.state]
+                    .filter(Boolean)
+                    .join(", ")}
               </p>
               {pendingPlace.googleRating != null && (
                 <p className="text-xs text-green-600 mt-0.5">
@@ -395,11 +384,7 @@ export function VenueComboSearch({
         </div>
       )}
 
-      {error && (
-        <div className="text-sm text-red-600 bg-red-50 rounded-md px-3 py-2">
-          {error}
-        </div>
-      )}
+      {error && <div className="text-sm text-red-600 bg-red-50 rounded-md px-3 py-2">{error}</div>}
     </div>
   );
 }

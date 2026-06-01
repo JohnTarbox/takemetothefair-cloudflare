@@ -650,7 +650,7 @@ export default async function EventDetailPage({ params }: Props) {
                     </div>
                   </div>
                   {(event.viewCount ?? 0) > 10 && (
-                    <p className="text-sm text-gray-400 flex items-center gap-1 mt-1">
+                    <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
                       <Eye className="w-3.5 h-3.5" />
                       {(event.viewCount ?? 0).toLocaleString()} views
                     </p>
@@ -727,7 +727,7 @@ export default async function EventDetailPage({ params }: Props) {
                         className="object-cover"
                       />
                     ) : (
-                      <Store className="w-5 h-5 text-gray-400" />
+                      <Store className="w-5 h-5 text-gray-600" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -911,7 +911,7 @@ export default async function EventDetailPage({ params }: Props) {
                 </div>
               ) : (
                 <div className="flex items-start gap-3">
-                  <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <MapPin className="w-5 h-5 text-gray-600 mt-0.5" />
                   <div>
                     <p className="text-sm text-gray-500">Venue to be announced</p>
                   </div>
@@ -1138,7 +1138,7 @@ export default async function EventDetailPage({ params }: Props) {
           {!session && (
             <Card id="vendor-apply">
               <CardContent className="p-6 text-center">
-                <Store className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <Store className="w-8 h-8 text-gray-600 mx-auto mb-2" />
                 <p className="text-sm text-gray-600 mb-3">Are you a vendor?</p>
                 <Link href="/login">
                   <Button variant="outline" className="w-full">
@@ -1169,7 +1169,7 @@ export default async function EventDetailPage({ params }: Props) {
                         className="object-cover"
                       />
                     ) : (
-                      <User className="w-6 h-6 text-gray-400" />
+                      <User className="w-6 h-6 text-gray-600" />
                     )}
                   </div>
                   <div>
@@ -1243,7 +1243,7 @@ export default async function EventDetailPage({ params }: Props) {
                   <p className="text-sm text-gray-500 mt-2 line-clamp-2">{post.excerpt}</p>
                 )}
                 {post.publishDate && (
-                  <p className="text-xs text-gray-400 mt-2">
+                  <p className="text-xs text-gray-600 mt-2">
                     {new Date(post.publishDate).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",

@@ -316,7 +316,7 @@ export default async function SourceQualityPage({
                           {r.sourceDomain}
                         </Link>
                       ) : (
-                        <span className="text-gray-400">(no domain)</span>
+                        <span className="text-gray-600">(no domain)</span>
                       )}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-gray-700">
@@ -330,7 +330,7 @@ export default async function SourceQualityPage({
                     <Num value={r.imageless} pct={pct(r.imageless, r.total)} muted />
                     <td className="px-4 py-2 text-right tabular-nums text-gray-700">
                       {r.yield30dPct == null ? (
-                        <span className="text-gray-400">—</span>
+                        <span className="text-gray-600">—</span>
                       ) : (
                         <span>{r.yield30dPct}%</span>
                       )}
@@ -472,7 +472,7 @@ async function ExtractionMethodCard() {
                     className="border-b border-gray-100 hover:bg-gray-50"
                   >
                     <td className="px-4 py-2 font-mono text-gray-900">
-                      {r.sourceDomain ?? <span className="text-gray-400">(no domain)</span>}
+                      {r.sourceDomain ?? <span className="text-gray-600">(no domain)</span>}
                     </td>
                     {methodColumns.map((m) => (
                       <td key={m} className="px-4 py-2 text-right tabular-nums text-gray-700">

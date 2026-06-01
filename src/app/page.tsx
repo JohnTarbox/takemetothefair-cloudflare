@@ -292,7 +292,7 @@ export default async function HomePage() {
                 href={`/events/${state.slug}`}
                 className="flex items-center justify-center gap-2 p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all text-center group"
               >
-                <MapPin className="w-4 h-4 text-gray-400 group-hover:text-navy" />
+                <MapPin className="w-4 h-4 text-gray-600 group-hover:text-navy" />
                 <span className="font-medium text-gray-900 group-hover:text-navy">
                   {state.name}
                 </span>

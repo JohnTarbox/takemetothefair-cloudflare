@@ -349,7 +349,7 @@ function AeoTotalBadge({ total }: { total: number }) {
 
 function AeoDeltaCell({ current, previous }: { current: number; previous: number }) {
   const pct = aeoDeltaPercent(current, previous);
-  if (pct === null) return <span className="text-gray-400">—</span>;
+  if (pct === null) return <span className="text-gray-600">—</span>;
   const rounded = Math.round(pct);
   const sign = rounded > 0 ? "+" : "";
   const color = rounded > 0 ? "text-green-700" : rounded < 0 ? "text-red-700" : "text-gray-600";

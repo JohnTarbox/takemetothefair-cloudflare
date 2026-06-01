@@ -62,7 +62,7 @@ export function VendorLogoUpload({ vendorId, currentLogoUrl }: Props) {
           <p className="text-xs text-gray-500 mt-1 break-all">{logoUrl}</p>
         </div>
       ) : (
-        <div className="w-32 h-32 border border-dashed border-gray-300 rounded-md flex items-center justify-center text-gray-400 text-xs mb-4">
+        <div className="w-32 h-32 border border-dashed border-gray-300 rounded-md flex items-center justify-center text-gray-600 text-xs mb-4">
           No logo
         </div>
       )}

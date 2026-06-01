@@ -257,7 +257,7 @@ export default function OgImageSweepPage() {
                               rel="noopener noreferrer"
                               className="text-blue-600 hover:underline"
                             >
-                              {row.source_url || <span className="text-gray-400">—</span>}
+                              {row.source_url || <span className="text-gray-600">—</span>}
                             </a>
                           </td>
                           <td className="py-2 pr-3 font-mono text-gray-700 max-w-[420px] truncate">
@@ -271,7 +271,7 @@ export default function OgImageSweepPage() {
                                 {row.image_url}
                               </a>
                             ) : (
-                              (row.reason ?? <span className="text-gray-400">—</span>)
+                              (row.reason ?? <span className="text-gray-600">—</span>)
                             )}
                           </td>
                         </tr>

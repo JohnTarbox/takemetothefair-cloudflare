@@ -437,7 +437,7 @@ function Delta({
 
   if (previous === 0 && current === 0) {
     label = "no prior data";
-    color = "text-gray-400";
+    color = "text-gray-600";
     Icon = Minus;
   } else if (previous === 0) {
     label = "new";

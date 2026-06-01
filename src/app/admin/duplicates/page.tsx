@@ -442,7 +442,7 @@ export default function AdminDuplicatesPage() {
                             >
                               {formatSimilarity(pair.similarity)}
                             </Badge>
-                            <ArrowRight className="w-4 h-4 text-gray-400 my-1" />
+                            <ArrowRight className="w-4 h-4 text-gray-600 my-1" />
                           </div>
 
                           {/* Entity 2 */}
@@ -480,7 +480,7 @@ export default function AdminDuplicatesPage() {
               <h2 className="text-lg font-semibold text-gray-900">
                 Review Duplicate {entityType.slice(0, -1)}
               </h2>
-              <button onClick={handleCloseReview} className="text-gray-400 hover:text-gray-600">
+              <button onClick={handleCloseReview} className="text-gray-600 hover:text-gray-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -549,7 +549,7 @@ export default function AdminDuplicatesPage() {
                                     {e.city as string}, {e.state as string} {e.zip as string}
                                   </p>
                                   {(e.latitude || e.longitude) && (
-                                    <p className="text-gray-400 text-xs">
+                                    <p className="text-gray-600 text-xs">
                                       {e.latitude as number}, {e.longitude as number}
                                     </p>
                                   )}
@@ -575,7 +575,7 @@ export default function AdminDuplicatesPage() {
                                     </p>
                                   )}
                                   {e.description && (
-                                    <p className="text-gray-400 text-xs line-clamp-2 mt-1">
+                                    <p className="text-gray-600 text-xs line-clamp-2 mt-1">
                                       {e.description as string}
                                     </p>
                                   )}
@@ -591,7 +591,7 @@ export default function AdminDuplicatesPage() {
                                     <p className="text-xs font-medium text-gray-500">
                                       Google Places
                                     </p>
-                                    <p className="text-gray-400 text-xs truncate">
+                                    <p className="text-gray-600 text-xs truncate">
                                       Place ID: {(e.googlePlaceId as string) || "—"}
                                     </p>
                                     <p className="text-xs text-gray-600">

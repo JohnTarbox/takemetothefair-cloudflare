@@ -200,7 +200,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                         {post.excerpt && (
                           <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
                         )}
-                        <div className="flex items-center gap-3 text-xs text-gray-400 mt-2">
+                        <div className="flex items-center gap-3 text-xs text-gray-600 mt-2">
                           {post.publishDate && (
                             <span>
                               {new Date(post.publishDate).toLocaleDateString("en-US", {

@@ -182,7 +182,7 @@ function RecurringScheduleView({
                     {showHours ? ":" : ""}
                   </span>
                   {day.closed ? (
-                    <span className="text-gray-400">Closed</span>
+                    <span className="text-gray-600">Closed</span>
                   ) : showHours ? (
                     <span
                       className={

@@ -384,7 +384,7 @@ export default async function VendorClaimLeaderboardPage() {
                       </td>
                       <td className="px-4 py-2 text-xs text-gray-600">
                         {r.outreachCount === 0 ? (
-                          <span className="text-gray-400">never</span>
+                          <span className="text-gray-600">never</span>
                         ) : (
                           <span>
                             {r.outreachCount}× · last{" "}

@@ -200,12 +200,12 @@ function PopoverContent({
 
         <div className="space-y-1.5 text-sm text-gray-600 mb-3">
           <div className="flex items-center gap-2">
-            <CalendarIcon className="w-4 h-4 flex-shrink-0 text-gray-400" />
+            <CalendarIcon className="w-4 h-4 flex-shrink-0 text-gray-600" />
             <span>{formatDateRange(event.startDate, event.endDate)}</span>
           </div>
           {location && (
             <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4 flex-shrink-0 text-gray-400" />
+              <MapPin className="w-4 h-4 flex-shrink-0 text-gray-600" />
               <span>{location}</span>
             </div>
           )}
@@ -323,7 +323,7 @@ export function DayEventsPopover({
         <h3 className="font-semibold text-gray-900 text-sm">{dateLabel}</h3>
         <button
           onClick={onClose}
-          className="p-1 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
+          className="p-1 text-gray-600 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
           aria-label="Close"
         >
           <X className="w-4 h-4" />
@@ -344,7 +344,7 @@ export function DayEventsPopover({
           >
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getEventColor(event.id)}`} />
             <span className="text-sm text-gray-800 truncate flex-1">{event.name}</span>
-            <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <ChevronRight className="w-3.5 h-3.5 text-gray-600 flex-shrink-0" />
           </button>
         ))}
       </div>

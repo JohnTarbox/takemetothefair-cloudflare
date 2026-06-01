@@ -380,7 +380,7 @@ export default function AdminEventsPage() {
                           {event.blogPostCount}
                         </span>
                       ) : (
-                        <span className="text-xs text-gray-400">0</span>
+                        <span className="text-xs text-gray-600">0</span>
                       )}
                     </td>
                     <td className="py-3 px-4">

@@ -152,7 +152,7 @@ export default function VendorEventsPage() {
       {/* Filters */}
       <div className="mb-6 flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600" />
           <input
             type="text"
             placeholder="Search events..."
@@ -200,7 +200,7 @@ export default function VendorEventsPage() {
       {sortedEvents.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <Calendar className="w-12 h-12 text-gray-600 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900">No events found</h3>
             <p className="mt-1 text-gray-500">Try adjusting your search or filter criteria</p>
           </CardContent>
@@ -222,7 +222,7 @@ export default function VendorEventsPage() {
                         className="w-full h-full object-cover"
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-400">
+                      <div className="w-full h-full flex items-center justify-center text-gray-600">
                         <Calendar className="w-12 h-12" />
                       </div>
                     )}
@@ -290,7 +290,7 @@ export default function VendorEventsPage() {
                           className="w-24 h-24 object-cover"
                         />
                       ) : (
-                        <Calendar className="w-8 h-8 text-gray-400" />
+                        <Calendar className="w-8 h-8 text-gray-600" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">

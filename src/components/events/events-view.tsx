@@ -617,7 +617,7 @@ function CalendarView({
               ? "bg-royal text-white font-semibold hover:bg-navy"
               : day.inMonth
                 ? "font-medium text-gray-700 hover:bg-gray-200"
-                : "text-gray-400 hover:bg-gray-100"
+                : "text-gray-600 hover:bg-gray-100"
           }`}
         >
           {day.day}
@@ -686,7 +686,7 @@ function CalendarView({
               <div className="p-2">
                 <div className="grid grid-cols-7 gap-0.5 text-center">
                   {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                    <div key={i} className="text-[10px] text-gray-400 font-medium">
+                    <div key={i} className="text-[10px] text-gray-600 font-medium">
                       {d}
                     </div>
                   ))}
@@ -1252,7 +1252,7 @@ export function EventsView({
                     <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.state || "-"}</td>
                     <td className="py-3 px-4 text-sm text-gray-600 whitespace-nowrap">
                       <div className="flex items-center gap-1">
-                        <CalendarIcon className="w-4 h-4 text-gray-400" />
+                        <CalendarIcon className="w-4 h-4 text-gray-600" />
                         {formatDateRange(event.startDate, event.endDate)}
                       </div>
                     </td>
@@ -1269,7 +1269,7 @@ export function EventsView({
                             href={event.ticketUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-gray-400 hover:text-gray-600"
+                            className="text-gray-600 hover:text-gray-600"
                             title="Event Website"
                           >
                             <ExternalLink className="w-4 h-4" />

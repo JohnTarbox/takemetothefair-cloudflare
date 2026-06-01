@@ -383,7 +383,7 @@ export default async function VendorDetailPage({ params }: Props) {
                   ) : (
                     <VendorTypeIcon
                       vendorType={vendor.vendorType}
-                      className="text-gray-400"
+                      className="text-gray-600"
                       size={96}
                     />
                   )}
@@ -395,7 +395,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 >
                   <VendorTypeIcon
                     vendorType={vendor.vendorType}
-                    className="text-gray-400"
+                    className="text-gray-600"
                     size={48}
                   />
                 </div>
@@ -550,7 +550,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     <Link key={event.id} href={`/events/${event.slug}`}>
                       <Card className="hover:shadow-md transition-shadow opacity-75">
                         <CardContent className="p-4 flex items-center gap-4">
-                          <div className="w-16 h-16 rounded-lg bg-gray-100 flex flex-col items-center justify-center text-gray-400">
+                          <div className="w-16 h-16 rounded-lg bg-gray-100 flex flex-col items-center justify-center text-gray-600">
                             <Calendar className="w-6 h-6" />
                           </div>
                           <div className="flex-1">
@@ -607,7 +607,7 @@ export default async function VendorDetailPage({ params }: Props) {
               <CardContent className="space-y-3">
                 {vendor.contactName && (
                   <div className="flex items-center gap-3 text-gray-700">
-                    <User className="w-5 h-5 text-gray-400" />
+                    <User className="w-5 h-5 text-gray-600" />
                     {vendor.contactName}
                   </div>
                 )}
@@ -664,7 +664,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-start gap-3 text-gray-700">
-                    <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
+                    <MapPin className="w-5 h-5 text-gray-600 mt-0.5" />
                     <div>
                       {vendor.address && <div>{vendor.address}</div>}
                       {(vendor.city || vendor.state || vendor.zip) && (
@@ -688,7 +688,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 <CardContent className="space-y-3">
                   {vendor.yearEstablished && (
                     <div className="flex items-center gap-3 text-gray-700">
-                      <Building className="w-5 h-5 text-gray-400" />
+                      <Building className="w-5 h-5 text-gray-600" />
                       <span>Est. {vendor.yearEstablished}</span>
                     </div>
                   )}
@@ -696,7 +696,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     return (
                       paymentMethods.length > 0 && (
                         <div className="flex items-start gap-3 text-gray-700">
-                          <CreditCard className="w-5 h-5 text-gray-400 mt-0.5" />
+                          <CreditCard className="w-5 h-5 text-gray-600 mt-0.5" />
                           <div className="flex flex-wrap gap-1">
                             {paymentMethods.map((method) => (
                               <Badge key={method} variant="default" className="text-xs">

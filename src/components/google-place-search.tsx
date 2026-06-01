@@ -50,9 +50,7 @@ export function GooglePlaceSearch({
     setLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/venues/google-autocomplete?q=${encodeURIComponent(query)}`
-        );
+        const res = await fetch(`/api/venues/google-autocomplete?q=${encodeURIComponent(query)}`);
         if (res.ok) {
           const data = (await res.json()) as {
             suggestions: AutocompleteSuggestion[];
@@ -73,10 +71,7 @@ export function GooglePlaceSearch({
   // Click outside to close
   useEffect(() => {
     function handleMouseDown(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     }
@@ -102,9 +97,7 @@ export function GooglePlaceSearch({
         const place = (await res.json()) as PlaceLookupResult;
         onPlaceSelect(place);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to load place details"
-        );
+        setError(err instanceof Error ? err.message : "Failed to load place details");
       } finally {
         setLoadingPlace(false);
       }
@@ -146,9 +139,7 @@ export function GooglePlaceSearch({
       onPlaceSelect(place);
       setUrlValue("");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to resolve Google Maps URL"
-      );
+      setError(err instanceof Error ? err.message : "Failed to resolve Google Maps URL");
     } finally {
       setResolvingUrl(false);
     }
@@ -158,7 +149,7 @@ export function GooglePlaceSearch({
     <div className={cn("space-y-2", className)} ref={containerRef}>
       {/* Search input */}
       <div className="relative">
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">
           {loading || loadingPlace ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
@@ -190,7 +181,7 @@ export function GooglePlaceSearch({
               setIsOpen(false);
               inputRef.current?.focus();
             }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-600"
           >
             <X className="w-4 h-4" />
           </button>
@@ -206,15 +197,11 @@ export function GooglePlaceSearch({
                 onClick={() => selectSuggestion(s)}
                 className="w-full text-left px-3 py-2 hover:bg-brand-blue-light flex items-start gap-2 text-sm border-b border-gray-50 last:border-0"
               >
-                <MapPin className="w-4 h-4 mt-0.5 text-gray-400 shrink-0" />
+                <MapPin className="w-4 h-4 mt-0.5 text-gray-600 shrink-0" />
                 <div className="min-w-0">
-                  <div className="font-medium text-gray-900 truncate">
-                    {s.mainText}
-                  </div>
+                  <div className="font-medium text-gray-900 truncate">{s.mainText}</div>
                   {s.secondaryText && (
-                    <div className="text-xs text-gray-500 truncate">
-                      {s.secondaryText}
-                    </div>
+                    <div className="text-xs text-gray-500 truncate">{s.secondaryText}</div>
                   )}
                 </div>
               </button>
@@ -238,7 +225,7 @@ export function GooglePlaceSearch({
       {showUrl && (
         <div className="flex gap-2">
           <div className="relative flex-1">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">
               <Link2 className="w-4 h-4" />
             </div>
             <input
@@ -283,11 +270,7 @@ export function GooglePlaceSearch({
               "flex items-center gap-1.5"
             )}
           >
-            {resolvingUrl ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              "Resolve"
-            )}
+            {resolvingUrl ? <Loader2 className="w-4 h-4 animate-spin" /> : "Resolve"}
           </button>
         </div>
       )}
@@ -301,11 +284,7 @@ export function GooglePlaceSearch({
       )}
 
       {/* Error message */}
-      {error && (
-        <div className="text-sm text-red-600 bg-red-50 rounded-md px-3 py-2">
-          {error}
-        </div>
-      )}
+      {error && <div className="text-sm text-red-600 bg-red-50 rounded-md px-3 py-2">{error}</div>}
     </div>
   );
 }

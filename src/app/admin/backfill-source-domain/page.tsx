@@ -227,16 +227,16 @@ export default function BackfillSourceDomainPage() {
                       {result.sample.map((row) => (
                         <tr key={row.id} className="border-b border-gray-100">
                           <td className="py-2 pr-3 font-mono text-gray-700 max-w-[160px] truncate">
-                            {row.sourceName ?? <span className="text-gray-400">null</span>}
+                            {row.sourceName ?? <span className="text-gray-600">null</span>}
                           </td>
                           <td className="py-2 pr-3 font-mono text-gray-700 max-w-[280px] truncate">
-                            {row.sourceUrl ?? <span className="text-gray-400">null</span>}
+                            {row.sourceUrl ?? <span className="text-gray-600">null</span>}
                           </td>
                           <td className="py-2 pr-3 font-mono text-gray-900">
-                            {row.sourceDomain ?? <span className="text-gray-400">null</span>}
+                            {row.sourceDomain ?? <span className="text-gray-600">null</span>}
                           </td>
                           <td className="py-2 pr-3 font-mono text-gray-900">
-                            {row.ingestionMethod ?? <span className="text-gray-400">null</span>}
+                            {row.ingestionMethod ?? <span className="text-gray-600">null</span>}
                           </td>
                         </tr>
                       ))}
