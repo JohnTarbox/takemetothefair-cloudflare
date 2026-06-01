@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import { pluralize } from "@/lib/text";
 import {
   SortableHeader,
   SortConfig,
@@ -214,8 +215,8 @@ export default function AdminEventsPage() {
         <CardHeader>
           <p className="text-sm text-gray-600">
             {filteredEvents.length === events.length
-              ? `${events.length} events total`
-              : `${filteredEvents.length} of ${events.length} events`}
+              ? `${pluralize(events.length, "event")} total`
+              : `${filteredEvents.length} of ${pluralize(events.length, "event")}`}
           </p>
         </CardHeader>
         <CardContent>

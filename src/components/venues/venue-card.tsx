@@ -7,6 +7,7 @@ import { MapPin, Users, Calendar } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { parseJsonArray } from "@/types";
+import { pluralize } from "@/lib/text";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getStateColors } from "@/lib/state-colors";
 
@@ -63,7 +64,9 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
       <Link href={`/venues/${venue.slug}`} className="block">
-        <div className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-gray-100" : stateColors.bg}`}>
+        <div
+          className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-gray-100" : stateColors.bg}`}
+        >
           {venue.imageUrl && !imgError ? (
             <Image
               src={venue.imageUrl}
@@ -81,7 +84,9 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           )}
           {venue.state && (!venue.imageUrl || imgError) && (
             <div className="absolute top-3 left-3">
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${stateColors.badge}`}>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${stateColors.badge}`}
+              >
                 {venue.state}
               </span>
             </div>
@@ -94,9 +99,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           />
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-lg text-gray-900">
-            {venue.name}
-          </h3>
+          <h3 className="font-semibold text-lg text-gray-900">{venue.name}</h3>
           <div className="mt-2 space-y-1 text-sm text-gray-600">
             {addressParts && (
               <div className="flex items-start">
@@ -116,7 +119,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
             )}
             <div className="flex items-center">
               <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-              <span>{venue._count.events} upcoming events</span>
+              <span>{pluralize(venue._count.events, "upcoming event")}</span>
             </div>
           </div>
           {amenities.length > 0 && (
@@ -126,11 +129,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
                   {amenity}
                 </Badge>
               ))}
-              {amenities.length > 3 && (
-                <Badge variant="default">
-                  +{amenities.length - 3}
-                </Badge>
-              )}
+              {amenities.length > 3 && <Badge variant="default">+{amenities.length - 3}</Badge>}
             </div>
           )}
         </div>
