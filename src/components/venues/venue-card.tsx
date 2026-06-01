@@ -10,6 +10,7 @@ import { parseJsonArray } from "@/types";
 import { pluralize } from "@/lib/text";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getStateColors } from "@/lib/state-colors";
+import { displayVenueName } from "@/lib/venue-display";
 
 interface VenueCardProps {
   venue: {
@@ -99,7 +100,13 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           />
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-lg text-gray-900">{venue.name}</h3>
+          <h3 className="font-semibold text-lg text-gray-900">
+            {/* Cohort 8 (C9/U9) — fall back when venue.name looks like
+                a street address (created via URL import that copied the
+                address into the name field). Data-cleanup rule in
+                src/lib/recommendations/rules/venues-named-by-address.ts. */}
+            {displayVenueName(venue)}
+          </h3>
           <div className="mt-2 space-y-1 text-sm text-gray-600">
             {addressParts && (
               <div className="flex items-start">
