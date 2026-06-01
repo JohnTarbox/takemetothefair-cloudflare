@@ -1,5 +1,6 @@
 import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
 import { parseJsonArray } from "@/types";
+import { displayVenueName } from "@/lib/venue-display";
 
 const META_DESCRIPTION_MAX = 160;
 const META_DESCRIPTION_MIN_USEFUL = 50;
@@ -298,12 +299,20 @@ export function buildEventMetaDescription(event: {
 export function buildVenueMetaDescription(venue: {
   name: string;
   description?: string | null;
+  // Cohort 8 follow-up (2026-06-01) — address is forwarded to the
+  // display-name fallback below so meta descriptions on street-address-
+  // named venues read "Event venue in {City}, {State}. …" instead of
+  // "18 Spring Street. …". Optional so existing callers compile.
+  address?: string | null;
   city?: string | null;
   state?: string | null;
   amenities?: string | null;
   capacity?: number | null;
 }): string {
-  const name = decodeHtmlEntities(venue.name);
+  // Cohort 8 follow-up (2026-06-01) — use displayVenueName so the
+  // meta description's leading clause reads "Event venue in
+  // {City}, {State}. …" for street-address-named rows.
+  const name = decodeHtmlEntities(displayVenueName(venue));
   const locPhrase = venue.city && venue.state ? ` in ${venue.city}, ${venue.state}` : "";
 
   const desc = decodeHtmlEntities(venue.description?.trim() || "");

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
 import { trackEvent, trackSearchResults, trackZeroResults } from "@/lib/analytics";
+import { displayVenueName } from "@/lib/venue-display";
 
 interface SearchResults {
   events: { name: string; slug: string; startDate: string | null }[];
@@ -184,7 +185,9 @@ export function GlobalSearch() {
                     >
                       <MapPin className="w-4 h-4 text-royal flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="text-sm text-gray-900 truncate">{venue.name}</div>
+                        <div className="text-sm text-gray-900 truncate">
+                          {displayVenueName(venue)}
+                        </div>
                         {(venue.city || venue.state) && (
                           <div className="text-xs text-gray-500">
                             {[venue.city, venue.state].filter(Boolean).join(", ")}
