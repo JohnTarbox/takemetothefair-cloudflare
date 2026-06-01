@@ -29,6 +29,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues } from "@/lib/db/schema";
 import { eq, and, gte, lt } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { attachEventDayDates } from "@/lib/event-days-attach";
 import { logError } from "@/lib/logger";
 import type { Metadata } from "next";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -92,10 +93,20 @@ async function getPromoter(slug: string) {
       promoter: r.promoters!,
     });
 
+    // Cohort 7 follow-up (2026-06-01) — attach event_days so EventCard's
+    // date badge shows the next occurrence. Two batches because the
+    // upcoming + past lists are independent.
+    const upcomingFlat = upcomingResults.map(mapEvent);
+    const pastFlat = pastResults.map(mapEvent);
+    const [upcomingEvents, pastEvents] = await Promise.all([
+      attachEventDayDates(db, upcomingFlat),
+      attachEventDayDates(db, pastFlat),
+    ]);
+
     return {
       ...promoter,
-      upcomingEvents: upcomingResults.map(mapEvent),
-      pastEvents: pastResults.map(mapEvent),
+      upcomingEvents,
+      pastEvents,
     };
   } catch (e) {
     await logError(db, {

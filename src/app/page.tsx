@@ -8,6 +8,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { attachEventDayDates } from "@/lib/event-days-attach";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
@@ -57,11 +58,15 @@ async function getFeaturedEvents() {
       .orderBy(events.startDate)
       .limit(6);
 
-    return results.map((r) => ({
+    const flat = results.map((r) => ({
       ...r.events,
       venue: r.venues!,
       promoter: r.promoters!,
     }));
+    // Cohort 7 follow-up (2026-06-01) — attach event_days so EventCard's
+    // date badge resolves the next occurrence instead of falling back
+    // to startDate. Cheap batch query (one SELECT for all 6 events).
+    return await attachEventDayDates(db, flat);
   } catch {
     return [];
   }
@@ -79,11 +84,12 @@ async function getUpcomingEvents() {
       .orderBy(events.startDate)
       .limit(6);
 
-    return results.map((r) => ({
+    const flat = results.map((r) => ({
       ...r.events,
       venue: r.venues!,
       promoter: r.promoters!,
     }));
+    return await attachEventDayDates(db, flat);
   } catch {
     return [];
   }
@@ -102,11 +108,12 @@ async function getWeekendEvents() {
       .where(and(isPublicEventStatus(), gte(events.endDate, now), lte(events.startDate, horizon)))
       .orderBy(events.startDate)
       .limit(4);
-    return results.map((r) => ({
+    const flat = results.map((r) => ({
       ...r.events,
       venue: r.venues!,
       promoter: r.promoters!,
     }));
+    return await attachEventDayDates(db, flat);
   } catch {
     return [];
   }

@@ -7,6 +7,7 @@ import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schem
 import { eq, and, gte, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { attachEventDayDates } from "@/lib/event-days-attach";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { getStateColors } from "@/lib/state-colors";
@@ -101,7 +102,7 @@ async function getStateEvents(
     vendorsByEvent.set(ev.eventId, existing);
   }
 
-  const eventsWithVendors = results.map((r) => ({
+  const eventsBase = results.map((r) => ({
     ...r.events,
     venue: r.venues,
     promoter: r.promoters,
@@ -113,6 +114,10 @@ async function getStateEvents(
       vendorType: ev.vendorType,
     })),
   }));
+  // Cohort 7 follow-up (2026-06-01) — same event_days attachment as
+  // the other event-listing pages so the per-state grid shows the next
+  // occurrence date in card badges.
+  const eventsWithVendors = await attachEventDayDates(db, eventsBase);
 
   const countResult = await db
     .select({ count: count() })
