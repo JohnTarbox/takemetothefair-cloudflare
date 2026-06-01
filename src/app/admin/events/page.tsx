@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, Store, RefreshCw, MapPin } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, Store, RefreshCw, MapPin, GitMerge } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
+import { pluralize } from "@/lib/text";
 import {
   SortableHeader,
   SortConfig,
@@ -32,6 +33,17 @@ interface Event {
   // evaluateGates() when the row routed to PENDING_REVIEW. NULL = no gate
   // fired OR row predates the gates (pre-2026-05-16).
   gateFlags?: string | null;
+  // Cohort 2 (2026-06-01) — set by the inbound-email workflow on
+  // MEDIUM-confidence dedup hits. /api/admin/events GET attaches the
+  // candidate event's metadata so the row can render an inline
+  // "possible duplicate of X — merge into this" affordance.
+  possibleDuplicate?: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+    startDate: string | Date | null;
+  } | null;
 }
 
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
@@ -81,6 +93,46 @@ export default function AdminEventsPage() {
       }
     } catch (error) {
       console.error("Failed to delete event:", error);
+    }
+  };
+
+  // Cohort 2 (2026-06-01) — merge this row INTO its possibleDuplicate
+  // candidate. Keeper = the existing public event the workflow flagged
+  // as a potential match; duplicate = this PENDING row from the
+  // inbound-email submission. Same /api/admin/duplicates/merge endpoint
+  // the /admin/duplicates UI uses (see src/app/admin/duplicates/page.tsx).
+  const handleMerge = async (
+    pendingEventId: string,
+    pendingEventName: string,
+    candidate: { id: string; name: string }
+  ) => {
+    const ok = confirm(
+      `Merge "${pendingEventName}" INTO "${candidate.name}"?\n\nThis tombstones the PENDING row, redirects its slug to the candidate, and transfers any vendors/days/citations/links. This cannot be undone.`
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch("/api/admin/duplicates/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "events",
+          primaryId: candidate.id,
+          duplicateId: pendingEventId,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        error?: string;
+      } | null;
+      if (!res.ok || !data?.success) {
+        alert(`Merge failed: ${data?.error ?? `HTTP ${res.status}`}`);
+        return;
+      }
+      // Refresh the list so the tombstoned row disappears.
+      fetchEvents();
+    } catch (error) {
+      console.error("Failed to merge:", error);
+      alert("Merge failed. Check console for details.");
     }
   };
 
@@ -214,8 +266,8 @@ export default function AdminEventsPage() {
         <CardHeader>
           <p className="text-sm text-gray-600">
             {filteredEvents.length === events.length
-              ? `${events.length} events total`
-              : `${filteredEvents.length} of ${events.length} events`}
+              ? `${pluralize(events.length, "event")} total`
+              : `${filteredEvents.length} of ${pluralize(events.length, "event")}`}
           </p>
         </CardHeader>
         <CardContent>
@@ -283,6 +335,26 @@ export default function AdminEventsPage() {
                             Flagged
                           </Badge>
                         )}
+                        {event.possibleDuplicate && (
+                          // Cohort 2 (2026-06-01) — MEDIUM-confidence dedup
+                          // hit from the inbound-email workflow. The merge
+                          // button in the Actions column lets the operator
+                          // confirm with one click (or ignore and approve
+                          // separately if they're genuinely distinct).
+                          <div className="mt-1 text-xs text-amber-700">
+                            Possible duplicate of:{" "}
+                            <Link
+                              href={`/events/${event.possibleDuplicate.slug}`}
+                              className="underline hover:text-amber-900"
+                              target="_blank"
+                            >
+                              {event.possibleDuplicate.name}
+                            </Link>{" "}
+                            <span className="text-gray-500">
+                              ({event.possibleDuplicate.status})
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </td>
                     <td className="py-3 px-4">
@@ -344,6 +416,26 @@ export default function AdminEventsPage() {
                             aria-hidden="true"
                           />
                         </Button>
+                        {event.possibleDuplicate && (
+                          // Cohort 2 (2026-06-01) — only renders on PENDING
+                          // rows that the workflow flagged as MEDIUM-
+                          // confidence dedup hits. Operator confirms the
+                          // merge here in one click.
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              handleMerge(event.id, event.name, {
+                                id: event.possibleDuplicate!.id,
+                                name: event.possibleDuplicate!.name,
+                              })
+                            }
+                            aria-label={`Merge ${event.name} into ${event.possibleDuplicate.name}`}
+                            title={`Merge into "${event.possibleDuplicate.name}"`}
+                          >
+                            <GitMerge className="w-4 h-4 text-amber-700" aria-hidden="true" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"

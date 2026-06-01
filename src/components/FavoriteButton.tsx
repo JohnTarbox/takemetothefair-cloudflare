@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useTransition } from "react";
 import { Heart } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { trackEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+import { useFavorites } from "@/components/FavoritesProvider";
 
 type FavoritableType = "EVENT" | "VENUE" | "VENDOR" | "PROMOTER";
 
@@ -16,10 +17,19 @@ interface FavoriteButtonProps {
 }
 
 export function FavoriteButton({ type, id, className, size = "md" }: FavoriteButtonProps) {
+  // Cohort 4 (2026-06-01) — pull favorited state from per-page
+  // FavoritesProvider cache instead of fetching on every mount. One
+  // fetch per type per page-load, shared across all FavoriteButtons.
+  // Per-button POST/DELETE is unchanged — only the read path is shared.
   const { data: session, status } = useSession();
-  const [isFavorited, setIsFavorited] = useState(false);
+  const { isFavorited: favCheck, setFavorited, isLoadingType } = useFavorites();
+  const isFavorited = favCheck(type, id);
   const [isPending, startTransition] = useTransition();
-  const [isLoading, setIsLoading] = useState(true);
+  // Show the loading shimmer only while the very first fetch for this
+  // type is in flight AND we have a session (logged-out users have
+  // nothing to load). Avoids the briefly-disabled flash on subsequent
+  // mounts that hit the warm cache.
+  const isLoading = status === "loading" || (!!session?.user && isLoadingType(type));
 
   const sizeClasses = {
     sm: "w-5 h-5",
@@ -33,34 +43,6 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
     lg: "p-2.5",
   };
 
-  // Check if item is favorited on mount
-  useEffect(() => {
-    if (status === "loading") return;
-    if (!session?.user) {
-      setIsLoading(false);
-      return;
-    }
-
-    const checkFavorite = async () => {
-      try {
-        const response = await fetch(`/api/favorites?type=${type}`);
-        if (response.ok) {
-          const data = (await response.json()) as {
-            favorites: Array<{ id: string; favoritableType: string; favoritableId: string }>;
-          };
-          const favorited = data.favorites.some((fav) => fav.favoritableId === id);
-          setIsFavorited(favorited);
-        }
-      } catch (error) {
-        console.error("Error checking favorite status:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    checkFavorite();
-  }, [type, id, session, status]);
-
   const toggleFavorite = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -71,35 +53,35 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
       return;
     }
 
-    // Optimistic update
+    // Optimistic update — write the new state straight into the
+    // shared cache. Every FavoriteButton subscribed to the same
+    // (type, id) re-renders with the new heart fill.
     const newState = !isFavorited;
-    setIsFavorited(newState);
+    setFavorited(type, id, newState);
     trackEvent("favorite_toggle", { category: "engagement", label: `${type}:${id}` });
 
     startTransition(async () => {
       try {
         if (newState) {
-          // Add favorite
           const response = await fetch("/api/favorites", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ type, id }),
           });
           if (!response.ok) {
-            setIsFavorited(false); // Revert on error
+            setFavorited(type, id, false); // Revert on error
           }
         } else {
-          // Remove favorite
           const response = await fetch(`/api/favorites?type=${type}&id=${id}`, {
             method: "DELETE",
           });
           if (!response.ok) {
-            setIsFavorited(true); // Revert on error
+            setFavorited(type, id, true); // Revert on error
           }
         }
       } catch (error) {
         console.error("Error toggling favorite:", error);
-        setIsFavorited(!newState); // Revert on error
+        setFavorited(type, id, !newState); // Revert on error
       }
     });
   };

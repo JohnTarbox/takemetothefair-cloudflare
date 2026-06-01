@@ -7,6 +7,7 @@ import { MapPin, Users, Calendar } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { parseJsonArray } from "@/types";
+import { pluralize } from "@/lib/text";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getStateColors } from "@/lib/state-colors";
 import { displayVenueName } from "@/lib/venue-display";
@@ -125,7 +126,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
             )}
             <div className="flex items-center">
               <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-              <span>{venue._count.events} upcoming events</span>
+              <span>{pluralize(venue._count.events, "upcoming event")}</span>
             </div>
           </div>
           {amenities.length > 0 && (

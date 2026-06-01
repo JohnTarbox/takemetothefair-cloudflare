@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDateRange, formatPrice } from "@/lib/utils";
 import { formatDistance } from "@/lib/geo";
 import { parseJsonArray } from "@/types";
+import { nextOccurrence } from "@/lib/event-occurrence";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
@@ -32,6 +33,13 @@ interface EventCardProps {
     venue: Venue | null;
     promoter: Promoter | null;
     vendors?: VendorSummary[];
+    // Cohort 7 (C2/U2, 2026-06-01) — optional list of per-day
+    // occurrence dates joined from event_days. When supplied, the
+    // badge shows the next FUTURE occurrence instead of the series
+    // start date. Backwards-compatible: existing callers that don't
+    // join event_days still work — card falls back to publicStartDate
+    // ?? startDate (the pre-Cohort-7 behavior).
+    eventDayDates?: string[];
   };
   /** Set to true for above-the-fold images to enable priority loading */
   priority?: boolean;
@@ -72,13 +80,26 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   const displayStartDate = event.publicStartDate ?? event.startDate;
   const displayEndDate = event.publicEndDate ?? event.endDate;
 
-  // Parse start date for date badge — use UTC methods so the rendered day
-  // number is identical on the edge (UTC) and in the browser (local TZ).
-  const startDate = displayStartDate ? new Date(displayStartDate) : null;
-  const monthAbbr = startDate
-    ? startDate.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase()
+  // Cohort 7 (C2/U2) — date badge shows the NEXT occurrence, not the
+  // series start. For events whose caller joined event_days into the
+  // payload (eventDayDates), this is the next future event_day date.
+  // For events without that join (most callers today), the helper
+  // falls back to the contiguous-range path — same date the badge
+  // showed pre-Cohort-7, so this change is backwards-compatible.
+  const occurrence = nextOccurrence(
+    {
+      startDate: displayStartDate,
+      endDate: displayEndDate,
+      discontinuousDates: event.discontinuousDates,
+      eventDayDates: event.eventDayDates,
+    },
+    new Date()
+  );
+  const badgeDate = occurrence?.date ?? (displayStartDate ? new Date(displayStartDate) : null);
+  const monthAbbr = badgeDate
+    ? badgeDate.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase()
     : null;
-  const dayNum = startDate ? startDate.getUTCDate() : null;
+  const dayNum = badgeDate ? badgeDate.getUTCDate() : null;
 
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
@@ -110,7 +131,9 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           {/* Date badge */}
           {monthAbbr && dayNum && (!event.imageUrl || imgError) && (
             <div className="absolute bottom-3 left-3 bg-white rounded-lg shadow-sm px-2.5 py-1.5 text-center leading-tight">
-              <div className="text-[10px] font-semibold text-amber tracking-wide">{monthAbbr}</div>
+              <div className="text-[10px] font-semibold text-amber-fg tracking-wide">
+                {monthAbbr}
+              </div>
               <div className="text-lg font-bold text-navy -mt-0.5">{dayNum}</div>
             </div>
           )}

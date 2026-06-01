@@ -530,7 +530,13 @@ export async function submitCheckDuplicate(
 export async function submitEvent(
   env: HandlerEnv,
   extracted: SubmitExtractResult,
-  fromAddress: string
+  fromAddress: string,
+  // Cohort 2 (analyst, 2026-06-01) — optional MEDIUM-confidence dedup
+  // tag. When set, the route writes events.possible_duplicate_of so
+  // /admin/events PENDING queue can surface the candidate inline with
+  // a merge button. HIGH-confidence dedup short-circuits before
+  // calling submitEvent, so this is only ever set on the MEDIUM path.
+  possibleDuplicateOf?: string | null
 ): Promise<SubmitEventResult> {
   let res: Response;
   try {
@@ -544,6 +550,9 @@ export async function submitEvent(
     // URL when present, so passing empty-string would fail validation.
     if (extracted.url) {
       submitBody.sourceUrl = extracted.url;
+    }
+    if (possibleDuplicateOf) {
+      submitBody.possibleDuplicateOf = possibleDuplicateOf;
     }
     res = await fetch(`${env.MAIN_APP_URL}/api/suggest-event/submit`, {
       method: "POST",

@@ -164,7 +164,7 @@ export function GlobalSearch() {
                       onClick={() => navigate(`/events/${event.slug}`)}
                       className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors"
                     >
-                      <Calendar className="w-4 h-4 text-amber flex-shrink-0" />
+                      <Calendar className="w-4 h-4 text-amber-fg flex-shrink-0" />
                       <span className="text-sm text-gray-900 truncate">{event.name}</span>
                     </button>
                   ))}

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatDateRange } from "@/lib/utils";
+import { pluralize } from "@/lib/text";
 
 interface EventWithVendorCount {
   id: string;
@@ -29,18 +30,17 @@ interface EventVendorsPanelProps {
 export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredEvents = events.filter((event) =>
-    event.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    event.venue?.city?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    event.venue?.state?.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredEvents = events.filter(
+    (event) =>
+      event.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      event.venue?.city?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      event.venue?.state?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
-        <h2 className="text-lg font-semibold text-gray-900">
-          Manage Event Vendors
-        </h2>
+        <h2 className="text-lg font-semibold text-gray-900">Manage Event Vendors</h2>
         <Link href="/admin/events">
           <Button variant="outline" size="sm">
             View All Events
@@ -105,7 +105,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
 
         {events.length > 0 && (
           <p className="text-xs text-gray-400 mt-3 pt-3 border-t">
-            Showing {filteredEvents.length} of {events.length} upcoming events
+            Showing {filteredEvents.length} of {pluralize(events.length, "upcoming event")}
           </p>
         )}
       </CardContent>

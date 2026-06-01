@@ -67,4 +67,11 @@ export const submitEventSchema = z.object({
   specificDates: z.array(z.string()).nullable().optional(),
   submittedByUserId: z.string().optional(), // User who submitted (auto-filled for authenticated users)
   source: z.enum(["community", "vendor", "email"]).optional(), // Submission source
+  // Cohort 2 (analyst, 2026-06-01) — set by the inbound-email workflow
+  // when findDuplicate returns a MEDIUM-confidence match (city_state_date
+  // or similar_name_date). Surfaces the candidate inline on the
+  // /admin/events PENDING queue with a "merge into this" button.
+  // Trusted-internal field; not exposed via the public vendor / community
+  // suggest forms.
+  possibleDuplicateOf: z.string().nullable().optional(),
 });

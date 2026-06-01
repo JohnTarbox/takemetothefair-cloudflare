@@ -210,6 +210,32 @@ ${SUPPORT_LINE}
 
 ${SIGN_OFF}`;
     }
+    // Cohort 2 (2026-06-01) MEDIUM-confidence dedup hit. New PENDING
+    // event was created and tagged with possible_duplicate_of, but the
+    // sender is told it MAY be a duplicate. The operator's admin queue
+    // surfaces the candidate inline with a one-click merge button —
+    // they confirm or reject. Distinct from "already-exists" (HIGH
+    // dedup: no new event created) and from "ok-medium" (low field
+    // confidence, non-duplicate).
+    case "ok-medium-dup": {
+      const eventName = (params.eventName as string | undefined) ?? "your event";
+      const candidateName = (params.candidateName as string | undefined) ?? "an existing event";
+      const candidateUrl = (params.candidateUrl as string | undefined) ?? "";
+      const candidateLine = candidateUrl
+        ? `  ${candidateName}\n  ${candidateUrl}`
+        : `  ${candidateName}`;
+      return `Thanks for submitting "${eventName}" to Meet Me at the Fair!
+
+We've captured your submission, but it might be the same event as one already on our site:
+
+${candidateLine}
+
+Our team will compare them within 24 hours and either merge yours with the existing listing or publish it as a separate event. If you're sure they're different, just reply with a quick note (different organizer, different town, etc.) and we'll publish yours separately.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "no-url": {
       const hasAttachments = !!params.hasAttachments;
       const attachmentNote = hasAttachments
