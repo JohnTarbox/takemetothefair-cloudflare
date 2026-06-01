@@ -21,6 +21,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, events, promoters } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { attachEventDayDates } from "@/lib/event-days-attach";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
@@ -73,10 +74,13 @@ async function getVenue(slug: string) {
       venue: r.venues!,
       promoter: r.promoters!,
     }));
+    // Cohort 7 follow-up (2026-06-01) — attach event_days so EventCard's
+    // date badge shows the next occurrence, not the series start.
+    const venueEventsWithDays = await attachEventDayDates(db, venueEvents);
 
     return {
       ...venue,
-      events: venueEvents,
+      events: venueEventsWithDays,
     };
   } catch (e) {
     await logError(db, {

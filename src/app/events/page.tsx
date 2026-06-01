@@ -30,6 +30,7 @@ import {
 } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { attachEventDayDates } from "@/lib/event-days-attach";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { sanitizeLikeInput } from "@/lib/utils";
@@ -382,7 +383,7 @@ async function getEvents(
     }
 
     // Combine events with their vendors
-    const eventsWithVendors = results.map((r) => ({
+    const eventsBase = results.map((r) => ({
       ...r.events,
       venue: r.venues,
       promoter: r.promoters,
@@ -393,11 +394,23 @@ async function getEvents(
         logoUrl: ev.logoUrl,
         vendorType: ev.vendorType,
       })),
-      // Include specific dates for discontinuous events (calendar view)
+      // Include specific dates for discontinuous events (calendar view).
+      // The calendar view already pre-loaded these into daysByEvent; for
+      // the cards view we fall through to attachEventDayDates below
+      // (which the discontinuous path will short-circuit on, since the
+      // map will already have entries from daysByEvent).
       ...(r.events.discontinuousDates && daysByEvent.has(r.events.id)
         ? { eventDayDates: daysByEvent.get(r.events.id) }
         : {}),
     }));
+
+    // Cohort 7 follow-up (2026-06-01) — attach event_days for ALL events
+    // (not just calendar-view discontinuous ones) so EventCard's date
+    // badge resolves the next occurrence everywhere. Idempotent: if the
+    // event already has eventDayDates from the calendar-view path above,
+    // attachEventDayDates re-populates it with the same data (same SELECT
+    // shape, same sort). Small cost; one query per page render.
+    const eventsWithVendors = await attachEventDayDates(db, eventsBase);
 
     // Count total (state filter now lives on events.state_code, so no venue join needed)
     const countResult = await db

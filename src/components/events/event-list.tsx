@@ -18,14 +18,15 @@ interface EventListProps {
     venue: Venue;
     promoter: Promoter;
     vendors?: VendorSummary[];
+    // Cohort 7 follow-up (2026-06-01) — forwarded to EventCard so the
+    // date badge resolves the next occurrence. Optional so existing
+    // callers without the event_days JOIN still typecheck.
+    eventDayDates?: string[];
   })[];
   emptyMessage?: string;
 }
 
-export function EventList({
-  events,
-  emptyMessage = "No events found",
-}: EventListProps) {
+export function EventList({ events, emptyMessage = "No events found" }: EventListProps) {
   if (events.length === 0) {
     return (
       <div className="text-center py-12">
