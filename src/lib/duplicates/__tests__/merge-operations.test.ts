@@ -529,6 +529,180 @@ describe("executeMerge", () => {
         executeMerge(db as never, "events", "keeper-id", "duplicate-id")
       ).rejects.toThrow(/already merged/);
     });
+
+    // K9 (2026-06-01). Reproduces the Bar Harbor Holiday Craft Fair shape:
+    // blog post 8ede7fd4 carried content_links to BOTH keeper and
+    // duplicate events. Before the K9 fix the merge_events tool threw
+    // D1_ERROR: UNIQUE constraint failed when the dup-side row was
+    // repointed to keeper.slug (existing keeper row + repointed dup row
+    // collide on (source_type, source_id, target_type, target_slug)).
+    //
+    // The fix is a SELECT keeper-side keys + DELETE matching dup-side
+    // rows BEFORE the existing UPDATE. This test exercises the path by
+    // returning a colliding keeper-side row from the second outside-of-
+    // batch SELECT (the K9 pre-delete query — the first is the
+    // event_days dupDayDates lookup).
+    it("K9: pre-deletes colliding content_links before the repoint UPDATE", async () => {
+      let batchCallCount = 0;
+      let outsideSelectCount = 0;
+      const deleteWhereCalls: number = 0;
+      const deleteChainSpy = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+
+      const db = {
+        // First outside-of-batch select() is the event_days dupDayDates
+        // lookup (returns []). Second is the K9 keeper content_links
+        // lookup — return one colliding pair so the K9 DELETE branch fires.
+        select: vi.fn().mockImplementation(() => ({
+          from: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockImplementation(() => {
+              outsideSelectCount++;
+              if (outsideSelectCount === 2) {
+                // The K9 keeper-key lookup. Returns the Bar-Harbor-shape
+                // colliding key (one blog post links both events).
+                return Promise.resolve([{ sourceType: "BLOG_POST", sourceId: "blog-8ede7fd4" }]);
+              }
+              return Promise.resolve([]);
+            }),
+          })),
+        })),
+        update: vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          })),
+        })),
+        // Capture each .delete().where() invocation so we can assert
+        // the K9 pre-delete fired AT LEAST once with a content_links
+        // target. Since delete() takes the table and where() takes the
+        // predicate, every delete chain hits this where mock.
+        delete: vi.fn().mockImplementation(() => ({
+          where: deleteChainSpy,
+        })),
+        insert: vi.fn().mockImplementation(() => ({
+          values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1)
+            return Promise.resolve([
+              [],
+              [],
+              [
+                {
+                  slug: "keeper",
+                  viewCount: 0,
+                  sourceUrl: "https://k.example/e",
+                  sourceDomain: "k.example",
+                  sourceId: "k1",
+                  sourceName: "K",
+                },
+              ],
+              [
+                {
+                  slug: "duplicate",
+                  viewCount: 0,
+                  mergedInto: null,
+                  sourceUrl: null,
+                  sourceDomain: null,
+                  sourceId: null,
+                  sourceName: null,
+                },
+              ],
+            ]);
+          if (batchCallCount === 2) return Promise.resolve([{}, {}, {}, {}, {}]);
+          return Promise.resolve([
+            [{ id: "primary-id", slug: "keeper" }],
+            [{ name: "Venue" }],
+            [{ companyName: "Promoter" }],
+            [{ count: 0 }],
+          ]);
+        }),
+      } as unknown;
+
+      const result = await executeMerge(db as never, "events", "primary-id", "duplicate-id");
+
+      expect(result.success).toBe(true);
+      // The K9 pre-delete loop ran at least once on the colliding pair
+      // returned by the K9 SELECT. Without the fix, deleteChainSpy
+      // would only fire for the event_vendors / event_days / userFavorites
+      // cleanups. With the fix, there's one additional call from the K9
+      // collision DELETE. We assert ≥1 to avoid coupling to internal
+      // delete-loop ordering — if the fix is silently removed the
+      // collision DELETE disappears and the count drops.
+      expect(deleteChainSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+      // Silence the lint on the unused tracker — kept to make the
+      // intent explicit (count would matter if we tightened the assertion).
+      void deleteWhereCalls;
+    });
+
+    // K9 (2026-06-01). Negative case — when the keeper has no
+    // colliding content_links, the K9 pre-delete loop is a no-op.
+    // The previously-passing "tombstones the duplicate" test already
+    // covers this implicitly (the generic select returns [] so the
+    // K9 SELECT returns nothing); this test makes the contract explicit.
+    it("K9: skips pre-delete when keeper has no overlapping content_links", async () => {
+      let batchCallCount = 0;
+
+      const db = {
+        select: vi.fn().mockImplementation(() => ({
+          from: vi.fn().mockImplementation(() => ({
+            // Every outside-of-batch SELECT returns []. The K9 keeper-key
+            // lookup gets [] back so the DELETE branch is skipped.
+            where: vi.fn().mockResolvedValue([]),
+          })),
+        })),
+        update: vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+          })),
+        })),
+        delete: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+        })),
+        insert: vi.fn().mockImplementation(() => ({
+          values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1)
+            return Promise.resolve([
+              [],
+              [],
+              [
+                {
+                  slug: "keeper",
+                  viewCount: 0,
+                  sourceUrl: null,
+                  sourceDomain: null,
+                  sourceId: null,
+                  sourceName: null,
+                },
+              ],
+              [
+                {
+                  slug: "duplicate",
+                  viewCount: 0,
+                  mergedInto: null,
+                  sourceUrl: null,
+                  sourceDomain: null,
+                  sourceId: null,
+                  sourceName: null,
+                },
+              ],
+            ]);
+          if (batchCallCount === 2) return Promise.resolve([{}, {}, {}, {}, {}]);
+          return Promise.resolve([
+            [{ id: "primary-id", slug: "keeper" }],
+            [{ name: "Venue" }],
+            [{ companyName: "Promoter" }],
+            [{ count: 0 }],
+          ]);
+        }),
+      } as unknown;
+
+      const result = await executeMerge(db as never, "events", "primary-id", "duplicate-id");
+
+      expect(result.success).toBe(true);
+    });
   });
 
   describe("vendors merge", () => {

@@ -437,21 +437,44 @@ export function registerEventLifecycleTools(
         };
       }
 
-      // Preview branch uses the existing GET-ish preview endpoint.
-      // Note: the main-app preview route only takes admin session auth
-      // today (not the internal key); the MCP tool short-cuts straight
-      // to executing for the merge case. A future "preview from MCP"
-      // would extend the preview endpoint similarly. For now, refuse
-      // preview from MCP and direct the operator to use the admin UI.
+      // K8 (analyst, 2026-06-01). Preview path now lives in the same
+      // /api/admin/duplicates/preview endpoint the admin UI uses;
+      // K8 part 1 extended that route to accept X-Internal-Key auth.
+      // Returns relationship counts + warnings (different promoter,
+      // different venue, overlapping vendors) without committing — the
+      // operator (or Claude) can sanity-check before invoking the tool
+      // a second time with preview=false to actually merge.
       if (params.preview) {
+        const previewRes = await fetch(`${env.MAIN_APP_URL}/api/admin/duplicates/preview`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-internal-key": env.INTERNAL_API_KEY,
+          },
+          body: JSON.stringify({
+            type: "events",
+            primaryId: params.keeper_event_id,
+            duplicateId: params.duplicate_event_id,
+          }),
+        });
+        const previewData = (await previewRes.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        if (!previewRes.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: previewData?.error
+                  ? `merge_events preview failed: ${previewData.error}`
+                  : `merge_events preview failed: HTTP ${previewRes.status}`,
+              },
+            ],
+            isError: true,
+          };
+        }
         return {
-          content: [
-            {
-              type: "text",
-              text: "Preview from MCP isn't supported yet — open the admin UI's duplicates view for a preview, then call merge_events without preview=true to commit.",
-            },
-          ],
-          isError: true,
+          content: [jsonContent({ preview: true, ...previewData })],
         };
       }
 
