@@ -85,7 +85,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         logoUrl: vendors.logoUrl,
       })
       .from(vendors)
-      .where(sql`(LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(${vendors.description}) LIKE LOWER(${searchTerm}))`)
+      .where(
+        sql`(LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(${vendors.description}) LIKE LOWER(${searchTerm}))`
+      )
       .orderBy(vendors.businessName)
       .limit(12),
 
@@ -111,7 +113,8 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       .limit(12),
   ]);
 
-  const totalResults = eventResults.length + venueResults.length + vendorResults.length + blogResults.length;
+  const totalResults =
+    eventResults.length + venueResults.length + vendorResults.length + blogResults.length;
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -129,10 +132,18 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
           <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <p className="text-gray-500">Try a different search term or browse by category.</p>
           <div className="flex justify-center gap-4 mt-6">
-            <Link href="/events" className="text-royal hover:underline">Browse Events</Link>
-            <Link href="/venues" className="text-royal hover:underline">Browse Venues</Link>
-            <Link href="/vendors" className="text-royal hover:underline">Browse Vendors</Link>
-            <Link href="/blog" className="text-royal hover:underline">Browse Blog</Link>
+            <Link href="/events" className="text-royal hover:underline">
+              Browse Events
+            </Link>
+            <Link href="/venues" className="text-royal hover:underline">
+              Browse Venues
+            </Link>
+            <Link href="/vendors" className="text-royal hover:underline">
+              Browse Vendors
+            </Link>
+            <Link href="/blog" className="text-royal hover:underline">
+              Browse Blog
+            </Link>
           </div>
         </div>
       )}
@@ -142,7 +153,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         {eventResults.length > 0 && (
           <section>
             <div className="flex items-center gap-2 mb-4">
-              <Calendar className="w-5 h-5 text-amber" />
+              <Calendar className="w-5 h-5 text-amber-fg" />
               <h2 className="text-xl font-semibold text-navy">Events ({eventResults.length})</h2>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -191,7 +202,14 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                         )}
                         <div className="flex items-center gap-3 text-xs text-gray-400 mt-2">
                           {post.publishDate && (
-                            <span>{new Date(post.publishDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}</span>
+                            <span>
+                              {new Date(post.publishDate).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                                timeZone: "UTC",
+                              })}
+                            </span>
                           )}
                           {post.authorName && <span>{post.authorName}</span>}
                         </div>

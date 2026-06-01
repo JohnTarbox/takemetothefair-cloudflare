@@ -39,7 +39,7 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
   return (
     <section className="mb-8">
       <div className="flex items-center gap-2 mb-4">
-        <Sparkles className="w-5 h-5 text-amber" />
+        <Sparkles className="w-5 h-5 text-amber-fg" />
         <h2 className="text-lg font-semibold text-gray-900">Featured Vendors</h2>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
