@@ -38,10 +38,28 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { sql, eq, and, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+
+/**
+ * Dual auth: admin session OR X-Internal-Key. The latter lets the MCP
+ * Worker's dedup-sweep canary (A3, PR-6, 2026-06-01 EVE) poll this
+ * endpoint without an admin session. Same shape as the other internal-
+ * cron-friendly admin routes (see backfill/source-domain etc).
+ */
+async function authorize(
+  request: NextRequest,
+  env: { INTERNAL_API_KEY?: string }
+): Promise<boolean> {
+  const internalKey = request.headers.get("X-Internal-Key");
+  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+    return true;
+  }
+  const session = await auth();
+  return session?.user?.role === "ADMIN";
+}
 
 export const runtime = "edge";
 
@@ -66,8 +84,8 @@ type Cluster = VenueDateCluster | CityStateDateCluster;
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth();
-    if (!session || session.user.role !== "ADMIN") {
+    const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
+    if (!(await authorize(request, env))) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

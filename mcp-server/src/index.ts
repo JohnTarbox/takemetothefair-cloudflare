@@ -24,6 +24,7 @@ import {
   runInboundEmailStaleSweep,
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
+import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import { eq } from "drizzle-orm";
@@ -78,7 +79,19 @@ interface Env {
   // "which bundle is the server running?" without a client round-trip.
   GIT_SHA?: string;
   BUILD_TIME?: string;
+  // A3 / PR-6 (2026-06-01 EVE) — Slack incoming-webhook URL for technical
+  // alerts (KPI alerts + dedup-sweep canary). Set via
+  // `wrangler secret put SLACK_WEBHOOK_URL_TECHNICAL` on the MCP Worker.
+  // Same channel as the main app's SLACK_WEBHOOK_URL_TECHNICAL secret
+  // (which feeds src/lib/kpi-alerts.ts); they're independently bound
+  // per-artifact per [[feedback_pages_secret_requires_redeploy]]. When
+  // unset, the dedup canary no-ops cleanly (logs configuration note,
+  // never throws), so local dev / CI without secrets keeps working.
+  SLACK_WEBHOOK_URL_TECHNICAL?: string;
 }
+
+// Re-export for the canary helper, which needs the same Env type.
+export type { Env };
 
 // ---------------------------------------------------------------------------
 // Durable Object — MCP agent with OAuth-provided user props
@@ -1130,6 +1143,11 @@ export default {
             retention: { successRetention: "7 days", errorRetention: "7 days" },
           })
         ),
+        // A3 / PR-6 (2026-06-01 EVE) — daily Slack canary for dedup sweep
+        // cluster count growth. Polls /api/admin/duplicates/sweep, snapshots
+        // dedup_sweep_snapshots, alerts on RED (+1 day-over-day, always) or
+        // YELLOW (>10% vs 7-day avg, 72h-debounced).
+        runScheduledDedupSweepCanary(env),
       ]).then(() => undefined)
     );
   },
