@@ -147,7 +147,7 @@ export default function EventVendorsPage() {
             onClick={() => setViewMode("grid")}
             className={`p-2 rounded ${
               viewMode === "grid"
-                ? "bg-amber-light text-amber-dark"
+                ? "bg-amber-light text-amber-bg-fg"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             aria-label="Grid view"
@@ -158,7 +158,7 @@ export default function EventVendorsPage() {
             onClick={() => setViewMode("list")}
             className={`p-2 rounded ${
               viewMode === "list"
-                ? "bg-amber-light text-amber-dark"
+                ? "bg-amber-light text-amber-bg-fg"
                 : "text-gray-600 hover:bg-gray-100"
             }`}
             aria-label="List view"

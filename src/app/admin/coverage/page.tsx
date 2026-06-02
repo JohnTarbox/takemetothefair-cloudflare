@@ -335,7 +335,7 @@ function CoverageRowItem({
       <span className="text-gray-600 text-sm">{row.state ?? "-"}</span>
       <span>
         {hasPosts ? (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-dark">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-bg-fg">
             {posts.length}
           </span>
         ) : (

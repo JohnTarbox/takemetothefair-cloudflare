@@ -239,7 +239,7 @@ export default async function PromoterEventsPage() {
                           )}
                           <span className="inline-flex items-center gap-2 text-xs">
                             {event.vendorCounts.applied > 0 && (
-                              <span className="inline-flex items-center gap-1 bg-amber-light text-amber-dark px-2 py-0.5 rounded-full font-medium">
+                              <span className="inline-flex items-center gap-1 bg-amber-light text-amber-bg-fg px-2 py-0.5 rounded-full font-medium">
                                 {event.vendorCounts.applied} applied
                               </span>
                             )}

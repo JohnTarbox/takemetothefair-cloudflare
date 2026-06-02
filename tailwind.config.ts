@@ -40,6 +40,18 @@ const config: Config = {
           // pre-existing escape hatch — keep it for badge/icon use
           // where AA is satisfied. Use .fg for body / label text.
           fg: "#8B5A05",
+          // UX-R3 (analyst, 2026-06-01 EVE) — dark text token for
+          // text that sits ON an amber surface. amber.dark on
+          // amber.light measures ~3.65:1 (below the 4.5:1 AA floor
+          // for body text), and amber.dark on amber.DEFAULT collapses
+          // entirely (~2.4:1). This near-black achieves AAA on every
+          // amber variant we render: ~17:1 on amber.light (#FFF3D6),
+          // ~9.7:1 on amber.DEFAULT (#E8960C), ~5.4:1 on amber.dark
+          // (#B5730A). Use as `text-amber-bg-fg` everywhere body or
+          // label text sits on an amber background — filter chips,
+          // pills, badges with amber backdrops. Distinct from .fg
+          // (amber text on white) which is the inverse axis.
+          "bg-fg": "#1F1A0A",
         },
         cream: "#FAF7F2",
         terracotta: {

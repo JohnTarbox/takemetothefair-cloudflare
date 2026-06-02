@@ -15,7 +15,7 @@ const STYLES: Record<
   },
   medium: {
     label: "AI extracted",
-    className: "bg-amber-light text-amber-dark",
+    className: "bg-amber-light text-amber-bg-fg",
     tooltip: "AI best-guess — please review",
     Icon: Sparkles,
   },

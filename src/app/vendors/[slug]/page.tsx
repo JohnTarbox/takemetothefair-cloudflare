@@ -733,7 +733,7 @@ export default async function VendorDetailPage({ params }: Props) {
                       href={`/blog/${post.slug}`}
                       className="block p-3 rounded-lg border border-stone-100 hover:border-amber hover:bg-amber-light/40 transition-colors"
                     >
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-1 rounded-full text-[11px] font-medium bg-amber-light text-amber-dark">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-1 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                         Written about this vendor
                       </span>
                       <p className="font-medium text-gray-900 line-clamp-2">{post.title}</p>
