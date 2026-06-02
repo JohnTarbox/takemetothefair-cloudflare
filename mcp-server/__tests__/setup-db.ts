@@ -132,6 +132,12 @@ const SCHEMA_SQL = `
     -- K2 part 5 (drizzle/0096, analyst, 2026-05-31) — possible-duplicate
     -- pointer for MEDIUM-confidence dedup matches.
     possible_duplicate_of TEXT,
+    -- UX-R1 / C1 (drizzle/0098, analyst 2026-06-01 EVE) — post-ingest operator-
+    -- review marker. Set by scripts/backfill-event-days-from-description.ts
+    -- when expandCadence can't determine a pattern. Drizzle inserts SQL that
+    -- includes this column even when callers don't pass a value (NOT NULL with
+    -- default 0), so test seeders need it here or every INSERT fails.
+    flagged_for_review INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
   );
