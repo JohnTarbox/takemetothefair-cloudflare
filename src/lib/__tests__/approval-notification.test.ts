@@ -37,7 +37,10 @@ function makeDb(row: FakeEventRow | null) {
 }
 
 function makeQueue() {
-  const send = vi.fn(async () => undefined);
+  // Explicit signature so `send.mock.calls[0][0]` is typed as `unknown`
+  // (a structured cast at the call site narrows it). Without the generic,
+  // vi infers args as `[]` and `mock.calls[0][0]` fails TS2493.
+  const send = vi.fn<(body: unknown) => Promise<undefined>>(async () => undefined);
   return { queue: { send } as unknown as Queue<unknown>, send };
 }
 
