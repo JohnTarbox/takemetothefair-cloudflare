@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Eye, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { IconButton, IconLink } from "@/components/ui/icon-button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -42,7 +43,7 @@ export default function AdminVendorsPage() {
   const fetchVendors = async () => {
     try {
       const res = await fetch("/api/admin/vendors");
-      const data = await res.json() as Vendor[];
+      const data = (await res.json()) as Vendor[];
       setVendors(data);
     } catch (error) {
       console.error("Failed to fetch vendors:", error);
@@ -51,8 +52,10 @@ export default function AdminVendorsPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this vendor?")) return;
+  const handleDelete = async (id: string, businessName: string) => {
+    // Include the business name in the confirm so the operator can
+    // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
+    if (!confirm(`Delete vendor "${businessName}"? This cannot be undone.`)) return;
 
     try {
       const res = await fetch(`/api/admin/vendors/${id}`, { method: "DELETE" });
@@ -161,15 +164,9 @@ export default function AdminVendorsPage() {
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{vendor.businessName}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {vendor.vendorType || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {vendor.user?.email || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {vendor._count.events}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{vendor.vendorType || "-"}</td>
+                    <td className="py-3 px-4 text-gray-600">{vendor.user?.email || "-"}</td>
+                    <td className="py-3 px-4 text-gray-600">{vendor._count.events}</td>
                     <td className="py-3 px-4">
                       {vendor.verified ? (
                         <Badge variant="success" className="inline-flex items-center gap-1">
@@ -188,30 +185,29 @@ export default function AdminVendorsPage() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      {vendor.canSelfConfirm && (
-                        <Badge variant="success">Self-Confirm</Badge>
-                      )}
+                      {vendor.canSelfConfirm && <Badge variant="success">Self-Confirm</Badge>}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link href={`/vendors/${vendor.slug}`}>
-                          <Button variant="ghost" size="sm" aria-label={`View ${vendor.businessName}`}>
-                            <Eye className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Link href={`/admin/vendors/${vendor.id}/edit`}>
-                          <Button variant="ghost" size="sm" aria-label={`Edit ${vendor.businessName}`}>
-                            <Pencil className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(vendor.id)}
+                      <div className="flex items-center justify-end gap-1">
+                        {/* IconLink + IconButton primitives — type-enforced
+                            aria-label, ≥40px hit area, single interactive
+                            element (no nested Link>Button). UX-R2, 2026-06-01. */}
+                        <IconLink
+                          href={`/vendors/${vendor.slug}`}
+                          aria-label={`View ${vendor.businessName}`}
+                          icon={<Eye />}
+                        />
+                        <IconLink
+                          href={`/admin/vendors/${vendor.id}/edit`}
+                          aria-label={`Edit ${vendor.businessName}`}
+                          icon={<Pencil />}
+                        />
+                        <IconButton
+                          variant="danger"
+                          onClick={() => handleDelete(vendor.id, vendor.businessName)}
                           aria-label={`Delete ${vendor.businessName}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
-                        </Button>
+                          icon={<Trash2 />}
+                        />
                       </div>
                     </td>
                   </tr>

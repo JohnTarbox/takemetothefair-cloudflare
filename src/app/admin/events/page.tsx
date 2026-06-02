@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Eye, Store, RefreshCw, MapPin, GitMerge } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { IconButton, IconLink } from "@/components/ui/icon-button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils";
@@ -83,8 +84,10 @@ export default function AdminEventsPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this event?")) return;
+  const handleDelete = async (id: string, name: string) => {
+    // Include the event name in the confirm so the operator can
+    // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
+    if (!confirm(`Delete event "${name}"? This cannot be undone.`)) return;
 
     try {
       const res = await fetch(`/api/admin/events/${id}`, { method: "DELETE" });
@@ -384,46 +387,43 @@ export default function AdminEventsPage() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link href={`/events/${event.slug}`}>
-                          <Button variant="ghost" size="sm" aria-label={`View ${event.name}`}>
-                            <Eye className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Link href={`/admin/events/${event.id}/vendors`}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Manage vendors for ${event.name}`}
-                          >
-                            <Store className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Link href={`/admin/events/${event.id}/edit`}>
-                          <Button variant="ghost" size="sm" aria-label={`Edit ${event.name}`}>
-                            <Pencil className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Button
-                          variant="ghost"
-                          size="sm"
+                      <div className="flex items-center justify-end gap-1">
+                        {/* IconLink + IconButton primitives — type-enforced
+                            aria-label, ≥40px hit area, single interactive
+                            element (no nested Link>Button). UX-R2, 2026-06-01. */}
+                        <IconLink
+                          href={`/events/${event.slug}`}
+                          aria-label={`View ${event.name}`}
+                          icon={<Eye />}
+                        />
+                        <IconLink
+                          href={`/admin/events/${event.id}/vendors`}
+                          aria-label={`Manage vendors for ${event.name}`}
+                          icon={<Store />}
+                        />
+                        <IconLink
+                          href={`/admin/events/${event.id}/edit`}
+                          aria-label={`Edit ${event.name}`}
+                          icon={<Pencil />}
+                        />
+                        <IconButton
                           onClick={() => handleRescrape(event.id)}
                           disabled={rescrapingId === event.id}
                           aria-label={`Re-scrape ${event.name}`}
-                        >
-                          <RefreshCw
-                            className={`w-4 h-4 ${rescrapingId === event.id ? "animate-spin text-blue-500" : ""}`}
-                            aria-hidden="true"
-                          />
-                        </Button>
+                          icon={
+                            <RefreshCw
+                              className={
+                                rescrapingId === event.id ? "animate-spin text-blue-500" : ""
+                              }
+                            />
+                          }
+                        />
                         {event.possibleDuplicate && (
                           // Cohort 2 (2026-06-01) — only renders on PENDING
                           // rows that the workflow flagged as MEDIUM-
                           // confidence dedup hits. Operator confirms the
                           // merge here in one click.
-                          <Button
-                            variant="ghost"
-                            size="sm"
+                          <IconButton
                             onClick={() =>
                               handleMerge(event.id, event.name, {
                                 id: event.possibleDuplicate!.id,
@@ -432,18 +432,15 @@ export default function AdminEventsPage() {
                             }
                             aria-label={`Merge ${event.name} into ${event.possibleDuplicate.name}`}
                             title={`Merge into "${event.possibleDuplicate.name}"`}
-                          >
-                            <GitMerge className="w-4 h-4 text-amber-700" aria-hidden="true" />
-                          </Button>
+                            icon={<GitMerge className="text-amber-700" />}
+                          />
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(event.id)}
+                        <IconButton
+                          variant="danger"
+                          onClick={() => handleDelete(event.id, event.name)}
                           aria-label={`Delete ${event.name}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
-                        </Button>
+                          icon={<Trash2 />}
+                        />
                       </div>
                     </td>
                   </tr>
