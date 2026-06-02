@@ -291,6 +291,15 @@ export const events = sqliteTable(
     // evaluateGates() routed the row to PENDING_REVIEW. NULL = gate did
     // not fire OR row predates the gates. See src/lib/event-date-gates.ts.
     gateFlags: text("gate_flags"),
+    // UX-R1 / C1 (drizzle/0098, 2026-06-01 EVE). Operator-action queue
+    // marker — set by scripts/backfill-event-days-from-description.ts when
+    // expandCadence() can't determine a recurrence pattern from the
+    // description. Mirrors inbound_emails.flagged_for_review at line 1497.
+    // Distinct from gateFlags (pre-ingest decision trace); this is a
+    // POST-ingest review queue. "Only SET the flag here — never clear it"
+    // (the K7 idempotent-notification pattern); operators clear after
+    // triage via the /admin/events?flagged=1 filter.
+    flaggedForReview: integer("flagged_for_review").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -313,6 +322,12 @@ export const events = sqliteTable(
     index("idx_events_possible_duplicate_of")
       .on(table.possibleDuplicateOf)
       .where(sql`${table.possibleDuplicateOf} IS NOT NULL`),
+    // UX-R1 / C1 (drizzle/0098) — partial index supporting the
+    // /admin/events?flagged=1 operator review queue. Only the "1" rows
+    // are indexed, mirroring the inbound_emails.flagged_for_review pattern.
+    index("idx_events_flagged_for_review")
+      .on(table.flaggedForReview)
+      .where(sql`${table.flaggedForReview} = 1`),
   ]
 );
 

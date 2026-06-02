@@ -33,6 +33,11 @@ interface Event {
   // evaluateGates() when the row routed to PENDING_REVIEW. NULL = no gate
   // fired OR row predates the gates (pre-2026-05-16).
   gateFlags?: string | null;
+  // UX-R1 / C1 (2026-06-01 EVE). Post-ingest operator-review marker. Set
+  // by scripts/backfill-event-days-from-description.ts (and any future
+  // helper) when the row needs manual triage. Distinct from gateFlags
+  // (pre-ingest gate decision); filter via the "Review flag" select.
+  flaggedForReview?: number;
   // Cohort 2 (2026-06-01) — set by the inbound-email workflow on
   // MEDIUM-confidence dedup hits. /api/admin/events GET attaches the
   // candidate event's metadata so the row can render an inline
@@ -66,6 +71,9 @@ export default function AdminEventsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [venueFilter, setVenueFilter] = useState<string>("all");
   const [flagFilter, setFlagFilter] = useState<string>("all");
+  // Separate from flagFilter (which targets gateFlags) — reviewFlagFilter
+  // targets flagged_for_review, the post-ingest operator queue.
+  const [reviewFlagFilter, setReviewFlagFilter] = useState<string>("all");
 
   useEffect(() => {
     fetchEvents();
@@ -182,6 +190,12 @@ export default function AdminEventsPage() {
     const isFlagged = e.gateFlags != null && e.gateFlags !== "" && e.gateFlags !== "[]";
     if (flagFilter === "flagged" && !isFlagged) return false;
     if (flagFilter === "clean" && isFlagged) return false;
+    // UX-R1 / C1: post-ingest review queue. Treat any truthy value as
+    // flagged (column is INTEGER 0/1 but JSON may surface as number or
+    // boolean depending on serialization).
+    const isReviewFlagged = Boolean(e.flaggedForReview);
+    if (reviewFlagFilter === "flagged" && !isReviewFlagged) return false;
+    if (reviewFlagFilter === "clean" && isReviewFlagged) return false;
     return true;
   });
 
@@ -244,16 +258,30 @@ export default function AdminEventsPage() {
           className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
           title="Filter by pre-ingest gate flags"
         >
-          <option value="all">All (flag status)</option>
-          <option value="flagged">Flagged only</option>
-          <option value="clean">Clean only</option>
+          <option value="all">All (gate flags)</option>
+          <option value="flagged">Gate-flagged only</option>
+          <option value="clean">Gate-clean only</option>
         </select>
-        {(statusFilter !== "all" || venueFilter !== "all" || flagFilter !== "all") && (
+        <select
+          value={reviewFlagFilter}
+          onChange={(e) => setReviewFlagFilter(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+          title="Filter by post-ingest operator review flag (set by helpers like the recurrence backfill)"
+        >
+          <option value="all">All (review flag)</option>
+          <option value="flagged">Needs review</option>
+          <option value="clean">Review-clean only</option>
+        </select>
+        {(statusFilter !== "all" ||
+          venueFilter !== "all" ||
+          flagFilter !== "all" ||
+          reviewFlagFilter !== "all") && (
           <button
             onClick={() => {
               setStatusFilter("all");
               setVenueFilter("all");
               setFlagFilter("all");
+              setReviewFlagFilter("all");
             }}
             className="text-sm text-royal hover:underline"
           >
