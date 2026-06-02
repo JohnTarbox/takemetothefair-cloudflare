@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Pencil, Trash2, Eye, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { IconButton, IconLink } from "@/components/ui/icon-button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -39,7 +40,7 @@ export default function AdminPromotersPage() {
   const fetchPromoters = async () => {
     try {
       const res = await fetch("/api/admin/promoters");
-      const data = await res.json() as Promoter[];
+      const data = (await res.json()) as Promoter[];
       setPromoters(data);
     } catch (error) {
       console.error("Failed to fetch promoters:", error);
@@ -48,8 +49,10 @@ export default function AdminPromotersPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this promoter?")) return;
+  const handleDelete = async (id: string, companyName: string) => {
+    // Include the company name in the confirm so the operator can
+    // re-confirm they targeted the right row (UX-R2, 2026-06-01 EVE).
+    if (!confirm(`Delete promoter "${companyName}"? This cannot be undone.`)) return;
 
     try {
       const res = await fetch(`/api/admin/promoters/${id}`, { method: "DELETE" });
@@ -137,12 +140,8 @@ export default function AdminPromotersPage() {
                     <td className="py-3 px-4">
                       <p className="font-medium text-gray-900">{promoter.companyName}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {promoter.user?.email || "-"}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {promoter._count.events}
-                    </td>
+                    <td className="py-3 px-4 text-gray-600">{promoter.user?.email || "-"}</td>
+                    <td className="py-3 px-4 text-gray-600">{promoter._count.events}</td>
                     <td className="py-3 px-4">
                       {promoter.verified ? (
                         <Badge variant="success" className="inline-flex items-center gap-1">
@@ -154,25 +153,26 @@ export default function AdminPromotersPage() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link href={`/promoters/${promoter.slug}`}>
-                          <Button variant="ghost" size="sm" aria-label={`View ${promoter.companyName}`}>
-                            <Eye className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Link href={`/admin/promoters/${promoter.id}/edit`}>
-                          <Button variant="ghost" size="sm" aria-label={`Edit ${promoter.companyName}`}>
-                            <Pencil className="w-4 h-4" aria-hidden="true" />
-                          </Button>
-                        </Link>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDelete(promoter.id)}
+                      <div className="flex items-center justify-end gap-1">
+                        {/* IconLink + IconButton primitives — type-enforced
+                            aria-label, ≥40px hit area, single interactive
+                            element (no nested Link>Button). UX-R2, 2026-06-01. */}
+                        <IconLink
+                          href={`/promoters/${promoter.slug}`}
+                          aria-label={`View ${promoter.companyName}`}
+                          icon={<Eye />}
+                        />
+                        <IconLink
+                          href={`/admin/promoters/${promoter.id}/edit`}
+                          aria-label={`Edit ${promoter.companyName}`}
+                          icon={<Pencil />}
+                        />
+                        <IconButton
+                          variant="danger"
+                          onClick={() => handleDelete(promoter.id, promoter.companyName)}
                           aria-label={`Delete ${promoter.companyName}`}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-500" aria-hidden="true" />
-                        </Button>
+                          icon={<Trash2 />}
+                        />
                       </div>
                     </td>
                   </tr>
