@@ -1446,6 +1446,31 @@ export const kpiStateHistory = sqliteTable(
   (t) => [index("idx_kpi_state_history_name_at").on(t.kpiName, t.computedAt)]
 );
 
+// A3 / K2 part 7 (drizzle/0099, analyst 2026-06-01 EVE). Daily snapshot
+// rows from the MCP Worker's dedup-sweep canary. Each row records the
+// cluster counts from GET /api/admin/duplicates/sweep at the time of
+// the cron run. last_yellow_alerted_at tracks the 72h YELLOW debounce
+// state inline (same debounce shape as the KPI YELLOW path). See
+// mcp-server/src/dedup-sweep-canary.ts for the dispatch logic.
+export const dedupSweepSnapshots = sqliteTable(
+  "dedup_sweep_snapshots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD (UTC)
+    totalClusters: integer("total_clusters").notNull(),
+    venueDateClusters: integer("venue_date_clusters").notNull(),
+    cityStateDateClusters: integer("city_state_date_clusters").notNull(),
+    eventsInClusters: integer("events_in_clusters").notNull(),
+    // Seconds-epoch of the most-recent YELLOW dispatch — drives the 72h
+    // debounce check. NULL = never YELLOW-alerted. RED bypasses entirely.
+    lastYellowAlertedAt: integer("last_yellow_alerted_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [uniqueIndex("idx_dedup_snapshot_date").on(t.snapshotDate)]
+);
+
 // §6.3 Phase 2 GA4 liveness check log (drizzle/0060). One row per daily check
 // from the MCP-Worker cron. Consecutive-failure count carries forward; alert
 // fires after 2 consecutive critical/degraded results (anti-flap). Wired in
