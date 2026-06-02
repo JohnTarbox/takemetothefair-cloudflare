@@ -16,7 +16,7 @@ type CategoryColors = {
 const GOLD: CategoryColors = {
   bg: "bg-amber-light",
   icon: "text-amber-fg",
-  badge: "bg-amber-light text-amber-dark",
+  badge: "bg-amber-light text-amber-bg-fg",
   accent: "#E8960C",
 };
 

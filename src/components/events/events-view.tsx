@@ -703,7 +703,7 @@ function CalendarView({
                           isCurrentDay
                             ? "bg-royal text-white"
                             : hasEvent
-                              ? "bg-amber-light text-amber-dark"
+                              ? "bg-amber-light text-amber-bg-fg"
                               : "text-gray-700"
                         }`}
                       >

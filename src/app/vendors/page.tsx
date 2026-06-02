@@ -388,7 +388,7 @@ export default async function VendorsPage({
                     href={`/vendors${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       !params.type
-                        ? "bg-amber-light text-amber-dark font-medium"
+                        ? "bg-amber-light text-amber-bg-fg font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >
@@ -400,7 +400,7 @@ export default async function VendorsPage({
                       href={`/vendors${buildQueryString({ type, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                       className={`block px-3 py-2 rounded-lg text-sm ${
                         params.type === type
-                          ? "bg-amber-light text-amber-dark font-medium"
+                          ? "bg-amber-light text-amber-bg-fg font-medium"
                           : "text-gray-600 hover:bg-gray-50"
                       }`}
                     >

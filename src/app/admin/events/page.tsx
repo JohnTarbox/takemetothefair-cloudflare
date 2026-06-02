@@ -376,7 +376,7 @@ export default function AdminEventsPage() {
                     </td>
                     <td className="py-3 px-4">
                       {event.blogPostCount > 0 ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-dark">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-bg-fg">
                           {event.blogPostCount}
                         </span>
                       ) : (

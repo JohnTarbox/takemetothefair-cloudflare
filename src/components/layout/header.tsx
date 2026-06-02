@@ -133,7 +133,7 @@ export function Header() {
                         session.user.role === "ADMIN"
                           ? "bg-terracotta-light text-stone-900"
                           : session.user.role === "PROMOTER"
-                            ? "bg-amber-light text-amber-dark"
+                            ? "bg-amber-light text-amber-bg-fg"
                             : "bg-sage-50 text-sage-700"
                       }`}
                       aria-label={`Account role: ${session.user.role.toLowerCase()}`}

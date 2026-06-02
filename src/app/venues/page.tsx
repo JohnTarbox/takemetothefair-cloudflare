@@ -290,7 +290,7 @@ export default async function VenuesPage({
                     href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       !params.state
-                        ? "bg-amber-light text-amber-dark font-medium"
+                        ? "bg-amber-light text-amber-bg-fg font-medium"
                         : "text-gray-600 hover:bg-gray-50"
                     }`}
                   >
@@ -302,7 +302,7 @@ export default async function VenuesPage({
                       href={`/venues${buildQueryString({ state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                       className={`block px-3 py-2 rounded-lg text-sm ${
                         params.state === state
-                          ? "bg-amber-light text-amber-dark font-medium"
+                          ? "bg-amber-light text-amber-bg-fg font-medium"
                           : "text-gray-600 hover:bg-gray-50"
                       }`}
                     >

@@ -1232,7 +1232,7 @@ export default async function EventDetailPage({ params }: Props) {
                 className="p-4 bg-white rounded-lg border border-gray-200 hover:border-amber hover:shadow-sm transition-all group"
               >
                 {post.kind === "direct" && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-dark">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                     Written about this event
                   </span>
                 )}
