@@ -13,9 +13,17 @@
  *   2. "every <weekday>" / "weekly"      → weekly cadence
  *   3. "<Nth> <weekday> of [the|every|each] month"  → monthly pattern (N=1..4|last)
  *   4. Explicit lists                    → "May 23, June 6, June 20" or "5/23, 6/6, 6/20"
+ *   5. "every <weekday> and <weekday>"   → multi-weekday weekly (PR-7, 2026-06-01)
+ *      "<weekday>s and <weekday>s"       → same, pluralized form
+ *      Two separate weekly cadences fired in one sweep. The pluralized form
+ *      ("Saturdays and Sundays") and the `every` prefix are intentional
+ *      anchors: they signal recurrence rather than scope ("Closed Saturday
+ *      and Sunday"). Singular-without-every ("Tuesday and Thursday" alone)
+ *      stays out of scope — too easily confused with closure / hours
+ *      statements; let those flag for human review.
  *
- * Out of scope (rare enough to defer): "every Tuesday and Thursday",
- * "monthly on the 15th", "the second and fourth Wednesday".
+ * Out of scope (rare enough to defer): "monthly on the 15th",
+ * "the second and fourth Wednesday", singular-without-every multi-weekday.
  *
  * Failure mode: returns an empty array when no pattern matches or the
  * window is invalid. Caller falls back to whatever the AI produced (or to
@@ -94,8 +102,32 @@ export function expandCadence(text: string, opts: CadenceExpandOptions): string[
     enumerateInterval(start, end, dow, 14, dates);
   }
 
+  // Multi-weekday weekly (PR-7, 2026-06-01). Two anchored forms:
+  //   - "every <weekday> and <weekday>"  → explicit recurrence intent
+  //   - "<weekday>s and <weekday>s"      → pluralized form ("Saturdays and Sundays")
+  // Both fire enumerateInterval(7) for each weekday so the Set ends up with
+  // BOTH days' occurrences. Without this rule, the single-weekday regex
+  // below would silently match only the FIRST weekday and produce
+  // half the data — worse than no data per the multi-weekday hazard
+  // ([[feedback_silent_empty_array_failures]] family). Result: two
+  // dedup-by-date weekly streams in the Set.
+  const multiWeeklyEvery =
+    /every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+(?:and|&)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i;
+  const multiWeeklyPlural =
+    /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)s\s+(?:and|&)\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)s\b/i;
+  const multiMatch = normalized.match(multiWeeklyEvery) ?? normalized.match(multiWeeklyPlural);
+  if (multiMatch && !everyOtherMatch) {
+    const dow1 = WEEKDAYS[multiMatch[1].toLowerCase()];
+    const dow2 = WEEKDAYS[multiMatch[2].toLowerCase()];
+    enumerateInterval(start, end, dow1, 7, dates);
+    enumerateInterval(start, end, dow2, 7, dates);
+  }
+
   // "every <weekday>" (weekly) — only fire if we didn't already match
   // "every other …" (since "every other Saturday" also matches /every saturday/).
+  // Note: the multi-weekday rule above may also have fired; if so, this
+  // singleton match for "every <weekday>" re-adds the first weekday's
+  // dates, deduped by the Set. No correctness impact.
   if (!everyOtherMatch) {
     const everyWeekly = /every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i;
     const m = normalized.match(everyWeekly);
