@@ -88,6 +88,14 @@ interface Env {
   // unset, the dedup canary no-ops cleanly (logs configuration note,
   // never throws), so local dev / CI without secrets keeps working.
   SLACK_WEBHOOK_URL_TECHNICAL?: string;
+  // PR-8 (2026-06-02) — Email alternative to Slack for the dedup-sweep
+  // canary. Set to a destination email address via
+  // `wrangler secret put ALERT_EMAIL_TECHNICAL` on the MCP Worker. When
+  // set, RED/YELLOW canary transitions push to env.EMAIL_JOBS for
+  // delivery via the same queue-consumer path that handles every other
+  // outbound MCP email. Independent of the Slack webhook — set either,
+  // both, or neither.
+  ALERT_EMAIL_TECHNICAL?: string;
 }
 
 // Re-export for the canary helper, which needs the same Env type.

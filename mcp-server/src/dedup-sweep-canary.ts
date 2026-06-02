@@ -15,10 +15,16 @@
  *     cluster count (debounced 72h per the KPI YELLOW pattern). Inline
  *     state via dedup_sweep_snapshots.last_yellow_alerted_at.
  *
- * Routes to SLACK_WEBHOOK_URL_TECHNICAL — same channel as the technical
- * KPI alerts (src/lib/kpi-alerts.ts). The webhook is a secret bound on
- * the MCP Worker; if not set, the dispatch returns ok with channel:"none"
- * and never throws (so CI/local without secrets still passes).
+ * Dispatch channels — either or both, set independently:
+ *   - SLACK_WEBHOOK_URL_TECHNICAL — POSTs to a Slack incoming-webhook.
+ *   - ALERT_EMAIL_TECHNICAL       — pushes an email-job message to
+ *                                   env.EMAIL_JOBS; the queue consumer
+ *                                   (this same Worker) sends via
+ *                                   Cloudflare Email Sending.
+ * Both are optional secrets bound on the MCP Worker. With neither set,
+ * the canary still runs (writes snapshot, computes tier) but never
+ * pushes a notification — purely log-only via the persisted snapshot.
+ * Same shape as the KPI alerts dispatch fan-out at src/lib/kpi-alerts.ts.
  *
  * Per the MCP server's cron-handler convention (see comments in
  * mcp-server/src/index.ts around runMainAppSweep): errors are logged
@@ -212,27 +218,89 @@ export async function runScheduledDedupSweepCanary(env: Env): Promise<void> {
     return;
   }
 
-  // 6. Dispatch Slack alert. SLACK_WEBHOOK_URL_TECHNICAL is a secret on
-  // the MCP Worker; if not set, the post no-ops and we log it as a
-  // configuration note (not an error).
+  // 6. Build alert payload + dispatch to whichever channels are configured.
+  // Both SLACK_WEBHOOK_URL_TECHNICAL and ALERT_EMAIL_TECHNICAL are
+  // independent optional secrets on the MCP Worker. With neither set,
+  // the snapshot is still written (above) — only the push fan-out skips.
   const webhookUrl = env.SLACK_WEBHOOK_URL_TECHNICAL;
+  const alertEmail = env.ALERT_EMAIL_TECHNICAL;
   const emoji = isRed ? "🔴" : "🟡";
   const tier = isRed ? "RED" : "YELLOW";
   const detail = isRed
     ? `total_clusters ${yesterday?.totalClusters ?? "?"} → ${c.total_clusters} (day-over-day)`
     : `total_clusters ${c.total_clusters} vs 7-day avg ${rolling7Avg?.toFixed(1) ?? "?"} (>${Math.round((YELLOW_GROWTH_RATIO - 1) * 100)}% growth)`;
-  const text = `${emoji} *Dedup sweep ${tier}* — ${detail}\nVenue+date: ${c.venue_date_clusters}, city+state+date: ${c.city_state_date_clusters}, events in clusters: ${c.events_in_clusters}\n<https://meetmeatthefair.com/admin/duplicates|Open admin/duplicates>`;
-  const dispatch = await postSlackWebhook(webhookUrl, text);
+  const slackText = `${emoji} *Dedup sweep ${tier}* — ${detail}\nVenue+date: ${c.venue_date_clusters}, city+state+date: ${c.city_state_date_clusters}, events in clusters: ${c.events_in_clusters}\n<https://meetmeatthefair.com/admin/duplicates|Open admin/duplicates>`;
 
-  if (!dispatch.ok) {
+  // Slack — synchronous POST, fail-soft.
+  if (webhookUrl) {
+    const dispatch = await postSlackWebhook(webhookUrl, slackText);
+    if (!dispatch.ok) {
+      await logError(env.DB, {
+        source: SOURCE,
+        message: `${tier} Slack dispatch failed: ${dispatch.error}`,
+        sessionId,
+        context: { tier, total_clusters: c.total_clusters },
+      });
+    } else {
+      console.log(`[cron] dedup-sweep-canary ${tier} → Slack — ${detail}`);
+    }
+  }
+
+  // Email — enqueue to EMAIL_JOBS; the queue consumer (this same Worker)
+  // delivers via Cloudflare Email Sending. Mirrors the approval-notification
+  // pattern. Push is fire-and-forget at this layer — queue retries (max 3)
+  // are the retry mechanism, not a synchronous wait here.
+  if (alertEmail && env.EMAIL_JOBS) {
+    const subject = `${emoji} Dedup sweep ${tier}: ${c.total_clusters} clusters`;
+    const textBody =
+      `${detail}\n\n` +
+      `Venue+date clusters: ${c.venue_date_clusters}\n` +
+      `City+state+date clusters: ${c.city_state_date_clusters}\n` +
+      `Events in clusters: ${c.events_in_clusters}\n\n` +
+      `Open admin/duplicates: https://meetmeatthefair.com/admin/duplicates\n`;
+    const htmlBody =
+      `<p><strong>${emoji} Dedup sweep ${tier}</strong> — ${detail}</p>` +
+      `<ul>` +
+      `<li>Venue+date clusters: ${c.venue_date_clusters}</li>` +
+      `<li>City+state+date clusters: ${c.city_state_date_clusters}</li>` +
+      `<li>Events in clusters: ${c.events_in_clusters}</li>` +
+      `</ul>` +
+      `<p><a href="https://meetmeatthefair.com/admin/duplicates">Open admin/duplicates</a></p>`;
+    try {
+      await env.EMAIL_JOBS.send({
+        to: alertEmail,
+        subject,
+        text: textBody,
+        html: htmlBody,
+        source: `dedup-canary:${tier.toLowerCase()}`,
+      });
+      console.log(`[cron] dedup-sweep-canary ${tier} → email queued — ${alertEmail}`);
+    } catch (error) {
+      await logError(env.DB, {
+        source: SOURCE,
+        message: `${tier} email enqueue failed`,
+        error,
+        sessionId,
+        context: { tier, total_clusters: c.total_clusters, alertEmail },
+      });
+    }
+  } else if (alertEmail && !env.EMAIL_JOBS) {
+    // Misconfigured: secret set but queue binding missing. Log once so the
+    // operator can fix wrangler.toml.
     await logError(env.DB, {
+      level: "warn",
       source: SOURCE,
-      message: `${tier} dispatch failed: ${dispatch.error}`,
+      message: "ALERT_EMAIL_TECHNICAL is set but EMAIL_JOBS queue binding is missing",
       sessionId,
-      context: { tier, total_clusters: c.total_clusters, webhookConfigured: Boolean(webhookUrl) },
     });
-  } else {
-    console.log(`[cron] dedup-sweep-canary ${tier} dispatched — ${detail}`);
+  }
+
+  // Configuration-status diagnostic line — visible in wrangler tail. Helps
+  // an operator confirm at a glance which channels actually ran.
+  if (!webhookUrl && !alertEmail) {
+    console.log(
+      `[cron] dedup-sweep-canary ${tier} — no push channels configured (snapshot still written); ${detail}`
+    );
   }
 
   // 7. Update debounce marker on YELLOW dispatches (success or fail —
