@@ -94,7 +94,9 @@ describe("dispatchKpiAlert — no-op cases", () => {
   it("does not dispatch on GREEN transitions (resolutions handled separately)", async () => {
     MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/x";
     const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     const result = await dispatchKpiAlert(db, {
@@ -129,7 +131,9 @@ describe("dispatchKpiAlert — RED transitions", () => {
     MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/x";
     // Even with a recent prior YELLOW in the window, RED must send.
     const db = makeMockDb({ yellowCountByKpi: { __current: 5 } });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     const result = await dispatchKpiAlert(db, {
@@ -148,7 +152,9 @@ describe("dispatchKpiAlert — RED transitions", () => {
     MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/business";
     MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
     const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     await dispatchKpiAlert(db, {
@@ -165,7 +171,9 @@ describe("dispatchKpiAlert — RED transitions", () => {
     MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/business";
     MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
     const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     await dispatchKpiAlert(db, {
@@ -219,7 +227,9 @@ describe("dispatchKpiAlert — YELLOW debounce", () => {
   it("debounces YELLOW alert when a prior YELLOW exists in window (count>=2)", async () => {
     MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/x";
     const db = makeMockDb({ yellowCountByKpi: { __current: 2 } });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     const result = await dispatchKpiAlert(db, {
@@ -240,7 +250,9 @@ describe("dispatchKpiAlert — STALE", () => {
     MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/business";
     MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
     const db = makeMockDb({ yellowCountByKpi: { __current: 1 } });
-    const fetchSpy = vi.fn(async () => new Response("ok", { status: 200 }));
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
     vi.stubGlobal("fetch", fetchSpy);
 
     await dispatchKpiAlert(db, {

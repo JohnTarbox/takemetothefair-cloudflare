@@ -110,7 +110,15 @@ export const venues = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
-  (table) => [index("idx_venues_status").on(table.status)]
+  (table) => [
+    index("idx_venues_status").on(table.status),
+    // Partial UNIQUE index from drizzle/0016 — multiple venues CAN have NULL
+    // google_place_id (optional field), but if a venue has one it must be
+    // unique. Same partial-index pattern as uq_inbound_emails_message_id.
+    uniqueIndex("idx_venues_google_place_id_unique")
+      .on(table.googlePlaceId)
+      .where(sql`${table.googlePlaceId} IS NOT NULL`),
+  ]
 );
 
 // Promoters table
@@ -805,7 +813,10 @@ export const contentLinks = sqliteTable(
     notifiedAt: integer("notified_at", { mode: "timestamp" }),
   },
   (table) => ({
-    uniqueIdx: index("idx_content_links_unique").on(
+    // Migration drizzle/0086 created this as UNIQUE INDEX; the schema
+    // declaration must mirror it so future drizzle-kit diffs stay clean
+    // (same hygiene reason as the user_roles unique index above).
+    uniqueIdx: uniqueIndex("idx_content_links_unique").on(
       table.sourceType,
       table.sourceId,
       table.targetType,
@@ -1080,6 +1091,48 @@ export const gscInspectionState = sqliteTable(
   (table) => [index("idx_gsc_inspection_state_stale").on(table.lastInspectedAt)]
 );
 
+// K10 (drizzle/0097, analyst 2026-06-01 EVE) — Search Console "milestone"
+// emails. Holds the "Congrats on X clicks in 28 days" growth notifications
+// Google sends. Source-of-truth for the SEO milestone growth chart on
+// /admin/analytics (B2 / K11). Backs the line chart of `threshold` over
+// `email_date`, plus the four stat cards (latest / earliest / count /
+// May ramp). siteUrl filter is critical — the table also holds milestones
+// for the Maine Cardworks property; the MMATF chart must scope by
+// site_url='https://meetmeatthefair.com/'.
+//
+// Nothing populates this automatically (MMATF doesn't read the inbox);
+// rows are added manually as Google sends the emails. A future cron
+// could snapshot the GSC clicks figure and INSERT a row when a threshold
+// is first crossed.
+export const gscMilestoneEmails = sqliteTable(
+  "gsc_milestone_emails",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    metric: text("metric").notNull().default("clicks"),
+    windowDays: integer("window_days").notNull().default(28),
+    threshold: integer("threshold").notNull(),
+    // Google's cited impact date — nullable because not every milestone
+    // email includes one explicitly.
+    reachedDate: text("reached_date"),
+    emailDate: text("email_date").notNull(),
+    siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
+    source: text("source").notNull().default("google_search_console_email"),
+    note: text("note"),
+    // SECONDS-epoch (unixepoch() in SQL default) per
+    // [[reference_drizzle_timestamp_mode_is_seconds]] — mode:"timestamp"
+    // gives the same shape as createdAt fields on neighboring tables.
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    // UNIQUE on (metric, windowDays, threshold, emailDate) so re-running
+    // a backfill or re-receiving a duplicate Google email doesn't create
+    // duplicate rows. Mirrors drizzle/0097.
+    uniqueIndex("idx_gsc_milestone_unique").on(t.metric, t.windowDays, t.threshold, t.emailDate),
+  ]
+);
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
@@ -1326,6 +1379,9 @@ export const timeToIndexLog = sqliteTable(
     index("idx_time_to_index_log_url").on(t.url),
     index("idx_time_to_index_log_first_crawl_at").on(t.firstCrawlAt),
     index("idx_time_to_index_log_target").on(t.targetType, t.targetId),
+    // UNIQUE index from drizzle/0057 — one row per (url, submission) pair.
+    // Schema declaration mirrors the migration so drizzle-kit diffs stay clean.
+    uniqueIndex("uq_time_to_index_log_url_submitted").on(t.url, t.indexnowSubmittedAt),
   ]
 );
 
