@@ -1280,6 +1280,171 @@ function Sparkline({
   );
 }
 
+// K11 (analyst 2026-06-01 EVE) — "Search clicks milestone" growth-chart card.
+// Renders the milestone line chart with on-point value labels plus a 4-stat
+// row above (latest / earliest / count / May ramp). Sibling to SparklineCard
+// above — same hand-rolled SVG approach the rest of the page uses (no chart
+// lib in the codebase). Differs from SparklineCard in three ways: (1) value
+// label on each point (8 points, not 30 — labels fit), (2) x-axis date
+// labels at start/middle/end, (3) dots at each milestone so the
+// non-monotonic Mar 1 → Mar 5 dip reads as an honest data point.
+function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
+  if (points.length === 0) {
+    return (
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Search clicks milestones</CardTitle>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Milestones as reported by Google Search Console emails
+          </p>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-600 italic">No milestones yet.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const sorted = [...points]; // already sorted by emailDate in loader
+  const latest = sorted[sorted.length - 1];
+  const earliest = sorted[0];
+  // "May ramp" = total threshold growth across May 2026 — the cited story
+  // from the email. Defined as (last May threshold) - (last April threshold,
+  // or earliest if no April rows). Falls back to 0 if either side is missing.
+  const maySorted = sorted.filter((p) => p.emailDate.startsWith("2026-05"));
+  const aprilOrEarlier = sorted.filter((p) => p.emailDate < "2026-05-01");
+  const mayRamp =
+    maySorted.length > 0 && aprilOrEarlier.length > 0
+      ? maySorted[maySorted.length - 1].threshold -
+        aprilOrEarlier[aprilOrEarlier.length - 1].threshold
+      : 0;
+
+  return (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle>Search clicks milestones</CardTitle>
+        <p className="text-xs text-gray-500 mt-0.5">
+          Milestones as reported by Google Search Console emails (28-day window)
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div>
+            <p className="text-xs text-gray-600">Latest</p>
+            <p className="text-2xl font-bold text-gray-900 tabular-nums">{fmt(latest.threshold)}</p>
+            <p className="text-xs text-gray-500">{formatDateOnly(latest.emailDate) || "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600">Earliest</p>
+            <p className="text-2xl font-bold text-gray-900 tabular-nums">
+              {fmt(earliest.threshold)}
+            </p>
+            <p className="text-xs text-gray-500">{formatDateOnly(earliest.emailDate) || "—"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600">Milestones</p>
+            <p className="text-2xl font-bold text-gray-900 tabular-nums">{fmt(sorted.length)}</p>
+            <p className="text-xs text-gray-500">Across span</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600">May ramp</p>
+            <p className="text-2xl font-bold text-gray-900 tabular-nums">
+              {mayRamp > 0 ? `+${fmt(mayRamp)}` : fmt(mayRamp)}
+            </p>
+            <p className="text-xs text-gray-500">vs. April end</p>
+          </div>
+        </div>
+        <MilestoneChart points={sorted} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
+  // Hand-rolled SVG (matches the existing Sparkline pattern). Wider viewBox
+  // than the sparkline because we draw value labels above each point.
+  const width = 800;
+  const height = 220;
+  const padTop = 28; // room for value labels above the highest point
+  const padBottom = 36; // room for date labels below the x-axis
+  const padLeft = 12;
+  const padRight = 12;
+  const max = Math.max(1, ...points.map((p) => p.threshold));
+  const stepX = points.length > 1 ? (width - padLeft - padRight) / (points.length - 1) : 0;
+  const plotHeight = height - padTop - padBottom;
+
+  const coords = points.map((p, i) => {
+    const x = padLeft + i * stepX;
+    const y = padTop + plotHeight * (1 - p.threshold / max);
+    return { x, y, threshold: p.threshold, emailDate: p.emailDate };
+  });
+
+  const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
+  const areaPath = `${linePath} L ${coords[coords.length - 1].x} ${height - padBottom} L ${coords[0].x} ${height - padBottom} Z`;
+
+  // x-axis date labels: render at start, middle, and end so the chart
+  // stays readable even when point count grows beyond 8.
+  const dateLabelIndices =
+    coords.length <= 1 ? [0] : [0, Math.floor((coords.length - 1) / 2), coords.length - 1];
+  // De-dup so a 2-point series doesn't render the middle/end label twice.
+  const uniqueDateLabelIndices = Array.from(new Set(dateLabelIndices));
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className="w-full h-56"
+      aria-label="Search clicks milestone growth chart"
+      role="img"
+    >
+      {/* baseline at the bottom of the plot area */}
+      <line
+        x1={padLeft}
+        y1={height - padBottom}
+        x2={width - padRight}
+        y2={height - padBottom}
+        className="stroke-gray-200"
+        strokeWidth={1}
+      />
+      <path d={areaPath} className="fill-blue-100" opacity={0.5} />
+      <path d={linePath} className="stroke-blue-600 fill-none" strokeWidth={2} />
+      {coords.map((c, i) => (
+        <g key={`${c.emailDate}-${i}`}>
+          {/* dot */}
+          <circle cx={c.x} cy={c.y} r={4} className="fill-blue-600" />
+          {/* value label above the dot */}
+          <text
+            x={c.x}
+            y={c.y - 10}
+            textAnchor="middle"
+            className="fill-gray-900 text-xs font-semibold"
+            style={{ fontSize: "11px" }}
+          >
+            {fmt(c.threshold)}
+          </text>
+        </g>
+      ))}
+      {uniqueDateLabelIndices.map((idx) => {
+        const c = coords[idx];
+        const anchor: "start" | "middle" | "end" =
+          idx === 0 ? "start" : idx === coords.length - 1 ? "end" : "middle";
+        return (
+          <text
+            key={`date-${idx}`}
+            x={c.x}
+            y={height - padBottom + 16}
+            textAnchor={anchor}
+            className="fill-gray-600"
+            style={{ fontSize: "11px" }}
+          >
+            {formatDateOnly(c.emailDate) || c.emailDate}
+          </text>
+        );
+      })}
+    </svg>
+  );
+}
+
 function ActivityFeedCard({
   activity,
   title = "Activity feed",
@@ -2374,10 +2539,60 @@ async function loadGscData(): Promise<GscLoad> {
   }
 }
 
+// K11 (analyst 2026-06-01 EVE) — "Congrats on X clicks in 28 days" milestone
+// rows from gsc_milestone_emails. siteUrl filter is critical: the table also
+// holds milestones for the Maine Cardworks property; the MMATF chart must
+// scope by site_url='https://meetmeatthefair.com/'. Hard-coded (not env-var)
+// because this is the admin page for THIS site.
+async function loadGscMilestones(): Promise<GscMilestonePoint[]> {
+  const { gscMilestoneEmails } = await import("@/lib/db/schema");
+  const { and, eq, asc } = await import("drizzle-orm");
+  const db = getCloudflareDb();
+  const rows = await db
+    .select({
+      threshold: gscMilestoneEmails.threshold,
+      emailDate: gscMilestoneEmails.emailDate,
+      reachedDate: gscMilestoneEmails.reachedDate,
+    })
+    .from(gscMilestoneEmails)
+    .where(
+      and(
+        eq(gscMilestoneEmails.metric, "clicks"),
+        eq(gscMilestoneEmails.windowDays, 28),
+        eq(gscMilestoneEmails.siteUrl, "https://meetmeatthefair.com/")
+      )
+    )
+    .orderBy(asc(gscMilestoneEmails.emailDate));
+  // The Mar 1 → Mar 5 dip (30 → 20) is a Google send-order artifact, NOT a
+  // real decline. Render faithfully in email_date order — do not smooth or
+  // sort by threshold.
+  return rows.map((r) => ({
+    threshold: r.threshold,
+    emailDate: r.emailDate,
+    reachedDate: r.reachedDate,
+  }));
+}
+
+interface GscMilestonePoint {
+  threshold: number;
+  emailDate: string;
+  reachedDate: string | null;
+}
+
 async function GoogleTab() {
+  // Milestone card reads from our own D1 (gsc_milestone_emails), not the
+  // Search Console API — so it must render whether or not SC_SITE_URL is
+  // configured. Load + render it ABOVE the GSC API gate. The GSC-API
+  // sections below early-return GscErrorPanel when SC is unconfigured.
+  const milestones = await loadGscMilestones();
   const result = await loadGscData();
   if (!result.ok) {
-    return <GscErrorPanel kind={result.kind} message={result.message} />;
+    return (
+      <>
+        <GscMilestoneChartCard points={milestones} />
+        <GscErrorPanel kind={result.kind} message={result.message} />
+      </>
+    );
   }
   const { queries, sitemaps } = result;
   const sitemapErrorCount = sitemaps?.sitemaps.reduce((acc, s) => acc + (s.errors ?? 0), 0) ?? 0;
@@ -2446,6 +2661,8 @@ async function GoogleTab() {
           </CardContent>
         </Card>
       </div>
+
+      <GscMilestoneChartCard points={milestones} />
 
       <Card className="mb-6">
         <CardHeader>
