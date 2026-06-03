@@ -1,0 +1,55 @@
+-- TAX1 Phase 1 (analyst, 2026-06-02). The audience/access taxonomy
+-- adds two ORTHOGONAL questions that today's `categories[]` column
+-- can't answer:
+--
+--   primary_audience — who is the event ORIENTED toward (PUBLIC,
+--                      TRADE, MEMBERS)
+--   public_access    — can a non-member-of-the-public attend at all
+--                      (OPEN, CLOSED)
+--
+-- These are independent: a TRADE event can be OPEN (industry expo
+-- where public may pay in — Maine PHCC Expo) or CLOSED (credential-
+-- gated B2B); a MEMBERS event can have a CLOSED core + a separate
+-- OPEN public-marketplace listing (members' convention + plant sale).
+-- Cost stays in ticket_price_min/max — "public can attend if they
+-- pay" is `TRADE + OPEN + non-zero price`, not a separate enum.
+--
+-- The motivating accuracy harm: the Maine Association of Retirees
+-- Annual Meeting and Garden Club Federation of Maine Convention are
+-- members-focused, not public, but today they surface as if any
+-- attendee can show up. Google AI Overview presenting a retirees'
+-- meeting as a public attraction is an accuracy/trust regression.
+--
+-- Supporting fields:
+--   access_notes          — free text nuance the enum pair can't
+--                           express (e.g. "members + public for the
+--                           Saturday plant sale 9am–1pm")
+--   registration_required — logistics axis, separate from
+--                           audience/access; defaults false
+--
+-- Enum enforcement is application-layer (Drizzle .$type<...> on the
+-- columns; D1/SQLite has no native ENUM). Both audience+access
+-- defaults are the permissive value so the migration is invisible
+-- by construction: every existing row reads as PUBLIC + OPEN, which
+-- matches the pre-migration semantics. Phase 2 (operator-reviewed
+-- backfill) corrects the ~30–60 known restricted events; Phase 3
+-- adds the public badge + JSON-LD `audience` mapping.
+--
+-- No index in Phase 1: filter usage (search_events `primary_audience`
+-- / `public_access` params) is gated by the existing status + start_
+-- date predicates in publicEventWhere() which are already indexed.
+-- Add a partial index later if a top-N admin query needs it.
+--
+-- Pre-flight per [[feedback_verify_table_doesnt_exist_before_create]]
+-- (extended to "verify column doesn't exist before ADD COLUMN" per
+-- [[feedback_alter_table_not_idempotent]] — SQLite's ALTER TABLE has
+-- no IF NOT EXISTS form):
+--   PRAGMA table_info('events');
+-- Run this against prod D1 via Cloudflare MCP d1_database_query
+-- before applying — confirm none of primary_audience, public_access,
+-- access_notes, registration_required exist yet.
+
+ALTER TABLE events ADD COLUMN primary_audience TEXT NOT NULL DEFAULT 'PUBLIC';
+ALTER TABLE events ADD COLUMN public_access TEXT NOT NULL DEFAULT 'OPEN';
+ALTER TABLE events ADD COLUMN access_notes TEXT;
+ALTER TABLE events ADD COLUMN registration_required INTEGER NOT NULL DEFAULT 0;

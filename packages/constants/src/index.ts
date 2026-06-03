@@ -202,6 +202,14 @@ export const EVENT_CATEGORIES = [
   "Antique Show",
   "Art Walk",
   "Car Show",
+  // TAX1 A10 (2026-06-02). Two first-class values for the
+  // charity / community gap. Kept distinct rather than collapsed
+  // (e.g. "Community Event" + charity-as-tag) so category-browse
+  // pages and the picker UI can surface them separately —
+  // charitable events have different vendor / attendee semantics
+  // than general community gatherings.
+  "Charity",
+  "Community Event",
   "Craft Fair",
   "Craft Show",
   "Farmers Market",
@@ -216,6 +224,21 @@ export const EVENT_CATEGORIES = [
   "Other",
 ] as const;
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+
+// ── TAX1 Phase 1 — audience / access enums ────────────────────────
+//
+// Orthogonal to EVENT_CATEGORIES (what an event IS) and to vendor-
+// access flags (who can SELL). Defaults are the permissive value so
+// the 2026-06-02 migration is invisible: every pre-migration row
+// reads as PUBLIC + OPEN, preserving today's semantics. See
+// drizzle/0100_events_audience_access.sql + events.primaryAudience
+// in packages/db-schema/src/index.ts.
+
+export const PRIMARY_AUDIENCE = ["PUBLIC", "TRADE", "MEMBERS"] as const;
+export type PrimaryAudience = (typeof PRIMARY_AUDIENCE)[number];
+
+export const PUBLIC_ACCESS = ["OPEN", "CLOSED"] as const;
+export type PublicAccess = (typeof PUBLIC_ACCESS)[number];
 
 // ── Event-vendor status transition state machine ──────────────────
 // Used by both the admin event-vendor PATCH endpoint (main app) and the

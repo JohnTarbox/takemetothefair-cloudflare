@@ -308,6 +308,38 @@ export const events = sqliteTable(
     // (the K7 idempotent-notification pattern); operators clear after
     // triage via the /admin/events?flagged=1 filter.
     flaggedForReview: integer("flagged_for_review").notNull().default(0),
+    // TAX1 Phase 1 (drizzle/0100, 2026-06-02). Two ORTHOGONAL audience
+    // questions today's `categories[]` can't answer.
+    //   primaryAudience — who is the event ORIENTED toward
+    //   publicAccess    — can a non-member-of-the-public attend at all
+    // These compose freely: TRADE+OPEN = "industry show, public may pay
+    // in" (Maine PHCC Expo); TRADE+CLOSED = credential-gated B2B;
+    // MEMBERS+CLOSED = restricted association meeting; MEMBERS+OPEN +
+    // accessNotes = members' event with a public-marketplace window.
+    // PUBLIC+OPEN is the permissive default = today's pre-migration
+    // semantics, so existing rows are invisible at deploy. Phase 2 hand-
+    // backfills the known restricted set; Phase 3 wires the public
+    // badge + JSON-LD `audience` mapping. NEVER down-rank MEMBERS/TRADE
+    // in vendor-recommendation surfaces — "restricted audience +
+    // exhibitor floor + matching demographic" is a known-good pattern
+    // (LeafFilter × MAR). Audience is informational, not a quality
+    // signal.
+    primaryAudience: text("primary_audience", { enum: ["PUBLIC", "TRADE", "MEMBERS"] })
+      .notNull()
+      .default("PUBLIC"),
+    publicAccess: text("public_access", { enum: ["OPEN", "CLOSED"] })
+      .notNull()
+      .default("OPEN"),
+    // Free-text nuance the enum pair can't hold (e.g. "members + public
+    // for Saturday plant sale 9am–1pm"). NULL = the audience/access pair
+    // is fully self-describing for this event.
+    accessNotes: text("access_notes"),
+    // Logistics axis — separate from audience/access. Defaults false.
+    // Drives a future "Registration required — see ticket URL" badge
+    // in Phase 3 (paired with the audience badge composition).
+    registrationRequired: integer("registration_required", { mode: "boolean" })
+      .notNull()
+      .default(false),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
