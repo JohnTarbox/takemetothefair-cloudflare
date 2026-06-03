@@ -1,6 +1,8 @@
 import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from "@/lib/datetime";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
 import { displayVenueName } from "@/lib/venue-display";
+import { formatAudienceBadge, isClosedToPublic, hasNonDefaultAudience } from "@/lib/event-audience";
+import type { PrimaryAudience, PublicAccess } from "@takemetothefair/constants";
 
 interface EventDay {
   date: string;
@@ -62,6 +64,15 @@ interface EventSchemaProps {
   eventDays?: EventDay[];
   vendors?: EventVendor[];
   createdAt?: Date | null;
+  // TAX1 Phase 3 (2026-06-02) — audience/access taxonomy. Both
+  // optional so legacy callers continue to render without these
+  // fields. The lib/event-audience.ts helpers null-coalesce missing
+  // values to the permissive default (PUBLIC + OPEN), which means
+  // the schema is unchanged for any caller that hasn't been updated
+  // yet (and for the ~95% of events that ARE PUBLIC + OPEN).
+  primaryAudience?: PrimaryAudience | null;
+  publicAccess?: PublicAccess | null;
+  accessNotes?: string | null;
 }
 
 function getEventType(categories?: string[]): string {
@@ -97,6 +108,9 @@ export function EventSchema({
   eventDays,
   vendors,
   createdAt,
+  primaryAudience,
+  publicAccess,
+  accessNotes,
 }: EventSchemaProps) {
   // Convert integer cents → dollars for JSON-LD emission. Round-2 backlog
   // item 1 (2026-05-11): only emit `offers` and `isAccessibleForFree` when
@@ -190,30 +204,43 @@ export function EventSchema({
       ? (parseDateLoose(previousEndDate)?.toISOString() ?? undefined)
       : undefined;
 
-  // Only emit `offers` when price is known. Schema.org marks `offers` as
-  // recommended-but-not-required, so omitting is the honest signal when we
-  // don't know whether an event is free or paid. `JSON.parse(JSON.stringify())`
-  // below strips the `undefined` from the final output.
-  const offers = !hasKnownPrice
-    ? undefined
-    : priceMaxDollars !== null && priceMinDollars !== null && priceMaxDollars !== priceMinDollars
-      ? {
-          "@type": "AggregateOffer",
-          url: ticketUrl || url,
-          lowPrice: priceMinDollars,
-          highPrice: priceMaxDollars,
-          priceCurrency: "USD",
-          availability: "https://schema.org/InStock",
-          validFrom: validFromDate,
-        }
-      : {
-          "@type": "Offer",
-          url: ticketUrl || url,
-          price: priceMinDollars ?? priceMaxDollars ?? 0,
-          priceCurrency: "USD",
-          availability: "https://schema.org/InStock",
-          validFrom: validFromDate,
-        };
+  // TAX1 Phase 3 (2026-06-02) — A7 SEO accuracy lever. When the event
+  // is CLOSED to the public (members-only, credential-gated B2B,
+  // etc.), suppress the entire `offers` block. Emitting `offers` on a
+  // CLOSED event tells Google's rich-result crawler "this is bookable
+  // by anyone for $X" — the exact harm this feature exists to prevent
+  // (the Maine Association of Retirees Annual Meeting surfacing as a
+  // public attraction). The price gate above still applies for OPEN
+  // events.
+  const closedToPublic = isClosedToPublic(publicAccess);
+
+  // Only emit `offers` when price is known AND the event is open. Schema.org
+  // marks `offers` as recommended-but-not-required, so omitting is the honest
+  // signal when we don't know whether an event is free or paid OR when the
+  // event isn't bookable by the public.
+  // `JSON.parse(JSON.stringify())` below strips the `undefined` from the
+  // final output.
+  const offers =
+    !hasKnownPrice || closedToPublic
+      ? undefined
+      : priceMaxDollars !== null && priceMinDollars !== null && priceMaxDollars !== priceMinDollars
+        ? {
+            "@type": "AggregateOffer",
+            url: ticketUrl || url,
+            lowPrice: priceMinDollars,
+            highPrice: priceMaxDollars,
+            priceCurrency: "USD",
+            availability: "https://schema.org/InStock",
+            validFrom: validFromDate,
+          }
+        : {
+            "@type": "Offer",
+            url: ticketUrl || url,
+            price: priceMinDollars ?? priceMaxDollars ?? 0,
+            priceCurrency: "USD",
+            availability: "https://schema.org/InStock",
+            validFrom: validFromDate,
+          };
 
   const organizerBlock = organizer
     ? {
@@ -277,6 +304,20 @@ export function EventSchema({
           }))
         : undefined,
     location,
+    // TAX1 Phase 3 (2026-06-02) — A7. Emit schema.org `audience`
+    // when the event has a non-default audience/access pair. The
+    // human-readable label from formatAudienceBadge() doubles as the
+    // audienceType — schema.org's spec accepts free text. Crawlers
+    // pair this with the offers-suppression above to understand
+    // "this isn't bookable by the general public" — the core SEO
+    // accuracy fix for restricted events.
+    audience: hasNonDefaultAudience(primaryAudience, publicAccess)
+      ? {
+          "@type": "Audience",
+          audienceType:
+            formatAudienceBadge(primaryAudience, publicAccess, accessNotes)?.label ?? "Restricted",
+        }
+      : undefined,
     subEvent: subEvents,
     organizer: organizerBlock,
     // Split vendor lineup into schema.org `performer` + `sponsor` per the
