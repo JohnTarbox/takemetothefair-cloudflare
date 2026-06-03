@@ -59,6 +59,7 @@ import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.j
 import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
 import { registerSourceReliabilityTool } from "./admin-source-reliability.js";
+import { registerDiscrepancyTools } from "./admin-discrepancies.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import {
   registerCitationTools,
@@ -145,6 +146,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // mcp-server/src/goodwill/scoring.ts which the GW1d resolve_discrepancy
   // tool fires to write source_reliability rows.
   registerSourceReliabilityTool(server, db, auth);
+
+  // GW1d (2026-06-02): the goodwill-engine outreach queue's CRUD
+  // surface. list_event_discrepancies + resolve_discrepancy +
+  // create_discrepancy + rerank_outreach_queue.
+  registerDiscrepancyTools(server, db, auth);
 
   // Analyst J1 (2026-05-29 PM): outreach-attempt logging substrate for
   // /admin/vendor-claim-leaderboard. MCP-exposed so Cowork can log
