@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, gte, lte, like, inArray, sql } from "drizzle-orm";
 import { events, venues, vendors, eventVendors, eventDays, promoters } from "../schema.js";
+import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import {
   parseJsonArray,
   formatDateRange,
@@ -49,6 +50,21 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .describe("Filter by promoter ID (UUID) — returns all events by a specific promoter"),
       start_after: z.string().optional().describe("Events starting after this date (YYYY-MM-DD)"),
       start_before: z.string().optional().describe("Events starting before this date (YYYY-MM-DD)"),
+      // TAX1 Phase 1 (2026-06-02) — audience / access filters.
+      // Defaults aren't applied here; omitting either param skips
+      // the filter so existing callers see no behavior change.
+      primary_audience: z
+        .enum(PRIMARY_AUDIENCE)
+        .optional()
+        .describe(
+          "Filter by audience orientation. PUBLIC = general public; TRADE = industry / B2B; MEMBERS = association / club."
+        ),
+      public_access: z
+        .enum(PUBLIC_ACCESS)
+        .optional()
+        .describe(
+          "Filter by public-access policy. OPEN = anyone can attend (may still require ticket); CLOSED = restricted."
+        ),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
       offset: z
         .number()
@@ -114,6 +130,15 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       if (params.promoter_id) {
         conditions.push(eq(events.promoterId, params.promoter_id));
+      }
+
+      // TAX1 Phase 1 — pure column equality, both columns are
+      // NOT NULL DEFAULT so they're always present and indexable.
+      if (params.primary_audience) {
+        conditions.push(eq(events.primaryAudience, params.primary_audience));
+      }
+      if (params.public_access) {
+        conditions.push(eq(events.publicAccess, params.public_access));
       }
 
       const limit = params.limit ?? 20;

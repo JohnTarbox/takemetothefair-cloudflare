@@ -43,6 +43,7 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { evaluateGates } from "@takemetothefair/utils";
+import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
@@ -493,6 +494,36 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       application_url: z.string().optional().describe("URL for vendor applications"),
       application_instructions: z.string().optional().describe("How to apply as a vendor"),
       walk_ins_allowed: z.boolean().optional().describe("Whether walk-in vendors are accepted"),
+      // TAX1 Phase 1 (2026-06-02) — audience / access taxonomy. These
+      // are attributes, NOT structural tracked fields, so they do
+      // NOT participate in the citation denorm map at
+      // admin-citations.ts. Per A4 of the spec.
+      primary_audience: z
+        .enum(PRIMARY_AUDIENCE)
+        .optional()
+        .describe(
+          "Who the event is ORIENTED toward. PUBLIC = general public; TRADE = industry / B2B; MEMBERS = association / club. Orthogonal to public_access."
+        ),
+      public_access: z
+        .enum(PUBLIC_ACCESS)
+        .optional()
+        .describe(
+          "Can a non-member of the public attend at all? OPEN = yes (may still require ticket); CLOSED = no. A TRADE+OPEN event means the public can pay in."
+        ),
+      access_notes: z
+        .string()
+        .max(1000)
+        .transform(sanitizeProse)
+        .optional()
+        .describe(
+          "Free-text nuance the audience+access pair can't hold (e.g. 'Members + public for the Saturday plant sale 9am-1pm')."
+        ),
+      registration_required: z
+        .boolean()
+        .optional()
+        .describe(
+          "True when advance registration is required to attend. Separate axis from audience/access."
+        ),
       source_url: z.string().optional().describe("Original source URL"),
       source_id: z.string().optional().describe("ID in the source system"),
       source_name: z
@@ -605,6 +636,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         },
         { param: "application_instructions", column: "applicationInstructions" },
         { param: "walk_ins_allowed", column: "walkInsAllowed" },
+        // TAX1 Phase 1 (2026-06-02) — audience / access taxonomy.
+        // String/bool only; no transform needed. NOT a tracked
+        // citation field (per A4 these are attributes, not the
+        // structural dates/venue/name/numerics).
+        { param: "primary_audience", column: "primaryAudience" },
+        { param: "public_access", column: "publicAccess" },
+        { param: "access_notes", column: "accessNotes" },
+        { param: "registration_required", column: "registrationRequired" },
         { param: "source_url", column: "sourceUrl" },
         { param: "source_id", column: "sourceId" },
         { param: "source_name", column: "sourceName" },

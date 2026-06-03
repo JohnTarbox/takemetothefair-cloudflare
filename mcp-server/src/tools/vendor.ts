@@ -19,6 +19,8 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
 import { evaluateGates, classifySource } from "@takemetothefair/utils";
+import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
+import { logError } from "../logger.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
@@ -560,8 +562,51 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       venue_name: z.string().transform(sanitizeProse).optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
       venue_state: z.string().optional().describe("Venue state (2-letter code)"),
+      // TAX1 A11 (2026-06-02) — let suggest_event accept categories at
+      // create time. Before this PR every suggestion landed with the
+      // hardcoded ["Event"] placeholder and needed manual recategorization
+      // (5 Augusta Civic Center events on 6/2 all needed correcting).
+      // When omitted, the insert still falls back to ["Event"] AND
+      // emits a level:"info" log entry so /admin/source-quality can
+      // surface uncategorized-suggestion frequency.
+      categories: z
+        .array(z.string())
+        .optional()
+        .describe(
+          `Category list at creation time, e.g. ['Craft Fair','Festival']. Pick from: ${EVENT_CATEGORIES.join(", ")}. When omitted, the event lands as ["Event"] and surfaces in the admin uncategorized queue.`
+        ),
       ticket_url: z.string().optional().describe("URL to purchase tickets"),
       source_url: z.string().optional().describe("URL with more information about the event"),
+      // TAX1 Phase 1 (2026-06-02) — audience / access taxonomy. Both
+      // default to the permissive value, so omitting both preserves
+      // today's pre-TAX1 semantics. See drizzle/0100 + the events
+      // schema header for the full design.
+      primary_audience: z
+        .enum(PRIMARY_AUDIENCE)
+        .optional()
+        .describe(
+          "Who the event is ORIENTED toward. PUBLIC (default) = general public; TRADE = industry / B2B; MEMBERS = association / club. Orthogonal to public_access."
+        ),
+      public_access: z
+        .enum(PUBLIC_ACCESS)
+        .optional()
+        .describe(
+          "Can a non-member of the public attend at all? OPEN (default) = yes (may still require ticket); CLOSED = no. A TRADE+OPEN event means the public can pay in (e.g. industry expo)."
+        ),
+      access_notes: z
+        .string()
+        .max(1000)
+        .transform(sanitizeProse)
+        .optional()
+        .describe(
+          "Free-text nuance the audience+access pair can't hold (e.g. 'Members + public for the Saturday plant sale 9am-1pm')."
+        ),
+      registration_required: z
+        .boolean()
+        .optional()
+        .describe(
+          "True when advance registration is required to attend. Separate axis from audience/access."
+        ),
       promoter_id: z
         .string()
         .optional()
@@ -850,6 +895,30 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       const gateFlagsJson =
         gateResult.reasons.length > 0 ? JSON.stringify(gateResult.reasons) : null;
 
+      // TAX1 A11 (2026-06-02) — prefer caller-supplied categories.
+      // When omitted, fall back to the legacy ["Event"] placeholder
+      // AND log at level:"info" so /admin/source-quality can sample
+      // how often this still happens. Invalid values are quietly
+      // filtered out (EVENT_CATEGORIES is the allow-list); empty
+      // result also falls back. Don't fail the suggestion — agents
+      // pass categories on a best-effort basis and a bad value
+      // shouldn't block ingest.
+      const validCategorySet = new Set<string>(EVENT_CATEGORIES);
+      const filteredCategories = (params.categories ?? []).filter((c) => validCategorySet.has(c));
+      const categoriesToStore = filteredCategories.length > 0 ? filteredCategories : ["Event"];
+      if (categoriesToStore[0] === "Event") {
+        await logError(db, {
+          source: "mcp:suggest_event:uncategorized",
+          message: "suggest_event landed without a valid category",
+          level: "info",
+          context: {
+            providedCategories: params.categories ?? null,
+            sourceUrl: params.source_url ?? null,
+            name: params.name,
+          },
+        });
+      }
+
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
         id: eventId,
@@ -861,11 +930,21 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         startDate,
         endDate,
         datesConfirmed: startDate !== null,
-        categories: JSON.stringify(["Event"]),
+        categories: JSON.stringify(categoriesToStore),
         tags: JSON.stringify(["community-suggestion", "vendor-submission"]),
         ticketUrl: gatedTicketUrl,
         status: eventStatus,
         gateFlags: gateFlagsJson,
+        // TAX1 Phase 1 — undefined params let the column defaults
+        // (PUBLIC / OPEN / 0) win at the D1 level. Drizzle's column
+        // .default() is what populates pre-existing rows; for new
+        // inserts we have to pass undefined (not the default value)
+        // so the SQL omits the column from the INSERT clause and
+        // SQLite applies DEFAULT.
+        primaryAudience: params.primary_audience,
+        publicAccess: params.public_access,
+        accessNotes: params.access_notes,
+        registrationRequired: params.registration_required,
         // Mirror the main-app suggest-event behavior: vendor submissions are
         // TENTATIVE-lifecycle (dates unconfirmed at submission time).
         lifecycleStatus: "TENTATIVE",

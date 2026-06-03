@@ -138,6 +138,15 @@ const SCHEMA_SQL = `
     -- includes this column even when callers don't pass a value (NOT NULL with
     -- default 0), so test seeders need it here or every INSERT fails.
     flagged_for_review INTEGER NOT NULL DEFAULT 0,
+    -- TAX1 Phase 1 (drizzle/0100, 2026-06-02) — audience/access taxonomy.
+    -- Same Drizzle-emits-it-anyway pattern as flagged_for_review above:
+    -- because both columns are NOT NULL with defaults, omitting them
+    -- from the test CREATE TABLE causes every events INSERT in the
+    -- mcp-server suites to fail with "no column named primary_audience".
+    primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
+    public_access TEXT NOT NULL DEFAULT 'OPEN',
+    access_notes TEXT,
+    registration_required INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
   );
