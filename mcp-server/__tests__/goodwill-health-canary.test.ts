@@ -148,6 +148,123 @@ describe("runScheduledGoodwillHealthCanary — RED dispatch", () => {
   });
 });
 
+describe("runScheduledGoodwillHealthCanary — email fallback (alertEmail + emailQueue)", () => {
+  // Seeds a prior snapshot + today's RED-triggering discrepancies, then
+  // asserts which channels were called based on the opts provided.
+  async function setupRedScenario() {
+    await seedEvent("evt-1");
+    await db.insert(goodwillHealthSnapshots).values({
+      snapshotDate: new Date(Date.now() - 86400 * 1000).toISOString().slice(0, 10),
+      openCount: 1,
+      outreachCandidateCount: 0,
+      weightedPrioritySum: 0,
+      openIngestAddverify: 0,
+      openStalePageRadar: 0,
+      openSelfConsistency: 1,
+      openManual: 0,
+      resolvedLast28d: 0,
+      dismissedLast28d: 0,
+      medianOfficialFreshness: null,
+      medianOfficialAccuracy: null,
+      medianAggregatorAccuracy: null,
+      lastYellowAlertedAt: null,
+      createdAt: new Date(),
+    });
+    await seedDiscrepancy({ id: "d-1" });
+    await seedDiscrepancy({ id: "d-2" });
+  }
+
+  it("email-only: enqueues an EmailJobMessage with the right shape", async () => {
+    await setupRedScenario();
+    const sent: Array<unknown> = [];
+    const emailQueue = {
+      send: async (msg: unknown) => {
+        sent.push(msg);
+      },
+    };
+    const result = await runScheduledGoodwillHealthCanary(db, {
+      alertEmail: "ops@example.com",
+      emailQueue,
+    });
+    expect(result.decision).toBe("wrote_snapshot_and_red");
+    expect(sent.length).toBe(1);
+    const msg = sent[0] as {
+      to: string;
+      subject: string;
+      text: string;
+      html: string;
+      source: string;
+    };
+    expect(msg.to).toBe("ops@example.com");
+    expect(msg.subject).toMatch(/RED/);
+    expect(msg.subject).toMatch(/2 open/);
+    expect(msg.text).toMatch(/open count 1.*→ 2/);
+    expect(msg.html).toContain("admin/data-health");
+    expect(msg.source).toBe("goodwill-canary:red");
+  });
+
+  it("both channels: fires Slack AND email when both are set", async () => {
+    await setupRedScenario();
+    const sent: Array<unknown> = [];
+    const emailQueue = {
+      send: async (msg: unknown) => {
+        sent.push(msg);
+      },
+    };
+    const fetchSpy = vi.fn(async () => new Response("ok"));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const result = await runScheduledGoodwillHealthCanary(db, {
+        slackWebhookUrl: "https://hooks.slack.example/x",
+        alertEmail: "ops@example.com",
+        emailQueue,
+      });
+      expect(result.decision).toBe("wrote_snapshot_and_red");
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(sent.length).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("misconfigured: alertEmail set but emailQueue null → still wrote_snapshot_and_red, no enqueue", async () => {
+    await setupRedScenario();
+    const result = await runScheduledGoodwillHealthCanary(db, {
+      alertEmail: "ops@example.com",
+      emailQueue: null,
+    });
+    // Decision still reflects RED; the misconfig is logged separately
+    // (not asserted here — logError writes to error_logs which the test
+    // schema doesn't include).
+    expect(result.decision).toBe("wrote_snapshot_and_red");
+  });
+
+  it("email-side failure doesn't break Slack-side dispatch", async () => {
+    await setupRedScenario();
+    const emailQueue = {
+      send: async () => {
+        throw new Error("queue unavailable");
+      },
+    };
+    const fetchSpy = vi.fn(async () => new Response("ok"));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    try {
+      const result = await runScheduledGoodwillHealthCanary(db, {
+        slackWebhookUrl: "https://hooks.slack.example/x",
+        alertEmail: "ops@example.com",
+        emailQueue,
+      });
+      expect(result.decision).toBe("wrote_snapshot_and_red");
+      // Slack still fired despite email throwing.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe("runScheduledGoodwillHealthCanary — RED beats YELLOW when both would fire", () => {
   it("when open count AND weighted priority both grow, RED wins", async () => {
     await seedEvent("evt-1");
