@@ -2,7 +2,15 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Share2, Twitter, Facebook, Linkedin, Mail, Link2, Check } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
+
+// U7 / Phase D (2026-06-02) — trigger migrated from <Button size="sm">
+// (~28px tall, icon + "Share" text) to icon-only IconButton size="md"
+// (40px guaranteed hit area). The "Share" word is dropped; ShareButtons
+// now sits beside FavoriteButton as a matching pair of round-ish
+// icon-only actions in the event-detail header. Menu items get an
+// explicit min-h-[40px] so keyboard / touch hit-areas are reliable
+// regardless of font line-height. WCAG 2.2 AA 2.5.8.
 
 interface ShareButtonsProps {
   url: string;
@@ -63,23 +71,22 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
 
   return (
     <div className="relative" ref={menuRef}>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="gap-2"
+      <IconButton
+        size="md"
+        variant="ghost"
+        aria-label={`Share ${title}`}
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        // Match FavoriteButton's pill silhouette next door so the two
+        // header actions read as a paired set.
+        className="rounded-full bg-white shadow-md border border-gray-200 hover:shadow-lg transition-all"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           setIsOpen(!isOpen);
         }}
-        aria-label={`Share ${title}`}
-        aria-expanded={isOpen}
-        aria-haspopup="menu"
-      >
-        <Share2 className="w-4 h-4" aria-hidden="true" />
-        Share
-      </Button>
+        icon={<Share2 className="w-5 h-5 text-gray-600" />}
+      />
 
       {isOpen && (
         <div
@@ -89,7 +96,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
         >
           <button
             onClick={() => openShareWindow(shareLinks.twitter)}
-            className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             role="menuitem"
             aria-label="Share on Twitter"
           >
@@ -98,7 +105,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </button>
           <button
             onClick={() => openShareWindow(shareLinks.facebook)}
-            className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             role="menuitem"
             aria-label="Share on Facebook"
           >
@@ -107,7 +114,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </button>
           <button
             onClick={() => openShareWindow(shareLinks.linkedin)}
-            className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             role="menuitem"
             aria-label="Share on LinkedIn"
           >
@@ -116,7 +123,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </button>
           <a
             href={shareLinks.email}
-            className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             onClick={() => setIsOpen(false)}
             role="menuitem"
             aria-label="Share via email"
@@ -126,7 +133,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </a>
           <button
             onClick={copyToClipboard}
-            className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
             role="menuitem"
             aria-label={copied ? "Link copied" : "Copy link to clipboard"}
           >
