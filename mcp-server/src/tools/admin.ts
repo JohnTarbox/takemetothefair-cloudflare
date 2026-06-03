@@ -60,6 +60,7 @@ import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
 import { registerSourceQualityTool } from "./admin-source-quality.js";
 import { registerSourceReliabilityTool } from "./admin-source-reliability.js";
 import { registerDiscrepancyTools } from "./admin-discrepancies.js";
+import { registerDataHealthTool } from "./admin-data-health.js";
 import { registerLogVendorOutreachTool } from "./admin-log-vendor-outreach.js";
 import {
   registerCitationTools,
@@ -151,6 +152,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // surface. list_event_discrepancies + resolve_discrepancy +
   // create_discrepancy + rerank_outreach_queue.
   registerDiscrepancyTools(server, db, auth);
+
+  // GW1e (2026-06-02): CPI report-card. Surfaces queue health +
+  // reliability matrix + 28-day resolution metrics + 14-day snapshot
+  // trend. Phase-2-only metrics stub as 'Awaiting Phase 2' per B8.
+  registerDataHealthTool(server, db, auth);
 
   // Analyst J1 (2026-05-29 PM): outreach-attempt logging substrate for
   // /admin/vendor-claim-leaderboard. MCP-exposed so Cowork can log

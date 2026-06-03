@@ -27,6 +27,7 @@ import {
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
+import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import { eq } from "drizzle-orm";
@@ -1168,6 +1169,13 @@ export default {
         // wrapped Db directly per [[feedback_drizzle_d1_unit_test_inject_db]].
         runScheduledStalePageRadar(getDb(env.DB)).then(() => undefined),
         runScheduledSelfConsistencyCron(getDb(env.DB)).then(() => undefined),
+        // GW1e (2026-06-02) — daily goodwill-health canary mirrors the
+        // dedup-sweep-canary pattern from PR #306. Writes the snapshot,
+        // dispatches RED on +1 open growth day-over-day, YELLOW on
+        // >10% weighted-priority growth (72h-debounced).
+        runScheduledGoodwillHealthCanary(getDb(env.DB), {
+          slackWebhookUrl: env.SLACK_WEBHOOK_URL_TECHNICAL ?? null,
+        }).then(() => undefined),
       ]).then(() => undefined)
     );
   },
