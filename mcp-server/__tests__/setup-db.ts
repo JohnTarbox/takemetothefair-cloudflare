@@ -411,6 +411,38 @@ const SCHEMA_SQL = `
     ON email_source_suggestions (host)
     WHERE status = 'pending_review';
 
+  -- discovery_candidates — pre-existing prod table owned by the
+  -- out-of-repo daily NE event discovery skill (schema captured from
+  -- PRAGMA table_info on 2026-05-21). Added to the test setup for K12
+  -- (2026-06-02) when seed-discovery began writing to it.
+  CREATE TABLE discovery_candidates (
+    id TEXT PRIMARY KEY,
+    rule_slug TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_label TEXT NOT NULL,
+    source_url TEXT,
+    source_ref_id TEXT,
+    state TEXT,
+    category TEXT,
+    expected_yield INTEGER,
+    last_yield INTEGER,
+    total_events_created INTEGER NOT NULL DEFAULT 0,
+    cms_type TEXT,
+    harvest_method TEXT,
+    harvest_endpoint TEXT,
+    rescrape_interval_days INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    status_reason TEXT,
+    last_outcome TEXT,
+    notes TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_checked_at INTEGER,
+    last_harvested_at INTEGER,
+    resolved_at INTEGER,
+    snoozed_until INTEGER
+  );
+
   CREATE TABLE submission_correction_tokens (
     token TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
