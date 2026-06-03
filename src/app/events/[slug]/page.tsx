@@ -56,6 +56,7 @@ import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { ShareButtons } from "@/components/ShareButtons";
 import { getCategoryBadgeClass } from "@/lib/category-colors";
+import { formatAudienceBadge } from "@/lib/event-audience";
 import { buildEventMetaDescription, buildEventTitle } from "@/lib/seo-utils";
 import { haversineDistance, formatDistance } from "@/lib/geo";
 import { TrackedLink } from "@/components/TrackedLink";
@@ -582,6 +583,15 @@ export default async function EventDetailPage({ params }: Props) {
             | undefined,
         }))}
         createdAt={event.createdAt}
+        // TAX1 Phase 3 (2026-06-02). Audience/access drives the
+        // schema.org `audience` block + offers suppression for CLOSED
+        // events (the SEO accuracy lever per A7). When the columns
+        // are PUBLIC + OPEN (the default for the ~95% majority),
+        // EventSchema emits the same shape as pre-TAX1 — no
+        // behavior change.
+        primaryAudience={event.primaryAudience}
+        publicAccess={event.publicAccess}
+        accessNotes={event.accessNotes}
       />
       <BreadcrumbSchema
         items={[
@@ -632,6 +642,21 @@ export default async function EventDetailPage({ params }: Props) {
                     {event.status === "TENTATIVE" && (
                       <Badge variant="info">Tentative — Unverified</Badge>
                     )}
+                    {/* TAX1 Phase 3 (2026-06-02) — A6 audience/access label.
+                        Renders only for non-default audience/access pairs
+                        (MEMBERS, TRADE, CLOSED variants). PUBLIC + OPEN
+                        events show no badge per the dev-email spec
+                        ("avoid clutter"). */}
+                    {(() => {
+                      const audienceBadge = formatAudienceBadge(
+                        event.primaryAudience,
+                        event.publicAccess,
+                        event.accessNotes
+                      );
+                      return audienceBadge ? (
+                        <Badge variant={audienceBadge.variant}>{audienceBadge.label}</Badge>
+                      ) : null;
+                    })()}
                     {categories.map((cat) => (
                       <Badge key={cat} className={getCategoryBadgeClass(cat)}>
                         {cat}

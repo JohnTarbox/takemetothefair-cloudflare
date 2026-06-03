@@ -10,6 +10,7 @@ import { formatDateRange, formatPrice } from "@/lib/utils";
 import { formatDistance } from "@/lib/geo";
 import { parseJsonArray } from "@/types";
 import { nextOccurrence } from "@/lib/event-occurrence";
+import { formatAudienceBadge } from "@/lib/event-audience";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
@@ -137,9 +138,23 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               <div className="text-lg font-bold text-navy -mt-0.5">{dayNum}</div>
             </div>
           )}
-          <div className="absolute top-3 left-3 flex gap-1">
+          <div className="absolute top-3 left-3 flex gap-1 flex-wrap max-w-[calc(100%-48px)]">
             {event.featured && <Badge variant="warning">Featured</Badge>}
             {event.status === "TENTATIVE" && <Badge variant="info">Tentative</Badge>}
+            {/* TAX1 Phase 3 (2026-06-02) — A6 audience badge on cards.
+                The flex-wrap + max-w guards against the long
+                MEMBERS+OPEN label colliding with the favorite button
+                on narrow card widths. */}
+            {(() => {
+              const audienceBadge = formatAudienceBadge(
+                event.primaryAudience,
+                event.publicAccess,
+                event.accessNotes
+              );
+              return audienceBadge ? (
+                <Badge variant={audienceBadge.variant}>{audienceBadge.label}</Badge>
+              ) : null;
+            })()}
           </div>
           <FavoriteButton
             type="EVENT"

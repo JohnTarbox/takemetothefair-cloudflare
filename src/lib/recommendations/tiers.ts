@@ -14,6 +14,18 @@
  *   don't move the immediate revenue or defense needle
  *
  * Unmapped rules fall into T3 by default (most-conservative impact bucket).
+ *
+ * ## TAX1 / Phase 3 invariant (2026-06-02)
+ *
+ * **`events.primary_audience` is INFORMATIONAL — never a down-rank
+ * input.** Per A5 of the dev email, MEMBERS / TRADE events ARE
+ * legitimate vendor floors: LeafFilter × MAR (the Maine Association
+ * of Retirees Annual Meeting) is the canonical example — 250-300
+ * retired homeowners is an ideal home-improvement audience even
+ * though the event is members-focused. Any future rule that gates on
+ * `primary_audience` must be reviewed against this principle. The
+ * `formatAudienceBadge` helper at `src/lib/event-audience.ts` is
+ * the read-only surface; this engine never consumes it.
  */
 export type Tier = "T1" | "T2" | "T3";
 
