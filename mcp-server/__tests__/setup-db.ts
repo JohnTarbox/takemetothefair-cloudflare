@@ -163,6 +163,33 @@ const SCHEMA_SQL = `
     resolved_at INTEGER
   );
 
+  -- GW1a (drizzle/0101, 2026-06-02). Goodwill Engine Phase 1
+  -- discrepancies table. Added to setup-db.ts as soon as GW1b started
+  -- emitting rows into it from the cron handlers under test.
+  CREATE TABLE event_discrepancies (
+    id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    field_class TEXT NOT NULL,
+    authoritative_value TEXT,
+    authoritative_source_key TEXT,
+    authoritative_source_url TEXT,
+    divergent_value TEXT,
+    divergent_source_key TEXT,
+    divergent_source_url TEXT,
+    detected_by TEXT NOT NULL,
+    detected_at INTEGER NOT NULL,
+    confidence REAL,
+    resolution_status TEXT NOT NULL DEFAULT 'open',
+    resolved_value TEXT,
+    resolution_source TEXT,
+    resolved_at INTEGER,
+    outreach_candidate INTEGER NOT NULL DEFAULT 0,
+    outreach_priority_score REAL,
+    outreach_id TEXT,
+    notes TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
   CREATE TABLE vendors (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL UNIQUE,

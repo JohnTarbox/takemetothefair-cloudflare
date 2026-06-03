@@ -25,6 +25,8 @@ import {
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
+import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
+import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import { eq } from "drizzle-orm";
@@ -1156,6 +1158,16 @@ export default {
         // dedup_sweep_snapshots, alerts on RED (+1 day-over-day, always) or
         // YELLOW (>10% vs 7-day avg, 72h-debounced).
         runScheduledDedupSweepCanary(env),
+        // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
+        // hooks. Both consume the foundations from GW1a (drizzle/0101)
+        // and emit event_discrepancies rows for GW1c/d/e to score and
+        // rank. Cosmetic-failsoft per
+        // [[feedback_workflow_cosmetic_steps_failsoft]] — each helper
+        // catches its own errors and returns a result struct so a
+        // single bad row doesn't pull down the sibling crons. Pass the
+        // wrapped Db directly per [[feedback_drizzle_d1_unit_test_inject_db]].
+        runScheduledStalePageRadar(getDb(env.DB)).then(() => undefined),
+        runScheduledSelfConsistencyCron(getDb(env.DB)).then(() => undefined),
       ]).then(() => undefined)
     );
   },
