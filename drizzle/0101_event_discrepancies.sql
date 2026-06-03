@@ -228,11 +228,26 @@ CREATE TABLE IF NOT EXISTS source_type_priors (
 -- field_class catalog: date | hours | venue | status | price | existence | name
 -- axis catalog:        accuracy | freshness
 
--- Helper macro-by-hand: for each (source_type, field_class, axis),
--- one row. To keep this readable, the SELECT … UNION ALL form
--- materializes the catalog, and the prior values are computed via
--- CASE expressions encoding the design above.
+-- Catalog materialized via WITH ... VALUES rather than UNION ALL.
+-- D1's local-mode emulation (wrangler d1 migrations apply --local
+-- via Miniflare) caps SQLITE_LIMIT_COMPOUND_SELECT very low — the
+-- earlier UNION ALL form (8+7+2=17 terms across three subqueries)
+-- failed CI with "too many terms in compound SELECT: SQLITE_ERROR".
+-- VALUES is the portable, limit-free way to materialize a small
+-- constants table. Prior values are computed via CASE expressions
+-- encoding the design above.
 INSERT OR IGNORE INTO source_type_priors (source_type, field_class, axis, prior_alpha, prior_beta)
+WITH st(source_type) AS (VALUES
+  ('official'), ('dmo_tourism'), ('ticketing'), ('newspaper'),
+  ('social'), ('aggregator'), ('community'), ('unknown')
+),
+fc(field_class) AS (VALUES
+  ('date'), ('hours'), ('venue'), ('status'),
+  ('price'), ('existence'), ('name')
+),
+ax(axis) AS (VALUES
+  ('accuracy'), ('freshness')
+)
 SELECT
   st.source_type,
   fc.field_class,
@@ -277,23 +292,4 @@ SELECT
     WHEN st.source_type = 'unknown' THEN 5.0
     ELSE 5.0
   END AS prior_beta
-FROM
-  (SELECT 'official' AS source_type UNION ALL
-   SELECT 'dmo_tourism' UNION ALL
-   SELECT 'ticketing' UNION ALL
-   SELECT 'newspaper' UNION ALL
-   SELECT 'social' UNION ALL
-   SELECT 'aggregator' UNION ALL
-   SELECT 'community' UNION ALL
-   SELECT 'unknown') st
-CROSS JOIN
-  (SELECT 'date' AS field_class UNION ALL
-   SELECT 'hours' UNION ALL
-   SELECT 'venue' UNION ALL
-   SELECT 'status' UNION ALL
-   SELECT 'price' UNION ALL
-   SELECT 'existence' UNION ALL
-   SELECT 'name') fc
-CROSS JOIN
-  (SELECT 'accuracy' AS axis UNION ALL
-   SELECT 'freshness' AS axis) ax;
+FROM st CROSS JOIN fc CROSS JOIN ax;
