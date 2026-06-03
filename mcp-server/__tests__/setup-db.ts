@@ -201,6 +201,29 @@ const SCHEMA_SQL = `
     PRIMARY KEY (source_type, field_class, axis)
   );
 
+  -- GW1e (drizzle/0102, 2026-06-02). Daily snapshots of the goodwill
+  -- queue + reliability medians; backs the Slack health canary.
+  CREATE TABLE goodwill_health_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL,
+    open_count INTEGER NOT NULL,
+    outreach_candidate_count INTEGER NOT NULL,
+    weighted_priority_sum REAL NOT NULL,
+    open_ingest_addverify INTEGER NOT NULL DEFAULT 0,
+    open_stale_page_radar INTEGER NOT NULL DEFAULT 0,
+    open_self_consistency INTEGER NOT NULL DEFAULT 0,
+    open_manual INTEGER NOT NULL DEFAULT 0,
+    resolved_last_28d INTEGER NOT NULL DEFAULT 0,
+    dismissed_last_28d INTEGER NOT NULL DEFAULT 0,
+    median_official_freshness REAL,
+    median_official_accuracy REAL,
+    median_aggregator_accuracy REAL,
+    last_yellow_alerted_at INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  CREATE UNIQUE INDEX idx_goodwill_snapshot_date
+    ON goodwill_health_snapshots(snapshot_date);
+
   CREATE TABLE event_discrepancies (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,

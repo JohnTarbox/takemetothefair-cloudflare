@@ -2102,3 +2102,31 @@ export const sourceTypePriors = sqliteTable(
 );
 
 export type SourceTypePrior = typeof sourceTypePriors.$inferSelect;
+
+// GW1e (drizzle/0102, 2026-06-02). Daily snapshot of the goodwill-
+// queue health + per-tier reliability medians. Backs the Slack
+// canary in mcp-server/src/goodwill/health-canary.ts and the report-
+// card admin tool. Mirrors the dedup_sweep_snapshots shape from 0099.
+export const goodwillHealthSnapshots = sqliteTable("goodwill_health_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD UTC
+  openCount: integer("open_count").notNull(),
+  outreachCandidateCount: integer("outreach_candidate_count").notNull(),
+  weightedPrioritySum: real("weighted_priority_sum").notNull(),
+  openIngestAddverify: integer("open_ingest_addverify").notNull().default(0),
+  openStalePageRadar: integer("open_stale_page_radar").notNull().default(0),
+  openSelfConsistency: integer("open_self_consistency").notNull().default(0),
+  openManual: integer("open_manual").notNull().default(0),
+  resolvedLast28d: integer("resolved_last_28d").notNull().default(0),
+  dismissedLast28d: integer("dismissed_last_28d").notNull().default(0),
+  medianOfficialFreshness: real("median_official_freshness"),
+  medianOfficialAccuracy: real("median_official_accuracy"),
+  medianAggregatorAccuracy: real("median_aggregator_accuracy"),
+  /** 72h debounce state for YELLOW alerts. NULL = never alerted. */
+  lastYellowAlertedAt: integer("last_yellow_alerted_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type GoodwillHealthSnapshot = typeof goodwillHealthSnapshots.$inferSelect;
