@@ -163,9 +163,44 @@ const SCHEMA_SQL = `
     resolved_at INTEGER
   );
 
-  -- GW1a (drizzle/0101, 2026-06-02). Goodwill Engine Phase 1
-  -- discrepancies table. Added to setup-db.ts as soon as GW1b started
-  -- emitting rows into it from the cron handlers under test.
+  -- GW1a (drizzle/0101, 2026-06-02). Goodwill Engine Phase 1 sibling
+  -- tables. event_discrepancies is the queue; sources / source_reliability
+  -- / source_type_priors back the Bayesian updater (GW1c).
+  CREATE TABLE sources (
+    source_key TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    authority_weight REAL NOT NULL DEFAULT 1.0,
+    notes TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE source_reliability (
+    source_key TEXT NOT NULL,
+    field_class TEXT NOT NULL,
+    axis TEXT NOT NULL,
+    prior_type TEXT NOT NULL,
+    alpha REAL NOT NULL,
+    beta REAL NOT NULL,
+    n_checks INTEGER NOT NULL DEFAULT 0,
+    n_agreed INTEGER NOT NULL DEFAULT 0,
+    n_stale INTEGER NOT NULL DEFAULT 0,
+    score REAL NOT NULL,
+    confidence TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    last_updated INTEGER NOT NULL,
+    PRIMARY KEY (source_key, field_class, axis)
+  );
+
+  CREATE TABLE source_type_priors (
+    source_type TEXT NOT NULL,
+    field_class TEXT NOT NULL,
+    axis TEXT NOT NULL,
+    prior_alpha REAL NOT NULL,
+    prior_beta REAL NOT NULL,
+    PRIMARY KEY (source_type, field_class, axis)
+  );
+
   CREATE TABLE event_discrepancies (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
