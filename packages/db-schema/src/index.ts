@@ -5,6 +5,7 @@ import {
   real,
   index,
   uniqueIndex,
+  primaryKey,
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { relations, sql } from "drizzle-orm";
@@ -1925,3 +1926,147 @@ export const inboundEmailSenderFeedback = sqliteTable(
 );
 
 export type InboundEmailSenderFeedback = typeof inboundEmailSenderFeedback.$inferSelect;
+
+// ─────────────────────────────────────────────────────────────────
+// GW1 — Goodwill Engine Phase 1 (drizzle/0101, 2026-06-02)
+//
+// Four tables backing cross-source discrepancy capture + per-source
+// reliability scoring. Phase 1 ends at "ranked outreach queue"; Phase
+// 2 (the outreach communication layer) is explicitly out of scope —
+// `event_discrepancies.outreach_id` is reserved NULL in Phase 1 so
+// Phase 2 adds behavior without a migration.
+//
+// See drizzle/0101_event_discrepancies.sql for the SQL + seed priors
+// header explaining the design.
+// ─────────────────────────────────────────────────────────────────
+
+export const eventDiscrepancies = sqliteTable("event_discrepancies", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  /** date | hours | venue | status | price | existence | name */
+  fieldClass: text("field_class", {
+    enum: ["date", "hours", "venue", "status", "price", "existence", "name"],
+  }).notNull(),
+  /** The value MMATF currently treats as correct (events column value
+   *  at capture time). NULL when the field is absent. */
+  authoritativeValue: text("authoritative_value"),
+  /** Aligns with events.source_domain (lowercased, no www). */
+  authoritativeSourceKey: text("authoritative_source_key"),
+  authoritativeSourceUrl: text("authoritative_source_url"),
+  /** What the other source claims. For self_consistency rows, the
+   *  "what the field should be if the inconsistency were corrected" hint. */
+  divergentValue: text("divergent_value"),
+  divergentSourceKey: text("divergent_source_key"),
+  divergentSourceUrl: text("divergent_source_url"),
+  /** ingest_addverify | stale_page_radar | self_consistency | manual.
+   *  Phase 2/3 will add: crowd_report, ai_monitor. */
+  detectedBy: text("detected_by", {
+    enum: ["ingest_addverify", "stale_page_radar", "self_consistency", "manual"],
+  }).notNull(),
+  /** Epoch seconds — `mode: "timestamp"` convention. */
+  detectedAt: integer("detected_at", { mode: "timestamp" }).notNull(),
+  /** 0..1 detector confidence. NULL when capture path doesn't compute it. */
+  confidence: real("confidence"),
+  /** open | resolved_authoritative | resolved_divergent | self_resolved | dismissed */
+  resolutionStatus: text("resolution_status", {
+    enum: ["open", "resolved_authoritative", "resolved_divergent", "self_resolved", "dismissed"],
+  })
+    .notNull()
+    .default("open"),
+  resolvedValue: text("resolved_value"),
+  /** higher_tier | post_event | operator. Phase 2 will add promoter_reply. */
+  resolutionSource: text("resolution_source", {
+    enum: ["higher_tier", "post_event", "operator"],
+  }),
+  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  /** Computed by GW1d queue ranker. Boolean-as-integer. */
+  outreachCandidate: integer("outreach_candidate", { mode: "boolean" }).notNull().default(false),
+  outreachPriorityScore: real("outreach_priority_score"),
+  /** Phase 2 placeholder — always NULL in Phase 1 per B13. Reserving
+   *  the column now means the Phase 2 wiring is a no-migration change. */
+  outreachId: text("outreach_id"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type EventDiscrepancy = typeof eventDiscrepancies.$inferSelect;
+
+export const sourceReliability = sqliteTable(
+  "source_reliability",
+  {
+    sourceKey: text("source_key").notNull(),
+    fieldClass: text("field_class", {
+      enum: ["date", "hours", "venue", "status", "price", "existence", "name"],
+    }).notNull(),
+    /** accuracy | freshness */
+    axis: text("axis", { enum: ["accuracy", "freshness"] }).notNull(),
+    /** Snapshot of the source's type at row creation; denormalized so
+     *  the scoring path doesn't JOIN sources on every read. */
+    priorType: text("prior_type").notNull(),
+    /** Beta distribution params: successes + prior, failures + prior. */
+    alpha: real("alpha").notNull(),
+    beta: real("beta").notNull(),
+    nChecks: integer("n_checks").notNull().default(0),
+    nAgreed: integer("n_agreed").notNull().default(0),
+    nStale: integer("n_stale").notNull().default(0),
+    /** Posterior mean alpha/(alpha+beta). Denormalized for queue-rank
+     *  sort without recomputing per read. */
+    score: real("score").notNull(),
+    /** prior_only | low | established */
+    confidence: text("confidence", {
+      enum: ["prior_only", "low", "established"],
+    }).notNull(),
+    /** Bumps when seed-priors change so old rows can be distinguished
+     *  from rows scored under the new prior set. */
+    modelVersion: text("model_version").notNull(),
+    lastUpdated: integer("last_updated", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.sourceKey, t.fieldClass, t.axis] })]
+);
+
+export type SourceReliability = typeof sourceReliability.$inferSelect;
+
+export const sources = sqliteTable("sources", {
+  sourceKey: text("source_key").primaryKey(),
+  displayName: text("display_name").notNull(),
+  /** official | dmo_tourism | ticketing | newspaper | social | aggregator | community | unknown */
+  sourceType: text("source_type", {
+    enum: [
+      "official",
+      "dmo_tourism",
+      "ticketing",
+      "newspaper",
+      "social",
+      "aggregator",
+      "community",
+      "unknown",
+    ],
+  }).notNull(),
+  /** Tiebreaker in the GW1d reliability-weighted resolution path when
+   *  two sources have equal posterior scores. */
+  authorityWeight: real("authority_weight").notNull().default(1.0),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type Source = typeof sources.$inferSelect;
+
+export const sourceTypePriors = sqliteTable(
+  "source_type_priors",
+  {
+    sourceType: text("source_type").notNull(),
+    fieldClass: text("field_class").notNull(),
+    axis: text("axis").notNull(),
+    priorAlpha: real("prior_alpha").notNull(),
+    priorBeta: real("prior_beta").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.sourceType, t.fieldClass, t.axis] })]
+);
+
+export type SourceTypePrior = typeof sourceTypePriors.$inferSelect;
