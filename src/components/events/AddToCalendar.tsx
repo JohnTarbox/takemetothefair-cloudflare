@@ -3,7 +3,16 @@
 import { useState, useRef, useEffect } from "react";
 import { Calendar, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { trackAddToCalendar } from "@/lib/analytics";
+
+// U7 / Phase D (2026-06-02) — the icon variant's trigger moved from a
+// raw <button> with `p-3.5 -m-1` (~44px hit area but loosely enforced,
+// negative margin pulled visual padding back to ~36px) to the shared
+// IconButton primitive so the floor is type-enforced and matches the
+// FavoriteButton / ShareButtons pair. Dropdown menu items get an
+// explicit min-h-[40px] across all three variants for the same
+// reason — WCAG 2.2 AA 2.5.8.
 import {
   generateGoogleCalendarUrl,
   generateOutlookCalendarUrl,
@@ -175,16 +184,20 @@ export function AddToCalendar({
   if (variant === "icon") {
     return (
       <div className={`relative inline-block ${className}`} ref={dropdownRef}>
-        <button
-          onClick={() => setIsOpen(!isOpen)}
-          onKeyDown={handleKeyDown}
-          className="p-3.5 -m-1 text-royal hover:text-navy hover:bg-brand-blue-light rounded transition-colors"
+        <IconButton
+          size="md"
+          variant="ghost"
           aria-label="Add to calendar"
           aria-expanded={isOpen}
           aria-haspopup="true"
-        >
-          <Calendar className="w-4 h-4" aria-hidden="true" />
-        </button>
+          onClick={() => setIsOpen(!isOpen)}
+          onKeyDown={handleKeyDown}
+          // Preserve the existing royal/navy hover treatment via
+          // className override; twMerge collapses the base ghost
+          // gray hover in favor of the brand-blue-light hover here.
+          className="text-royal hover:text-navy hover:bg-brand-blue-light"
+          icon={<Calendar className="w-5 h-5" />}
+        />
 
         {isOpen && (
           <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
@@ -195,7 +208,7 @@ export function AddToCalendar({
                 target="_blank"
                 rel="noopener noreferrer"
                 download={option.download}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                 onClick={() => handleCalendarClick(option.name)}
               >
                 {option.icon}
@@ -237,7 +250,7 @@ export function AddToCalendar({
                 target="_blank"
                 rel="noopener noreferrer"
                 download={option.download}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                 onClick={() => handleCalendarClick(option.name)}
               >
                 {option.icon}
@@ -280,7 +293,7 @@ export function AddToCalendar({
               target="_blank"
               rel="noopener noreferrer"
               download={option.download}
-              className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
               onClick={() => setIsOpen(false)}
             >
               {option.icon}
