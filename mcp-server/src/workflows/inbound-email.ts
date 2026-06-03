@@ -79,6 +79,7 @@ import {
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
+import { seedDiscoveryCandidate } from "../goodwill/seed-discovery.js";
 
 export type InboundEmailParams = {
   messageRowId: string;
@@ -729,7 +730,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               subject,
               rowSnapshot.fromAddress,
               rowSnapshot.attachmentCount > 0,
-              null // no fetch happened on free-text path
+              null, // no fetch happened on free-text path
+              messageRowId
             );
           }
         } catch {
@@ -872,7 +874,8 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       subject,
       rowSnapshot.fromAddress,
       rowSnapshot.attachmentCount > 0,
-      fetched.fetchMethod
+      fetched.fetchMethod,
+      messageRowId
     );
   }
 
@@ -895,7 +898,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     subject: string,
     fromAddress: string,
     hasAttachments: boolean,
-    fetchMethod: "standard" | "browser-rendering" | null
+    fetchMethod: "standard" | "browser-rendering" | null,
+    // K12 (2026-06-02). Threaded from runSubmitPipeline so the new
+    // submit/seed-discovery step can FK the email_source_suggestions
+    // row back to the triggering inbound_emails row for audit trace.
+    messageRowId: string
   ): Promise<HandlerResult> {
     // C1 Phase 2 (analyst, 2026-05-30): multi-event landing pages
     // (e.g. https://downtownfarmington.com/farmers-markets/ listing 3
@@ -924,6 +931,39 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       "submit/check-duplicate",
       { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
       () => submitCheckDuplicate(this.env, extracted)
+    );
+
+    // K12 (analyst, 2026-06-02). Submission-seeded discovery — enqueue
+    // the submitter's organizer domain so the daily-discovery cron
+    // picks up the org's OTHER upcoming events. Fires AFTER dedup
+    // (regardless of outcome) so even already-existing submissions
+    // benefit when the organizer has more on their /events page than
+    // we know about. Failsoft inside the step body per
+    // [[feedback_workflow_cosmetic_steps_failsoft]] — the helper
+    // itself never throws, but the step wrapper provides one retry
+    // for transient infrastructure hiccups.
+    await step.do(
+      "submit/seed-discovery",
+      { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+      async () => {
+        try {
+          await seedDiscoveryCandidate(getDb(this.env.DB), {
+            sourceUrl: extracted.url,
+            fromAddress,
+            inboundEmailId: messageRowId,
+          });
+        } catch (err) {
+          // The helper catches its own errors; this layer exists for
+          // the truly-unexpected case (e.g. import-resolution failure
+          // on a stale deploy). Never propagate — discovery seeding
+          // is purely additive.
+          await logError(getDb(this.env.DB), {
+            source: "mcp:workflow:seed-discovery",
+            message: "seedDiscoveryCandidate threw despite internal catch",
+            error: err,
+          });
+        }
+      }
     );
 
     if (dedup.isDuplicate && dedup.existingEventSlug) {
