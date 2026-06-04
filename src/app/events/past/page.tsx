@@ -7,6 +7,7 @@ import { eq, and, lt, count, inArray, desc, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
@@ -51,9 +52,12 @@ async function getPastEvents(searchParams: SearchParams) {
     conditions.push(sql`${events.categories} LIKE ${categoryPattern}` as ReturnType<typeof eq>);
   }
 
+  // Narrow projection — D1's 100-col result-row cap; see
+  // eventJoinProjection. The count query stays unchanged: it only
+  // selects COUNT(*) so it doesn't trip the column cap.
   const [results, totalResult] = await Promise.all([
     db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -108,10 +112,15 @@ async function getPastEvents(searchParams: SearchParams) {
     vendorsByEvent.set(ev.eventId, existing);
   }
 
+  // Cast the lite projection back to schema row types so EventsView's
+  // `Venue | null` / `Promoter | null` props compile. See
+  // eventJoinProjection for the audit + maintenance contract.
+  type FullVenue = typeof venues.$inferSelect;
+  type FullPromoter = typeof promoters.$inferSelect;
   const eventsBase = results.map((r) => ({
     ...r.events,
-    venue: r.venues,
-    promoter: r.promoters,
+    venue: r.venue as FullVenue | null,
+    promoter: r.promoter as FullPromoter | null,
     vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
       id: ev.vendorId,
       businessName: ev.businessName,

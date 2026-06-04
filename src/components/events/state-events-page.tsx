@@ -8,6 +8,7 @@ import { eq, and, gte, isNotNull, count, inArray, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { getStateColors } from "@/lib/state-colors";
@@ -54,8 +55,9 @@ async function getStateEvents(
     conditions.push(gte(events.endDate, new Date()));
   }
 
+  // Narrow projection — D1 100-col cap; see eventJoinProjection.
   const results = await db
-    .select()
+    .select(eventJoinProjection)
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -102,10 +104,14 @@ async function getStateEvents(
     vendorsByEvent.set(ev.eventId, existing);
   }
 
+  // Cast lite projection back to schema row types — see
+  // eventJoinProjection for the audit + maintenance contract.
+  type FullVenue = typeof venues.$inferSelect;
+  type FullPromoter = typeof promoters.$inferSelect;
   const eventsBase = results.map((r) => ({
     ...r.events,
-    venue: r.venues,
-    promoter: r.promoters,
+    venue: r.venue as FullVenue | null,
+    promoter: r.promoter as FullPromoter | null,
     vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
       id: ev.vendorId,
       businessName: ev.businessName,

@@ -40,6 +40,7 @@ import { eq, and, sql, ne, gte, lt, like, desc, or, isNull } from "drizzle-orm";
 import { isPublicVendorStatus, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
@@ -168,9 +169,10 @@ async function getEvent(slug: string) {
   const db = getCloudflareDb();
 
   try {
-    // Get event with venue and promoter
+    // Get event with venue and promoter. Narrow projection — D1's 100-col
+    // result-row cap; see eventJoinProjection for the audit + contract.
     const eventResults = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -182,11 +184,11 @@ async function getEvent(slug: string) {
     const eventData = eventResults[0];
 
     // Get promoter's user
-    const promoterUser = eventData.promoters?.userId
+    const promoterUser = eventData.promoter?.userId
       ? await db
           .select({ name: users.name, email: users.email })
           .from(users)
-          .where(eq(users.id, eventData.promoters.userId))
+          .where(eq(users.id, eventData.promoter.userId))
           .limit(1)
       : [];
 
@@ -224,12 +226,18 @@ async function getEvent(slug: string) {
       .set({ viewCount: sql`${events.viewCount} + 1` })
       .where(eq(events.id, eventData.events.id));
 
+    // venue/promoter are the lite projection from eventJoinProjection;
+    // cast back to the schema row type so consumer prop types compile
+    // unchanged. Sound because every venue/promoter field consumers
+    // actually read is present in the projection (audit 2026-06-04).
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     return {
       ...eventData.events,
-      venue: eventData.venues,
-      promoter: eventData.promoters
+      venue: eventData.venue as FullVenue | null,
+      promoter: eventData.promoter
         ? {
-            ...eventData.promoters,
+            ...(eventData.promoter as FullPromoter),
             user: promoterUser[0] || { name: null, email: null },
           }
         : null,
@@ -263,10 +271,16 @@ async function getRelatedEvents(
       : gte(events.endDate, new Date());
     const baseConditions = [ne(events.id, eventId), isPublicEventStatus(), dateCondition];
 
+    // Both branches use the narrow projection (D1 100-col cap); see
+    // eventJoinProjection. The cast back to full row types keeps the
+    // EventsView prop contract intact.
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
+
     // Try same venue first
     if (venueId) {
       const sameVenue = await db
-        .select()
+        .select(eventJoinProjection)
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -277,7 +291,11 @@ async function getRelatedEvents(
       if (sameVenue.length >= 2) {
         return {
           heading: "More Events at This Venue",
-          events: sameVenue.map((r) => ({ ...r.events, venue: r.venues, promoter: r.promoters })),
+          events: sameVenue.map((r) => ({
+            ...r.events,
+            venue: r.venue as FullVenue | null,
+            promoter: r.promoter as FullPromoter | null,
+          })),
         };
       }
     }
@@ -286,7 +304,7 @@ async function getRelatedEvents(
     const primaryCategory = categories[0];
     if (primaryCategory) {
       const sameCategory = await db
-        .select()
+        .select(eventJoinProjection)
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -299,8 +317,8 @@ async function getRelatedEvents(
           heading: `More ${primaryCategory} Events`,
           events: sameCategory.map((r) => ({
             ...r.events,
-            venue: r.venues,
-            promoter: r.promoters,
+            venue: r.venue as FullVenue | null,
+            promoter: r.promoter as FullPromoter | null,
           })),
         };
       }

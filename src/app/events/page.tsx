@@ -31,6 +31,7 @@ import {
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { sanitizeLikeInput } from "@/lib/utils";
@@ -289,10 +290,14 @@ async function getEvents(
     };
     const orderBy = orderByMap[sort as keyof typeof orderByMap] || startDateAsc;
 
+    // Narrow projection — D1 caps result rows at 100 columns; the
+    // default `db.select()` over events+venues+promoters emits 104
+    // columns and fails every render. See eventJoinProjection's
+    // docblock for the audit + maintenance contract.
     let query;
     if (isCalendarView) {
       query = db
-        .select()
+        .select(eventJoinProjection)
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -300,7 +305,7 @@ async function getEvents(
         .orderBy(orderBy);
     } else {
       query = db
-        .select()
+        .select(eventJoinProjection)
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -382,11 +387,19 @@ async function getEvents(
       }
     }
 
-    // Combine events with their vendors
+    // Combine events with their vendors. `venue`/`promoter` here are the
+    // lite projections from eventJoinProjection, cast back to the full
+    // schema type so EventCard/EventsView's existing `Venue | null` /
+    // `Promoter | null` props compile unchanged. The cast is sound:
+    // every venue/promoter field consumers actually read is present in
+    // the projection (audited 2026-06-04). See event-join-projection.ts
+    // for the maintenance contract.
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     const eventsBase = results.map((r) => ({
       ...r.events,
-      venue: r.venues,
-      promoter: r.promoters,
+      venue: r.venue as FullVenue | null,
+      promoter: r.promoter as FullPromoter | null,
       vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
         id: ev.vendorId,
         businessName: ev.businessName,

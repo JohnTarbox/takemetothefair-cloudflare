@@ -34,11 +34,37 @@ async function getVendorEvents(userId: string) {
       "CONFIRMED",
     ];
 
+    // Narrow venue/promoter projection — D1 caps result rows at 100
+    // columns. The default `venues`/`promoters` (full row) projection
+    // here plus events(62) crosses the limit. Field set mirrors
+    // `src/lib/db/event-join-projection.ts` (audited 2026-06-04); the
+    // shape differs slightly (singular `event:` key + extra
+    // `applicationStatus`) so the projection is inlined here rather
+    // than imported.
     const results = await db
       .select({
         event: events,
-        venue: venues,
-        promoter: promoters,
+        venue: {
+          id: venues.id,
+          name: venues.name,
+          slug: venues.slug,
+          address: venues.address,
+          city: venues.city,
+          state: venues.state,
+          zip: venues.zip,
+          latitude: venues.latitude,
+          longitude: venues.longitude,
+          googleMapsUrl: venues.googleMapsUrl,
+        },
+        promoter: {
+          id: promoters.id,
+          userId: promoters.userId,
+          companyName: promoters.companyName,
+          slug: promoters.slug,
+          logoUrl: promoters.logoUrl,
+          verified: promoters.verified,
+          website: promoters.website,
+        },
         applicationStatus: eventVendors.status,
       })
       .from(eventVendors)
@@ -47,12 +73,15 @@ async function getVendorEvents(userId: string) {
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(eq(eventVendors.vendorId, vendor.id));
 
+    // Cast back to full row types for the EventsView prop contract.
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     const eventsList = results
       .filter((r) => activeStatuses.includes(r.applicationStatus))
       .map((r) => ({
         ...r.event,
-        venue: r.venue,
-        promoter: r.promoter,
+        venue: r.venue as FullVenue | null,
+        promoter: r.promoter as FullPromoter | null,
       }));
 
     const vendorCoords =
