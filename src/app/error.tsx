@@ -16,6 +16,15 @@ export default function Error({
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === "ADMIN";
 
+  // REL1' §1 (2026-06-04): FetchError is thrown by page-level data
+  // fetchers (getEvents/getEvent/getVenue/getPromoter) when the
+  // underlying D1 query fails. Distinguish it from generic Error so
+  // the user sees "service temporarily unavailable" framing — both
+  // visually distinct from a real-zero-results empty state, and a
+  // signal to crawlers that this is a transient outage, not a
+  // permanent 404 or a sparse-content page worth indexing.
+  const isFetchError = error.name === "FetchError";
+
   useEffect(() => {
     // Log the error to an error reporting service
     console.error("Application error:", error);
@@ -30,9 +39,22 @@ export default function Error({
           </div>
         </div>
 
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+          {isFetchError ? "Service temporarily unavailable" : "Something went wrong"}
+        </h1>
         <p className="text-gray-600 mb-4">
-          We&apos;re sorry, but something unexpected happened while loading this page.
+          {isFetchError ? (
+            <>
+              We&apos;re having trouble loading the data for this page. This is usually a brief
+              outage on our end — please try again in a moment. If it persists, you can{" "}
+              <Link href="/report-problem" className="text-royal underline">
+                let us know
+              </Link>
+              .
+            </>
+          ) : (
+            <>We&apos;re sorry, but something unexpected happened while loading this page.</>
+          )}
         </p>
         <div className="text-sm text-gray-500 mb-8 space-y-1">
           <p>You can try:</p>

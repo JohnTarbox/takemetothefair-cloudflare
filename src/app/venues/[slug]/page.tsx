@@ -99,7 +99,10 @@ async function getVenue(slug: string) {
       source: "app/venues/[slug]/page.tsx:getVenue",
       context: { slug },
     });
-    return null;
+    // REL1' §1 (2026-06-04): throw FetchError on query failure so error.tsx
+    // renders (transient outage) instead of notFound() (permanent 404).
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/venues/[slug]/page.tsx:getVenue", e);
   }
 }
 

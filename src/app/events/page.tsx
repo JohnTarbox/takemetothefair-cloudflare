@@ -448,7 +448,14 @@ async function getEvents(
       source: "app/events/page.tsx:getEvents",
       context: { isCalendarView, page, limit },
     });
-    return { events: [], total: 0, page: 1, limit };
+    // REL1' §1 (2026-06-04): throw FetchError instead of returning empty.
+    // Lets Next.js's error.tsx render a "service temporarily unavailable"
+    // page that's visibly + crawler-visibly distinct from a real zero-
+    // result empty state. The 2026-06-04 D1 100-col outage took 17h to
+    // detect partly because the empty-list looked exactly like a real
+    // empty filter.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/events/page.tsx:getEvents", e);
   }
 }
 

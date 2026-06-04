@@ -120,7 +120,10 @@ async function getPromoter(slug: string) {
       source: "app/promoters/[slug]/page.tsx:getPromoter",
       context: { slug },
     });
-    return null;
+    // REL1' §1 (2026-06-04): throw FetchError on query failure so error.tsx
+    // renders (transient outage) instead of notFound() (permanent 404).
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/promoters/[slug]/page.tsx:getPromoter", e);
   }
 }
 
