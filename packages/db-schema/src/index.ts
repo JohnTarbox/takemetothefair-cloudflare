@@ -1992,10 +1992,15 @@ export const eventDiscrepancies = sqliteTable("event_discrepancies", {
   divergentValue: text("divergent_value"),
   divergentSourceKey: text("divergent_source_key"),
   divergentSourceUrl: text("divergent_source_url"),
-  /** ingest_addverify | stale_page_radar | self_consistency | manual.
-   *  Phase 2/3 will add: crowd_report, ai_monitor. */
+  /** ingest_addverify | stale_page_radar | self_consistency | holdout_sample
+   *  | manual.
+   *  Phase 2/3 will add: crowd_report, ai_monitor.
+   *
+   *  holdout_sample added GW1.3 (2026-06-03) — daily random sample of
+   *  high-trust source events re-checked against the live source page.
+   *  No CHECK constraint in the DDL so the addition is TS-only. */
   detectedBy: text("detected_by", {
-    enum: ["ingest_addverify", "stale_page_radar", "self_consistency", "manual"],
+    enum: ["ingest_addverify", "stale_page_radar", "self_consistency", "holdout_sample", "manual"],
   }).notNull(),
   /** Epoch seconds — `mode: "timestamp"` convention. */
   detectedAt: integer("detected_at", { mode: "timestamp" }).notNull(),

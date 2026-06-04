@@ -28,6 +28,7 @@ import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
+import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
 import { logError } from "./logger.js";
 import { inboundEmails } from "./schema.js";
 import { eq } from "drizzle-orm";
@@ -1108,11 +1109,30 @@ export default {
     // Dispatch by cron expression. wrangler.toml lists each cron; the
     // ScheduledController carries which one fired in `controller.cron`.
     //   - "0 6 * * *"     → daily heavy work (recs, gsc, time-to-index)
+    //   - "10 6 * * *"    → GW1.3 holdout-sampling (added 2026-06-03)
     //   - "*/10 * * * *"  → §6.3 KPI state-machine recompute (light)
     //   - "0 * * * *"     → hourly: drain pending_search_pings older than 1h
     console.warn(
       `[cron] firing for cron='${controller.cron}' at ${new Date(controller.scheduledTime).toISOString()}`
     );
+    if (controller.cron === "10 6 * * *") {
+      // GW1.3 holdout-sampling cron — daily ~1% random sample of
+      // high-trust source events re-checked against the live source
+      // page. 10 minutes after the 06:00 batch so the heavy recs +
+      // workflow inits aren't contending for D1 + AI throughput when
+      // this fires. See src/goodwill/holdout-sampling.ts for the
+      // cap rationale and per-event budget. Pass env directly so the
+      // helper can call submitFetch/submitExtract via env.MAIN_APP_URL
+      // + env.INTERNAL_API_KEY.
+      ctx.waitUntil(
+        runScheduledHoldoutSampling(getDb(env.DB), {
+          DB: env.DB,
+          MAIN_APP_URL: env.MAIN_APP_URL,
+          INTERNAL_API_KEY: env.INTERNAL_API_KEY,
+        }).then(() => undefined)
+      );
+      return;
+    }
     if (controller.cron === "*/10 * * * *") {
       // Two parallel sweeps share this cadence:
       //   - KPI recompute (the original tenant)
