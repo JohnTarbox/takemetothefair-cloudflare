@@ -50,11 +50,11 @@
  * logError() and swallowed — never thrown — so a single canary failure
  * doesn't trigger Cloudflare's cron retry.
  */
-import { and, gte, sql, like, desc, eq } from "drizzle-orm";
-import { errorLogs, pageErrorCanaryState } from "@takemetothefair/db-schema";
+import { pageErrorCanaryState } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { getErrorLogsBurstWindow } from "./error-logs-burst.js";
 
 const SLACK_BUDGET_MS = 5_000;
 
@@ -151,44 +151,29 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
   const windowStart = new Date(now.getTime() - WINDOW_MINUTES * 60_000);
   const db = getDb(env.DB);
 
-  // 1. Count + top-source aggregate over the window.
+  // 1. Count + per-source breakdown over the window.
+  // B2 (2026-06-04, REL1' §0) — refactored to call the shared
+  // `getErrorLogsBurstWindow` helper (B1). The helper returns the full
+  // top-N source breakdown so the alert body can show *which* fetchers
+  // spiked, not just the loudest one. Per-source DEBOUNCE (one alert per
+  // source) is deferred: `page_error_canary_state` is keyed by tier only,
+  // so per-source debounce needs a schema change. Until then the alert
+  // body lists the top sources so a noisy-but-broad outage and a
+  // narrow-but-deep one are visually distinguishable.
   let totalCount: number;
-  let topSource: { source: string | null; count: number } | null;
+  let bySource: Array<{ source: string | null; count: number }>;
   try {
-    // Total errors matching the page-fetcher pattern in the window.
-    const [totalRow] = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(errorLogs)
-      .where(
-        and(
-          gte(errorLogs.timestamp, windowStart),
-          like(errorLogs.source, SOURCE_PATTERN),
-          eq(errorLogs.level, "error")
-        )
-      );
-    totalCount = totalRow?.count ?? 0;
-
-    // Top-source by count (single row) for triage context in the alert.
-    // Only run if we have a non-trivial signal — saves a SELECT on the
-    // (very common) zero-error fire path.
-    if (totalCount > 0) {
-      const topRows = await db
-        .select({ source: errorLogs.source, count: sql<number>`count(*)` })
-        .from(errorLogs)
-        .where(
-          and(
-            gte(errorLogs.timestamp, windowStart),
-            like(errorLogs.source, SOURCE_PATTERN),
-            eq(errorLogs.level, "error")
-          )
-        )
-        .groupBy(errorLogs.source)
-        .orderBy(desc(sql`count(*)`))
-        .limit(1);
-      topSource = topRows[0] ?? null;
-    } else {
-      topSource = null;
-    }
+    const burst = await getErrorLogsBurstWindow(db, {
+      since: windowStart,
+      until: now,
+      sourcePattern: SOURCE_PATTERN,
+      // Minimum to track via this helper is YELLOW threshold; we rely on
+      // the existing decideTier() to actually decide what fires.
+      minCount: YELLOW_THRESHOLD,
+      topSourcesLimit: 5,
+    });
+    totalCount = burst.totalErrors;
+    bySource = burst.bySource;
   } catch (error) {
     await logError(env.DB, {
       source: SOURCE,
@@ -198,6 +183,11 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
     });
     return;
   }
+
+  // Keep the legacy `topSource` for any downstream consumers (the
+  // alert dispatch below still references it for the one-liner Slack
+  // summary; bySource carries the full top-5 for the body).
+  const topSource: { source: string | null; count: number } | null = bySource[0] ?? null;
 
   // 2. Load current debounce state for both tiers.
   let redLastAlertedAt: Date | null = null;
@@ -236,9 +226,16 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
   const topDetail = topSource?.source
     ? ` · top source: \`${topSource.source}\` (${topSource.count})`
     : "";
+  // B2 (2026-06-04): include top-5 source breakdown in the Slack
+  // body so operators see which fetcher(s) spiked at-a-glance. Falls
+  // through harmlessly when bySource is empty or single-entry.
+  const sourceListLines = bySource
+    .slice(0, 5)
+    .map((s) => `• \`${s.source ?? "<null>"}\` — ${s.count}`);
+  const sourceList = bySource.length > 1 ? `\n*Top sources*:\n${sourceListLines.join("\n")}` : "";
   const slackText =
     `${emoji} *Page-error canary ${tier}* — ${totalCount} errors in last ${WINDOW_MINUTES} min` +
-    `${topDetail}\n<https://meetmeatthefair.com/admin/error-logs|Open admin/error-logs>`;
+    `${topDetail}${sourceList}\n<https://meetmeatthefair.com/admin/error-logs|Open admin/error-logs>`;
 
   const webhookUrl = env.SLACK_WEBHOOK_URL_TECHNICAL;
   if (webhookUrl) {
