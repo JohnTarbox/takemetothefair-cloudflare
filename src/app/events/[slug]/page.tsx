@@ -289,9 +289,12 @@ async function getRelatedEvents(
         .limit(4);
 
       if (sameVenue.length >= 2) {
+        // EventRow derived from sameVenue so any projection change
+        // flows through automatically.
+        type EventRow = (typeof sameVenue)[number];
         return {
           heading: "More Events at This Venue",
-          events: sameVenue.map((r) => ({
+          events: sameVenue.map((r: EventRow) => ({
             ...r.events,
             venue: r.venue as FullVenue | null,
             promoter: r.promoter as FullPromoter | null,
@@ -313,9 +316,13 @@ async function getRelatedEvents(
         .limit(4);
 
       if (sameCategory.length > 0) {
+        // EventRow derived from sameCategory (same projection shape
+        // as sameVenue above; aliased separately so the locally-named
+        // result variable stays the source of truth).
+        type EventRow = (typeof sameCategory)[number];
         return {
           heading: `More ${primaryCategory} Events`,
-          events: sameCategory.map((r) => ({
+          events: sameCategory.map((r: EventRow) => ({
             ...r.events,
             venue: r.venue as FullVenue | null,
             promoter: r.promoter as FullPromoter | null,

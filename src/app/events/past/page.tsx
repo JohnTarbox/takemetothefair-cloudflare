@@ -117,7 +117,9 @@ async function getPastEvents(searchParams: SearchParams) {
   // eventJoinProjection for the audit + maintenance contract.
   type FullVenue = typeof venues.$inferSelect;
   type FullPromoter = typeof promoters.$inferSelect;
-  const eventsBase = results.map((r) => ({
+  // EventRow derived from results so projection changes flow through.
+  type EventRow = (typeof results)[number];
+  const eventsBase = results.map((r: EventRow) => ({
     ...r.events,
     venue: r.venue as FullVenue | null,
     promoter: r.promoter as FullPromoter | null,
