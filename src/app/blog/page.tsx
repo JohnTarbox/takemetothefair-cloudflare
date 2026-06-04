@@ -124,9 +124,34 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
         .from(blogPosts)
         .where(eq(blogPosts.status, "PUBLISHED"));
 
-  const allTags = [
-    ...new Set(allTagsResult.flatMap((r) => JSON.parse(r.tags || "[]") as string[])),
-  ].sort();
+  // A6 (2026-06-04) — rank tags by frequency. Previously we rendered every
+  // unique tag inline (~300+ post-content-batches), which made the sidebar
+  // sluggish and the choice paradoxical (no signal about which tags have
+  // many posts). Show top-N most-frequent inline; collapse the long tail
+  // behind a `<details>` element so the markup is still present (SEO +
+  // bot-discoverable) but not rendered eagerly.
+  const TAGS_INLINE_LIMIT = 20;
+  const tagFrequency = new Map<string, number>();
+  for (const r of allTagsResult) {
+    for (const tag of JSON.parse(r.tags || "[]") as string[]) {
+      tagFrequency.set(tag, (tagFrequency.get(tag) ?? 0) + 1);
+    }
+  }
+  const rankedTags = [...tagFrequency.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag);
+  // Keep the currently-active tag at the top of the inline list even if
+  // it's not in the top-N by frequency — otherwise selecting a rare tag
+  // makes the "active" chip vanish into the collapsed section.
+  const activeTag = params.tag;
+  const inlineTagSet = new Set(rankedTags.slice(0, TAGS_INLINE_LIMIT));
+  if (activeTag && !inlineTagSet.has(activeTag) && rankedTags.includes(activeTag)) {
+    inlineTagSet.add(activeTag);
+  }
+  const inlineTags = rankedTags.filter((t) => inlineTagSet.has(t));
+  const overflowTags = rankedTags.filter((t) => !inlineTagSet.has(t));
+  // (Previously kept a flat sorted `allTags` list — render now consumes
+  //  `rankedTags` / `inlineTags` / `overflowTags` exclusively.)
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -168,7 +193,7 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Sidebar — tags filter */}
-        {allTags.length > 0 && (
+        {rankedTags.length > 0 && (
           <aside className="lg:col-span-1">
             <div className="bg-white rounded-lg border border-gray-200 p-4 sticky top-24">
               <h2 className="text-sm font-semibold text-navy mb-3">Filter by Tag</h2>
@@ -181,7 +206,7 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
                     All posts
                   </Link>
                 )}
-                {allTags.map((tag) => (
+                {inlineTags.map((tag) => (
                   <Link
                     key={tag}
                     href={`/blog?tag=${encodeURIComponent(tag)}`}
@@ -195,12 +220,34 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
                   </Link>
                 ))}
               </div>
+              {overflowTags.length > 0 && (
+                <details className="mt-3">
+                  <summary className="text-xs text-gray-700 cursor-pointer hover:text-navy select-none">
+                    Browse all {rankedTags.length} tags ({overflowTags.length} more)
+                  </summary>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {overflowTags.map((tag) => (
+                      <Link
+                        key={tag}
+                        href={`/blog?tag=${encodeURIComponent(tag)}`}
+                        className={`text-xs px-3 py-1 rounded-full transition-colors ${
+                          params.tag === tag
+                            ? "bg-royal text-white"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        }`}
+                      >
+                        {tag}
+                      </Link>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           </aside>
         )}
 
         {/* Posts grid */}
-        <div className={allTags.length > 0 ? "lg:col-span-3" : "lg:col-span-4"}>
+        <div className={rankedTags.length > 0 ? "lg:col-span-3" : "lg:col-span-4"}>
           {parsedPosts.length === 0 ? (
             <div className="text-center py-16">
               <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
