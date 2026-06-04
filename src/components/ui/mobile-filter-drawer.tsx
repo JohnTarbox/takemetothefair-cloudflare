@@ -55,7 +55,10 @@ export function MobileFilterDrawer({ children, label = "Filters", activeCount }:
           <Filter className="w-4 h-4" aria-hidden />
           {label}
           {activeCount !== undefined && activeCount > 0 && (
-            <span className="inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full bg-amber text-navy text-xs font-semibold">
+            // UX-R3 (2026-06-04): amber-bg-fg gives ~9.7:1 on solid amber,
+            // vs ~5.7:1 for navy. Both pass AA but amber-bg-fg is the
+            // dedicated text-on-amber token.
+            <span className="inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-full bg-amber text-amber-bg-fg text-xs font-semibold">
               {activeCount}
             </span>
           )}
