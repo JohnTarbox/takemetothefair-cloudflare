@@ -16,6 +16,7 @@ import { registerUserTools } from "./tools/user.js";
 import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
+import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -246,6 +247,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       if (auth.role === "ADMIN") {
         before = snapshot();
         registerAdminTools(this.server, db, auth, this.env);
+        // UR1 C5 (2026-06-04) — problem-report triage tools.
+        registerAdminProblemReportTools(this.server, db);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -439,6 +442,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
     if (auth.role === "PROMOTER" || auth.role === "ADMIN") registerPromoterTools(server, db, auth);
     if (auth.role === "ADMIN") {
       registerAdminTools(server, db, auth, env);
+      registerAdminProblemReportTools(server, db);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
