@@ -14,6 +14,7 @@ import { events, vendors, venues } from "@/lib/db/schema";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { ScApiError, ScConfigError, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
 import type { ItemMatch, RuleDefinition } from "../engine";
+import { resolveGscPath } from "../resolve-gsc-path";
 
 // Hub URL patterns that should NOT outrank dedicated entity pages on
 // entity-specific queries.
@@ -87,18 +88,29 @@ export const cannibalizationDetectionRule: RuleDefinition = {
       byName.set(e.name.toLowerCase(), e);
     }
 
+    // A3 (2026-06-04): resolve historical GSC paths to current canonical
+    // slugs before emitting. Mirrors low-ctr-pages / seo-position-11-20
+    // (both use the same `resolveGscPath` + `topPagePath`+`topPagePathStatus`
+    // payload shape). The engine's stale-path filter at canonical-paths.ts
+    // then drops items whose resolved topPagePath classifies as "stale" —
+    // protects against the case where GSC is still attributing impressions
+    // to an outranking hub that no longer matches the live URL set.
     const matches: ItemMatch[] = [];
     for (const q of hubQueries) {
       const queryLower = q.query.toLowerCase().trim();
       const entity = byName.get(queryLower);
       if (!entity) continue;
+      const resolution = await resolveGscPath(db, q.topPages[0]?.path ?? null);
       // Stable id: query string (so refreshes update the same row)
       matches.push({
         targetType: "gsc_query",
         targetId: queryLower.slice(0, 200),
         payload: {
           query: q.query,
-          hubPath: q.topPages[0]?.path ?? null,
+          // Use `topPagePath` (not the old `hubPath` key) so the engine's
+          // stale-path filter picks this up identically to other GSC rules.
+          topPagePath: resolution.path,
+          topPagePathStatus: resolution.status,
           impressions: q.impressions,
           position: Number(q.position.toFixed(1)),
           entityType: entity.type,
