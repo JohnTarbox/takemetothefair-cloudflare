@@ -15,11 +15,25 @@
  * in D1.
  */
 
-import type { Env } from "../index.js";
 import { logError } from "../logger.js";
 
 const SOURCE = "mcp:problem-reports:dispatch-alert";
 const SLACK_BUDGET_MS = 5_000;
+
+/**
+ * Structural subset of env fields this dispatcher uses. Both the full
+ * Worker `Env` and `HandlerEnv` (email-handlers/types.ts, after the
+ * 2026-06-04 K2-rewire extension) satisfy this shape. Keeping the
+ * dispatcher decoupled from the larger Env interface means future
+ * callers (e.g. a future cron-driven escalation re-check) don't have
+ * to widen their own env types just to call this.
+ */
+export interface DispatchAlertEnv {
+  DB: D1Database;
+  SLACK_WEBHOOK_URL_TECHNICAL?: string;
+  ALERT_EMAIL_TECHNICAL?: string;
+  EMAIL_JOBS?: Queue;
+}
 
 export interface HighAlertContext {
   reportId: string;
@@ -33,7 +47,7 @@ export interface HighAlertContext {
 }
 
 export async function dispatchHighProblemReportAlert(
-  env: Env,
+  env: DispatchAlertEnv,
   ctx: HighAlertContext
 ): Promise<void> {
   const adminLink = `https://meetmeatthefair.com/admin/problem-reports/${ctx.reportId}`;

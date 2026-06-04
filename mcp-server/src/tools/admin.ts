@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, like, lte, inArray, isNull, ne, sql } from "drizzle-orm";
+import { eq, and, like, inArray, isNull, sql } from "drizzle-orm";
 import {
   events,
   eventVendors,
@@ -27,6 +27,9 @@ import {
   sanitizeProse,
   coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
+} from "../helpers.js";
+import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
+import {
   EVENT_STATUS_ENUM,
   VENDOR_STATUS_ENUM,
   PAYMENT_STATUS_ENUM,
@@ -906,21 +909,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Always set updatedAt
       updates.updatedAt = new Date();
 
-      // ── Venue+date duplicate detection (analyst 2026-05-22 P7c) ──────
-      // suggest_event runs dedup at creation time, but its workaround for
-      // a separate D1_TYPE_ERROR bug (now fixed) made callers create the
-      // event date-less and set dates via update_event afterward. That
-      // path skipped dedup entirely — a duplicate (plus a duplicate venue)
-      // slipped through this week. This check fires when the SAME call
-      // sets a venue (via venue_id) AND a start_date, and warns the caller
-      // about overlapping events at the same venue. Warning, not blocking:
-      // pass acknowledge_possible_duplicates=true after manual review.
+      // ── Venue+date duplicate detection (K2 rewire, 2026-06-04) ──────
+      // Was: inline venue+date-overlap query at the same venueId only
+      // (analyst 2026-05-22 P7c). Now: delegates to the shared
+      // `findDuplicate` 4-stage match via the main-app's
+      // /api/suggest-event/check-duplicate route. Catches the same
+      // additional cases the suggest_event rewire does: exact source_url,
+      // city+state+date (covers slug-divergence cohort), similar name
+      // + date. Still warning-only — `acknowledge_possible_duplicates`
+      // suppresses the warning, never blocks.
       let possibleDuplicatesWarning: Array<{
         id: string;
         name: string;
         slug: string;
         dates: string;
         status: string;
+        match_type?: string;
       }> | null = null;
       const mergedVenueId =
         params.venue_id !== undefined
@@ -933,38 +937,44 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         updates.startDate instanceof Date &&
         !params.acknowledge_possible_duplicates
       ) {
+        // K2 rewire: look up the venue row so we can pass venueName +
+        // venueCity + venueState into findDuplicate. The helper needs
+        // these for the venue_date + city_state_date stages — without
+        // them it would fall back to source_url-only matching.
         const newStartDate = updates.startDate as Date;
-        const newEnd = (updates.endDate as Date | undefined) ?? newStartDate;
-        // Match the suggest_event dedup query verbatim, exclude self, and
-        // serialize Date to seconds-epoch for the raw sql fragment (the same
-        // D1_TYPE_ERROR avoidance the suggest_event side now applies).
-        const newStartSecs = Math.floor(newStartDate.getTime() / 1000);
-        const possibleDupes = await db
+        const [venueRow] = await db
           .select({
-            id: events.id,
-            name: events.name,
-            slug: events.slug,
-            startDate: events.startDate,
-            endDate: events.endDate,
-            status: events.status,
+            name: venues.name,
+            city: venues.city,
+            state: venues.state,
           })
-          .from(events)
-          .where(
-            and(
-              eq(events.venueId, mergedVenueId),
-              ne(events.id, event.id),
-              lte(events.startDate, newEnd),
-              sql`coalesce(${events.endDate}, ${events.startDate}) >= ${newStartSecs}`
-            )
-          );
-        if (possibleDupes.length > 0) {
-          possibleDuplicatesWarning = possibleDupes.map((d) => ({
-            id: d.id,
-            name: d.name,
-            slug: d.slug as unknown as string,
-            dates: formatDateRange(d.startDate, d.endDate),
-            status: d.status,
-          }));
+          .from(venues)
+          .where(eq(venues.id, mergedVenueId))
+          .limit(1);
+
+        const dupe = await checkDuplicateViaMainApp(env ?? {}, {
+          sourceUrl: (params.source_url as string | undefined) ?? null,
+          name: params.name ?? null,
+          startDate: newStartDate.toISOString().slice(0, 10),
+          venueName: venueRow?.name ?? null,
+          venueCity: venueRow?.city ?? null,
+          venueState: venueRow?.state ?? null,
+        });
+
+        // Self-filter: findDuplicate doesn't know the calling event's
+        // id. If the match IS the event we're updating, suppress the
+        // warning — matching yourself isn't a duplicate.
+        if (dupe.isDuplicate && dupe.existingEvent.id !== event.id) {
+          possibleDuplicatesWarning = [
+            {
+              id: dupe.existingEvent.id,
+              name: dupe.existingEvent.name,
+              slug: dupe.existingEvent.slug,
+              dates: formatDateRange(dupe.existingEvent.startDate, null),
+              status: dupe.existingEvent.status,
+              match_type: dupe.matchType,
+            },
+          ];
         }
       }
 

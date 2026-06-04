@@ -153,6 +153,13 @@ export interface HandlerEnv {
   DB: D1Database;
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  // Optional alert-dispatch surface — extended for UR1 C2 (2026-06-04).
+  // Read by `problem-report` handler when it needs to push HIGH-severity
+  // reports to the technical channel. Other handlers ignore. Optional
+  // here because they're optional in the full Env too (no-op when unset).
+  SLACK_WEBHOOK_URL_TECHNICAL?: string;
+  ALERT_EMAIL_TECHNICAL?: string;
+  EMAIL_JOBS?: Queue;
 }
 
 /**
