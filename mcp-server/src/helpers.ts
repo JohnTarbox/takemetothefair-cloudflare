@@ -17,6 +17,9 @@ export {
   computeVendorCompletenessScore,
   computeEventCompletenessScore,
   SITEMAP_MIN_COMPLETENESS,
+  // DQ2 (2026-06-04) — coerce address-as-name at venue ingest. Used by
+  // create_venue (admin.ts) and suggest_event venue auto-create (vendor.ts).
+  coerceVenueNameAtIngest,
 } from "@takemetothefair/utils";
 export type { Slug } from "@takemetothefair/utils";
 

@@ -16,7 +16,7 @@ import {
   INDOOR_OUTDOOR,
   EVENT_SCALE,
 } from "@takemetothefair/constants";
-import { sanitizeProse, decodeHtmlEntities } from "@takemetothefair/utils";
+import { sanitizeProse, decodeHtmlEntities, coerceVenueNameAtIngest } from "@takemetothefair/utils";
 import { parseDateOnly } from "@takemetothefair/datetime";
 
 /** Length and format limits used across input validators. App-only
@@ -64,8 +64,19 @@ const emailSchema = z
   .or(z.literal(""));
 const phoneSchema = z.string().max(VALIDATION.PHONE_MAX_LENGTH).optional().nullable();
 
-// Venue schemas
-export const venueCreateSchema = z.object({
+// Venue schemas.
+//
+// The base object schema is `_venueCreateBaseSchema` (NOT exported) — used
+// directly to derive `venueUpdateSchema` via `.partial()` (admins editing
+// an existing venue must be able to set any field freely, including a
+// name that would have tripped the DQ2 ingest guard).
+//
+// `venueCreateSchema` wraps the base in a `.transform()` that applies the
+// DQ2 coercion (address-as-name → derive name from city/state, copy
+// offending string into `address` if address was empty). The transform
+// only runs on CREATE, so callers correcting an existing row aren't
+// second-guessed.
+const _venueCreateBaseSchema = z.object({
   name: nameSchema,
   address: z.string().min(1).max(VALIDATION.ADDRESS_MAX_LENGTH),
   city: z.string().min(1).max(VALIDATION.CITY_MAX_LENGTH),
@@ -94,7 +105,19 @@ export const venueCreateSchema = z.object({
     .default(VENUE_STATUS.ACTIVE),
 });
 
-export const venueUpdateSchema = venueCreateSchema.partial();
+export const venueCreateSchema = _venueCreateBaseSchema.transform((v) => {
+  const coerced = coerceVenueNameAtIngest({
+    name: v.name,
+    address: v.address,
+    city: v.city,
+    state: v.state,
+  });
+  return coerced.wasCoerced ? { ...v, name: coerced.name, address: coerced.address } : v;
+});
+
+// Update keeps every field optional and skips the DQ2 transform — admins
+// editing an existing venue should not be second-guessed about its name.
+export const venueUpdateSchema = _venueCreateBaseSchema.partial();
 
 // Promoter schemas
 export const promoterCreateSchema = z.object({

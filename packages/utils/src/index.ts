@@ -349,3 +349,8 @@ export * from "./blog-faq-source";
 // reliability scoring can read clean columns rather than parse free-form
 // labels at query time. Analyst backlog Item 1 (2026-05-26).
 export * from "./source-classification";
+
+// Venue-name ingest helper (DQ2 — backlog row, 2026-06-04). Coerces
+// address-as-name at write time on every venue-create path so the public
+// venues directory never accrues another "18 Spring Street" name.
+export * from "./venue-name";
