@@ -5,6 +5,12 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { compareForIngest } from "@/lib/goodwill/ingest-discrepancy";
+import {
+  lookupReliability,
+  decideResolution,
+  formatResolutionNotes,
+} from "@/lib/goodwill/reliability-resolution";
+import { flipEventField } from "@/lib/goodwill/flip-event-field";
 import { enqueueIngestDiscrepancy } from "@/lib/queues/producers";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
@@ -206,7 +212,86 @@ async function enqueueDiscrepanciesAsync(
     const divergentSourceKey = safeHostFromUrl(candidate.sourceUrl ?? null);
     const divergentSourceUrl = candidate.sourceUrl ?? null;
 
+    // GW1.2 (2026-06-03) — reliability-weighted resolution. Per
+    // disagreeing field: look up both sources' accuracy posteriors,
+    // decide winner by 0.2-absolute margin. Below margin or on
+    // unknown source → log decision in notes, keep existing value
+    // (default). At/above margin with winner=candidate → either
+    // FLIP the stored value via flipEventField (when the
+    // GOODWILL_FLIP_ENABLED env flag is set) or log a 'would_flip'
+    // shadow note. Spec requires the discrepancy to be emitted in
+    // all cases — the decision augments notes, never gates emit.
+    const flipEnabled =
+      (getCloudflareEnv() as unknown as { GOODWILL_FLIP_ENABLED?: string })
+        .GOODWILL_FLIP_ENABLED === "1";
+
     for (const d of disagreements) {
+      let resolutionNotes = "";
+      try {
+        // hours/status/price/existence aren't yielded by compareForIngest
+        // today, but the type permits them — narrow defensively.
+        if (d.fieldClass === "date" || d.fieldClass === "venue" || d.fieldClass === "name") {
+          const [candRel, existRel] = await Promise.all([
+            lookupReliability(db, divergentSourceKey, d.fieldClass),
+            lookupReliability(db, row.sourceDomain, d.fieldClass),
+          ]);
+          const decision = decideResolution({
+            fieldClass: d.fieldClass,
+            candidateSourceKey: divergentSourceKey,
+            existingSourceKey: row.sourceDomain,
+            candidateScore: candRel?.score ?? null,
+            existingScore: existRel?.score ?? null,
+            flipEnabled,
+          });
+          resolutionNotes = formatResolutionNotes(decision);
+
+          // Flip only when: decision.reason === 'flipped' (margin met
+          // AND flag set), winner = candidate, and the field is one we
+          // know how to write (date or name — venue deferred).
+          if (
+            decision.reason === "flipped" &&
+            decision.winner === "candidate" &&
+            d.divergentValue &&
+            (d.fieldClass === "date" || d.fieldClass === "name")
+          ) {
+            try {
+              const flipResult = await flipEventField(db, {
+                eventId: row.id,
+                fieldClass: d.fieldClass,
+                newValue: d.divergentValue,
+                sourceUrl: candidate.sourceUrl ?? "",
+                sourceType: "other",
+                notes: `gw1.2 flip from ${row.sourceDomain ?? "unknown"} → ${divergentSourceKey ?? "unknown"}`,
+              });
+              if (!flipResult) {
+                // Parse failure — record in notes so the emit captures it.
+                resolutionNotes += " [flip-skipped: parse-failed]";
+              }
+            } catch (flipErr) {
+              await logError(db, {
+                level: "warn",
+                source: "suggest-event-check-duplicate:gw1.2-flip",
+                message: "flipEventField threw",
+                error: flipErr,
+                context: { eventId: row.id, fieldClass: d.fieldClass },
+              });
+              resolutionNotes += " [flip-failed: see-error-logs]";
+            }
+          }
+        }
+      } catch (resErr) {
+        // Resolution failure is non-fatal — emit the discrepancy with
+        // a marker so the scorer can see we tried but couldn't decide.
+        resolutionNotes = " [gw1.2 resolution-error]";
+        await logError(db, {
+          level: "warn",
+          source: "suggest-event-check-duplicate:gw1.2-resolve",
+          message: "reliability-resolution threw",
+          error: resErr,
+          context: { eventId: row.id, fieldClass: d.fieldClass },
+        });
+      }
+
       await enqueueIngestDiscrepancy({
         detectedBy: "ingest_addverify",
         eventId: row.id,
@@ -218,7 +303,7 @@ async function enqueueDiscrepanciesAsync(
         divergentSourceKey,
         divergentSourceUrl,
         confidence: 0.85,
-        notes: d.notes,
+        notes: d.notes + resolutionNotes,
       });
     }
   } catch (err) {
