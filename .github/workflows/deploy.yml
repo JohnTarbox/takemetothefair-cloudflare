@@ -109,11 +109,20 @@ jobs:
         run: sleep 60
       - name: Post-deploy smoke test
         run: |
-          set -euo pipefail
+          # Drop `pipefail` for the /events check below: `curl | grep -q`
+          # causes SIGPIPE on curl when grep matches early + exits, and
+          # pipefail bubbles curl's exit 23 up as a step failure (false
+          # positive — caught on the first real run after this step
+          # was added). Use a download-then-grep pattern instead, which
+          # has no pipe between the two checks.
+          set -eu
           echo "Smoke: /events must render at least 1 event card"
-          curl -fsS 'https://meetmeatthefair.com/events' \
-            | grep -qE 'href="/events/[a-z0-9-]+"' \
-            || { echo "FAIL: /events rendered no event links"; exit 1; }
+          curl -fsS 'https://meetmeatthefair.com/events' -o /tmp/smoke-events.html
+          if ! grep -qE 'href="/events/[a-z0-9-]+"' /tmp/smoke-events.html; then
+            echo "FAIL: /events rendered no event links"
+            head -c 2000 /tmp/smoke-events.html
+            exit 1
+          fi
           echo "Smoke: known-good venue must return 200"
           test "$(curl -fsS -o /dev/null -w '%{http_code}' \
             'https://meetmeatthefair.com/venues/abbot-square')" = "200" \
