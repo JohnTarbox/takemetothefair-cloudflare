@@ -100,6 +100,30 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy .vercel/output/static --project-name=takemetothefair --branch=main --commit-dirty=true
 
+      # REL1' §2 (2026-06-04) — post-deploy prod smoke. Catches the symptom
+      # the 2026-06-04 D1 100-col outage produced (empty /events list + every
+      # venue/promoter 404) before users do. 60s sleep lets the Pages CDN
+      # propagate the new build to the edge. Hardcoded URLs only — no user
+      # input flows into the shell.
+      - name: Wait for prod propagation
+        run: sleep 60
+      - name: Post-deploy smoke test
+        run: |
+          set -euo pipefail
+          echo "Smoke: /events must render at least 1 event card"
+          curl -fsS 'https://meetmeatthefair.com/events' \
+            | grep -qE 'href="/events/[a-z0-9-]+"' \
+            || { echo "FAIL: /events rendered no event links"; exit 1; }
+          echo "Smoke: known-good venue must return 200"
+          test "$(curl -fsS -o /dev/null -w '%{http_code}' \
+            'https://meetmeatthefair.com/venues/abbot-square')" = "200" \
+            || { echo "FAIL: /venues/abbot-square not 200"; exit 1; }
+          echo "Smoke: known-good promoter must return 200"
+          test "$(curl -fsS -o /dev/null -w '%{http_code}' \
+            'https://meetmeatthefair.com/promoters/american-consumer-shows')" = "200" \
+            || { echo "FAIL: /promoters/american-consumer-shows not 200"; exit 1; }
+          echo "Smoke passed."
+
   deploy-mcp-server:
     needs: d1-migrate
     name: Build & Deploy MCP Server (Worker)
