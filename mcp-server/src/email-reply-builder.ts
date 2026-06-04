@@ -354,6 +354,19 @@ We've received your message and our team will get back to you soon. For event su
 
 ${SIGN_OFF}`;
     }
+    case "problem-report-ack": {
+      // UR1 Phase 1 (2026-06-04). Sent in response to anything landing on
+      // report@ / feedback@. Intentionally short — we don't want to
+      // imply a manual response is coming on every report; the operator
+      // only replies when there's something to communicate back.
+      return `Thanks for letting us know — we've logged your report.
+
+If your report coincided with a site outage, it's been flagged HIGH priority and the technical team has been alerted. Otherwise we'll review it and act on what you've described; we may reply directly if we need more detail.
+
+${SUPPORT_LINE}
+
+${SIGN_OFF}`;
+    }
     case "press-ack": {
       return `Thanks for your interest in Meet Me at the Fair!
 

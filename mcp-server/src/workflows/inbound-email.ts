@@ -63,6 +63,7 @@ import type { EmailIntent } from "../email-intents.js";
 import type { HandlerFn, HandlerResult, ReplyKind } from "../email-handlers/types.js";
 import { handle as handleCorrection } from "../email-handlers/correction.js";
 import { handle as handleSupport } from "../email-handlers/support.js";
+import { handle as handleProblemReport } from "../email-handlers/problem-report.js";
 import { handle as handlePress } from "../email-handlers/press.js";
 import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
@@ -158,6 +159,8 @@ const HANDLERS: Record<Exclude<EmailIntent, "submit" | "new_event">, HandlerFn> 
   vendor_inquiry: handleSupport, // manual response via support template
   unclear: handleUnknown, // catch-all admin triage
   multi: handleUnknown, // parent row of a multi-intent split; children carry the real intent
+  // UR1 Phase 1 (2026-06-04) — report@ / feedback@ → problem_reports table
+  problem_report: handleProblemReport,
 };
 
 /** Map an error message thrown by a submit-leg or handler to a user-
