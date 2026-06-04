@@ -554,11 +554,19 @@ export function registerVendorTools(
 function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?: IndexNowEnv) {
   server.tool(
     "suggest_event",
-    "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status.",
+    "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status. `start_date` is required so duplicate-detection (which keys on venue + date) can run — without a date the dedup guard silently skipped and we accrued duplicate rows like 'Winthrop Arts Festival 2026' alongside '38th Annual Winthrop Arts Festival' on the same date. If the date is genuinely unknown, hold the submission until it's confirmed rather than creating a dateless row.",
     {
       name: z.string().transform(sanitizeProse).describe("Event name"),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
-      start_date: z.string().optional().describe("Start date (YYYY-MM-DD)"),
+      // A2 (2026-06-04): start_date is now REQUIRED. Previously optional;
+      // when callers omitted it the dedup guard at L805
+      // (`if (venueId && startDate && !params.force_create)`) silently
+      // skipped, allowing duplicate rows at the same place. force_create
+      // remains as the explicit escape hatch.
+      start_date: z
+        .string()
+        .min(1, "start_date is required for duplicate-detection")
+        .describe("Start date (YYYY-MM-DD) — required so dedup can match on venue + date"),
       end_date: z.string().optional().describe("End date (YYYY-MM-DD)"),
       venue_name: z.string().transform(sanitizeProse).optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
