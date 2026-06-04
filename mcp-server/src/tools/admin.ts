@@ -25,6 +25,7 @@ import {
   type Slug,
   parseLocation,
   sanitizeProse,
+  coerceVenueNameAtIngest,
   VALID_TRANSITIONS,
   EVENT_STATUS_ENUM,
   VENDOR_STATUS_ENUM,
@@ -2278,13 +2279,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("If true, queue the IndexNow ping for batched flush."),
     },
     async (params) => {
+      // DQ2 (2026-06-04): coerce address-as-name BEFORE dedup. When
+      // `params.name` is a bare street address or equals `params.address`,
+      // derive a real name from city/state and shift the offending
+      // string into address (if address was empty). Running this BEFORE
+      // the dedup check ensures dedup sees the coerced name, so we
+      // don't accidentally create another "Event venue in {City}, {State}"
+      // duplicate alongside an existing one.
+      const coerced = coerceVenueNameAtIngest({
+        name: params.name,
+        address: params.address,
+        city: params.city,
+        state: params.state,
+      });
+      const effectiveName = coerced.name;
+      const effectiveAddress = coerced.address;
+
       // Warn on potential duplicate (same name + city + state)
       const dupeCheck = await db
         .select({ id: venues.id, slug: venues.slug })
         .from(venues)
         .where(
           and(
-            eq(venues.name, params.name),
+            eq(venues.name, effectiveName),
             eq(venues.city, params.city),
             sql`upper(${venues.state}) = upper(${params.state})`
           )
@@ -2296,7 +2313,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           content: [
             {
               type: "text",
-              text: `A venue named "${params.name}" already exists in ${params.city}, ${params.state} (slug: ${dupeCheck[0].slug}, id: ${dupeCheck[0].id}). Use update_venue to modify it, or choose a different name.`,
+              text: `A venue named "${effectiveName}" already exists in ${params.city}, ${params.state} (slug: ${dupeCheck[0].slug}, id: ${dupeCheck[0].id}). Use update_venue to modify it, or choose a different name.`,
             },
           ],
           isError: true,
@@ -2304,7 +2321,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       // Generate unique slug
-      const baseSlug = createSlug(params.name);
+      const baseSlug = createSlug(effectiveName);
       if (!baseSlug) {
         return {
           content: [{ type: "text", text: "Could not generate a valid slug from the venue name." }],
@@ -2338,9 +2355,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       await db.insert(venues).values({
         id: venueId,
-        name: params.name,
+        // DQ2-coerced values from above — never write back the raw
+        // address-as-name if `coerced.wasCoerced` was true.
+        name: effectiveName,
         slug: finalSlug,
-        address: params.address,
+        address: effectiveAddress,
         city: params.city,
         state: params.state.toUpperCase(),
         zip: params.zip,

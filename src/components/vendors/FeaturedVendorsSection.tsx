@@ -48,7 +48,10 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
             key={v.id}
             className="overflow-hidden border-amber/40 bg-amber/5 hover:border-amber transition-colors relative"
           >
-            <div className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-amber/90 text-navy text-xs font-medium px-2 py-0.5">
+            {/* UX-R3 (2026-06-04): use amber-bg-fg (~9.7:1 on amber.DEFAULT)
+                rather than navy (~5.7:1) for AAA-grade legibility on the
+                amber surface. Lifts contrast headroom without altering hue. */}
+            <div className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-amber/90 text-amber-bg-fg text-xs font-medium px-2 py-0.5">
               Featured
             </div>
             <Link href={`/vendors/${v.slug}`} className="block p-4">

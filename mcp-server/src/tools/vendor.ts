@@ -14,6 +14,7 @@ import {
   createSlug,
   appendSlugSegment,
   unsafeSlug,
+  coerceVenueNameAtIngest,
 } from "../helpers.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
@@ -553,11 +554,19 @@ export function registerVendorTools(
 function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?: IndexNowEnv) {
   server.tool(
     "suggest_event",
-    "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status.",
+    "Suggest a new event to be added to the platform. The event will be created with TENTATIVE status. `start_date` is required so duplicate-detection (which keys on venue + date) can run — without a date the dedup guard silently skipped and we accrued duplicate rows like 'Winthrop Arts Festival 2026' alongside '38th Annual Winthrop Arts Festival' on the same date. If the date is genuinely unknown, hold the submission until it's confirmed rather than creating a dateless row.",
     {
       name: z.string().transform(sanitizeProse).describe("Event name"),
       description: z.string().transform(sanitizeProse).optional().describe("Event description"),
-      start_date: z.string().optional().describe("Start date (YYYY-MM-DD)"),
+      // A2 (2026-06-04): start_date is now REQUIRED. Previously optional;
+      // when callers omitted it the dedup guard at L805
+      // (`if (venueId && startDate && !params.force_create)`) silently
+      // skipped, allowing duplicate rows at the same place. force_create
+      // remains as the explicit escape hatch.
+      start_date: z
+        .string()
+        .min(1, "start_date is required for duplicate-detection")
+        .describe("Start date (YYYY-MM-DD) — required so dedup can match on venue + date"),
       end_date: z.string().optional().describe("End date (YYYY-MM-DD)"),
       venue_name: z.string().transform(sanitizeProse).optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
@@ -696,9 +705,22 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
 
       if (params.venue_name) {
+        // DQ2 (2026-06-04): coerce address-as-name BEFORE slug + dedup. AI
+        // extraction occasionally pulls a street address as the venue
+        // name (the U9 root cause). Running the coercion here means the
+        // dedup paths and slug all see the derived name "Event venue in
+        // {City}, {State}" instead of the raw "18 Spring Street", which
+        // both prevents the bad ingest and keeps the slug stable.
+        const _coerced = coerceVenueNameAtIngest({
+          name: params.venue_name,
+          address: null, // suggest_event auto-create writes address: "" below
+          city: params.venue_city,
+          state: params.venue_state,
+        });
+        const effectiveVenueName = _coerced.name;
         // Use canonical createSlug so this lookup matches what create_venue
         // (admin.ts) writes — divergence here caused duplicate venues (issue #120).
-        const venueSlug = createSlug(params.venue_name);
+        const venueSlug = createSlug(effectiveVenueName);
         const venueCity = (params.venue_city || "").toLowerCase().trim();
         const venueState = (params.venue_state || "").toUpperCase().trim();
 
@@ -714,7 +736,10 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // discovery session 2026-05-26. Schema-level entity decoding via
         // sanitizeProse already covers `&amp;`-style inputs; this guards
         // the orthogonal "stored slug pre-dates current generator" case.
-        const normalizedVenueName = params.venue_name.trim().toLowerCase();
+        // Match on the coerced name — if `params.venue_name` was a street
+        // address, we want to match an existing "Event venue in {City}"
+        // (the coerced form), not the raw address that no real row carries.
+        const normalizedVenueName = effectiveVenueName.trim().toLowerCase();
         const existingVenues = await db
           .select({
             id: venues.id,
@@ -786,18 +811,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           }
 
           const newVenueId = crypto.randomUUID();
+          // DQ2: write the coerced name. If the original `params.venue_name`
+          // looked like a street address, push it into `address` instead
+          // so the operator can later edit a proper name without losing
+          // the address text the AI extracted.
+          const newAddress = _coerced.wasCoerced && _coerced.address ? _coerced.address : "";
           await db.insert(venues).values({
             id: newVenueId,
-            name: params.venue_name,
+            name: effectiveVenueName,
             slug: finalVenueSlug,
-            address: "",
+            address: newAddress,
             city: params.venue_city || "",
             state: (params.venue_state || "").toUpperCase(),
             zip: "",
             status: "ACTIVE",
           });
           venueId = newVenueId;
-          venueResult = { matched: false, venueId: newVenueId, name: params.venue_name };
+          venueResult = { matched: false, venueId: newVenueId, name: effectiveVenueName };
         }
       }
 

@@ -544,16 +544,32 @@ function EventsFilter({
       )}
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+        <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="events-search">
+          Search
+        </label>
+        {/* A5 (2026-06-04): inline submit button gives the search field a
+            discoverable affordance — previously the only way to fire the
+            search was Enter or the "Apply Filters" button at the bottom
+            of the long form, and users reported missing the search entirely.
+            Submitting still posts the whole filter form (same URL state),
+            so the behavior is unchanged — just visible. */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
           <input
+            id="events-search"
             type="text"
             name="query"
             defaultValue={searchParams.query}
             placeholder="Search events..."
-            className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+            className="w-full pl-10 pr-12 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
           />
+          <button
+            type="submit"
+            aria-label="Search events"
+            className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2.5 rounded-md bg-royal text-white text-sm font-medium hover:bg-royal/90 focus:outline-none focus:ring-2 focus:ring-royal focus:ring-offset-1 transition-colors"
+          >
+            Go
+          </button>
         </div>
       </div>
 
