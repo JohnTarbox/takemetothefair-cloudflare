@@ -1175,6 +1175,8 @@ export default {
         // >10% weighted-priority growth (72h-debounced).
         runScheduledGoodwillHealthCanary(getDb(env.DB), {
           slackWebhookUrl: env.SLACK_WEBHOOK_URL_TECHNICAL ?? null,
+          alertEmail: env.ALERT_EMAIL_TECHNICAL ?? null,
+          emailQueue: env.EMAIL_JOBS ?? null,
         }).then(() => undefined),
       ]).then(() => undefined)
     );

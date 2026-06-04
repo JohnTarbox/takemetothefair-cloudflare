@@ -34,11 +34,39 @@ import { eventDiscrepancies, sourceReliability, goodwillHealthSnapshots } from "
 import type { Db } from "../db.js";
 import { logError } from "../logger.js";
 
+/** Mirrors the EmailJobMessage shape in mcp-server/src/queue-consumers.ts
+ *  so the canary can enqueue without importing the consumer module. */
+interface EmailJobMessage {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  from?: string;
+  source: string;
+}
+
+/** Minimal Queue-binding shape the canary needs. Avoids depending on
+ *  the full Cloudflare Workers types in this helper module. */
+interface MinimalEmailQueue {
+  send(message: EmailJobMessage): Promise<void>;
+}
+
 export interface CanaryOpts {
   /** Slack incoming-webhook URL. When omitted, the canary still
    *  writes the snapshot + computes the decision, but no Slack POST
    *  fires — local dev / CI without secrets keeps working. */
   slackWebhookUrl?: string | null;
+  /** Destination address for email-fallback alerts. Mirrors the
+   *  ALERT_EMAIL_TECHNICAL pattern from the dedup-sweep canary (PR
+   *  #309). Independent of slackWebhookUrl — set either, both, or
+   *  neither. When set AND emailQueue is bound, RED/YELLOW alerts
+   *  enqueue an EmailJobMessage that the queue consumer delivers via
+   *  Cloudflare Email Sending. */
+  alertEmail?: string | null;
+  /** EMAIL_JOBS queue binding (producer side). When alertEmail is set
+   *  but this is null, the canary logs a 'misconfigured' warning so
+   *  the operator can fix wrangler.toml. */
+  emailQueue?: MinimalEmailQueue | null;
 }
 
 const RED_GROWTH_THRESHOLD = 1; // +N open rows day-over-day
@@ -182,23 +210,106 @@ async function lookupPriorSnapshots(
   return { priorOpen, sevenDayAvgWeighted: avgWeighted };
 }
 
-async function postSlack(db: Db, slackUrl: string | null | undefined, text: string): Promise<void> {
-  if (!slackUrl) {
-    console.log("[goodwill-canary] slackWebhookUrl unset — skipping dispatch");
-    return;
+/**
+ * Build the alert payload (Slack text + email subject/html/text) for a
+ * given tier. Centralized so the Slack and email branches stay in sync
+ * — same numbers, same wording, just different containers.
+ */
+function buildAlertPayload(
+  tier: "RED" | "YELLOW",
+  args: {
+    priorOpen: number;
+    openTotal: number;
+    outreachCandidates: number;
+    priorWeighted?: number;
+    openWeighted?: number;
+    pct?: string;
   }
-  try {
-    await fetch(slackUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-  } catch (err) {
+): { slackText: string; emailSubject: string; emailText: string; emailHtml: string } {
+  const emoji = tier === "RED" ? ":rotating_light:" : ":warning:";
+  const detail =
+    tier === "RED"
+      ? `open count ${args.priorOpen} → ${args.openTotal} (+${
+          args.openTotal - args.priorOpen
+        }). Outreach candidates: ${args.outreachCandidates}.`
+      : `weighted priority sum ${args.priorWeighted?.toFixed(1) ?? "?"} (7d avg) → ${
+          args.openWeighted?.toFixed(1) ?? "?"
+        } (+${args.pct ?? "?"}%).`;
+  const slackText = `${emoji} *Goodwill queue ${tier}* — ${detail}`;
+  const emailEmoji = tier === "RED" ? "🔴" : "🟡";
+  const emailSubject = `${emailEmoji} Goodwill queue ${tier}: ${args.openTotal} open`;
+  const emailText =
+    `${detail}\n\n` + `Open admin/data-health: https://meetmeatthefair.com/admin/data-health\n`;
+  const emailHtml =
+    `<p><strong>${emailEmoji} Goodwill queue ${tier}</strong> — ${detail}</p>` +
+    `<p><a href="https://meetmeatthefair.com/admin/data-health">Open admin/data-health</a></p>`;
+  return { slackText, emailSubject, emailText, emailHtml };
+}
+
+/**
+ * Fan out a single tier's alert to whichever channels are configured.
+ * Mirrors the dispatch shape of `mcp-server/src/dedup-sweep-canary.ts`
+ * — independent fail-soft branches for Slack and email; both can run,
+ * either can be absent, neither blocks the snapshot write.
+ */
+async function dispatchAlert(
+  db: Db,
+  opts: CanaryOpts,
+  tier: "RED" | "YELLOW",
+  payload: ReturnType<typeof buildAlertPayload>
+): Promise<void> {
+  const SOURCE_BASE = "mcp:goodwill:health-canary";
+
+  // ── Slack branch ──────────────────────────────────────────────
+  if (opts.slackWebhookUrl) {
+    try {
+      await fetch(opts.slackWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: payload.slackText }),
+      });
+      console.log(`[goodwill-canary] ${tier} → Slack dispatched`);
+    } catch (err) {
+      await logError(db, {
+        source: `${SOURCE_BASE}:slack`,
+        message: `${tier} Slack webhook POST failed`,
+        error: err,
+      });
+    }
+  }
+
+  // ── Email branch ──────────────────────────────────────────────
+  if (opts.alertEmail && opts.emailQueue) {
+    try {
+      await opts.emailQueue.send({
+        to: opts.alertEmail,
+        subject: payload.emailSubject,
+        text: payload.emailText,
+        html: payload.emailHtml,
+        source: `goodwill-canary:${tier.toLowerCase()}`,
+      });
+      console.log(`[goodwill-canary] ${tier} → email queued — ${opts.alertEmail}`);
+    } catch (err) {
+      await logError(db, {
+        source: `${SOURCE_BASE}:email`,
+        message: `${tier} email enqueue failed`,
+        error: err,
+      });
+    }
+  } else if (opts.alertEmail && !opts.emailQueue) {
+    // Misconfigured — secret set but queue binding missing.
+    // Mirrors dedup-sweep-canary.ts:287-296.
     await logError(db, {
-      source: "mcp:goodwill:health-canary:slack",
-      message: "Slack webhook POST failed",
-      error: err,
+      level: "warn",
+      source: `${SOURCE_BASE}:email`,
+      message: "alertEmail is set but emailQueue binding is missing",
     });
+  }
+
+  // Configuration-status diagnostic line — same shape as dedup
+  // canary, visible in wrangler tail.
+  if (!opts.slackWebhookUrl && !opts.alertEmail) {
+    console.log(`[goodwill-canary] ${tier} fired but no dispatch channel configured`);
   }
 }
 
@@ -261,13 +372,12 @@ export async function runScheduledGoodwillHealthCanary(
     // RED check — +N open day-over-day, always fires.
     let decision: CanaryResult["decision"] = "wrote_snapshot";
     if (prior.priorOpen !== null && open.total >= prior.priorOpen + RED_GROWTH_THRESHOLD) {
-      await postSlack(
-        db,
-        opts.slackWebhookUrl,
-        `:rotating_light: *Goodwill queue RED* — open count ${prior.priorOpen} → ${open.total} (+${
-          open.total - prior.priorOpen
-        }). Outreach candidates: ${open.outreachCandidates}.`
-      );
+      const payload = buildAlertPayload("RED", {
+        priorOpen: prior.priorOpen,
+        openTotal: open.total,
+        outreachCandidates: open.outreachCandidates,
+      });
+      await dispatchAlert(db, opts, "RED", payload);
       decision = "wrote_snapshot_and_red";
     } else if (
       prior.sevenDayAvgWeighted !== null &&
@@ -281,13 +391,15 @@ export async function runScheduledGoodwillHealthCanary(
           (100 * (open.weightedSum - prior.sevenDayAvgWeighted)) /
           prior.sevenDayAvgWeighted
         ).toFixed(1);
-        await postSlack(
-          db,
-          opts.slackWebhookUrl,
-          `:warning: *Goodwill queue YELLOW* — weighted priority sum ${prior.sevenDayAvgWeighted.toFixed(
-            1
-          )} (7d avg) → ${open.weightedSum.toFixed(1)} (+${pct}%).`
-        );
+        const payload = buildAlertPayload("YELLOW", {
+          priorOpen: prior.priorOpen ?? 0,
+          openTotal: open.total,
+          outreachCandidates: open.outreachCandidates,
+          priorWeighted: prior.sevenDayAvgWeighted,
+          openWeighted: open.weightedSum,
+          pct,
+        });
+        await dispatchAlert(db, opts, "YELLOW", payload);
         // Bump the debounce marker.
         await db
           .update(goodwillHealthSnapshots)
