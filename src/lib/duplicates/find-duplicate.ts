@@ -263,8 +263,13 @@ function toExisting(row: {
  * Levenshtein-distance similarity ratio, 0..1. Kept inline rather than
  * pulled from a package because the existing route also computed it
  * inline — this is the bit-for-bit same implementation.
+ *
+ * Exported for GW1.1 (ingest_addverify capture, 2026-06-03) so the
+ * ingest-discrepancy comparator can apply the same threshold against
+ * candidate vs existing event names. Single source of truth — don't
+ * inline a parallel copy in the comparator.
  */
-function similarity(s1: string, s2: string): number {
+export function similarity(s1: string, s2: string): number {
   const longer = s1.length > s2.length ? s1 : s2;
   if (longer.length === 0) return 1.0;
 

@@ -57,6 +57,17 @@ queue = "email-jobs"
 binding = "INDEXNOW_PINGS"
 queue = "indexnow-pings"
 
+# GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Per the
+# Pages runtime quirk noted in src/lib/queues/producers.ts, this binding
+# is a no-op at runtime on Pages — the producer falls through to the
+# HTTP proxy at the MCP Worker's /api/admin/internal/enqueue-discrepancy
+# endpoint. Keeping the [[queues.producers]] block here matches the
+# EMAIL_JOBS / INDEXNOW_PINGS shape and lets a future Workers-on-Pages
+# migration pick up the direct binding without code change.
+[[queues.producers]]
+binding = "EVENT_DISCREPANCIES"
+queue = "event-discrepancies"
+
 # Workflow binding — DISABLED 2026-05-03. Cloudflare Pages projects don't
 # accept [[workflows]] in wrangler.toml ("Configuration file for Pages
 # projects does not support workflows" error from wrangler). Only Workers
