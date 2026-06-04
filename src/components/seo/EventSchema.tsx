@@ -88,7 +88,10 @@ function getEventType(categories?: string[]): string {
 
 export function EventSchema({
   name,
-  slug,
+  // `slug` kept in the prop type for caller compatibility but no longer
+  // consumed inside the component (the dynamic /api/og?slug=… image URL
+  // was retired 2026-06-04 in favour of the static og-default.png).
+  slug: _slug,
   description,
   startDate,
   endDate,
@@ -169,7 +172,13 @@ export function EventSchema({
 
   const hasDates = startDate && endDate;
   const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;
-  const resolvedImage = imageUrl || `https://meetmeatthefair.com/api/og?slug=${slug}`;
+  // Static OG fallback — `/api/og` dynamic generator removed 2026-06-04
+  // to keep the main-app Worker under the 25 MiB Cloudflare bundle cap
+  // (the satori + resvg-wasm chain was ~476 KiB compiled). 81% of events
+  // don't have a per-event image, so the previous /api/og?slug=… path
+  // was the common case; the static og-default.png is already used by
+  // every other listing/index page in the site.
+  const resolvedImage = imageUrl || "https://meetmeatthefair.com/og-default.png";
 
   // Schema.org eventStatus: prefer the lifecycle column (post-PR-#157), fall
   // back to the legacy datesConfirmed heuristic for any caller / fixture not
