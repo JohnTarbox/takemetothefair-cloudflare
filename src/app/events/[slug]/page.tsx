@@ -485,7 +485,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       // feedback_nextjs_metadata_type_cast_runtime.md.
       images: [
         {
-          url: event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`,
+          // Static OG fallback — `/api/og` dynamic generator removed
+          // 2026-06-04 to keep the main-app Worker under the 25 MiB
+          // Cloudflare bundle cap (satori + resvg-wasm was ~476 KiB
+          // compiled). 81% of events have no per-event image so this
+          // was the common case; matches every other index page.
+          url: event.imageUrl || "https://meetmeatthefair.com/og-default.png",
           width: 1200,
           height: 630,
           alt: title,
@@ -496,7 +501,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       card: "summary_large_image",
       title,
       description,
-      images: [event.imageUrl || `https://meetmeatthefair.com/api/og?slug=${event.slug}`],
+      images: [event.imageUrl || "https://meetmeatthefair.com/og-default.png"],
     },
     other: {
       "og:type": "event",
