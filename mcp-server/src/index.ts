@@ -25,6 +25,7 @@ import {
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
+import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
@@ -1223,10 +1224,16 @@ export default {
       //     status='received' with workflow_instance_id=NULL if D1 was
       //     transient during mark-processing, and without this sweep the
       //     submitter never gets an auto-reply)
+      // Issue #326 (2026-06-04) — page-error canary joins this cron
+      // tenant. ~1 COUNT query + 1 small SELECT + (rarely) 1 UPSERT;
+      // adds negligible load to the */10 fire. See page-error-canary.ts
+      // for thresholds, debounce, and scope rationale.
       ctx.waitUntil(
-        Promise.all([runScheduledKpiRecompute(env), runScheduledInboundEmailStaleSweep(env)]).then(
-          () => undefined
-        )
+        Promise.all([
+          runScheduledKpiRecompute(env),
+          runScheduledInboundEmailStaleSweep(env),
+          runScheduledPageErrorCanary(env),
+        ]).then(() => undefined)
       );
       return;
     }
