@@ -435,9 +435,41 @@ async function getEvents(
       .from(events)
       .where(and(...stateConditions));
 
+    const total = countResult[0]?.count || 0;
+
+    // REL1' §3 (2026-06-04): render-time invariant. When the result page
+    // is empty AND the user applied no filters AND the total-count says
+    // there ARE matching events, that's the silent-zero-result symptom
+    // that hid the 2026-06-04 D1 100-col outage. Log a high-signal
+    // error_logs row so B2's page-error canary picks it up on the next
+    // 10-min cron tick. Only fires on page=1 (no pagination overshoot).
+    const hasUserFilter = !!(
+      searchParams.query ||
+      searchParams.category ||
+      searchParams.state ||
+      searchParams.indoorOutdoor ||
+      searchParams.scale ||
+      searchParams.featured ||
+      searchParams.commercialVendors ||
+      searchParams.excludeFarmersMarkets ||
+      searchParams.includePast ||
+      searchParams.includeTBD ||
+      searchParams.myEvents ||
+      searchParams.favorites
+    );
+    if (page === 1 && eventsWithVendors.length === 0 && total > 0 && !hasUserFilter) {
+      await logError(db, {
+        message:
+          `Render-time invariant tripped: /events page=1 with no filters returned 0 rows but COUNT says ${total}. ` +
+          `Likely a query/filter regression; investigate getEvents.`,
+        source: "app/events/page.tsx:getEvents",
+        context: { invariantTripped: true, total, isCalendarView },
+      });
+    }
+
     return {
       events: eventsWithVendors,
-      total: countResult[0]?.count || 0,
+      total,
       page,
       limit,
     };
@@ -448,7 +480,14 @@ async function getEvents(
       source: "app/events/page.tsx:getEvents",
       context: { isCalendarView, page, limit },
     });
-    return { events: [], total: 0, page: 1, limit };
+    // REL1' §1 (2026-06-04): throw FetchError instead of returning empty.
+    // Lets Next.js's error.tsx render a "service temporarily unavailable"
+    // page that's visibly + crawler-visibly distinct from a real zero-
+    // result empty state. The 2026-06-04 D1 100-col outage took 17h to
+    // detect partly because the empty-list looked exactly like a real
+    // empty filter.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/events/page.tsx:getEvents", e);
   }
 }
 

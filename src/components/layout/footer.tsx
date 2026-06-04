@@ -28,6 +28,8 @@ export function Footer() {
     company: [
       { name: "About Us", href: "/about" },
       { name: "Contact", href: "/contact" },
+      // UR1 C3 (2026-06-04) — let visitors report a problem from any page.
+      { name: "Report a problem", href: "/report-problem" },
       { name: "Privacy Policy", href: "/privacy" },
       { name: "Terms of Service", href: "/terms" },
     ],

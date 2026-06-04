@@ -254,7 +254,14 @@ async function getEvent(slug: string) {
       source: "app/events/[slug]/page.tsx:getEvent",
       context: { slug },
     });
-    return null;
+    // REL1' §1 (2026-06-04): throw FetchError on query failure so
+    // Next.js routes to error.tsx (service-unavailable), NOT notFound()
+    // which would emit 404 and tell crawlers the page no longer exists.
+    // Returning null here would force the caller into notFound(),
+    // confusing transient outage with permanent delete. Genuine
+    // empty-row case is handled inline above (`return null` on length=0).
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/events/[slug]/page.tsx:getEvent", e);
   }
 }
 

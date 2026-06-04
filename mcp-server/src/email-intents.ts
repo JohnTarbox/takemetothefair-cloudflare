@@ -40,7 +40,13 @@ export type EmailIntent =
   | "vendor_inquiry" // vendor asking about listing/applications/profile
   | "spam" // quarantine — no auto-reply, no admin forward
   | "unclear" // confidence below threshold; admin triage
-  | "multi"; // parent of a multi-intent split (children carry the real intent)
+  | "multi" // parent of a multi-intent split (children carry the real intent)
+  // ----- UR1 Phase 1 (2026-06-04) — user problem-report intake -----
+  // `report@` and `feedback@` route here unconditionally. The classifier
+  // can also tag misrouted reports landing on `support@` as
+  // problem_report when the body matches problem-language keywords
+  // ("broken", "doesn't work", "error", "404", "page won't load").
+  | "problem_report";
 
 const INTENT_MAP: Record<string, EmailIntent> = {
   "submit@meetmeatthefair.com": "submit",
@@ -49,6 +55,10 @@ const INTENT_MAP: Record<string, EmailIntent> = {
   "hello@meetmeatthefair.com": "support",
   "press@meetmeatthefair.com": "press",
   "unsubscribe@meetmeatthefair.com": "unsubscribe",
+  // UR1 Phase 1 — dedicated problem-report intake addresses. Add Email
+  // Routing rules in CF dashboard for both addresses → mcp Worker.
+  "report@meetmeatthefair.com": "problem_report",
+  "feedback@meetmeatthefair.com": "problem_report",
 };
 
 /**

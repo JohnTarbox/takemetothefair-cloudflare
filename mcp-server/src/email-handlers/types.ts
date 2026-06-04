@@ -83,6 +83,10 @@ export type ReplyKind =
   | "press-ack"
   | "unsubscribe-ack"
   | "source-suggestion-ack"
+  // UR1 Phase 1 (2026-06-04) — problem-report intake ack. Reassures the
+  // sender that the report landed AND that operators get HIGH-priority
+  // visibility when the report co-occurs with an active outage.
+  | "problem-report-ack"
   // Admin-decision-tailored kinds (PR-D, waitForEvent flow)
   | "correction-applied"
   | "correction-rejected"

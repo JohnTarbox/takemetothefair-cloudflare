@@ -1517,6 +1517,41 @@ export const pageErrorCanaryState = sqliteTable("page_error_canary_state", {
   lastTopCount: integer("last_top_count"),
 });
 
+// UR1 Phase 1 (drizzle/0104, 2026-06-04) — user-reported problem tracking.
+// Direct response to the 6/3-6/4 outage being caught by a user not by
+// monitoring (17h MTTD). Web form + email intake both write here; the
+// intake hook runs the same `error_logs` burst-watch the page-error
+// canary uses, escalating HIGH on co-occurrence with an active error
+// burst. See drizzle/0104_problem_reports.sql for the column rationale.
+export const problemReports = sqliteTable(
+  "problem_reports",
+  {
+    id: text("id").primaryKey(),
+    reporterEmail: text("reporter_email"), // null for anonymous web submissions
+    body: text("body").notNull(),
+    source: text("source", { enum: ["web", "email"] }).notNull(),
+    path: text("path"), // page the user was on, when known
+    userAgent: text("user_agent"), // captured at web intake only
+    inboundEmailId: text("inbound_email_id"), // FK to inbound_emails(id); null for web
+    severity: text("severity", { enum: ["LOW", "HIGH"] })
+      .notNull()
+      .default("LOW"),
+    correlatedErrorCount: integer("correlated_error_count").notNull().default(0),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    resolvedByUserId: text("resolved_by_user_id"), // FK to users(id), set on resolve
+    notes: text("notes"),
+  },
+  (t) => [
+    index("idx_problem_reports_severity_resolved_created").on(
+      t.severity,
+      t.resolvedAt,
+      t.createdAt
+    ),
+    index("idx_problem_reports_source").on(t.source),
+  ]
+);
+
 // §6.3 Phase 2 GA4 liveness check log (drizzle/0060). One row per daily check
 // from the MCP-Worker cron. Consecutive-failure count carries forward; alert
 // fires after 2 consecutive critical/degraded results (anti-flap). Wired in
