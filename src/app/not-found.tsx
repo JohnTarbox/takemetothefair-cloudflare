@@ -22,6 +22,21 @@ export default function NotFound() {
           no longer exists.
         </p>
 
+        {/* UR1 C3 (2026-06-04) — if the page should exist but doesn't,
+            give the user a quick way to tell us. Path pre-fills via
+            window.location on the form page so the operator sees which
+            URL they hit. */}
+        <p className="text-sm text-gray-500 mb-6">
+          Think this page should exist?{" "}
+          <Link
+            href="/report-problem?source=not-found"
+            className="text-royal underline hover:text-navy"
+          >
+            Let us know
+          </Link>
+          .
+        </p>
+
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
           <Link href="/">
             <Button className="w-full sm:w-auto">
