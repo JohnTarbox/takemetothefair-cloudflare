@@ -1504,6 +1504,19 @@ export const dedupSweepSnapshots = sqliteTable(
   (t) => [uniqueIndex("idx_dedup_snapshot_date").on(t.snapshotDate)]
 );
 
+// Issue #326 — debounce state for the page-error Slack canary
+// (mcp-server/src/page-error-canary.ts). One row per alert tier so a
+// single sustained outage doesn't spam the channel every cron fire.
+// See drizzle/0103_page_error_canary_state.sql for the rationale.
+export const pageErrorCanaryState = sqliteTable("page_error_canary_state", {
+  // 'RED' | 'YELLOW' — primary key; never more than two rows total.
+  tier: text("tier").primaryKey(),
+  lastAlertedAt: integer("last_alerted_at", { mode: "timestamp" }).notNull(),
+  lastCount: integer("last_count").notNull(),
+  lastTopSource: text("last_top_source"),
+  lastTopCount: integer("last_top_count"),
+});
+
 // §6.3 Phase 2 GA4 liveness check log (drizzle/0060). One row per daily check
 // from the MCP-Worker cron. Consecutive-failure count carries forward; alert
 // fires after 2 consecutive critical/degraded results (anti-flap). Wired in
