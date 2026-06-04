@@ -104,6 +104,15 @@ queue = "email-jobs"
 binding = "INDEXNOW_PINGS"
 queue = "indexnow-pings"
 
+# GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
+# binding is here so the MCP enqueue endpoint (POST /api/admin/internal/
+# enqueue-discrepancy) and future MCP-internal callers can both push
+# messages. Consumer below drains and calls captureDiscrepancy from
+# src/goodwill/capture.ts.
+[[queues.producers]]
+binding = "EVENT_DISCREPANCIES"
+queue = "event-discrepancies"
+
 # Queue consumers — only Workers can consume (Pages projects cannot), so
 # all queue dispatch logic lives in this Worker.
 #
@@ -126,6 +135,18 @@ max_retries = 3
 queue = "indexnow-pings"
 max_batch_size = 100      # batch many URLs into one Bing submit
 max_batch_timeout = 30    # tolerable; IndexNow doesn't need to be instant
+max_retries = 3
+
+# GW1.1 ingest_addverify discrepancy capture (2026-06-03). Same risk
+# profile as IndexNow — non-user-facing async write, can tolerate a
+# few-second batching window. Smaller batch than IndexNow because each
+# message is its own (eventId, fieldClass) write rather than a list to
+# coalesce. The 24-hour idempotence guard inside captureDiscrepancy
+# tolerates duplicate-message retries without producing duplicate rows.
+[[queues.consumers]]
+queue = "event-discrepancies"
+max_batch_size = 25
+max_batch_timeout = 15
 max_retries = 3
 
 # Cloudflare Workflows — durable multi-step jobs that survive Worker

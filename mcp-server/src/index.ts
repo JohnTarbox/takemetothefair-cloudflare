@@ -55,6 +55,10 @@ interface Env {
   // MCP tools can enqueue work to the same consumer (this Worker, below).
   EMAIL_JOBS?: Queue;
   INDEXNOW_PINGS?: Queue;
+  // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Producer
+  // here is used by the /api/admin/internal/enqueue-discrepancy proxy
+  // (Pages → MCP HTTP hop); consumer drains and writes via captureDiscrepancy.
+  EVENT_DISCREPANCIES?: Queue;
   // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
   // consumer uses this to send transactional/auto-reply mail. Bound via
   // `[[send_email]]` in wrangler.toml — no API key needed.
@@ -1030,6 +1034,66 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
     return jsonResponse({ ok: true });
   }
 
+  // GW1.1 (2026-06-03). POST /api/admin/internal/enqueue-discrepancy —
+  // proxy for Pages' enqueueIngestDiscrepancy(). Same shape as the
+  // enqueue-email proxy above. Pages's [[queues.producers]] binding for
+  // EVENT_DISCREPANCIES no-ops at runtime, so the main-app producer
+  // falls through to this endpoint, and we send the message on its
+  // behalf via the MCP Worker's working producer binding.
+  if (url.pathname === "/api/admin/internal/enqueue-discrepancy" && request.method === "POST") {
+    if (!env.EVENT_DISCREPANCIES) {
+      await logError(env.DB, {
+        level: "warn",
+        source: "mcp:internal-api",
+        message: "EVENT_DISCREPANCIES binding missing on MCP Worker; cannot proxy enqueue",
+      });
+      return jsonResponse({ error: "event_discrepancies_binding_missing" }, 500);
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+
+    // Required string fields: eventId, fieldClass, detectedBy, notes.
+    // Numeric: confidence. The *_value, *_source_key, *_source_url
+    // halves are nullable per the table schema, so we accept null/
+    // undefined and let the consumer pass through. Validation here is
+    // shape-defensive — a single bad-shape message shouldn't be DLQ'd
+    // for content-validation reasons we could catch upstream.
+    if (
+      typeof body.eventId !== "string" ||
+      typeof body.fieldClass !== "string" ||
+      typeof body.detectedBy !== "string" ||
+      typeof body.notes !== "string" ||
+      typeof body.confidence !== "number"
+    ) {
+      return jsonResponse(
+        {
+          error: "missing_required_fields",
+          required: ["eventId", "fieldClass", "detectedBy", "notes", "confidence"],
+        },
+        400
+      );
+    }
+
+    try {
+      await env.EVENT_DISCREPANCIES.send(body);
+    } catch (e) {
+      await logError(env.DB, {
+        source: "mcp:internal-api",
+        message: "EVENT_DISCREPANCIES.send threw in enqueue-discrepancy proxy",
+        error: e,
+        context: { eventId: body.eventId, fieldClass: body.fieldClass },
+      });
+      return jsonResponse({ error: "queue_send_failed" }, 502);
+    }
+
+    return jsonResponse({ ok: true });
+  }
+
   return null;
 }
 
@@ -1051,7 +1115,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 // Dispatch by `batch.queue` since a single Worker can subscribe to multiple
 // queues and the handler needs to know which one fired. Implementations
 // live in queue-consumers.ts to keep this file focused on routing.
-import { handleEmailBatch, handleIndexNowBatch } from "./queue-consumers.js";
+import {
+  handleEmailBatch,
+  handleIndexNowBatch,
+  handleDiscrepancyBatch,
+} from "./queue-consumers.js";
 
 type EmailJobMessage = Parameters<typeof handleEmailBatch>[0]["messages"][number]["body"];
 type IndexNowMessage = Parameters<typeof handleIndexNowBatch>[0]["messages"][number]["body"];
@@ -1067,6 +1135,20 @@ export default {
     }
     if (batch.queue === "indexnow-pings") {
       await handleIndexNowBatch(batch as MessageBatch<IndexNowMessage>, env);
+      return;
+    }
+    if (batch.queue === "event-discrepancies") {
+      // GW1.1 (2026-06-03) — ingest_addverify discrepancy capture queue.
+      // Producer is Pages's check-duplicate route (proxied through
+      // /api/admin/internal/enqueue-discrepancy above).
+      await handleDiscrepancyBatch(
+        // The handler types its own message shape; cast bridges the
+        // generic MessageBatch<unknown>.
+        batch as MessageBatch<
+          Parameters<typeof handleDiscrepancyBatch>[0]["messages"][number]["body"]
+        >,
+        env
+      );
       return;
     }
     // Unknown queue — log to D1 so it's queryable later (silent acking

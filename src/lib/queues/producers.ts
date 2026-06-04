@@ -11,11 +11,12 @@ import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { sendEmail, type SendEmailArgs } from "@/lib/email/send";
 import { pingIndexNow } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
-import type { EmailJobMessage, IndexNowMessage } from "./types";
+import type { EmailJobMessage, IndexNowMessage, IngestDiscrepancyMessage } from "./types";
 
 type QueueEnv = {
   EMAIL_JOBS?: { send: (msg: unknown) => Promise<void> };
   INDEXNOW_PINGS?: { send: (msg: unknown) => Promise<void> };
+  EVENT_DISCREPANCIES?: { send: (msg: unknown) => Promise<void> };
   INTERNAL_API_KEY?: string;
   /** Override for the MCP proxy URL. Defaults to the production custom
    *  domain; useful for staging / local-dev overrides. */
@@ -134,4 +135,98 @@ export async function enqueueIndexNow(urls: string | string[], source: string): 
   // Fallback: ping synchronously via the existing helper.
   const db = getCloudflareDb();
   await pingIndexNow(db, list, env, source);
+}
+
+/**
+ * GW1.1 (2026-06-03) — enqueue one ingest_addverify discrepancy capture.
+ *
+ * Fired from `/api/suggest-event/check-duplicate` when `findDuplicate`
+ * matches stages 2-4 and the new submission's value for a tracked field
+ * disagrees with the existing event's stored value. The MCP consumer
+ * drains the queue and calls `captureDiscrepancy` to write one
+ * `event_discrepancies` row per message.
+ *
+ * Following the same 3-path shape as `enqueueEmail`:
+ *
+ *   1. Direct queue binding — no-op at runtime on Pages (see the comment
+ *      on `enqueueEmail`), but kept for shape consistency and for the
+ *      future Workers-on-Pages migration.
+ *   2. HTTP proxy to the MCP Worker's /api/admin/internal/enqueue-
+ *      discrepancy endpoint. INTERNAL_API_KEY auth, same pattern as the
+ *      email enqueue proxy.
+ *   3. Log-only fallback. No sync fallback exists because the
+ *      captureDiscrepancy helper lives in MCP-only code and the
+ *      event_discrepancies table is the one piece of goodwill state we
+ *      don't want main app to write directly (the 24-hr idempotence
+ *      guard and notes formatting are encapsulated in the helper).
+ *
+ * Never throws — the caller should wrap in `ctx.waitUntil` and treat as
+ * fire-and-forget. Errors get logged via the standard error_logs path.
+ */
+export async function enqueueIngestDiscrepancy(msg: IngestDiscrepancyMessage): Promise<void> {
+  const env = getCloudflareEnv() as unknown as QueueEnv;
+
+  // Path 1: direct binding (no-op on Pages, kept for shape parity).
+  if (env.EVENT_DISCREPANCIES) {
+    try {
+      await env.EVENT_DISCREPANCIES.send(msg);
+      return;
+    } catch (e) {
+      const db = getCloudflareDb();
+      await logError(db, {
+        level: "warn",
+        source: "queues:producers:enqueue-discrepancy",
+        message: "EVENT_DISCREPANCIES.send threw; falling through to HTTP proxy",
+        error: e,
+        context: { eventId: msg.eventId, fieldClass: msg.fieldClass },
+      });
+    }
+  }
+
+  // Path 2: HTTP proxy via the MCP Worker. Same pattern as enqueueEmail.
+  if (env.INTERNAL_API_KEY) {
+    const url = `${env.MCP_SERVER_URL || MCP_DEFAULT_URL}/api/admin/internal/enqueue-discrepancy`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Key": env.INTERNAL_API_KEY,
+        },
+        body: JSON.stringify(msg),
+      });
+      if (res.ok) return;
+      const db = getCloudflareDb();
+      await logError(db, {
+        level: "warn",
+        source: "queues:producers:enqueue-discrepancy",
+        message: "MCP proxy returned non-2xx; dropping discrepancy",
+        context: {
+          status: res.status,
+          eventId: msg.eventId,
+          fieldClass: msg.fieldClass,
+        },
+      });
+      return;
+    } catch (e) {
+      const db = getCloudflareDb();
+      await logError(db, {
+        level: "warn",
+        source: "queues:producers:enqueue-discrepancy",
+        message: "MCP proxy fetch threw; dropping discrepancy",
+        error: e,
+        context: { eventId: msg.eventId, fieldClass: msg.fieldClass },
+      });
+      return;
+    }
+  }
+
+  // Path 3: no INTERNAL_API_KEY (local dev without secret). Log and drop.
+  const db = getCloudflareDb();
+  await logError(db, {
+    level: "warn",
+    source: "queues:producers:enqueue-discrepancy",
+    message: "no EVENT_DISCREPANCIES binding and no INTERNAL_API_KEY; dropping",
+    context: { eventId: msg.eventId, fieldClass: msg.fieldClass },
+  });
 }

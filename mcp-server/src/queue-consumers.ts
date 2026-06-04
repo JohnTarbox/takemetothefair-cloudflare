@@ -15,6 +15,7 @@
 import { getDb } from "./db.js";
 import { indexnowSubmissions } from "./schema.js";
 import { logError } from "./logger.js";
+import { captureDiscrepancy, type FieldClass, type DetectedBy } from "./goodwill/capture.js";
 
 const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
@@ -33,6 +34,25 @@ type EmailJobMessage = {
 type IndexNowMessage = {
   urls: string[];
   source: string;
+};
+
+// GW1.1 (2026-06-03) — ingest_addverify discrepancy capture message.
+// Mirrors src/lib/queues/types.ts:IngestDiscrepancyMessage in the main
+// app. The consumer passes fields through to captureDiscrepancy
+// verbatim — see goodwill/capture.ts for the 24-hour idempotence
+// guard.
+type IngestDiscrepancyMessage = {
+  detectedBy: DetectedBy;
+  eventId: string;
+  fieldClass: FieldClass;
+  authoritativeValue: string | null;
+  authoritativeSourceKey: string | null;
+  authoritativeSourceUrl: string | null;
+  divergentValue: string | null;
+  divergentSourceKey: string | null;
+  divergentSourceUrl: string | null;
+  confidence: number;
+  notes: string;
 };
 
 type ConsumerEnv = {
@@ -237,6 +257,75 @@ async function recordAudit(
         error: err,
         context: { source, urlCount: urls.length, status },
       });
+    }
+  }
+}
+
+// ─── Discrepancy consumer ───────────────────────────────────────────────
+//
+// GW1.1 (2026-06-03) — drain event-discrepancies queue and write one
+// event_discrepancies row per message via captureDiscrepancy.
+//
+// Idempotence: captureDiscrepancy has a 24-hour guard on
+// (event_id, field_class, detected_by) — duplicate messages from queue
+// retries write at most one row per (event, field, detected_by, day).
+//
+// Retry policy: max_retries=3 per the queue config. A bad-shape message
+// is ack'd (not retried) so it doesn't loop forever — those are caught
+// at the producer's validation step. Real D1 failures retry up to the
+// queue's limit, then DLQ.
+export async function handleDiscrepancyBatch(
+  batch: MessageBatch<IngestDiscrepancyMessage>,
+  env: ConsumerEnv
+): Promise<void> {
+  const db = getDb(env.DB);
+  for (const m of batch.messages) {
+    const msg = m.body;
+    // Shape-guard: the enqueue endpoint already validates required
+    // fields, but a defensive check here protects against future-
+    // producer shape drift without DLQ'ing every message.
+    if (
+      !msg ||
+      typeof msg.eventId !== "string" ||
+      typeof msg.fieldClass !== "string" ||
+      typeof msg.detectedBy !== "string" ||
+      typeof msg.confidence !== "number"
+    ) {
+      await logError(env.DB, {
+        level: "warn",
+        source: "mcp:discrepancy-queue",
+        message: "malformed message; acking without action",
+        context: { attempts: m.attempts, body: msg },
+      });
+      m.ack();
+      continue;
+    }
+
+    const id = await captureDiscrepancy(db, {
+      eventId: msg.eventId,
+      fieldClass: msg.fieldClass,
+      detectedBy: msg.detectedBy,
+      authoritativeValue: msg.authoritativeValue,
+      authoritativeSourceKey: msg.authoritativeSourceKey,
+      authoritativeSourceUrl: msg.authoritativeSourceUrl,
+      divergentValue: msg.divergentValue,
+      divergentSourceKey: msg.divergentSourceKey,
+      divergentSourceUrl: msg.divergentSourceUrl,
+      confidence: msg.confidence,
+      notes: msg.notes,
+    });
+
+    // captureDiscrepancy returns null on idempotence skip OR on internal
+    // failure (it already logged). Both are terminal for this message —
+    // ack and move on. The internal-failure case will surface in
+    // error_logs for monitoring; we don't want to retry-loop a poison
+    // message into the DLQ when the underlying issue is e.g. an FK
+    // constraint failure that won't resolve on retry.
+    m.ack();
+    if (id) {
+      console.log(
+        `[queue:discrepancy] ${msg.detectedBy} event=${msg.eventId} field=${msg.fieldClass} → ${id}`
+      );
     }
   }
 }
