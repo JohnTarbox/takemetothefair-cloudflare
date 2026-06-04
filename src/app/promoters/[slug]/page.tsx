@@ -30,6 +30,7 @@ import { promoters, events, venues } from "@/lib/db/schema";
 import { eq, and, gte, lt } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { logError } from "@/lib/logger";
 import type { Metadata } from "next";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -60,9 +61,10 @@ async function getPromoter(slug: string) {
     const now = new Date();
 
     // Two passes: upcoming first (priority), then past (recent first, capped).
-    // Mirrors the structure of venue's events list.
+    // Mirrors the structure of venue's events list. Narrow projection —
+    // D1 100-col result-row cap; see eventJoinProjection.
     const upcomingResults = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -73,7 +75,7 @@ async function getPromoter(slug: string) {
       .limit(12);
 
     const pastResults = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -83,14 +85,17 @@ async function getPromoter(slug: string) {
       .orderBy(events.startDate)
       .limit(12);
 
-    const mapEvent = (r: {
-      events: typeof events.$inferSelect;
-      venues: typeof venues.$inferSelect | null;
-      promoters: typeof promoters.$inferSelect | null;
-    }) => ({
+    // Cast lite projection back to schema row types for EventList's
+    // prop contract; see eventJoinProjection's docblock for the audit.
+    // Parameter type derived from the result array so it stays in sync
+    // with the projection automatically.
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
+    type EventRow = (typeof upcomingResults)[number];
+    const mapEvent = (r: EventRow) => ({
       ...r.events,
-      venue: r.venues!,
-      promoter: r.promoters!,
+      venue: r.venue as FullVenue,
+      promoter: r.promoter as FullPromoter,
     });
 
     // Cohort 7 follow-up (2026-06-01) — attach event_days so EventCard's

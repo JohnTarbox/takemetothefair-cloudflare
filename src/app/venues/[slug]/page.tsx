@@ -22,6 +22,7 @@ import { venues, events, promoters } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { getDirectlyLinkedBlogPosts } from "@/lib/content-links-query";
@@ -58,9 +59,12 @@ async function getVenue(slug: string) {
 
     const venue = venueResults[0];
 
-    // Get upcoming events for this venue
+    // Get upcoming events for this venue. Narrow projection — D1 caps
+    // result rows at 100 columns and the full three-way join trips it
+    // (104 cols). See src/lib/db/event-join-projection.ts for the
+    // audit + maintenance contract.
     const eventResults = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -70,10 +74,15 @@ async function getVenue(slug: string) {
       .orderBy(events.startDate)
       .limit(6);
 
+    // Cast lite projection back to schema row types for EventList's
+    // prop contract. Sound because every venue/promoter field
+    // EventList reads is in the projection (see helper's docblock).
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     const venueEvents = eventResults.map((r) => ({
       ...r.events,
-      venue: r.venues!,
-      promoter: r.promoters!,
+      venue: r.venue as FullVenue,
+      promoter: r.promoter as FullPromoter,
     }));
     // Cohort 7 follow-up (2026-06-01) — attach event_days so EventCard's
     // date badge shows the next occurrence, not the series start.
