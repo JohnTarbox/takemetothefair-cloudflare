@@ -76,9 +76,11 @@ async function getVendorEvents(userId: string) {
     // Cast back to full row types for the EventsView prop contract.
     type FullVenue = typeof venues.$inferSelect;
     type FullPromoter = typeof promoters.$inferSelect;
+    // EventRow derived from results so projection changes flow through.
+    type EventRow = (typeof results)[number];
     const eventsList = results
-      .filter((r) => activeStatuses.includes(r.applicationStatus))
-      .map((r) => ({
+      .filter((r: EventRow) => activeStatuses.includes(r.applicationStatus))
+      .map((r: EventRow) => ({
         ...r.event,
         venue: r.venue as FullVenue | null,
         promoter: r.promoter as FullPromoter | null,

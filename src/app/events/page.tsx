@@ -396,7 +396,11 @@ async function getEvents(
     // for the maintenance contract.
     type FullVenue = typeof venues.$inferSelect;
     type FullPromoter = typeof promoters.$inferSelect;
-    const eventsBase = results.map((r) => ({
+    // EventRow is derived from the actual query result so any change
+    // to eventJoinProjection (or its replacement) flows through here
+    // automatically — no hand-typed parameter to drift.
+    type EventRow = (typeof results)[number];
+    const eventsBase = results.map((r: EventRow) => ({
       ...r.events,
       venue: r.venue as FullVenue | null,
       promoter: r.promoter as FullPromoter | null,
