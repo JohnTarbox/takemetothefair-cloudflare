@@ -5,6 +5,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
 import { eq, count, gte, and } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
@@ -64,8 +65,14 @@ async function getRecentSubmissions() {
   const db = getCloudflareDb();
 
   try {
+    // Narrow projection — D1 caps result rows at 100 columns and the
+    // unfiltered events+venues+promoters join is 104. See
+    // src/lib/db/event-join-projection.ts for the audit + maintenance
+    // contract. Deferred from PR #327 (1 err/day signal); now picked
+    // up because the page-error canary (PR #329) would otherwise
+    // dispatch on it every admin visit.
     const results = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
@@ -73,10 +80,16 @@ async function getRecentSubmissions() {
       .orderBy(events.createdAt)
       .limit(5);
 
-    return results.map((r) => ({
+    // Cast lite projection back to schema row types — only fields read
+    // downstream are `promoter.companyName` and `venue.name`, both in
+    // the projection. Same pattern as #325/#327/#328.
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
+    type EventRow = (typeof results)[number];
+    return results.map((r: EventRow) => ({
       ...r.events,
-      promoter: r.promoters!,
-      venue: r.venues!,
+      promoter: r.promoter as FullPromoter,
+      venue: r.venue as FullVenue,
     }));
   } catch (e) {
     await logError(db, {
