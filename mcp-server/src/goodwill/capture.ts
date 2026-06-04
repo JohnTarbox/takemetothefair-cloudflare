@@ -22,8 +22,19 @@ import { logError } from "../logger.js";
 /** field_class enum (mirrors the SQL column). */
 export type FieldClass = "date" | "hours" | "venue" | "status" | "price" | "existence" | "name";
 
-/** detected_by enum. */
-export type DetectedBy = "ingest_addverify" | "stale_page_radar" | "self_consistency" | "manual";
+/** detected_by enum.
+ *
+ *  `holdout_sample` added GW1.3 (2026-06-03) — daily random ~1% sample
+ *  of high-trust source events re-checked against the live source page
+ *  to guard against silent drift (the CPI guardrail from the GW1 spec).
+ *  Schema column has no CHECK constraint so the addition is TS-only.
+ */
+export type DetectedBy =
+  | "ingest_addverify"
+  | "stale_page_radar"
+  | "self_consistency"
+  | "holdout_sample"
+  | "manual";
 
 export interface CaptureDiscrepancyArgs {
   eventId: string;
@@ -189,6 +200,60 @@ export async function captureSelfConsistencyDiscrepancy(
     divergentSourceUrl: null,
     confidence: args.confidence ?? 0.9,
     notes: `evaluateGates reason: ${args.reason}`,
+  });
+}
+
+/**
+ * GW1.3 (2026-06-03) — emit a holdout_sample discrepancy when the daily
+ * re-check of a high-trust source page surfaces a field-value divergence
+ * from the stored event row.
+ *
+ * Unlike stale_page_radar (which leans on event_date_drift_findings as a
+ * pre-computed input), the holdout-sampling cron re-runs the live fetch +
+ * K7 deterministic+AI extract cascade against the source URL on each
+ * sampled event, then calls this helper one field at a time when the
+ * comparator finds a divergence. The authoritative side IS the source
+ * being re-checked — its score gets credit/debit on the resolution path
+ * (GW1c circularity guard handles this correctly).
+ *
+ * `confidence` defaults to 0.8: high-trust source means the
+ * re-extraction is unlikely to be wrong, but lower than ingest_addverify
+ * (0.85) because re-fetch noise (transient page state, intermediate
+ * redirects) is a real failure mode here.
+ */
+export async function captureHoldoutSampleDiscrepancy(
+  db: Db,
+  args: {
+    eventId: string;
+    fieldClass: FieldClass;
+    /** Stored value on the event row. */
+    storedValue: string | null;
+    /** Fresh re-extracted value from the same source URL. */
+    refreshValue: string | null;
+    /** The source URL being re-checked (== events.source_url). */
+    sourceUrl: string | null;
+    confidence?: number | null;
+    notes?: string | null;
+  }
+): Promise<string | null> {
+  return captureDiscrepancy(db, {
+    eventId: args.eventId,
+    fieldClass: args.fieldClass,
+    detectedBy: "holdout_sample",
+    // The source we're re-checking IS the authoritative side — its
+    // currently-stored value on the event row is what we trust by
+    // default, and the divergent value is what the live re-extract
+    // turned up. If the source page has drifted (was modified after
+    // ingest), the divergent value is what would have come in had the
+    // event been re-ingested today.
+    authoritativeValue: args.storedValue,
+    authoritativeSourceKey: safeHost(args.sourceUrl),
+    authoritativeSourceUrl: args.sourceUrl ?? null,
+    divergentValue: args.refreshValue,
+    divergentSourceKey: safeHost(args.sourceUrl),
+    divergentSourceUrl: args.sourceUrl ?? null,
+    confidence: args.confidence ?? 0.8,
+    notes: args.notes ?? null,
   });
 }
 
