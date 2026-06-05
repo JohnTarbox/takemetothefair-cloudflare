@@ -329,6 +329,26 @@ const SCHEMA_SQL = `
     changed_by TEXT
   );
 
+  -- E remainder (Dev backlog 2026-06-05, drizzle/0109) — venue +
+  -- promoter slug-history. Same shape as event_slug_history.
+  CREATE TABLE venue_slug_history (
+    id TEXT PRIMARY KEY,
+    venue_id TEXT NOT NULL,
+    old_slug TEXT NOT NULL,
+    new_slug TEXT NOT NULL,
+    changed_at INTEGER NOT NULL,
+    changed_by TEXT
+  );
+
+  CREATE TABLE promoter_slug_history (
+    id TEXT PRIMARY KEY,
+    promoter_id TEXT NOT NULL,
+    old_slug TEXT NOT NULL,
+    new_slug TEXT NOT NULL,
+    changed_at INTEGER NOT NULL,
+    changed_by TEXT
+  );
+
   CREATE TABLE admin_actions (
     id TEXT PRIMARY KEY,
     action TEXT NOT NULL,
