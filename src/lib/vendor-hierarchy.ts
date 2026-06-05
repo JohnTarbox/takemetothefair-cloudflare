@@ -1,105 +1,162 @@
 /**
- * EH1 Phase 2 (2026-06-05) — vendor display resolution.
+ * EH1 Phase 1 — vendor display resolution + alias chain.
  *
- * Decides which "face" of a hierarchical vendor surfaces publicly:
+ * The relationship-model version of the original 0106 minimal resolver.
+ * Implements spec §4 of Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md:
  *
- *   - For role=INDEPENDENT vendors: always 'LOCAL' (no hierarchy, the
- *     vendor IS the public-facing entity).
- *   - For role=NATIONAL: always 'NATIONAL' (the hub).
- *   - For role=LOCAL_OFFICE: depends on the parent's policy + the
- *     child's preference + the parent's override gate. See
- *     resolveLocalOfficeDisplay below.
+ *   resolveDisplay(v):
+ *     1. v = resolveAlias(v)       — follow alias chain to terminal canonical
+ *     2. if v.brandParent is null: → 'self'
+ *     3. if override granted + mode != inherit: → mode
+ *     4. else → parent.defaultChildDisplay ?? 'self'
  *
- * The rule (John's 2026-06-03 decision, codified in
- * project_national_local_vendor_model.md):
+ * Truth vs display: the resolver decides PRESENTATION only. The
+ * event_vendors table always points at the office (the truth layer);
+ * toggling display policy never re-points associations.
  *
- *   if (override_permitted AND display_preference != 'INHERIT')
- *     → use child's display_preference
- *   else
- *     → use parent's default_display
+ * Parent's-gate-always-wins (spec §4.4): a vendor claim grants edit
+ * rights on the office row but does NOT change displayOverridePermitted
+ * and does NOT bypass the gate. Only admin or the brand-parent owner
+ * can flip the gate, via set_vendor_display_policy.
  *
- * This means the parent's gate (`override_permitted`) wins by default —
- * a claimed office gets EDIT rights but doesn't bypass the gate. The
- * national brand decides whether local offices can self-route.
- *
- * Pure function. No I/O. Caller supplies the vendor row + (when
- * role=LOCAL_OFFICE) the parent vendor row already loaded. Returns
- * 'LOCAL' as the safe default in any ambiguous case (e.g. a
- * LOCAL_OFFICE row pointing at a parent that doesn't exist or whose
- * default_display is NULL — render the office page rather than
- * silently 404 the entire hierarchy).
+ * Pure functions. No I/O. The caller is responsible for loading the
+ * vendor + optional parents + (for alias chains) providing a lookup.
  */
 
-export type ResolvedDisplay = "NATIONAL" | "LOCAL";
+export type ResolvedDisplay = "self" | "brand_parent" | "operator_parent" | "both";
 
 export interface DisplayableVendor {
   role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
-  parentVendorId: string | null;
-  defaultDisplay: "NATIONAL" | "LOCAL" | null;
-  overridePermitted: boolean;
-  displayPreference: "NATIONAL" | "LOCAL" | "INHERIT" | null;
+  brandParentVendorId: string | null;
+  operatorParentVendorId: string | null;
+  aliasOfVendorId: string | null;
+  displayOverridePermitted: boolean;
+  displayMode: "inherit" | "self" | "brand_parent" | "operator_parent" | "both" | null;
 }
 
 export interface DisplayableParent {
   id: string;
   role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
-  defaultDisplay: "NATIONAL" | "LOCAL" | null;
+  defaultChildDisplay: "self" | "brand_parent" | "both" | null;
+}
+
+/** Cap on alias-chain depth — matches the cap suggested in design-doc
+ *  open-Q2. Five hops is far beyond any plausible legitimate chain;
+ *  it's the cycle guard, not a soft limit. */
+const ALIAS_CHAIN_MAX_DEPTH = 5;
+
+/**
+ * Follow `aliasOfVendorId` to the terminal canonical row, cycle-guarded.
+ *
+ * @param v       — the starting vendor row
+ * @param lookup  — caller-supplied `(id) => DisplayableVendor | null`;
+ *                  return null when the id doesn't resolve (deleted row,
+ *                  unknown id, etc.)
+ * @returns       — the terminal canonical (the first row whose
+ *                  aliasOfVendorId is null), or the deepest reachable
+ *                  row if the chain terminates in a dangling FK.
+ *                  Throws on cycle or depth-exceeded — these are data
+ *                  bugs and silently swallowing them would be a worse
+ *                  failure mode than a 500.
+ */
+export function resolveAlias(
+  v: DisplayableVendor,
+  lookup: (id: string) => DisplayableVendor | null
+): DisplayableVendor {
+  let cursor: DisplayableVendor = v;
+  const visited = new Set<string>();
+
+  for (let depth = 0; depth < ALIAS_CHAIN_MAX_DEPTH; depth++) {
+    if (cursor.aliasOfVendorId == null) return cursor;
+    // The terminal canonical's own id isn't in our DisplayableVendor
+    // shape (callers pass it implicitly by passing `v` whose id they
+    // know). We dedupe via the *target* ids in `visited` — any time we
+    // try to follow into an id we've already followed into, that's a
+    // cycle.
+    if (visited.has(cursor.aliasOfVendorId)) {
+      throw new Error(
+        `resolveAlias: alias cycle detected (revisited target id ${cursor.aliasOfVendorId})`
+      );
+    }
+    visited.add(cursor.aliasOfVendorId);
+    const next = lookup(cursor.aliasOfVendorId);
+    // Dangling FK — the alias points at an unknown / deleted row.
+    // Stop here and return the deepest *known* row; this is the safer
+    // user-facing behavior than throwing (renders the dangling row's
+    // own page).
+    if (next == null) return cursor;
+    cursor = next;
+  }
+
+  throw new Error(`resolveAlias: alias chain exceeded depth ${ALIAS_CHAIN_MAX_DEPTH}`);
 }
 
 /**
  * Resolve which display surface to render for a vendor.
  *
- * @param vendor — the vendor row whose page is being requested
- * @param parent — optional. The parent row, when vendor.role='LOCAL_OFFICE'.
- *                 Required for accurate LOCAL_OFFICE resolution; without it
- *                 the helper falls back to 'LOCAL' (safe — renders the
- *                 office page rather than collapsing to a missing hub).
+ * @param vendor — the vendor row whose page is being requested. CALLERS
+ *                 are responsible for running this through resolveAlias
+ *                 first if they want alias transparency at render time;
+ *                 this function only handles parent/preference logic.
+ * @param brandParent — the brand-parent row, when vendor.brandParentVendorId
+ *                 is set. Without it, LOCAL_OFFICE rows fall back to 'self'
+ *                 (safe — renders the office page rather than collapsing
+ *                 to a missing hub).
+ * @returns 'self' | 'brand_parent' | 'operator_parent' | 'both'
  */
 export function resolveVendorDisplay(
   vendor: DisplayableVendor,
-  parent?: DisplayableParent | null
+  brandParent?: DisplayableParent | null
 ): ResolvedDisplay {
-  if (vendor.role === "INDEPENDENT") return "LOCAL";
-  if (vendor.role === "NATIONAL") return "NATIONAL";
+  // Spec §4 step 2: no brand parent → office is its own canonical.
+  // Covers INDEPENDENT (no hierarchy) and the NATIONAL parent itself
+  // (its own page is the hub). For LOCAL_OFFICE with no parent loaded,
+  // fall back to 'self' — safer than collapsing to a missing brand.
+  if (vendor.brandParentVendorId == null) return "self";
+  if (!brandParent) return "self";
 
-  // role = 'LOCAL_OFFICE' below.
-  // Without the parent row loaded, we can't apply the rule — safe default
-  // is LOCAL (render the office page). This prevents a database-inconsistency
-  // (orphaned LOCAL_OFFICE) from collapsing the whole entity.
-  if (!parent || parent.role !== "NATIONAL") return "LOCAL";
-
-  // Override path: parent must have explicitly granted the gate AND
-  // the child must have set a concrete preference (not INHERIT).
+  // Spec §4 step 3: override path. Both conditions must be true:
+  //   - the parent has explicitly granted the gate (displayOverridePermitted)
+  //   - the office has picked a concrete mode (not 'inherit', not NULL)
   if (
-    vendor.overridePermitted &&
-    vendor.displayPreference &&
-    vendor.displayPreference !== "INHERIT"
+    vendor.displayOverridePermitted &&
+    vendor.displayMode != null &&
+    vendor.displayMode !== "inherit"
   ) {
-    return vendor.displayPreference;
+    return vendor.displayMode;
   }
 
-  // Default path: parent's choice. NULL default_display falls back to LOCAL
-  // (rare — only happens if Phase 1 backfill left it unset).
-  return parent.defaultDisplay ?? "LOCAL";
+  // Spec §4 step 4: inherit path — parent's defaultChildDisplay decides.
+  // NULL falls back to 'self' (rare — only when the brand parent hasn't
+  // set its policy yet; matches the 0106 LOCAL fallback semantics).
+  return brandParent.defaultChildDisplay ?? "self";
 }
 
 /**
- * Helper for the canonical-URL emitter. When a LOCAL_OFFICE resolves
- * to NATIONAL, the public canonical URL is the parent hub — not the
- * office page itself. The office page still EXISTS (operator can
- * still load /vendors/<office-slug>) but it should rel="canonical" up
- * to the hub and be excluded from the sitemap.
+ * Helper for canonical-URL emission. When a LOCAL_OFFICE resolves to a
+ * non-self mode, the canonical URL is the parent (brand or operator),
+ * not the office page itself. The office page still EXISTS (operator
+ * can still load it) but it rel="canonical"s up and is excluded from
+ * the sitemap.
  *
- * Returns null when the vendor is its own canonical (the common case).
+ * Returns:
+ *  - brandParentSlug when resolved display = 'brand_parent'
+ *  - operatorParentSlug when resolved display = 'operator_parent'
+ *  - null when resolved display = 'self' or 'both' (office is canonical;
+ *    'both' renders the office page but also shows a brand link in the UI)
+ *  - null when the relevant parent slug isn't loaded
  */
-export function canonicalParentSlugIfHubResolved(
+export function canonicalParentSlugFor(
   vendor: DisplayableVendor,
-  parent?: DisplayableParent | null,
-  parentSlug?: string | null
+  brandParent?: DisplayableParent | null,
+  brandParentSlug?: string | null,
+  operatorParentSlug?: string | null
 ): string | null {
   if (vendor.role !== "LOCAL_OFFICE") return null;
-  if (!parent || !parentSlug) return null;
-  const display = resolveVendorDisplay(vendor, parent);
-  if (display !== "NATIONAL") return null;
-  return parentSlug;
+  if (!brandParent) return null;
+  const mode = resolveVendorDisplay(vendor, brandParent);
+  if (mode === "brand_parent") return brandParentSlug ?? null;
+  if (mode === "operator_parent") return operatorParentSlug ?? null;
+  // 'self' and 'both' both render the office's own page as canonical.
+  return null;
 }

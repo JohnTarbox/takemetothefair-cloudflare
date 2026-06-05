@@ -293,14 +293,20 @@ const SCHEMA_SQL = `
     enrichment_attempted_at INTEGER,
     domain_hijacked INTEGER NOT NULL DEFAULT 0,
     completeness_score INTEGER NOT NULL DEFAULT 0,
-    -- EH1 Phase 1 (drizzle/0106, 2026-06-05) — vendor hierarchy.
-    -- Mirror the 5 columns added to the real vendors table so tests
-    -- using the Drizzle schema can INSERT without "no such column" errors.
+    -- EH1 Phase 1 (drizzle/0106 + 0107, 2026-06-05) — vendor hierarchy +
+    -- relationship model. Mirror the columns on the real vendors table
+    -- so tests using the Drizzle schema can INSERT without "no such
+    -- column" errors. Whenever a column is renamed or added to the
+    -- vendors table this block MUST be updated in lockstep — vitest
+    -- silently fails the affected test with "no such column" otherwise.
     role TEXT NOT NULL DEFAULT 'INDEPENDENT',
-    parent_vendor_id TEXT,
-    default_display TEXT,
-    override_permitted INTEGER NOT NULL DEFAULT 0,
-    display_preference TEXT,
+    brand_parent_vendor_id TEXT,
+    operator_parent_vendor_id TEXT,
+    alias_of_vendor_id TEXT,
+    relationship_type TEXT NOT NULL DEFAULT 'independent',
+    default_child_display TEXT,
+    display_override_permitted INTEGER NOT NULL DEFAULT 0,
+    display_mode TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );

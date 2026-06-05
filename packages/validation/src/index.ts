@@ -212,17 +212,35 @@ export const vendorUpdateSchema = vendorCreateSchema
     // Verified Pro tier scaffold (drizzle/0052). Admin-only set; no vendor
     // email per business decision. Orthogonal to claimed.
     verified_pro: z.boolean().optional(),
-    // EH1 Phase 3 (drizzle/0106). The 5 hierarchy fields. Admin-only by
-    // virtue of this schema being the admin PATCH surface. Vendor
-    // self-edit (vendorProfileUpdateSchema below) exposes ONLY
-    // display_preference and only for LOCAL_OFFICE roles, so the
-    // parent-controlled gate (`override_permitted`) stays admin-side.
-    // See src/lib/vendor-hierarchy.ts for the resolution rule.
+    // EH1 Phase 1 (drizzle/0106 + 0107). The vendor hierarchy + relationship
+    // model. Admin-only by virtue of this schema being the admin PATCH
+    // surface. Vendor self-edit (vendorProfileUpdateSchema below) exposes
+    // ONLY display_mode and only for LOCAL_OFFICE roles, so the
+    // parent-controlled gate (`display_override_permitted`) stays admin-side.
+    // See src/lib/vendor-hierarchy.ts for the resolution rule and
+    // Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md for the design.
     role: z.enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"]).optional(),
-    parent_vendor_id: z.string().min(1).nullable().optional(),
-    default_display: z.enum(["NATIONAL", "LOCAL"]).nullable().optional(),
-    override_permitted: z.boolean().optional(),
-    display_preference: z.enum(["NATIONAL", "LOCAL", "INHERIT"]).nullable().optional(),
+    brand_parent_vendor_id: z.string().min(1).nullable().optional(),
+    operator_parent_vendor_id: z.string().min(1).nullable().optional(),
+    alias_of_vendor_id: z.string().min(1).nullable().optional(),
+    relationship_type: z
+      .enum([
+        "branch",
+        "franchise",
+        "dealer",
+        "member",
+        "agent",
+        "employee_branch",
+        "government",
+        "independent",
+      ])
+      .optional(),
+    default_child_display: z.enum(["self", "brand_parent", "both"]).nullable().optional(),
+    display_override_permitted: z.boolean().optional(),
+    display_mode: z
+      .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+      .nullable()
+      .optional(),
   });
 
 // delete_vendor (MCP tool / DELETE /api/admin/vendors/[id]) — soft-delete
@@ -511,16 +529,22 @@ export const vendorProfileUpdateSchema = z.object({
   paymentMethods: z.array(z.string()).optional(),
   licenseInfo: z.string().max(500).optional().nullable(),
   insuranceInfo: z.string().max(500).optional().nullable(),
-  // EH1 Phase 3 — the ONLY hierarchy field a claimed LOCAL_OFFICE can
+  // EH1 Phase 1 — the ONLY hierarchy field a claimed LOCAL_OFFICE can
   // self-edit. Setting this expresses a *preference*; whether it's
   // honored at render time still depends on the parent's
-  // `override_permitted` gate (only admin or the parent-vendor owner
-  // can flip that). The other 4 hierarchy columns
-  // (role / parentVendorId / defaultDisplay / overridePermitted) are
-  // intentionally absent from this schema — they're admin-only via
-  // vendorUpdateSchema. Route handler also gates on vendor.role:
-  // non-LOCAL_OFFICE vendors get 400 if they try to set this.
-  displayPreference: z.enum(["NATIONAL", "LOCAL", "INHERIT"]).nullable().optional(),
+  // `display_override_permitted` gate (only admin or the brand-parent
+  // owner can flip that). The other hierarchy columns (role,
+  // brand_parent_vendor_id, operator_parent_vendor_id, alias_of_vendor_id,
+  // relationship_type, default_child_display, display_override_permitted)
+  // are intentionally absent from this schema — they're admin-only via
+  // vendorUpdateSchema and the three admin MCP tools
+  // (set_vendor_relationship, set_vendor_display_policy, set_vendor_alias).
+  // Route handler also gates on vendor.role: non-LOCAL_OFFICE vendors get
+  // 400 if they try to set this.
+  displayMode: z
+    .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+    .nullable()
+    .optional(),
 });
 
 // Promoter event creation
