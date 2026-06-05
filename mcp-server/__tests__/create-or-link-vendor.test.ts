@@ -464,3 +464,53 @@ describe("input sanitization", () => {
     expect(payload?.vendor_id).toBe("existing");
   });
 });
+
+// 12. regression: schema-drift / deploy-skew protection -------------------
+//
+// 2026-06-05: A `D1_ERROR: table vendors has no column named parent_vendor_id`
+// hit the live MCP tool during the EH1 Phase 1 deploy window (PRs #339 →
+// #343). The 0106 → 0107 migration renamed `parent_vendor_id` to
+// `brand_parent_vendor_id`; prod DB applied 0107 before the MCP Worker
+// redeploy caught up, so the deployed Worker's bare-select SQL referenced
+// the old column name against the new schema. Source is clean now (no bare
+// `db.select().from(vendors)` in the match path), but pin the literal
+// failure-mode shape so any future bare-select regression surfaces here
+// rather than against operator traffic.
+describe("regression: match-existing on Maine Cardworks shape (2026-06-05)", () => {
+  it("links to an existing vendor via strict + fuzzy match without DB errors", async () => {
+    const eid = seedEvent();
+    seedVendor({
+      id: "adc1d1b4",
+      businessName: "Maine Cardworks Inc",
+      slug: "maine-cardworks-inc",
+      vendorType: "Crafts",
+    });
+
+    // Strict path
+    const strict = await invoke({
+      event_id: eid,
+      business_name: "Maine Cardworks Inc",
+      dedup_strategy: "strict",
+    });
+    expect(strict.isError).toBe(false);
+    expect(strict.payload?.was_created).toBe(false);
+    expect(strict.payload?.vendor_id).toBe("adc1d1b4");
+    expect(strict.payload?.was_linked).toBe(true);
+
+    // Fuzzy path against the same row from a second event
+    const eid2 = seedEvent({
+      id: "event-2",
+      slug: "test-event-2",
+      promoterId: "promoter-1",
+    });
+    const fuzzy = await invoke({
+      event_id: eid2,
+      business_name: "Maine Cardworks Inc.",
+      type: "Crafts",
+      dedup_strategy: "fuzzy",
+    });
+    expect(fuzzy.isError).toBe(false);
+    expect(fuzzy.payload?.was_created).toBe(false);
+    expect(fuzzy.payload?.vendor_id).toBe("adc1d1b4");
+  });
+});

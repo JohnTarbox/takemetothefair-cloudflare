@@ -297,25 +297,53 @@ const DESCRIPTION_HAS_TIME_PATTERNS = [
   /\b(?:noon|midnight|morning|afternoon|evening|night)\b/i,
 ];
 
-/** Gate A4 (analyst spec 2026-05-16): catches the date-only-misparsed-as-
- *  timestamp bug. When a source provides a date-only ISO ("2026-07-15") or
- *  a date with an explicit non-UTC zone ("2026-07-15T20:00:00-04:00") and
- *  the ingest path doesn't normalize through parseDateOnly, the stored
- *  start_date can end up on a different UTC calendar day than the source
- *  intended. We can't see the original string here, but we CAN detect the
- *  shape: stored start_date with non-zero UTC h/m/s AND no time-of-day
- *  mention in the description (which would justify a non-midnight value). */
+/** Gate A4 (analyst spec 2026-05-16; C1 noon-anchor flip 2026-06-05):
+ *  catches the date-only-misparsed-as-timestamp bug. When a source provides
+ *  a date-only ISO ("2026-07-15") or a date with an explicit non-UTC zone
+ *  ("2026-07-15T20:00:00-04:00") and the ingest path doesn't normalize
+ *  through normalizeEventDate, the stored start_date can end up on a
+ *  different UTC calendar day than the source intended.
+ *
+ *  Since the noon-UTC anchor convention (PR-Q #200), the site stores
+ *  date-only ingests at 12:00:00 UTC specifically to avoid US-EDT
+ *  off-by-one rendering. The OLD form of this gate treated midnight UTC
+ *  as the canonical clean anchor and flagged off-midnight as confused —
+ *  which cried wolf on every correctly-anchored event after the noon
+ *  convention shipped. The C1 flip (2026-06-05) inverts the test:
+ *
+ *    - 12:00:00 UTC → CLEAN (the canonical noon anchor)
+ *    - 00:00:00 UTC → CONFUSED (the A3 / K14 symptom — date-only ingest
+ *      bypassed normalizeEventDate, parsed as midnight)
+ *    - non-quarter-hour minutes (m % 15 !== 0) or non-zero seconds →
+ *      CONFUSED (no human-meaningful event time uses those)
+ *    - other quarter-hour-aligned UTC times → defer to description: if
+ *      the source mentions a time, the stored value is legitimately
+ *      preserving it. */
 function dateLooksTimezoneConfused(input: DateGateInput): boolean {
   if (!input.startDate) return false;
-  const offUtcMidnight =
-    input.startDate.getUTCHours() !== 0 ||
-    input.startDate.getUTCMinutes() !== 0 ||
-    input.startDate.getUTCSeconds() !== 0;
-  if (!offUtcMidnight) return false;
+  const h = input.startDate.getUTCHours();
+  const m = input.startDate.getUTCMinutes();
+  const s = input.startDate.getUTCSeconds();
+
+  // Noon UTC is the canonical anchor for date-only ingests
+  // (normalizeEventDate). Always clean.
+  if (h === 12 && m === 0 && s === 0) return false;
+
+  // Midnight UTC is the A3 / K14 symptom — date-only ingest path
+  // bypassed normalizeEventDate and parsed as midnight. Always
+  // suspicious, even when the description mentions a time (a 5pm EDT
+  // event would correctly store at 21:00:00 UTC, not 00:00:00).
+  if (h === 0 && m === 0 && s === 0) return true;
+
+  // Non-quarter-hour minutes or non-zero seconds don't correspond to
+  // any human-meaningful event time. Always suspicious.
+  if (m % 15 !== 0 || s !== 0) return true;
+
+  // For other quarter-hour-aligned times (e.g. 18:00:00 = 2pm EDT,
+  // 14:30:00 = 10:30am EDT), defer to the description.
   if (input.description) {
     const decoded = decodeHtmlEntities(input.description);
     if (DESCRIPTION_HAS_TIME_PATTERNS.some((p) => p.test(decoded))) {
-      // Description names a specific time — non-midnight-UTC is legitimate.
       return false;
     }
   }

@@ -195,7 +195,8 @@ describe("dateLooksImplausible", () => {
   });
 
   it("does NOT flag legitimate single-day events", () => {
-    const day = new Date("2026-07-10");
+    // Noon-UTC anchor per normalizeEventDate (C1 flip 2026-06-05).
+    const day = new Date("2026-07-10T12:00:00.000Z");
     const r = dateLooksImplausible({
       startDate: day,
       endDate: day,
@@ -223,9 +224,10 @@ describe("dateLooksImplausible", () => {
   });
 
   it("returns ok for plausible future single-day event", () => {
+    // Noon-UTC anchor per normalizeEventDate (C1 flip 2026-06-05).
     const r = dateLooksImplausible({
-      startDate: new Date("2026-08-15"),
-      endDate: new Date("2026-08-15"),
+      startDate: new Date("2026-08-15T12:00:00.000Z"),
+      endDate: new Date("2026-08-15T12:00:00.000Z"),
       description: "A one-day farmers market.",
     });
     expect(r.ok).toBe(true);
@@ -236,17 +238,32 @@ describe("dateLooksImplausible", () => {
     expect(dateLooksImplausible({ startDate: undefined, endDate: undefined }).ok).toBe(true);
   });
 
-  // ── Gate A4 (analyst spec 2026-05-16 case 4) ──────────────────────────
+  // ── Gate A4 (analyst spec 2026-05-16 case 4; C1 noon-anchor flip 2026-06-05) ──
 
-  it("Gate A4: passes a date-only round-trip (parseDateOnly anchor at UTC midnight)", () => {
-    // The analyst's case 4 literal: harvest a date-only source field →
-    // confirm stored start_date displays as the intended local date.
-    // parseDateOnly anchors at UTC midnight; formatDateOnly uses UTC zone;
-    // round-trip preserves the calendar day. (Verifies the existing
-    // convention is intact for the pre-ingest baseline.)
-    const date = new Date("2026-07-15T00:00:00.000Z");
+  it("Gate A4: passes a date-only round-trip at the canonical noon-UTC anchor", () => {
+    // Since PR-Q #200 / normalizeEventDate, date-only ingests are anchored
+    // at 12:00:00 UTC specifically to avoid US-EDT off-by-one rendering.
+    // The C1 fix (2026-06-05) flips the gate to treat noon UTC as clean.
+    const date = new Date("2026-07-15T12:00:00.000Z");
     const result = dateLooksImplausible({ startDate: date, endDate: date });
     expect(result.ok).toBe(true);
+  });
+
+  it("Gate A4: flags midnight-UTC start_date as the A3 / K14 symptom", () => {
+    // 2026-06-05 observation: every event created via the suggest_event MCP
+    // tool that session stored at 00:00:00 UTC because the path bypassed
+    // normalizeEventDate. The C1 fix flips the gate so midnight specifically
+    // flags as confused regardless of whether the description mentions a
+    // time — a 5pm EDT event would correctly store at 21:00:00 UTC, not
+    // 00:00:00.
+    const date = new Date("2026-07-15T00:00:00.000Z");
+    const result = dateLooksImplausible({
+      startDate: date,
+      endDate: date,
+      description: "Doors open at 5 PM with live music.",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons).toContain("start_date_timezone_confused");
   });
 
   it("Gate A4: flags start_date stored off UTC midnight with no time mentioned", () => {
@@ -370,8 +387,9 @@ describe("evaluateGates", () => {
     const r = evaluateGates({
       name: "Concord Annual Maker Faire",
       sourceName: "admin-direct",
-      startDate: new Date("2026-08-15"),
-      endDate: new Date("2026-08-17"),
+      // Noon-UTC anchor per normalizeEventDate (C1 flip 2026-06-05).
+      startDate: new Date("2026-08-15T12:00:00.000Z"),
+      endDate: new Date("2026-08-17T12:00:00.000Z"),
       description: "A 3-day celebration of craft and innovation.",
     });
     expect(r.route).toBe("APPROVED");
