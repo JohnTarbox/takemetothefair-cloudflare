@@ -19,7 +19,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { decodeHtmlEntities, formatDateRange, unsafeSlug } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, vendorSlugHistory } from "@/lib/db/schema";
-import { eq, and, asc, desc, sql } from "drizzle-orm";
+import { eq, and, asc, desc, sql, isNull } from "drizzle-orm";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
@@ -40,6 +40,7 @@ import { ClaimListingCTA } from "@/components/vendors/ClaimListingCTA";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
+import { canonicalParentSlugIfHubResolved, type DisplayableParent } from "@/lib/vendor-hierarchy";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -143,6 +144,62 @@ async function getVendor(slug: string) {
       .set({ viewCount: sql`${vendors.viewCount} + 1` })
       .where(eq(vendors.id, vendor.vendors.id));
 
+    // EH1 Phase 2: load hierarchy context so render + canonical can resolve.
+    // LOCAL_OFFICE → fetch the parent row (needed by resolveVendorDisplay).
+    // NATIONAL    → fetch the children list (rendered as a "Local Offices"
+    //               section instead of the standard Events sections).
+    // INDEPENDENT → neither query runs. Most vendors hit this branch, so the
+    //               hierarchy work is paid only when a hierarchy exists.
+    let parent: {
+      id: string;
+      slug: string;
+      role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
+      defaultDisplay: "NATIONAL" | "LOCAL" | null;
+      businessName: string;
+    } | null = null;
+    let children: Array<{
+      id: string;
+      slug: string;
+      businessName: string;
+      city: string | null;
+      state: string | null;
+      contactPhone: string | null;
+      contactEmail: string | null;
+      vendorType: string | null;
+      logoUrl: string | null;
+    }> = [];
+
+    if (vendor.vendors.role === "LOCAL_OFFICE" && vendor.vendors.parentVendorId) {
+      const [parentRow] = await db
+        .select({
+          id: vendors.id,
+          slug: vendors.slug,
+          role: vendors.role,
+          defaultDisplay: vendors.defaultDisplay,
+          businessName: vendors.businessName,
+        })
+        .from(vendors)
+        .where(and(eq(vendors.id, vendor.vendors.parentVendorId), isNull(vendors.deletedAt)))
+        .limit(1);
+      if (parentRow) parent = parentRow;
+    } else if (vendor.vendors.role === "NATIONAL") {
+      children = await db
+        .select({
+          id: vendors.id,
+          slug: vendors.slug,
+          businessName: vendors.businessName,
+          city: vendors.city,
+          state: vendors.state,
+          contactPhone: vendors.contactPhone,
+          contactEmail: vendors.contactEmail,
+          vendorType: vendors.vendorType,
+          logoUrl: vendors.logoUrl,
+        })
+        .from(vendors)
+        .where(and(eq(vendors.parentVendorId, vendor.vendors.id), isNull(vendors.deletedAt)))
+        .orderBy(asc(vendors.state), asc(vendors.city), asc(vendors.businessName));
+    }
+
     return {
       ...vendor.vendors,
       user: vendor.users
@@ -151,6 +208,8 @@ async function getVendor(slug: string) {
       eventVendors: vendorEvents,
       seoEventAssociationCount: Number(seoCounts?.eventAssociationCount ?? 0),
       seoEventVenueGeoCount: Number(seoCounts?.eventVenueGeoCount ?? 0),
+      parent,
+      children,
     };
   } catch (e) {
     await logError(db, {
@@ -184,12 +243,41 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     eventVenueGeoCount: vendor.seoEventVenueGeoCount,
   });
 
+  // EH1 Phase 2: if this is a LOCAL_OFFICE that resolves to NATIONAL (parent's
+  // policy puts the brand front and center), canonical-up to the parent hub
+  // and emit noindex on the office page. The page still loads — deep links
+  // and operator URLs keep working — but search engines treat the parent as
+  // the indexed surface. Reversible: drop these and search engines re-index
+  // the office page within ~14 days.
+  const parentForResolution: DisplayableParent | null = vendor.parent
+    ? {
+        id: vendor.parent.id,
+        role: vendor.parent.role,
+        defaultDisplay: vendor.parent.defaultDisplay,
+      }
+    : null;
+  const canonicalUpSlug = canonicalParentSlugIfHubResolved(
+    vendor,
+    parentForResolution,
+    vendor.parent?.slug ?? null
+  );
+  const canonicalUrl = canonicalUpSlug
+    ? `https://meetmeatthefair.com/vendors/${canonicalUpSlug}`
+    : url;
+  // Canonical-up implies noindex on the office page (parent owns the search
+  // surface). Falls through to the §6.6 indexable predicate otherwise.
+  const robotsValue = canonicalUpSlug
+    ? { index: false, follow: true }
+    : indexable
+      ? undefined
+      : { index: false, follow: true };
+
   return {
     title,
     description,
-    robots: indexable ? undefined : { index: false, follow: true },
+    robots: robotsValue,
     alternates: {
-      canonical: url,
+      canonical: canonicalUrl,
     },
     openGraph: {
       title: businessName,
@@ -302,6 +390,13 @@ export default async function VendorDetailPage({ params }: Props) {
     (ev) => ev.event.endDate && new Date(ev.event.endDate) < now
   );
 
+  // EH1 Phase 2 — render-time hierarchy switch.
+  // Today only the NATIONAL hub branch alters JSX; canonical-up'd LOCAL_OFFICE
+  // pages still render normally and just lean on the noindex/canonical from
+  // generateMetadata to consolidate SEO equity. The "Part of <brand>" link
+  // in the header serves every LOCAL_OFFICE regardless of canonical state.
+  const isNationalHub = vendor.role === "NATIONAL";
+
   const products = parseJsonArray(vendor.products);
   const paymentMethods = parseJsonArray(vendor.paymentMethods);
 
@@ -401,6 +496,21 @@ export default async function VendorDetailPage({ params }: Props) {
                 </div>
               )}
               <div>
+                {/* EH1 Phase 2 — "Part of <National>" link on LOCAL_OFFICE
+                    pages. Renders for every office (not just canonical-up'd
+                    ones) because the relationship is true regardless of
+                    which surface is canonical. */}
+                {vendor.role === "LOCAL_OFFICE" && vendor.parent && (
+                  <p className="text-sm text-gray-600 mb-1">
+                    Part of{" "}
+                    <Link
+                      href={`/vendors/${vendor.parent.slug}`}
+                      className="text-royal hover:text-navy font-medium underline"
+                    >
+                      {decodeHtmlEntities(vendor.parent.businessName)}
+                    </Link>
+                  </p>
+                )}
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-3xl font-bold text-gray-900">{vendor.businessName}</h1>
                   {isEnhanced && vendor.verified && (
@@ -459,7 +569,53 @@ export default async function VendorDetailPage({ params }: Props) {
               );
             })()}
 
-            {upcomingEvents.length > 0 && (
+            {/* EH1 Phase 2 — NATIONAL hub renders a "Local Offices" section
+                instead of events. National parents typically have no event
+                associations (events apply to franchises, not the brand),
+                so swapping the section avoids a sad-empty Events block. */}
+            {isNationalHub && vendor.children.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Local Offices ({vendor.children.length})
+                  </h2>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {vendor.children.map((child) => (
+                    <Link key={child.id} href={`/vendors/${child.slug}`} className="block">
+                      <Card className="hover:shadow-md transition-shadow h-full">
+                        <CardContent className="p-4">
+                          <h3 className="font-medium text-gray-900 hover:text-navy">
+                            {decodeHtmlEntities(child.businessName)}
+                          </h3>
+                          {(child.city || child.state) && (
+                            <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                              <MapPin className="w-3 h-3" />
+                              {[child.city, child.state].filter(Boolean).join(", ")}
+                            </p>
+                          )}
+                          {child.contactPhone && (
+                            <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                              <Phone className="w-3 h-3" />
+                              {child.contactPhone}
+                            </p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* NATIONAL hub with no children yet — render a gentle empty
+                state instead of leaving the main column visually bare. */}
+            {isNationalHub && vendor.children.length === 0 && (
+              <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+                No local offices listed yet.
+              </div>
+            )}
+
+            {!isNationalHub && upcomingEvents.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-semibold text-gray-900">
@@ -530,7 +686,7 @@ export default async function VendorDetailPage({ params }: Props) {
               </div>
             )}
 
-            {pastEvents.length > 0 && (
+            {!isNationalHub && pastEvents.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-semibold text-gray-900">
@@ -712,14 +868,20 @@ export default async function VendorDetailPage({ params }: Props) {
               </Card>
             )}
 
-            <Card>
-              <CardContent className="p-6">
-                <div className="text-center">
-                  <p className="text-3xl font-bold text-gray-900">{vendor.eventVendors.length}</p>
-                  <p className="text-sm text-gray-600">Total Events Attended</p>
-                </div>
-              </CardContent>
-            </Card>
+            {/* EH1 Phase 2 — skip the events-attended counter on NATIONAL
+                hubs (national parents own no event_vendors rows, so it would
+                always show 0). The hub's "Local Offices" main-column section
+                already conveys size. */}
+            {!isNationalHub && (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="text-center">
+                    <p className="text-3xl font-bold text-gray-900">{vendor.eventVendors.length}</p>
+                    <p className="text-sm text-gray-600">Total Events Attended</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {linkedBlogPosts.length > 0 && (
               <Card>

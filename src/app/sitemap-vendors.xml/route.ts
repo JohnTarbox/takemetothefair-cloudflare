@@ -87,6 +87,32 @@ async function buildVendorUrls(): Promise<SitemapUrl[]> {
           )
         )
       )
+      -- EH1 Phase 2 — exclude LOCAL_OFFICE rows that resolve to NATIONAL
+      -- (canonical-up'd to the parent hub). The office page still loads,
+      -- but it emits rel="canonical" + noindex, so including it in the
+      -- sitemap would just feed Google duplicate-content signals.
+      --
+      -- Resolution rule mirrors resolveVendorDisplay() in
+      -- src/lib/vendor-hierarchy.ts. Keep these two in lock-step; an
+      -- audit query that returns rows where the page noindexes but the
+      -- sitemap includes (or vice versa) is the canary for drift.
+      AND NOT (
+        v.role = 'LOCAL_OFFICE'
+        AND EXISTS (
+          SELECT 1 FROM vendors p
+          WHERE p.id = v.parent_vendor_id
+            AND p.role = 'NATIONAL'
+            AND (
+              (v.override_permitted = 1 AND v.display_preference = 'NATIONAL')
+              OR (
+                (v.override_permitted = 0
+                 OR v.display_preference IS NULL
+                 OR v.display_preference = 'INHERIT')
+                AND p.default_display = 'NATIONAL'
+              )
+            )
+        )
+      )
   `);
 
   return (
