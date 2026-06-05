@@ -52,8 +52,10 @@ describe("eventsLegacyGateCandidatesRule.run", () => {
         slug: "annual-fair",
         sourceUrl: null, // no source = Tier 1
         sourceName: null,
-        startDate: new Date("2027-07-01T00:00:00Z"),
-        endDate: new Date("2027-07-03T00:00:00Z"),
+        // Noon-UTC anchor per normalizeEventDate (C1 flip 2026-06-05) —
+        // midnight UTC now correctly flags as timezone-confused.
+        startDate: new Date("2027-07-01T12:00:00Z"),
+        endDate: new Date("2027-07-03T12:00:00Z"),
         applicationDeadline: null,
         description: "Three days of fun for the whole family.",
       },

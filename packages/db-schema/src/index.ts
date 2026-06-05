@@ -1255,6 +1255,47 @@ export const gscMilestoneEmails = sqliteTable(
   ]
 );
 
+// B2 (Dev backlog 2026-06-05): GSC monthly performance snapshots — the
+// longer-window counterpart to gsc_milestone_emails. Stores month-over-
+// month rollups Google emails as the "How your site performed in <month>"
+// report (clicks/impressions/CTR plus optional device split). Reproduced
+// in repo from an out-of-band prod create the same way K10 did for
+// gsc_milestone_emails — see drizzle/0108_gsc_monthly_summary.sql.
+//
+// May 2026 row seeded so far (668 clicks / 40.1K impressions / 1.67% CTR).
+// Nothing populates this automatically yet; rows added manually as Google
+// sends the emails. A future cron / inbox parser could snapshot
+// programmatically.
+export const gscMonthlySummary = sqliteTable(
+  "gsc_monthly_summary",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    yearMonth: text("year_month").notNull(),
+    clicks: integer("clicks").notNull(),
+    impressions: integer("impressions").notNull(),
+    ctr: real("ctr").notNull(),
+    pagesWithFirstImpressions: integer("pages_with_first_impressions"),
+    desktopClicks: integer("desktop_clicks"),
+    mobileClicks: integer("mobile_clicks"),
+    tabletClicks: integer("tablet_clicks"),
+    siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
+    source: text("source").notNull().default("google_search_console_email"),
+    note: text("note"),
+    // SECONDS-epoch (unixepoch() in SQL default) per
+    // [[reference_drizzle_timestamp_mode_is_seconds]] — matches the
+    // gscMilestoneEmails sibling's createdAt shape.
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    // UNIQUE on (siteUrl, yearMonth) — one monthly row per property per
+    // month; re-receiving a duplicate Google email or re-running a
+    // backfill is idempotent. Mirrors drizzle/0108.
+    uniqueIndex("idx_gsc_monthly_unique").on(t.siteUrl, t.yearMonth),
+  ]
+);
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
