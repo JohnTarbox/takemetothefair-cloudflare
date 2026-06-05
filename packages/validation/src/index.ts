@@ -212,6 +212,17 @@ export const vendorUpdateSchema = vendorCreateSchema
     // Verified Pro tier scaffold (drizzle/0052). Admin-only set; no vendor
     // email per business decision. Orthogonal to claimed.
     verified_pro: z.boolean().optional(),
+    // EH1 Phase 3 (drizzle/0106). The 5 hierarchy fields. Admin-only by
+    // virtue of this schema being the admin PATCH surface. Vendor
+    // self-edit (vendorProfileUpdateSchema below) exposes ONLY
+    // display_preference and only for LOCAL_OFFICE roles, so the
+    // parent-controlled gate (`override_permitted`) stays admin-side.
+    // See src/lib/vendor-hierarchy.ts for the resolution rule.
+    role: z.enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"]).optional(),
+    parent_vendor_id: z.string().min(1).nullable().optional(),
+    default_display: z.enum(["NATIONAL", "LOCAL"]).nullable().optional(),
+    override_permitted: z.boolean().optional(),
+    display_preference: z.enum(["NATIONAL", "LOCAL", "INHERIT"]).nullable().optional(),
   });
 
 // delete_vendor (MCP tool / DELETE /api/admin/vendors/[id]) — soft-delete
@@ -500,6 +511,16 @@ export const vendorProfileUpdateSchema = z.object({
   paymentMethods: z.array(z.string()).optional(),
   licenseInfo: z.string().max(500).optional().nullable(),
   insuranceInfo: z.string().max(500).optional().nullable(),
+  // EH1 Phase 3 — the ONLY hierarchy field a claimed LOCAL_OFFICE can
+  // self-edit. Setting this expresses a *preference*; whether it's
+  // honored at render time still depends on the parent's
+  // `override_permitted` gate (only admin or the parent-vendor owner
+  // can flip that). The other 4 hierarchy columns
+  // (role / parentVendorId / defaultDisplay / overridePermitted) are
+  // intentionally absent from this schema — they're admin-only via
+  // vendorUpdateSchema. Route handler also gates on vendor.role:
+  // non-LOCAL_OFFICE vendors get 400 if they try to set this.
+  displayPreference: z.enum(["NATIONAL", "LOCAL", "INHERIT"]).nullable().optional(),
 });
 
 // Promoter event creation
