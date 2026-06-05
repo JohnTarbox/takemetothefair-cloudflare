@@ -11,6 +11,7 @@ import {
   formatResolutionNotes,
 } from "@/lib/goodwill/reliability-resolution";
 import { flipEventField } from "@/lib/goodwill/flip-event-field";
+import { getFlipMargin } from "@/lib/goodwill/get-flip-margin";
 import { enqueueIngestDiscrepancy } from "@/lib/queues/producers";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
@@ -214,16 +215,21 @@ async function enqueueDiscrepanciesAsync(
 
     // GW1.2 (2026-06-03) — reliability-weighted resolution. Per
     // disagreeing field: look up both sources' accuracy posteriors,
-    // decide winner by 0.2-absolute margin. Below margin or on
-    // unknown source → log decision in notes, keep existing value
-    // (default). At/above margin with winner=candidate → either
-    // FLIP the stored value via flipEventField (when the
+    // decide winner by a configurable margin (default 0.2, tunable
+    // via goodwill_config row id=1 per G remainder 2026-06-05). Below
+    // margin or on unknown source → log decision in notes, keep
+    // existing value (default). At/above margin with winner=candidate
+    // → either FLIP the stored value via flipEventField (when the
     // GOODWILL_FLIP_ENABLED env flag is set) or log a 'would_flip'
     // shadow note. Spec requires the discrepancy to be emitted in
     // all cases — the decision augments notes, never gates emit.
     const flipEnabled =
       (getCloudflareEnv() as unknown as { GOODWILL_FLIP_ENABLED?: string })
         .GOODWILL_FLIP_ENABLED === "1";
+    // Read the flip margin once per request — cheap (single-row table)
+    // and avoids per-disagreement query amplification on multi-field
+    // discrepancies.
+    const flipMargin = await getFlipMargin(db);
 
     for (const d of disagreements) {
       let resolutionNotes = "";
@@ -242,6 +248,7 @@ async function enqueueDiscrepanciesAsync(
             candidateScore: candRel?.score ?? null,
             existingScore: existRel?.score ?? null,
             flipEnabled,
+            margin: flipMargin,
           });
           resolutionNotes = formatResolutionNotes(decision);
 

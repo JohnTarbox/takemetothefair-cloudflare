@@ -2239,6 +2239,22 @@ export const sourceReliability = sqliteTable(
 
 export type SourceReliability = typeof sourceReliability.$inferSelect;
 
+// G remainder (Dev backlog 2026-06-05): single-row config table for
+// the GW1.2 flip margin (and future GW1.x thresholds — GW1.4's
+// authority-override margin sits here too per the 2026-06-03 spec).
+// CHECK(id=1) enforces single-row semantics. getFlipMargin(db) in
+// src/lib/goodwill/get-flip-margin.ts reads this row with the
+// hardcoded RELIABILITY_FLIP_MARGIN as a memoized fallback.
+export const goodwillConfig = sqliteTable("goodwill_config", {
+  id: integer("id").primaryKey(),
+  flipMargin: real("flip_margin").notNull().default(0.2),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type GoodwillConfig = typeof goodwillConfig.$inferSelect;
+
 export const sources = sqliteTable("sources", {
   sourceKey: text("source_key").primaryKey(),
   displayName: text("display_name").notNull(),
