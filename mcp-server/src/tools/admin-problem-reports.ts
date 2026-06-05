@@ -237,7 +237,11 @@ export function registerAdminProblemReportTools(server: McpServer, db: Db) {
           targetType: "problem_report",
           targetId: params.id,
           actorUserId: resolvedByUserId,
-          metadata: JSON.stringify({
+          // Column is `payload_json` / `payloadJson` (not `metadata`) — bug
+          // from C5 (2026-06-04) that slipped through review; would have
+          // failed at runtime on the first resolve. Fixed alongside K2
+          // because tsc surfaced it on a fresh build of the package.
+          payloadJson: JSON.stringify({
             notes: params.notes ?? null,
             resolverEmail: params.resolved_by_email ?? null,
           }),
