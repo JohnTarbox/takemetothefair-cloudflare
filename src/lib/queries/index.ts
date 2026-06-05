@@ -2,7 +2,7 @@
  * Reusable query helpers to eliminate N+1 queries and reduce code duplication
  */
 
-import { eq, count, and, gte, ne, isNotNull, inArray } from "drizzle-orm";
+import { eq, count, and, ne, isNotNull, inArray } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/schema";
 import type { EventStatus, FavoritableType } from "@takemetothefair/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 
 // Types for query results
 export type VenueWithCount = typeof venues.$inferSelect & {
@@ -167,7 +168,8 @@ export async function getEventsWithRelations(
     conditions.push(eq(events.status, status as EventStatus));
   }
   if (futureOnly) {
-    conditions.push(gte(events.endDate, new Date()));
+    // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+    conditions.push(upcomingEndPredicate(new Date()));
   }
 
   // Get events with venue and promoter in a single query
@@ -409,7 +411,8 @@ export async function countUpcomingEventsByState(db: Database, stateCode: string
         isPublicEventStatus(),
         eq(events.stateCode, stateCode),
         isNotNull(events.startDate),
-        gte(events.endDate, now)
+        // A2 (Dev backlog 2026-06-05): 24h end-of-day grace.
+        upcomingEndPredicate(now)
       )
     );
   return row?.count ?? 0;

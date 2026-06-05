@@ -14,6 +14,7 @@ import {
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 
 export const runtime = "edge";
@@ -126,13 +127,16 @@ export async function POST(request: NextRequest) {
       endDate = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
     }
 
-    // Auto-compute public date range (excluding vendor-only days)
+    // Auto-compute public date range (excluding vendor-only days).
+    // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so a
+    // bare YYYY-MM-DD lands at noon UTC (canonical anchor) rather than
+    // the midnight-UTC default that renders as previous-day-EDT.
     const { publicStartDate, publicEndDate } =
       eventDaysInput && eventDaysInput.length > 0
         ? computePublicDates(eventDaysInput)
         : {
-            publicStartDate: startDate ? new Date(startDate) : null,
-            publicEndDate: endDate ? new Date(endDate) : null,
+            publicStartDate: normalizeEventDate(startDate),
+            publicEndDate: normalizeEventDate(endDate),
           };
 
     const baseSlug = createSlug(name);
@@ -183,8 +187,8 @@ export async function POST(request: NextRequest) {
       stateCode: resolvedStateCode,
       isStatewide: isStatewide ?? false,
       promoterId: promoter.id,
-      startDate: startDate ? new Date(startDate) : null,
-      endDate: endDate ? new Date(endDate) : null,
+      startDate: normalizeEventDate(startDate),
+      endDate: normalizeEventDate(endDate),
       publicStartDate,
       publicEndDate,
       discontinuousDates: isDiscontinuous || false,

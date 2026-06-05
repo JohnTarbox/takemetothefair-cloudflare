@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   events,
@@ -16,7 +17,6 @@ import {
 import {
   eq,
   and,
-  gte,
   or,
   count,
   inArray,
@@ -172,7 +172,10 @@ async function getEvents(
     //   upcoming feed (where ORDER BY start_date ASC otherwise floats them).
     if (searchParams.includePast !== "true") {
       conditions.push(isNotNull(events.startDate));
-      conditions.push(gte(events.endDate, new Date()));
+      // A2 (Dev backlog 2026-06-05): give every event a 24h grace so an
+      // evening event whose stored end_date sits at noon UTC the same
+      // calendar day doesn't drop out of the upcoming feed at 8am EDT.
+      conditions.push(upcomingEndPredicate(new Date()));
     }
 
     if (searchParams.query) {

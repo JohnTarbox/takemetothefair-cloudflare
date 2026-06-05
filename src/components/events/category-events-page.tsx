@@ -3,9 +3,10 @@ import { Tag } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventVendors, vendors } from "@/lib/db/schema";
-import { eq, and, gte, isNotNull, count, inArray, like, sql } from "drizzle-orm";
+import { eq, and, isNotNull, count, inArray, like, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
@@ -64,7 +65,8 @@ async function getCategoryEvents(
   const conditions = [isPublicEventStatus(), like(events.categories, `%${category}%`)];
   if (!includePast) {
     conditions.push(isNotNull(events.startDate));
-    conditions.push(gte(events.endDate, new Date()));
+    // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+    conditions.push(upcomingEndPredicate(new Date()));
   }
 
   // Narrow projection — D1 100-col cap; see eventJoinProjection.

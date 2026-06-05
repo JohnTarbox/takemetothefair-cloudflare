@@ -1,6 +1,7 @@
-import { and, eq, gte, isNotNull, like, notLike, or, isNull, count, sql } from "drizzle-orm";
+import { and, eq, isNotNull, like, notLike, or, isNull, count, sql } from "drizzle-orm";
 import { events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { sanitizeLikeInput } from "@/lib/utils";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
@@ -60,7 +61,9 @@ export async function countPublicFilteredEvents(
 
   if (searchParams.includePast !== "true") {
     conditions.push(isNotNull(events.startDate));
-    conditions.push(gte(events.endDate, new Date()));
+    // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate
+    // — keep this in lockstep with src/app/events/page.tsx (same predicate).
+    conditions.push(upcomingEndPredicate(new Date()));
   }
 
   if (searchParams.query) {

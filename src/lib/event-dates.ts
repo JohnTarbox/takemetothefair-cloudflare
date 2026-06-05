@@ -1,26 +1,55 @@
 /**
- * Event-date input normalization for the suggest-event submit path.
+ * Date helpers for the events table.
  *
- * AI extraction returns dates in bare YYYY-MM-DD form. Parsing those
- * via `new Date()` produces a midnight-UTC Date, which renders as the
- * PREVIOUS calendar day in every US timezone (midnight UTC = 8pm EDT
- * yesterday / 4pm PDT yesterday). Shifting to noon UTC keeps the
- * intended calendar day site-wide.
+ * `normalizeEventDate` is a re-export from @takemetothefair/utils so the
+ * MCP Worker can wire through the same canonical noon-UTC normalizer
+ * (A3, Dev backlog 2026-06-05). Existing main-app imports
+ * (@/lib/event-dates) keep working unchanged.
  *
- * Backfill for existing midnight-UTC rows: drizzle/0074_event_dates_noon_utc.sql
+ * `upcomingEndPredicate` is the shared predicate for "is this event still
+ * upcoming?" filters across listings, search, sitemap, and home modules
+ * (A2, Dev backlog 2026-06-05). Pre-A2, each surface inlined
+ * `gte(events.endDate, new Date())`, which dropped events from public
+ * search the moment their stored end-date passed — for a noon-UTC
+ * anchored event running 5pm–9pm EDT, that meant disappearing at 8am EDT
+ * the same morning. Comparing against `now - 24h` gives every event a
+ * full extra calendar day of visibility, which covers the
+ * stored-anchor-precedes-actual-end-time gap without a per-row join.
  */
+import { sql, gte, type SQL } from "drizzle-orm";
+import { events } from "@/lib/db/schema";
 
-export function normalizeEventDate(input: string | null | undefined): Date | null {
-  if (!input) return null;
-  let s = input.trim();
-  if (!s) return null;
-  // Bare YYYY-MM-DD (no T separator) → append noon UTC
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    s = `${s}T12:00:00Z`;
-  } else if (/^\d{4}-\d{2}-\d{2}T00:00:00(\.000)?Z?$/.test(s)) {
-    // Explicit midnight UTC (with or without milliseconds / Z) → noon UTC
-    s = s.slice(0, 10) + "T12:00:00Z";
-  }
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
+export { normalizeEventDate } from "@takemetothefair/utils";
+
+/** Number of milliseconds in 24 hours. Public for tests. */
+export const UPCOMING_END_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Drizzle predicate for "this event is still upcoming." Compares
+ * `events.end_date` to `(now - 24h)` so an evening event whose stored
+ * end-date sits at noon UTC the same calendar day doesn't fall out of
+ * the upcoming filter at 8am EDT. Uses a 24h grace because the precise
+ * close-time fix (joining event_days.close_time per row) is a deeper
+ * change; the email's "give it one more day" rule is the minimal
+ * conservative fix that matches operator intuition ("an event happening
+ * today should be searchable today").
+ *
+ * For surfaces that need to include events with no end_date (e.g.
+ * promoters/[slug] which falls back to the home-page rule), wrap in
+ * `or(upcomingEndPredicate(now), isNull(events.endDate))`.
+ */
+export function upcomingEndPredicate(now: Date): SQL {
+  const cutoff = new Date(now.getTime() - UPCOMING_END_GRACE_MS);
+  return gte(events.endDate, cutoff);
+}
+
+/**
+ * Variant for tables joined under an alias (rare). Most callers use the
+ * bare `upcomingEndPredicate(now)`. Kept here so any future SQL builder
+ * that needs an inline literal can call this without re-deriving the
+ * cutoff.
+ */
+export function upcomingEndPredicateRaw(now: Date): SQL {
+  const cutoffSec = Math.floor((now.getTime() - UPCOMING_END_GRACE_MS) / 1000);
+  return sql`${events.endDate} >= ${cutoffSec}`;
 }

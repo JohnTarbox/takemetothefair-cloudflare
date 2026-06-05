@@ -3,9 +3,10 @@ import Link from "next/link";
 import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, userFavorites } from "@/lib/db/schema";
-import { eq, and, gte, asc, isNotNull, isNull, inArray, sql } from "drizzle-orm";
+import { eq, and, asc, isNotNull, isNull, inArray, sql } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { auth } from "@/lib/auth";
 import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
@@ -157,7 +158,8 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
             inArray(eventVendors.vendorId, batch),
             isPublicVendorStatus(),
             isPublicEventStatus(),
-            gte(events.endDate, new Date())
+            // A2 (Dev backlog 2026-06-05): 24h end-of-day grace.
+            upcomingEndPredicate(new Date())
           )
         )
         .orderBy(asc(events.startDate));

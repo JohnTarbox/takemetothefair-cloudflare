@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Calendar, ChevronRight, Eye, Heart, MapPin, Store, FileText } from "lucide-react";
-import { and, desc, eq, gte, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import {
   blogPosts,
@@ -10,6 +10,7 @@ import {
   venues,
 } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getDashboardMetrics, type Ga4Env } from "@/lib/ga4";
 import { bulkCountFavorites } from "@/lib/queries";
@@ -177,7 +178,8 @@ async function getCoverage(
       eventScope === "upcoming"
         ? and(
             isPublicEventStatus(),
-            or(gte(events.endDate, new Date()), isNull(events.endDate)),
+            // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+            or(upcomingEndPredicate(new Date()), isNull(events.endDate)),
           )
         : isPublicEventStatus();
     rows = await db

@@ -3,6 +3,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { SITEMAP_MIN_COMPLETENESS } from "@/lib/completeness";
 import { events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import {
   SITEMAP_BASE_URL,
   safeLastMod,
@@ -36,7 +37,8 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     db
       .select({ count: count() })
       .from(events)
-      .where(and(isPublicEventStatus(), isNotNull(events.startDate), gte(events.endDate, now))),
+      // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+      .where(and(isPublicEventStatus(), isNotNull(events.startDate), upcomingEndPredicate(now))),
     db.select({ count: count() }).from(events).where(isPublicEventStatus()),
   ]);
 

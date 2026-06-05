@@ -11,6 +11,7 @@ import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { parseDateOnly } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
@@ -169,14 +170,11 @@ export async function POST(request: NextRequest) {
       startDate = parseDateOnly(sorted[0]);
       endDate = parseDateOnly(sorted[sorted.length - 1]);
     } else {
-      if (event.startDate) {
-        startDate = new Date(event.startDate);
-        if (isNaN(startDate.getTime())) startDate = null;
-      }
-      if (event.endDate) {
-        endDate = new Date(event.endDate);
-        if (isNaN(endDate.getTime())) endDate = null;
-      }
+      // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so
+      // a bare YYYY-MM-DD lands at noon UTC (canonical anchor), matching
+      // every other ingest path.
+      startDate = normalizeEventDate(event.startDate);
+      endDate = normalizeEventDate(event.endDate);
     }
 
     // Resolve state_code: explicit from extractor wins, then venueState hint,
