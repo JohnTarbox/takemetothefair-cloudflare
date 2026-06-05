@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+import type { SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { blogPosts, contentLinks, events, vendors, venues } from "../schema.js";
 import { jsonContent, unsafeSlug } from "../helpers.js";
 import type { Db } from "../db.js";
@@ -64,26 +66,30 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
 
       const results: UncoveredRow[] = [];
 
-      // Shared: ids of entities already covered by a PUBLISHED link, for a given type
-      const coveredIdsFor = async (type: EntityType): Promise<string[]> => {
-        const rows = await db
-          .select({ id: contentLinks.targetId })
-          .from(contentLinks)
-          .innerJoin(blogPosts, eq(contentLinks.sourceId, blogPosts.id))
-          .where(
-            and(
-              eq(contentLinks.sourceType, "BLOG_POST"),
-              eq(contentLinks.targetType, type),
-              eq(blogPosts.status, "PUBLISHED")
-            )
-          );
-        return rows.map((r) => r.id).filter((id): id is string => !!id);
-      };
+      // B1 (Dev backlog 2026-06-05): correlated NOT EXISTS instead of
+      // notInArray(<id>, covered). The old shape fetched covered IDs into
+      // memory then bound them as ?,?,?,… in a NOT IN — which trips D1's
+      // 100-bound-param cap once the covered set exceeds 100 (270 events
+      // covered as of 2026-06-05, so the EVENT branch hit
+      // `D1_ERROR: too many SQL variables at offset 474`). The NOT EXISTS
+      // form pushes the filter into SQLite, scales to any covered count,
+      // and keeps the result shape identical. Pattern matches
+      // src/lib/recommendations/rules/confirm-past-event-occurrence.ts.
+      const notCoveredPredicate = (
+        type: EntityType,
+        idCol: AnySQLiteColumn
+      ): SQL => sql`NOT EXISTS (
+        SELECT 1 FROM content_links cl
+        INNER JOIN blog_posts bp ON cl.source_id = bp.id
+        WHERE cl.source_type = 'BLOG_POST'
+          AND cl.target_type = ${type}
+          AND cl.target_id = ${idCol}
+          AND bp.status = 'PUBLISHED'
+      )`;
 
       if (types.includes("EVENT")) {
-        const covered = await coveredIdsFor("EVENT");
         const whereParts = [
-          covered.length > 0 ? notInArray(events.id, covered) : sql`1=1`,
+          notCoveredPredicate("EVENT", events.id),
           stateCode ? eq(venues.state, stateCode) : sql`1=1`,
         ];
         const rows = await db
@@ -102,9 +108,8 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
       }
 
       if (types.includes("VENDOR")) {
-        const covered = await coveredIdsFor("VENDOR");
         const whereParts = [
-          covered.length > 0 ? notInArray(vendors.id, covered) : sql`1=1`,
+          notCoveredPredicate("VENDOR", vendors.id),
           stateCode ? eq(vendors.state, stateCode) : sql`1=1`,
         ];
         const rows = await db
@@ -122,9 +127,8 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
       }
 
       if (types.includes("VENUE")) {
-        const covered = await coveredIdsFor("VENUE");
         const whereParts = [
-          covered.length > 0 ? notInArray(venues.id, covered) : sql`1=1`,
+          notCoveredPredicate("VENUE", venues.id),
           stateCode ? eq(venues.state, stateCode) : sql`1=1`,
         ];
         const rows = await db
