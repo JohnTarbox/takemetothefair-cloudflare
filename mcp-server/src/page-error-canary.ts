@@ -50,6 +50,7 @@
  * logError() and swallowed — never thrown — so a single canary failure
  * doesn't trigger Cloudflare's cron retry.
  */
+import { inArray } from "drizzle-orm";
 import { pageErrorCanaryState } from "@takemetothefair/db-schema";
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
@@ -70,10 +71,16 @@ const WINDOW_MINUTES = 10;
  *  `app/admin/page.tsx:getRecentSubmissions`). */
 const SOURCE_PATTERN = "app/%page.tsx:%";
 
-/** Tier thresholds — calibrated against the 2026-06-04 outage rate
- *  (~250 errs/hr aggregate during the broken state ≈ 42 per 10-min window). */
-const RED_THRESHOLD = 50;
-const YELLOW_THRESHOLD = 10;
+/** Per-SOURCE tier thresholds (B2 per-source refactor, 2026-06-05).
+ *  The 2026-06-04 outage drove ~42 errs/win aggregate but ~10/win per
+ *  affected source (4 fetchers split the volume). Per-source thresholds:
+ *  RED=10/win and YELLOW=3/win catch the same outage shape source-by-
+ *  source. Lower numbers than the aggregate thresholds because a
+ *  single fetcher spiking is a strong signal — global outages produce
+ *  multiple separate per-source alerts which is the desired UX (you
+ *  see WHICH fetchers broke). */
+const RED_THRESHOLD = 10;
+const YELLOW_THRESHOLD = 3;
 
 /** Debounce — page-error state can flip on a single deploy, so these
  *  are in deploy-turnaround-time order of magnitude (not the dedup
@@ -184,19 +191,38 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
     return;
   }
 
-  // Keep the legacy `topSource` for any downstream consumers (the
-  // alert dispatch below still references it for the one-liner Slack
-  // summary; bySource carries the full top-5 for the body).
-  const topSource: { source: string | null; count: number } | null = bySource[0] ?? null;
+  // ── 2. Per-source debounce evaluation (B2 follow-up, 2026-06-05) ──
+  //
+  // Was: one decideTier() on totalCount with two debounce rows (RED +
+  // YELLOW). A multi-source outage debounced as one event.
+  //
+  // Now: load all (tier, source) debounce rows for the sources in
+  // this window, then decide+dispatch per-source. Each source gets
+  // its own debounce window — a localized regression on getEvents
+  // and a separate one on getVenue alert independently.
+  //
+  // Cheap-path early-exit: if no source crosses YELLOW_THRESHOLD at
+  // all (sub-3 per source), skip the debounce-state read entirely.
+  const candidateSources = bySource.filter((s) => s.source && s.count >= YELLOW_THRESHOLD);
+  if (candidateSources.length === 0) {
+    console.log(
+      `[cron] page-error-canary ok — total=${totalCount}, ` +
+        `no source crossed YELLOW threshold (${YELLOW_THRESHOLD}/win) — no alert`
+    );
+    return;
+  }
 
-  // 2. Load current debounce state for both tiers.
-  let redLastAlertedAt: Date | null = null;
-  let yellowLastAlertedAt: Date | null = null;
+  // Load only the debounce rows for our candidate sources (avoids a
+  // table-scan when most sources are silent).
+  const candidateSourceNames = candidateSources.map((s) => s.source!);
+  const debounceByKey = new Map<string, Date>(); // key = `${tier}::${source}`
   try {
-    const stateRows = await db.select().from(pageErrorCanaryState);
+    const stateRows = await db
+      .select()
+      .from(pageErrorCanaryState)
+      .where(inArray(pageErrorCanaryState.source, candidateSourceNames));
     for (const row of stateRows) {
-      if (row.tier === "RED") redLastAlertedAt = row.lastAlertedAt;
-      else if (row.tier === "YELLOW") yellowLastAlertedAt = row.lastAlertedAt;
+      debounceByKey.set(`${row.tier}::${row.source}`, row.lastAlertedAt);
     }
   } catch (error) {
     await logError(env.DB, {
@@ -208,127 +234,114 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
     return;
   }
 
-  const tier = decideTier(totalCount, redLastAlertedAt, yellowLastAlertedAt, now);
-
-  if (tier == null) {
-    // No-op: either below YELLOW threshold or debounced. Log briefly so
-    // wrangler tail shows the cron is alive even on green fires.
-    console.log(
-      `[cron] page-error-canary ok — count=${totalCount} (window=${WINDOW_MINUTES}m, ` +
-        `red_last=${redLastAlertedAt?.toISOString() ?? "n/a"}, ` +
-        `yellow_last=${yellowLastAlertedAt?.toISOString() ?? "n/a"}) — no alert`
-    );
-    return;
-  }
-
-  // 3. Build alert + dispatch.
-  const emoji = tier === "RED" ? "🔴" : "🟡";
-  const topDetail = topSource?.source
-    ? ` · top source: \`${topSource.source}\` (${topSource.count})`
-    : "";
-  // B2 (2026-06-04): include top-5 source breakdown in the Slack
-  // body so operators see which fetcher(s) spiked at-a-glance. Falls
-  // through harmlessly when bySource is empty or single-entry.
-  const sourceListLines = bySource
-    .slice(0, 5)
-    .map((s) => `• \`${s.source ?? "<null>"}\` — ${s.count}`);
-  const sourceList = bySource.length > 1 ? `\n*Top sources*:\n${sourceListLines.join("\n")}` : "";
-  const slackText =
-    `${emoji} *Page-error canary ${tier}* — ${totalCount} errors in last ${WINDOW_MINUTES} min` +
-    `${topDetail}${sourceList}\n<https://meetmeatthefair.com/admin/error-logs|Open admin/error-logs>`;
-
   const webhookUrl = env.SLACK_WEBHOOK_URL_TECHNICAL;
-  if (webhookUrl) {
-    const dispatch = await postSlackWebhook(webhookUrl, slackText);
-    if (!dispatch.ok) {
-      await logError(env.DB, {
-        source: SOURCE,
-        message: `${tier} Slack dispatch failed: ${dispatch.error}`,
-        sessionId,
-        context: { tier, totalCount, topSource: topSource?.source ?? null },
-      });
-    } else {
-      console.log(
-        `[cron] page-error-canary ${tier} → Slack — count=${totalCount} top=${topSource?.source ?? "n/a"}`
-      );
-    }
-  }
-
   const alertEmail = env.ALERT_EMAIL_TECHNICAL;
-  if (alertEmail && env.EMAIL_JOBS) {
-    const subject = `${emoji} Page-error canary ${tier}: ${totalCount} errors in ${WINDOW_MINUTES} min`;
-    const textBody =
-      `${totalCount} errors matching source LIKE '${SOURCE_PATTERN}' in the last ${WINDOW_MINUTES} minutes.\n\n` +
-      (topSource?.source ? `Top source: ${topSource.source} (${topSource.count})\n\n` : "") +
-      `Open admin/error-logs: https://meetmeatthefair.com/admin/error-logs\n`;
-    const htmlBody =
-      `<p><strong>${emoji} Page-error canary ${tier}</strong> — ${totalCount} errors in last ${WINDOW_MINUTES} min</p>` +
-      (topSource?.source
-        ? `<p>Top source: <code>${topSource.source}</code> (${topSource.count})</p>`
-        : "") +
-      `<p><a href="https://meetmeatthefair.com/admin/error-logs">Open admin/error-logs</a></p>`;
+  let firedCount = 0;
+  let skippedDebouncedCount = 0;
+
+  for (const cs of candidateSources) {
+    const src = cs.source!;
+    const redLast = debounceByKey.get(`RED::${src}`) ?? null;
+    const yellowLast = debounceByKey.get(`YELLOW::${src}`) ?? null;
+    const tier = decideTier(cs.count, redLast, yellowLast, now);
+    if (tier == null) {
+      skippedDebouncedCount++;
+      continue;
+    }
+    firedCount++;
+    const emoji = tier === "RED" ? "🔴" : "🟡";
+
+    const slackText =
+      `${emoji} *Page-error canary ${tier}* — \`${src}\` got ${cs.count} errors in last ${WINDOW_MINUTES} min` +
+      `\n<https://meetmeatthefair.com/admin/error-logs|Open admin/error-logs>`;
+
+    if (webhookUrl) {
+      const dispatch = await postSlackWebhook(webhookUrl, slackText);
+      if (!dispatch.ok) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: `${tier} Slack dispatch failed for ${src}: ${dispatch.error}`,
+          sessionId,
+          context: { tier, src, count: cs.count },
+        });
+      } else {
+        console.log(`[cron] page-error-canary ${tier} → Slack — src=${src} count=${cs.count}`);
+      }
+    }
+
+    if (alertEmail && env.EMAIL_JOBS) {
+      const subject = `${emoji} Page-error canary ${tier}: ${src} (${cs.count} in ${WINDOW_MINUTES}m)`;
+      const textBody =
+        `${cs.count} errors on \`${src}\` in the last ${WINDOW_MINUTES} minutes.\n\n` +
+        `Open admin/error-logs: https://meetmeatthefair.com/admin/error-logs\n`;
+      const htmlBody =
+        `<p><strong>${emoji} Page-error canary ${tier}</strong> — ${cs.count} errors on <code>${src}</code> in last ${WINDOW_MINUTES} min</p>` +
+        `<p><a href="https://meetmeatthefair.com/admin/error-logs">Open admin/error-logs</a></p>`;
+      try {
+        await env.EMAIL_JOBS.send({
+          to: alertEmail,
+          subject,
+          text: textBody,
+          html: htmlBody,
+          source: `page-error-canary:${tier.toLowerCase()}`,
+        });
+      } catch (error) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: `${tier} email enqueue failed for ${src}`,
+          error,
+          sessionId,
+          context: { tier, src, count: cs.count, alertEmail },
+        });
+      }
+    } else if (alertEmail && !env.EMAIL_JOBS) {
+      // One warn per fire would be noisy across sources; emit once
+      // per cron invocation by checking firedCount.
+      if (firedCount === 1) {
+        await logError(env.DB, {
+          level: "warn",
+          source: SOURCE,
+          message: "ALERT_EMAIL_TECHNICAL is set but EMAIL_JOBS queue binding is missing",
+          sessionId,
+        });
+      }
+    }
+
+    // Upsert the per-(tier, source) debounce row.
     try {
-      await env.EMAIL_JOBS.send({
-        to: alertEmail,
-        subject,
-        text: textBody,
-        html: htmlBody,
-        source: `page-error-canary:${tier.toLowerCase()}`,
-      });
-      console.log(`[cron] page-error-canary ${tier} → email queued — ${alertEmail}`);
+      await db
+        .insert(pageErrorCanaryState)
+        .values({
+          tier,
+          source: src,
+          lastAlertedAt: now,
+          lastCount: cs.count,
+        })
+        .onConflictDoUpdate({
+          target: [pageErrorCanaryState.tier, pageErrorCanaryState.source],
+          set: { lastAlertedAt: now, lastCount: cs.count },
+        });
     } catch (error) {
       await logError(env.DB, {
         source: SOURCE,
-        message: `${tier} email enqueue failed`,
+        message: `${tier} debounce row upsert failed for ${src}`,
         error,
         sessionId,
-        context: { tier, totalCount, alertEmail },
+        context: { tier, src, count: cs.count },
       });
     }
-  } else if (alertEmail && !env.EMAIL_JOBS) {
-    await logError(env.DB, {
-      level: "warn",
-      source: SOURCE,
-      message: "ALERT_EMAIL_TECHNICAL is set but EMAIL_JOBS queue binding is missing",
-      sessionId,
-    });
   }
 
-  if (!webhookUrl && !alertEmail) {
+  if (firedCount === 0) {
     console.log(
-      `[cron] page-error-canary ${tier} — no push channels configured (debounce row still written); ` +
-        `count=${totalCount}`
+      `[cron] page-error-canary all-debounced — ${skippedDebouncedCount} sources crossed ` +
+        `but every (tier, source) within debounce window; no alert fired`
     );
-  }
-
-  // 4. Upsert the debounce row for this tier.
-  try {
-    await db
-      .insert(pageErrorCanaryState)
-      .values({
-        tier,
-        lastAlertedAt: now,
-        lastCount: totalCount,
-        lastTopSource: topSource?.source ?? null,
-        lastTopCount: topSource?.count ?? null,
-      })
-      .onConflictDoUpdate({
-        target: pageErrorCanaryState.tier,
-        set: {
-          lastAlertedAt: now,
-          lastCount: totalCount,
-          lastTopSource: topSource?.source ?? null,
-          lastTopCount: topSource?.count ?? null,
-        },
-      });
-  } catch (error) {
-    await logError(env.DB, {
-      source: SOURCE,
-      message: `${tier} debounce row upsert failed`,
-      error,
-      sessionId,
-      context: { tier, totalCount },
-    });
+  } else {
+    console.log(
+      `[cron] page-error-canary fired=${firedCount} debounced=${skippedDebouncedCount} ` +
+        `(window=${WINDOW_MINUTES}m, total=${totalCount})`
+    );
   }
 }
 
