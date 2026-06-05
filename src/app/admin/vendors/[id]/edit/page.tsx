@@ -53,16 +53,27 @@ interface Vendor {
   // Verified Pro tier (drizzle/0052) — same pattern.
   verifiedPro: boolean;
   verifiedProAt: string | null;
-  // EH1 hierarchy (drizzle/0106). Phase 4 surfaces these in the form;
-  // API perimeter shipped in #341. Display resolution rule:
-  // override_permitted && display_preference != 'INHERIT' → preference
-  // else → parent.default_display. Pure function in
-  // src/lib/vendor-hierarchy.ts.
+  // EH1 hierarchy (drizzle/0106 + 0107). Phase 1 full relationship model.
+  // Display resolution rule:
+  //   override permitted + mode != 'inherit' → mode wins
+  //   else → parent.defaultChildDisplay
+  // Pure function in src/lib/vendor-hierarchy.ts.
   role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
-  parentVendorId: string | null;
-  defaultDisplay: "NATIONAL" | "LOCAL" | null;
-  overridePermitted: boolean;
-  displayPreference: "NATIONAL" | "LOCAL" | "INHERIT" | null;
+  brandParentVendorId: string | null;
+  operatorParentVendorId: string | null;
+  aliasOfVendorId: string | null;
+  relationshipType:
+    | "branch"
+    | "franchise"
+    | "dealer"
+    | "member"
+    | "agent"
+    | "employee_branch"
+    | "government"
+    | "independent";
+  defaultChildDisplay: "self" | "brand_parent" | "both" | null;
+  displayOverridePermitted: boolean;
+  displayMode: "inherit" | "self" | "brand_parent" | "operator_parent" | "both" | null;
 }
 
 export default function EditVendorPage() {
@@ -93,14 +104,26 @@ export default function EditVendorPage() {
     paymentMethods: [] as string[],
     licenseInfo: "",
     insuranceInfo: "",
-    // EH1 hierarchy fields. UI uses camelCase; submit handler maps them to
-    // snake_case (role / parent_vendor_id / default_display / etc.) which
-    // is what vendorUpdateSchema expects.
+    // EH1 hierarchy fields. UI uses camelCase; submit handler maps them
+    // to snake_case (matching vendorUpdateSchema's input shape). Empty
+    // strings are sentinels for "unset" and get mapped to null at submit
+    // time so Zod's nullable-enum check passes.
     role: "INDEPENDENT" as "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT",
-    parentVendorId: "",
-    defaultDisplay: "" as "" | "NATIONAL" | "LOCAL",
-    overridePermitted: false,
-    displayPreference: "" as "" | "NATIONAL" | "LOCAL" | "INHERIT",
+    brandParentVendorId: "",
+    operatorParentVendorId: "",
+    aliasOfVendorId: "",
+    relationshipType: "independent" as
+      | "branch"
+      | "franchise"
+      | "dealer"
+      | "member"
+      | "agent"
+      | "employee_branch"
+      | "government"
+      | "independent",
+    defaultChildDisplay: "" as "" | "self" | "brand_parent" | "both",
+    displayOverridePermitted: false,
+    displayMode: "" as "" | "inherit" | "self" | "brand_parent" | "operator_parent" | "both",
   });
 
   useEffect(() => {
@@ -149,10 +172,13 @@ export default function EditVendorPage() {
           insuranceInfo: data.insuranceInfo || "",
           // EH1 hierarchy
           role: data.role ?? "INDEPENDENT",
-          parentVendorId: data.parentVendorId ?? "",
-          defaultDisplay: data.defaultDisplay ?? "",
-          overridePermitted: data.overridePermitted ?? false,
-          displayPreference: data.displayPreference ?? "",
+          brandParentVendorId: data.brandParentVendorId ?? "",
+          operatorParentVendorId: data.operatorParentVendorId ?? "",
+          aliasOfVendorId: data.aliasOfVendorId ?? "",
+          relationshipType: data.relationshipType ?? "independent",
+          defaultChildDisplay: data.defaultChildDisplay ?? "",
+          displayOverridePermitted: data.displayOverridePermitted ?? false,
+          displayMode: data.displayMode ?? "",
         });
       }
     } catch (error) {
@@ -175,20 +201,28 @@ export default function EditVendorPage() {
       // mapped to null so they don't fail Zod's enum gate.
       const {
         role,
-        parentVendorId,
-        defaultDisplay,
-        overridePermitted,
-        displayPreference,
+        brandParentVendorId,
+        operatorParentVendorId,
+        aliasOfVendorId,
+        relationshipType,
+        defaultChildDisplay,
+        displayOverridePermitted,
+        displayMode,
         ...restFormData
       } = formData;
       const submitData = {
         ...restFormData,
         yearEstablished: formData.yearEstablished ? parseInt(formData.yearEstablished, 10) : null,
         role,
-        parent_vendor_id: parentVendorId.trim() === "" ? null : parentVendorId.trim(),
-        default_display: defaultDisplay === "" ? null : defaultDisplay,
-        override_permitted: overridePermitted,
-        display_preference: displayPreference === "" ? null : displayPreference,
+        brand_parent_vendor_id:
+          brandParentVendorId.trim() === "" ? null : brandParentVendorId.trim(),
+        operator_parent_vendor_id:
+          operatorParentVendorId.trim() === "" ? null : operatorParentVendorId.trim(),
+        alias_of_vendor_id: aliasOfVendorId.trim() === "" ? null : aliasOfVendorId.trim(),
+        relationship_type: relationshipType,
+        default_child_display: defaultChildDisplay === "" ? null : defaultChildDisplay,
+        display_override_permitted: displayOverridePermitted,
+        display_mode: displayMode === "" ? null : displayMode,
       };
 
       const res = await fetch(`/api/admin/vendors/${params.id}`, {
@@ -440,16 +474,24 @@ export default function EditVendorPage() {
               </div>
             </div>
 
-            {/* EH1 Vendor Hierarchy Section (Phase 4) — exposes the 5
-                national-brand / local-office columns. Most vendors are
-                INDEPENDENT and only see the role select; the other
-                fields conditionally appear based on the chosen role. */}
+            {/* EH1 Vendor Hierarchy Section — full relationship model
+                (drizzle/0107). Surfaces 8 fields:
+                  - role (always visible) — fast NATIONAL/LOCAL_OFFICE/INDEPENDENT discriminator.
+                  - relationshipType (always visible) — 8-shape typology.
+                  - aliasOfVendorId (always visible) — same-entity dedup; admin-only.
+                  - brandParentVendorId (LOCAL_OFFICE only) — the consumer-facing brand.
+                  - operatorParentVendorId (LOCAL_OFFICE only) — the contracts/billing entity.
+                  - defaultChildDisplay (NATIONAL only) — what offices show by default.
+                  - displayOverridePermitted (LOCAL_OFFICE only) — the per-office gate.
+                  - displayMode (LOCAL_OFFICE only) — the office's preference.
+                Most vendors are INDEPENDENT and only see role + relationshipType + alias inputs. */}
             <div className="border-t pt-6">
               <h3 className="text-lg font-medium mb-4">Vendor Hierarchy</h3>
               <p className="text-sm text-gray-600 mb-4">
                 Most vendors are <strong>Independent</strong>. Use <strong>National</strong> for
                 parent brands (e.g. LeafFilter HQ) and <strong>Local Office</strong> for franchise /
-                regional offices that should show under a national parent.
+                regional offices that should show under a national parent. Set{" "}
+                <strong>Relationship Type</strong> to describe how the office relates to its parent.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -471,106 +513,196 @@ export default function EditVendorPage() {
                   </select>
                 </div>
 
-                {/* Parent picker — only for LOCAL_OFFICE. ID input rather
-                    than a search picker for now (only ~2 NATIONAL parents
-                    today; pasting the id from /admin/vendors is fine).
-                    Phase 5 can upgrade to a typeahead. */}
+                {/* Relationship type — always visible. Maps to the 8-shape
+                    typology from the design doc. Carried in the schema
+                    even on INDEPENDENT rows so the column is uniform. */}
+                <div className="space-y-2">
+                  <Label htmlFor="relationshipType">Relationship Type</Label>
+                  <select
+                    id="relationshipType"
+                    value={formData.relationshipType}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        relationshipType: e.target.value as Vendor["relationshipType"],
+                      })
+                    }
+                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                  >
+                    <option value="independent">independent (default — no relationship)</option>
+                    <option value="branch">branch (W-2 office of operator)</option>
+                    <option value="franchise">franchise (independent operator)</option>
+                    <option value="dealer">dealer (reseller)</option>
+                    <option value="member">member (cooperative)</option>
+                    <option value="agent">agent (1099 — e.g. NY Life)</option>
+                    <option value="employee_branch">employee_branch (small-corp branch)</option>
+                    <option value="government">government (gov entity)</option>
+                  </select>
+                </div>
+
+                {/* Brand parent picker — only for LOCAL_OFFICE. ID input
+                    rather than a search picker for now (handful of NATIONAL
+                    parents today; pasting the id from /admin/vendors is
+                    fine). Phase 5 can upgrade to a typeahead. */}
                 {formData.role === "LOCAL_OFFICE" && (
                   <div className="space-y-2">
-                    <Label htmlFor="parentVendorId">Parent Vendor ID</Label>
+                    <Label htmlFor="brandParentVendorId">Brand Parent Vendor ID</Label>
                     <Input
-                      id="parentVendorId"
-                      value={formData.parentVendorId}
-                      onChange={(e) => setFormData({ ...formData, parentVendorId: e.target.value })}
-                      placeholder="UUID of the NATIONAL parent vendor"
+                      id="brandParentVendorId"
+                      value={formData.brandParentVendorId}
+                      onChange={(e) =>
+                        setFormData({ ...formData, brandParentVendorId: e.target.value })
+                      }
+                      placeholder="UUID of the NATIONAL brand parent vendor"
                     />
                     <p className="text-xs text-gray-500">
-                      Look up the NATIONAL parent at <code>/admin/vendors</code> and paste its{" "}
-                      <code>id</code> here.
+                      The consumer-facing brand (who appears on signage). Look up the NATIONAL
+                      parent at <code>/admin/vendors</code> and paste its <code>id</code> here.
                     </p>
                   </div>
                 )}
 
-                {/* Default display — only for NATIONAL. Decides what the
-                    public sees when a child has NO override (the common
-                    case). LOCAL means franchise pages surface; NATIONAL
-                    means franchise pages canonical-up to the hub. */}
+                {/* Operator parent — only for LOCAL_OFFICE. Distinct from
+                    brand parent for Shape C (Esler-run RbA franchises,
+                    Bath Fitter / Premier Bath). Often equals brand parent
+                    for Shape A (branch shapes — LeafFilter, Goodhue). */}
+                {formData.role === "LOCAL_OFFICE" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="operatorParentVendorId">Operator Parent Vendor ID</Label>
+                    <Input
+                      id="operatorParentVendorId"
+                      value={formData.operatorParentVendorId}
+                      onChange={(e) =>
+                        setFormData({ ...formData, operatorParentVendorId: e.target.value })
+                      }
+                      placeholder="UUID of the operator (contracts/billing) vendor"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Who signs contracts / pays booth fees. Equal to brand parent for branch
+                      shapes; distinct for franchise-with-operator shapes (e.g. Esler Companies).
+                    </p>
+                  </div>
+                )}
+
+                {/* Alias of — admin-only. Marks this row as the SAME
+                    operating entity as another row (different spelling).
+                    The aliased row should also be soft-deleted +
+                    redirectToVendorId-pointed-at-canonical via the
+                    set_vendor_alias MCP tool. */}
+                <div className="space-y-2">
+                  <Label htmlFor="aliasOfVendorId">Alias Of Vendor ID</Label>
+                  <Input
+                    id="aliasOfVendorId"
+                    value={formData.aliasOfVendorId}
+                    onChange={(e) => setFormData({ ...formData, aliasOfVendorId: e.target.value })}
+                    placeholder="UUID of the canonical vendor (if this is an alias)"
+                  />
+                  <p className="text-xs text-gray-500">
+                    Use the <code>set_vendor_alias</code> MCP tool instead to also repoint events.
+                    This input is for read-only inspection or manual cleanup.
+                  </p>
+                </div>
+
+                {/* Default child display — only for NATIONAL. Decides what
+                    the public sees when a child has NO override (the
+                    common case). 'self' means franchise pages surface;
+                    'brand_parent' means franchise pages canonical-up to
+                    the hub; 'both' means office is canonical but also
+                    shown under the brand. */}
                 {formData.role === "NATIONAL" && (
                   <div className="space-y-2">
-                    <Label htmlFor="defaultDisplay">Default Display (for children)</Label>
+                    <Label htmlFor="defaultChildDisplay">Default Child Display</Label>
                     <select
-                      id="defaultDisplay"
-                      value={formData.defaultDisplay}
+                      id="defaultChildDisplay"
+                      value={formData.defaultChildDisplay}
                       onChange={(e) =>
                         setFormData({
                           ...formData,
-                          defaultDisplay: e.target.value as "" | "NATIONAL" | "LOCAL",
+                          defaultChildDisplay: e.target.value as
+                            | ""
+                            | "self"
+                            | "brand_parent"
+                            | "both",
                         })
                       }
                       className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
                     >
                       <option value="">— Unset —</option>
-                      <option value="LOCAL">LOCAL (children pages indexed)</option>
-                      <option value="NATIONAL">NATIONAL (children canonical-up to this hub)</option>
+                      <option value="self">self (children pages indexed)</option>
+                      <option value="brand_parent">
+                        brand_parent (children canonical-up to this hub)
+                      </option>
+                      <option value="both">both (office indexed + linked under brand)</option>
                     </select>
                   </div>
                 )}
 
                 {/* Override gate — only meaningful on LOCAL_OFFICE. Default
-                    OFF: child can REQUEST a preference but the parent's
-                    default_display wins. Flip ON to grant the child its
-                    self-selected display. */}
+                    OFF: child can REQUEST a mode but the brand parent's
+                    defaultChildDisplay wins. Flip ON to grant the child
+                    its self-selected display. Encodes spec §4.4
+                    "parent's gate always wins". */}
                 {formData.role === "LOCAL_OFFICE" && (
                   <div className="space-y-2">
-                    <Label htmlFor="overridePermitted">Override Permitted (gate)</Label>
+                    <Label htmlFor="displayOverridePermitted">
+                      Display Override Permitted (gate)
+                    </Label>
                     <div className="flex items-center gap-2 pt-2">
                       <input
                         type="checkbox"
-                        id="overridePermitted"
-                        checked={formData.overridePermitted}
+                        id="displayOverridePermitted"
+                        checked={formData.displayOverridePermitted}
                         onChange={(e) =>
-                          setFormData({ ...formData, overridePermitted: e.target.checked })
+                          setFormData({
+                            ...formData,
+                            displayOverridePermitted: e.target.checked,
+                          })
                         }
                         className="rounded border-gray-300"
                       />
                       <span className="text-sm text-gray-600">
-                        Let this office&apos;s preference override the parent&apos;s default
+                        Let this office&apos;s preference override the brand&apos;s default
                       </span>
                     </div>
                   </div>
                 )}
 
                 {/* Child preference — only meaningful on LOCAL_OFFICE.
-                    INHERIT = fall through to parent's default_display.
-                    Setting NATIONAL or LOCAL here only takes effect when
-                    override_permitted is ON. */}
+                    'inherit' = fall through to brand's defaultChildDisplay.
+                    Setting one of the four resolved modes here only
+                    takes effect when displayOverridePermitted is ON. */}
                 {formData.role === "LOCAL_OFFICE" && (
                   <div className="space-y-2">
-                    <Label htmlFor="displayPreference">Display Preference</Label>
+                    <Label htmlFor="displayMode">Display Mode</Label>
                     <select
-                      id="displayPreference"
-                      value={formData.displayPreference}
+                      id="displayMode"
+                      value={formData.displayMode}
                       onChange={(e) =>
                         setFormData({
                           ...formData,
-                          displayPreference: e.target.value as
+                          displayMode: e.target.value as
                             | ""
-                            | "NATIONAL"
-                            | "LOCAL"
-                            | "INHERIT",
+                            | "inherit"
+                            | "self"
+                            | "brand_parent"
+                            | "operator_parent"
+                            | "both",
                         })
                       }
                       className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
                     >
                       <option value="">— Unset —</option>
-                      <option value="INHERIT">INHERIT (fall through to parent)</option>
-                      <option value="LOCAL">
-                        LOCAL (this office&apos;s page is the canonical)
+                      <option value="inherit">inherit (fall through to brand)</option>
+                      <option value="self">self (this office&apos;s page is canonical)</option>
+                      <option value="brand_parent">brand_parent (canonical-up to brand hub)</option>
+                      <option value="operator_parent">
+                        operator_parent (canonical-up to operator)
                       </option>
-                      <option value="NATIONAL">NATIONAL (canonical-up to parent hub)</option>
+                      <option value="both">both (office indexed + shown under brand)</option>
                     </select>
                     <p className="text-xs text-gray-500">
-                      Only takes effect when the parent grants <em>Override Permitted</em>.
+                      Only takes effect when the brand parent grants{" "}
+                      <em>Display Override Permitted</em>.
                     </p>
                   </div>
                 )}

@@ -18,6 +18,7 @@ import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
+import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -252,6 +253,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerAdminProblemReportTools(this.server, db);
         // DQ1 follow-up (2026-06-05) — merge_venue + merge_promoter.
         registerMergeEntitiesTools(this.server, db, auth);
+        // EH1 Phase 1 (2026-06-05) — set_vendor_relationship + set_vendor_display_policy + set_vendor_alias.
+        registerVendorHierarchyTools(this.server, db, auth);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -447,6 +450,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerAdminTools(server, db, auth, env);
       registerAdminProblemReportTools(server, db);
       registerMergeEntitiesTools(server, db, auth);
+      registerVendorHierarchyTools(server, db, auth);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);

@@ -80,14 +80,14 @@ export async function PATCH(request: NextRequest) {
       paymentMethods,
       licenseInfo,
       insuranceInfo,
-      displayPreference,
+      displayMode,
     } = validation.data;
 
     // Snapshot current vendor for slug-change detection, slug history,
     // and IndexNow material-change comparison. Mirrors the admin PATCH at
     // src/app/api/admin/vendors/[id]/route.ts — keeping the self-edit
     // surface in parity so renames don't silently break branded URLs.
-    // EH1 Phase 3: also reads `role` for the displayPreference gate below.
+    // EH1 Phase 1: also reads `role` for the displayMode gate below.
     const [currentVendor] = await db
       .select({
         id: vendors.id,
@@ -108,16 +108,17 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Vendor profile not found" }, { status: 404 });
     }
 
-    // EH1 Phase 3 — displayPreference gate. Only LOCAL_OFFICE rows can
-    // self-edit this field (it expresses a child's request; whether it's
-    // honored at render still depends on parent.override_permitted, which
-    // remains admin/parent-owner only). Non-LOCAL_OFFICE callers get a
-    // clear 400 instead of a silent no-op so the UI can surface the rule.
-    if (displayPreference !== undefined && currentVendor.role !== "LOCAL_OFFICE") {
+    // EH1 Phase 1 — displayMode gate. Only LOCAL_OFFICE rows can self-edit
+    // this field (it expresses a child's request; whether it's honored at
+    // render still depends on the brand parent's displayOverridePermitted
+    // gate, which remains admin/brand-parent-owner only). Non-LOCAL_OFFICE
+    // callers get a clear 400 instead of a silent no-op so the UI can
+    // surface the rule.
+    if (displayMode !== undefined && currentVendor.role !== "LOCAL_OFFICE") {
       return NextResponse.json(
         {
           error:
-            "displayPreference can only be set on LOCAL_OFFICE vendors. " +
+            "displayMode can only be set on LOCAL_OFFICE vendors. " +
             "Contact the national brand to convert this listing into a local office.",
         },
         { status: 400 }
@@ -178,9 +179,9 @@ export async function PATCH(request: NextRequest) {
     if (paymentMethods) updateData.paymentMethods = JSON.stringify(paymentMethods);
     if (licenseInfo !== undefined) updateData.licenseInfo = licenseInfo;
     if (insuranceInfo !== undefined) updateData.insuranceInfo = insuranceInfo;
-    // EH1 Phase 3 — pre-validated above (only LOCAL_OFFICE callers reach
+    // EH1 Phase 1 — pre-validated above (only LOCAL_OFFICE callers reach
     // this assignment). Safe to set unconditionally when present.
-    if (displayPreference !== undefined) updateData.displayPreference = displayPreference;
+    if (displayMode !== undefined) updateData.displayMode = displayMode;
 
     await db.update(vendors).set(updateData).where(eq(vendors.userId, gate.userId));
 

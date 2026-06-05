@@ -1666,6 +1666,49 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
       logo_url: z.string().optional().describe("URL to vendor logo image"),
+      // EH1 Phase 1 — optional hierarchy + relationship fields at create
+      // time. Most callers leave these unset (the row defaults to
+      // role='INDEPENDENT', relationship_type='independent'). Useful when
+      // an ingestion path knows up-front that a row is an office of an
+      // existing brand. The three audited admin tools remain the
+      // preferred path for relationship edits after creation.
+      role: z
+        .enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"])
+        .optional()
+        .describe("Hierarchy role at create time. Defaults to INDEPENDENT."),
+      brand_parent_vendor_id: z
+        .string()
+        .optional()
+        .describe("Brand-parent vendor id (the consumer-facing brand)."),
+      operator_parent_vendor_id: z
+        .string()
+        .optional()
+        .describe("Operator-parent vendor id (contracts/billing entity)."),
+      relationship_type: z
+        .enum([
+          "branch",
+          "franchise",
+          "dealer",
+          "member",
+          "agent",
+          "employee_branch",
+          "government",
+          "independent",
+        ])
+        .optional()
+        .describe("8-shape relationship typology. Defaults to 'independent'."),
+      default_child_display: z
+        .enum(["self", "brand_parent", "both"])
+        .optional()
+        .describe("For NATIONAL rows: the default display target for child offices."),
+      display_override_permitted: z
+        .boolean()
+        .optional()
+        .describe("For LOCAL_OFFICE rows: the per-office gate. Defaults to false."),
+      display_mode: z
+        .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+        .optional()
+        .describe("For LOCAL_OFFICE rows: the office's own display preference."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -1759,6 +1802,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         logoUrl: params.logo_url ?? null,
         city: loc.city,
         state: loc.state,
+        // EH1 Phase 1 — hierarchy + relationship fields. Drizzle column
+        // defaults handle the absent-key case (role='INDEPENDENT',
+        // relationship_type='independent', display_override_permitted=0).
+        ...(params.role !== undefined && { role: params.role }),
+        ...(params.brand_parent_vendor_id !== undefined && {
+          brandParentVendorId: params.brand_parent_vendor_id,
+        }),
+        ...(params.operator_parent_vendor_id !== undefined && {
+          operatorParentVendorId: params.operator_parent_vendor_id,
+        }),
+        ...(params.relationship_type !== undefined && {
+          relationshipType: params.relationship_type,
+        }),
+        ...(params.default_child_display !== undefined && {
+          defaultChildDisplay: params.default_child_display,
+        }),
+        ...(params.display_override_permitted !== undefined && {
+          displayOverridePermitted: params.display_override_permitted,
+        }),
+        ...(params.display_mode !== undefined && { displayMode: params.display_mode }),
       });
 
       await recomputeVendorCompleteness(db, vendorId);
@@ -2675,6 +2738,64 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .int()
         .optional()
         .describe("Featured rotation pin override; 0 = participate in shuffle, >0 = pinned high."),
+      // EH1 Phase 1 (drizzle/0106 + 0107) — hierarchy + relationship fields.
+      // Patch-only semantics: omitted params don't blank existing values.
+      // Prefer the three audited admin tools (set_vendor_relationship,
+      // set_vendor_display_policy, set_vendor_alias) when their richer
+      // validation + audit log matters; this surface is the escape hatch
+      // for one-off adjustments.
+      role: z
+        .enum(["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"])
+        .optional()
+        .describe("Hierarchy role: NATIONAL parent brand, LOCAL_OFFICE child, or INDEPENDENT."),
+      brand_parent_vendor_id: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Brand-parent vendor id (the consumer-facing brand). Null clears."),
+      operator_parent_vendor_id: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Operator-parent vendor id (contracts/billing entity). Null clears."),
+      alias_of_vendor_id: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          "Mark this row as an alias of the given canonical vendor id. Null clears. Prefer set_vendor_alias to also repoint events."
+        ),
+      relationship_type: z
+        .enum([
+          "branch",
+          "franchise",
+          "dealer",
+          "member",
+          "agent",
+          "employee_branch",
+          "government",
+          "independent",
+        ])
+        .optional()
+        .describe("8-shape relationship typology. Defaults to 'independent'."),
+      default_child_display: z
+        .enum(["self", "brand_parent", "both"])
+        .nullable()
+        .optional()
+        .describe(
+          "Brand-parent's default for its offices' display target. Only meaningful on NATIONAL rows."
+        ),
+      display_override_permitted: z
+        .boolean()
+        .optional()
+        .describe("Parent-controlled gate — only meaningful on LOCAL_OFFICE rows."),
+      display_mode: z
+        .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+        .nullable()
+        .optional()
+        .describe(
+          "Office's display preference. Only honored when display_override_permitted=true and mode != 'inherit'."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -2715,6 +2836,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           transform: (v: unknown) => JSON.stringify(v),
         },
         { param: "featured_priority", column: "featuredPriority" },
+        // EH1 Phase 1 — hierarchy + relationship fields.
+        { param: "role", column: "role" },
+        { param: "brand_parent_vendor_id", column: "brandParentVendorId" },
+        { param: "operator_parent_vendor_id", column: "operatorParentVendorId" },
+        { param: "alias_of_vendor_id", column: "aliasOfVendorId" },
+        { param: "relationship_type", column: "relationshipType" },
+        { param: "default_child_display", column: "defaultChildDisplay" },
+        { param: "display_override_permitted", column: "displayOverridePermitted" },
+        { param: "display_mode", column: "displayMode" },
       ];
 
       const updates: Record<string, unknown> = {};

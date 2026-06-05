@@ -87,30 +87,42 @@ async function buildVendorUrls(): Promise<SitemapUrl[]> {
           )
         )
       )
-      -- EH1 Phase 2 — exclude LOCAL_OFFICE rows that resolve to NATIONAL
-      -- (canonical-up'd to the parent hub). The office page still loads,
-      -- but it emits rel="canonical" + noindex, so including it in the
-      -- sitemap would just feed Google duplicate-content signals.
+      -- EH1 Phase 1 — exclude LOCAL_OFFICE rows that resolve to a non-self,
+      -- non-both display mode (i.e. canonical-up'd to a parent). The page
+      -- still loads, but it emits rel="canonical" + noindex, so including
+      -- it in the sitemap would just feed Google duplicate-content signals.
+      --
+      -- 'both' keeps the office IN the sitemap — that mode renders the
+      -- office page as canonical and additionally shows a brand link in
+      -- the UI (the brand isn't the canonical, so don't exclude).
+      --
+      -- Also exclude aliased rows outright (alias_of_vendor_id IS NOT
+      -- NULL) — they redirect to canonical and have no standalone surface.
       --
       -- Resolution rule mirrors resolveVendorDisplay() in
       -- src/lib/vendor-hierarchy.ts. Keep these two in lock-step; an
       -- audit query that returns rows where the page noindexes but the
       -- sitemap includes (or vice versa) is the canary for drift.
+      AND v.alias_of_vendor_id IS NULL
       AND NOT (
         v.role = 'LOCAL_OFFICE'
-        AND EXISTS (
-          SELECT 1 FROM vendors p
-          WHERE p.id = v.parent_vendor_id
-            AND p.role = 'NATIONAL'
-            AND (
-              (v.override_permitted = 1 AND v.display_preference = 'NATIONAL')
-              OR (
-                (v.override_permitted = 0
-                 OR v.display_preference IS NULL
-                 OR v.display_preference = 'INHERIT')
-                AND p.default_display = 'NATIONAL'
-              )
-            )
+        AND (
+          -- Override path: gate granted AND child mode picks a non-self
+          -- non-both canonical (i.e. canonical-up to brand or operator).
+          (v.display_override_permitted = 1
+           AND v.display_mode IN ('brand_parent','operator_parent'))
+          OR
+          -- Inherit path: parent's default picks a non-self non-both
+          -- canonical. Default falls through when gate closed OR mode
+          -- is NULL OR mode is the explicit 'inherit'.
+          ((v.display_override_permitted = 0
+            OR v.display_mode IS NULL
+            OR v.display_mode = 'inherit')
+           AND EXISTS (
+             SELECT 1 FROM vendors p
+             WHERE p.id = v.brand_parent_vendor_id
+               AND p.default_child_display = 'brand_parent'
+           ))
         )
       )
   `);

@@ -40,7 +40,7 @@ import { ClaimListingCTA } from "@/components/vendors/ClaimListingCTA";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
-import { canonicalParentSlugIfHubResolved, type DisplayableParent } from "@/lib/vendor-hierarchy";
+import { canonicalParentSlugFor, type DisplayableParent } from "@/lib/vendor-hierarchy";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -144,19 +144,23 @@ async function getVendor(slug: string) {
       .set({ viewCount: sql`${vendors.viewCount} + 1` })
       .where(eq(vendors.id, vendor.vendors.id));
 
-    // EH1 Phase 2: load hierarchy context so render + canonical can resolve.
-    // LOCAL_OFFICE → fetch the parent row (needed by resolveVendorDisplay).
+    // EH1 Phase 1 — load hierarchy context so render + canonical can resolve.
+    // LOCAL_OFFICE → fetch the brand parent row (drives resolveVendorDisplay)
+    //                AND the operator parent row if set (drives the
+    //                'operator_parent' / 'both' display modes).
     // NATIONAL    → fetch the children list (rendered as a "Local Offices"
-    //               section instead of the standard Events sections).
+    //                section instead of the standard Events sections).
     // INDEPENDENT → neither query runs. Most vendors hit this branch, so the
-    //               hierarchy work is paid only when a hierarchy exists.
-    let parent: {
+    //                hierarchy work is paid only when a hierarchy exists.
+    type ParentRow = {
       id: string;
       slug: string;
       role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
-      defaultDisplay: "NATIONAL" | "LOCAL" | null;
+      defaultChildDisplay: "self" | "brand_parent" | "both" | null;
       businessName: string;
-    } | null = null;
+    };
+    let brandParent: ParentRow | null = null;
+    let operatorParent: ParentRow | null = null;
     let children: Array<{
       id: string;
       slug: string;
@@ -169,20 +173,45 @@ async function getVendor(slug: string) {
       logoUrl: string | null;
     }> = [];
 
-    if (vendor.vendors.role === "LOCAL_OFFICE" && vendor.vendors.parentVendorId) {
+    if (vendor.vendors.role === "LOCAL_OFFICE" && vendor.vendors.brandParentVendorId) {
       const [parentRow] = await db
         .select({
           id: vendors.id,
           slug: vendors.slug,
           role: vendors.role,
-          defaultDisplay: vendors.defaultDisplay,
+          defaultChildDisplay: vendors.defaultChildDisplay,
           businessName: vendors.businessName,
         })
         .from(vendors)
-        .where(and(eq(vendors.id, vendor.vendors.parentVendorId), isNull(vendors.deletedAt)))
+        .where(and(eq(vendors.id, vendor.vendors.brandParentVendorId), isNull(vendors.deletedAt)))
         .limit(1);
-      if (parentRow) parent = parentRow;
-    } else if (vendor.vendors.role === "NATIONAL") {
+      if (parentRow) brandParent = parentRow;
+    }
+    // Operator parent is independent of brand parent — Shape C (Esler-run RbA
+    // franchises) sets both; Shape A (LeafFilter, Goodhue) sets operator =
+    // brand; an agent shape (NY Life) may have brand only. Only load when
+    // distinct from the brand to avoid a duplicate self-query.
+    if (
+      vendor.vendors.role === "LOCAL_OFFICE" &&
+      vendor.vendors.operatorParentVendorId &&
+      vendor.vendors.operatorParentVendorId !== vendor.vendors.brandParentVendorId
+    ) {
+      const [opRow] = await db
+        .select({
+          id: vendors.id,
+          slug: vendors.slug,
+          role: vendors.role,
+          defaultChildDisplay: vendors.defaultChildDisplay,
+          businessName: vendors.businessName,
+        })
+        .from(vendors)
+        .where(
+          and(eq(vendors.id, vendor.vendors.operatorParentVendorId), isNull(vendors.deletedAt))
+        )
+        .limit(1);
+      if (opRow) operatorParent = opRow;
+    }
+    if (vendor.vendors.role === "NATIONAL") {
       children = await db
         .select({
           id: vendors.id,
@@ -196,7 +225,7 @@ async function getVendor(slug: string) {
           logoUrl: vendors.logoUrl,
         })
         .from(vendors)
-        .where(and(eq(vendors.parentVendorId, vendor.vendors.id), isNull(vendors.deletedAt)))
+        .where(and(eq(vendors.brandParentVendorId, vendor.vendors.id), isNull(vendors.deletedAt)))
         .orderBy(asc(vendors.state), asc(vendors.city), asc(vendors.businessName));
     }
 
@@ -208,7 +237,8 @@ async function getVendor(slug: string) {
       eventVendors: vendorEvents,
       seoEventAssociationCount: Number(seoCounts?.eventAssociationCount ?? 0),
       seoEventVenueGeoCount: Number(seoCounts?.eventVenueGeoCount ?? 0),
-      parent,
+      parent: brandParent,
+      operatorParent,
       children,
     };
   } catch (e) {
@@ -243,23 +273,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     eventVenueGeoCount: vendor.seoEventVenueGeoCount,
   });
 
-  // EH1 Phase 2: if this is a LOCAL_OFFICE that resolves to NATIONAL (parent's
-  // policy puts the brand front and center), canonical-up to the parent hub
-  // and emit noindex on the office page. The page still loads — deep links
-  // and operator URLs keep working — but search engines treat the parent as
-  // the indexed surface. Reversible: drop these and search engines re-index
-  // the office page within ~14 days.
+  // EH1 Phase 1 — if this is a LOCAL_OFFICE that resolves to a non-self mode
+  // ('brand_parent' or 'operator_parent'), canonical-up to that parent and
+  // emit noindex on the office page. 'both' and 'self' keep the office page
+  // as its own canonical (no canonical-up). The page still loads — deep
+  // links and operator URLs keep working — but search engines treat the
+  // parent as the indexed surface for the non-self modes.
   const parentForResolution: DisplayableParent | null = vendor.parent
     ? {
         id: vendor.parent.id,
         role: vendor.parent.role,
-        defaultDisplay: vendor.parent.defaultDisplay,
+        defaultChildDisplay: vendor.parent.defaultChildDisplay,
       }
     : null;
-  const canonicalUpSlug = canonicalParentSlugIfHubResolved(
+  const canonicalUpSlug = canonicalParentSlugFor(
     vendor,
     parentForResolution,
-    vendor.parent?.slug ?? null
+    vendor.parent?.slug ?? null,
+    vendor.operatorParent?.slug ?? null
   );
   const canonicalUrl = canonicalUpSlug
     ? `https://meetmeatthefair.com/vendors/${canonicalUpSlug}`
@@ -496,10 +527,14 @@ export default async function VendorDetailPage({ params }: Props) {
                 </div>
               )}
               <div>
-                {/* EH1 Phase 2 — "Part of <National>" link on LOCAL_OFFICE
-                    pages. Renders for every office (not just canonical-up'd
-                    ones) because the relationship is true regardless of
-                    which surface is canonical. */}
+                {/* EH1 Phase 1 — relationship surface on LOCAL_OFFICE pages.
+                    Renders for every office (not just canonical-up'd ones)
+                    because the relationship is true regardless of which
+                    surface is canonical. When an operator parent is
+                    distinct from the brand parent (Shape C — Esler-run RbA
+                    franchises, Bath Fitter / Premier Bath), surface both
+                    relationships so the operator portfolio is discoverable
+                    while the brand stays the primary association. */}
                 {vendor.role === "LOCAL_OFFICE" && vendor.parent && (
                   <p className="text-sm text-gray-600 mb-1">
                     Part of{" "}
@@ -509,6 +544,18 @@ export default async function VendorDetailPage({ params }: Props) {
                     >
                       {decodeHtmlEntities(vendor.parent.businessName)}
                     </Link>
+                    {vendor.operatorParent && (
+                      <>
+                        {" "}
+                        · operated by{" "}
+                        <Link
+                          href={`/vendors/${vendor.operatorParent.slug}`}
+                          className="text-royal hover:text-navy font-medium underline"
+                        >
+                          {decodeHtmlEntities(vendor.operatorParent.businessName)}
+                        </Link>
+                      </>
+                    )}
                   </p>
                 )}
                 <div className="flex items-center gap-2 flex-wrap">

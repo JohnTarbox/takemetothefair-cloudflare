@@ -858,7 +858,7 @@ describe("validateRequestBody", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// EH1 Phase 3 — hierarchy fields on vendor schemas
+// EH1 Phase 1 — hierarchy + relationship fields on vendor schemas
 // ────────────────────────────────────────────────────────────────────────
 
 describe("vendorUpdateSchema — EH1 hierarchy fields (admin)", () => {
@@ -872,76 +872,130 @@ describe("vendorUpdateSchema — EH1 hierarchy fields (admin)", () => {
     expect(r.success).toBe(false);
   });
 
-  it("accepts parent_vendor_id as a string or null", () => {
-    expect(vendorUpdateSchema.safeParse({ parent_vendor_id: "abc-123" }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ parent_vendor_id: null }).success).toBe(true);
+  it("accepts brand_parent_vendor_id as a string or null", () => {
+    expect(vendorUpdateSchema.safeParse({ brand_parent_vendor_id: "abc-123" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ brand_parent_vendor_id: null }).success).toBe(true);
   });
 
-  it("accepts default_display NATIONAL or LOCAL or null", () => {
-    expect(vendorUpdateSchema.safeParse({ default_display: "NATIONAL" }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ default_display: "LOCAL" }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ default_display: null }).success).toBe(true);
+  it("accepts operator_parent_vendor_id as a string or null", () => {
+    expect(vendorUpdateSchema.safeParse({ operator_parent_vendor_id: "abc-123" }).success).toBe(
+      true
+    );
+    expect(vendorUpdateSchema.safeParse({ operator_parent_vendor_id: null }).success).toBe(true);
   });
 
-  it("rejects default_display = INHERIT (only display_preference uses INHERIT)", () => {
-    // INHERIT is a child-side preference, not a parent-side default.
-    const r = vendorUpdateSchema.safeParse({ default_display: "INHERIT" });
+  it("accepts alias_of_vendor_id as a string or null", () => {
+    expect(vendorUpdateSchema.safeParse({ alias_of_vendor_id: "abc-123" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ alias_of_vendor_id: null }).success).toBe(true);
+  });
+
+  it("accepts all 8 relationship_type values", () => {
+    const values = [
+      "branch",
+      "franchise",
+      "dealer",
+      "member",
+      "agent",
+      "employee_branch",
+      "government",
+      "independent",
+    ] as const;
+    for (const v of values) {
+      expect(vendorUpdateSchema.safeParse({ relationship_type: v }).success).toBe(true);
+    }
+  });
+
+  it("rejects relationship_type with an unknown value", () => {
+    expect(vendorUpdateSchema.safeParse({ relationship_type: "subsidiary" }).success).toBe(false);
+  });
+
+  it("accepts default_child_display self / brand_parent / both / null", () => {
+    expect(vendorUpdateSchema.safeParse({ default_child_display: "self" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ default_child_display: "brand_parent" }).success).toBe(
+      true
+    );
+    expect(vendorUpdateSchema.safeParse({ default_child_display: "both" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ default_child_display: null }).success).toBe(true);
+  });
+
+  it("rejects default_child_display = inherit (only display_mode uses inherit)", () => {
+    // inherit is a child-side preference, not a parent-side default.
+    const r = vendorUpdateSchema.safeParse({ default_child_display: "inherit" });
     expect(r.success).toBe(false);
   });
 
-  it("accepts override_permitted as a boolean", () => {
-    expect(vendorUpdateSchema.safeParse({ override_permitted: true }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ override_permitted: false }).success).toBe(true);
+  it("rejects default_child_display = operator_parent (only display_mode can target operator)", () => {
+    // operator_parent is a child-side resolution, not a parent default.
+    const r = vendorUpdateSchema.safeParse({ default_child_display: "operator_parent" });
+    expect(r.success).toBe(false);
   });
 
-  it("accepts display_preference NATIONAL / LOCAL / INHERIT / null", () => {
-    expect(vendorUpdateSchema.safeParse({ display_preference: "NATIONAL" }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ display_preference: "LOCAL" }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ display_preference: "INHERIT" }).success).toBe(true);
-    expect(vendorUpdateSchema.safeParse({ display_preference: null }).success).toBe(true);
+  it("accepts display_override_permitted as a boolean", () => {
+    expect(vendorUpdateSchema.safeParse({ display_override_permitted: true }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_override_permitted: false }).success).toBe(true);
+  });
+
+  it("accepts display_mode inherit / self / brand_parent / operator_parent / both / null", () => {
+    expect(vendorUpdateSchema.safeParse({ display_mode: "inherit" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_mode: "self" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_mode: "brand_parent" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_mode: "operator_parent" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_mode: "both" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_mode: null }).success).toBe(true);
   });
 });
 
 describe("vendorProfileUpdateSchema — EH1 self-edit perimeter", () => {
-  it("accepts displayPreference as a valid enum value", () => {
-    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: "NATIONAL" });
+  it("accepts displayMode as a valid enum value", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayMode: "brand_parent" });
     expect(r.success).toBe(true);
   });
 
-  it("accepts displayPreference = INHERIT (the explicit default-equivalent)", () => {
-    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: "INHERIT" });
+  it("accepts displayMode = inherit (the explicit default-equivalent)", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayMode: "inherit" });
     expect(r.success).toBe(true);
   });
 
-  it("accepts displayPreference = null (caller clearing the preference)", () => {
-    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: null });
+  it("accepts displayMode = both (the office shows under both surfaces)", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayMode: "both" });
     expect(r.success).toBe(true);
   });
 
-  it("rejects displayPreference with an unknown enum value", () => {
-    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: "BOTH" });
+  it("accepts displayMode = null (caller clearing the preference)", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayMode: null });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects displayMode with an unknown enum value", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayMode: "OFFICE" });
     expect(r.success).toBe(false);
   });
 
-  it("does NOT accept role / parentVendorId / defaultDisplay / overridePermitted (admin-only)", () => {
-    // These are admin-only via vendorUpdateSchema. Setting them on a self-edit
-    // payload should be silently stripped because Zod's default `.parse` mode
-    // drops unknown keys. Verify they don't appear in `.data`.
+  it("does NOT accept any admin-only hierarchy field (role / parents / relationship / gate / default)", () => {
+    // These are admin-only via vendorUpdateSchema and the three admin
+    // MCP tools. Setting them on a self-edit payload should be silently
+    // stripped because Zod's default `.parse` mode drops unknown keys.
     const r = vendorProfileUpdateSchema.safeParse({
       businessName: "Test Office",
       role: "NATIONAL",
-      parentVendorId: "abc",
-      defaultDisplay: "NATIONAL",
-      overridePermitted: true,
+      brandParentVendorId: "abc",
+      operatorParentVendorId: "def",
+      aliasOfVendorId: "ghi",
+      relationshipType: "franchise",
+      defaultChildDisplay: "brand_parent",
+      displayOverridePermitted: true,
     });
     expect(r.success).toBe(true);
     if (r.success) {
       expect("role" in r.data).toBe(false);
-      expect("parentVendorId" in r.data).toBe(false);
-      expect("defaultDisplay" in r.data).toBe(false);
-      expect("overridePermitted" in r.data).toBe(false);
-      // displayPreference NOT in this payload — confirm it's also not present
-      expect("displayPreference" in r.data).toBe(false);
+      expect("brandParentVendorId" in r.data).toBe(false);
+      expect("operatorParentVendorId" in r.data).toBe(false);
+      expect("aliasOfVendorId" in r.data).toBe(false);
+      expect("relationshipType" in r.data).toBe(false);
+      expect("defaultChildDisplay" in r.data).toBe(false);
+      expect("displayOverridePermitted" in r.data).toBe(false);
+      // displayMode NOT in this payload — confirm it's also not present
+      expect("displayMode" in r.data).toBe(false);
     }
   });
 });

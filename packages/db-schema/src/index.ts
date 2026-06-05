@@ -481,27 +481,80 @@ export const vendors = sqliteTable("vendors", {
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
   domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
   completenessScore: integer("completeness_score").notNull().default(0),
-  // EH1 Phase 1 (drizzle/0106, 2026-06-05) — national-brand / local-office
-  // vendor hierarchy. Data-model only at Phase 1; no public render change
-  // until Phase 2 wires display resolution. See drizzle/0106 + the project
-  // memory `project_national_local_vendor_model.md` for the full rationale.
+  // EH1 Phase 1 — vendor hierarchy + relationship model.
+  // Originally added in drizzle/0106 (minimal model: role + parent_vendor_id
+  // + default_display/override_permitted/display_preference). Extended in
+  // drizzle/0107 (2026-06-05) to the full relationship model approved in
+  // Dev-Spec-Vendor-Hierarchy-Phase1-2026-06-04.md: brand vs operator
+  // parent split, 8-shape relationship_type enum, alias links, and a
+  // wider display vocabulary that can express operator_parent + both.
+  //
+  // `role` stays as a fast NATIONAL/LOCAL_OFFICE/INDEPENDENT discriminator
+  // (existing render page + sitemap SQL + admin form read it heavily).
   role: text("role", { enum: ["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"] })
     .notNull()
     .default("INDEPENDENT"),
-  parentVendorId: text("parent_vendor_id").references((): AnySQLiteColumn => vendors.id, {
+  // Brand parent: who the consumer sees on signage (the national brand).
+  // The display resolver consumes this one. NULL for INDEPENDENT and
+  // for brand-parent rows themselves.
+  brandParentVendorId: text("brand_parent_vendor_id").references(
+    (): AnySQLiteColumn => vendors.id,
+    { onDelete: "set null" }
+  ),
+  // Operator parent: who signs contracts / pays booth fees (e.g. Esler
+  // Companies). Drives sales-motion + portfolio analytics, NOT public
+  // display. Often equal to brandParentVendorId for branch shapes;
+  // distinct for shape C (franchise with multi-market operator).
+  operatorParentVendorId: text("operator_parent_vendor_id").references(
+    (): AnySQLiteColumn => vendors.id,
+    { onDelete: "set null" }
+  ),
+  // Alias link: "this row IS that row, different spelling." Resolved
+  // transparently by resolveAlias() in src/lib/vendor-hierarchy.ts; the
+  // aliased row is also soft-deleted (deletedAt + redirectToVendorId)
+  // so middleware can 301-redirect its URL to the canonical.
+  aliasOfVendorId: text("alias_of_vendor_id").references((): AnySQLiteColumn => vendors.id, {
     onDelete: "set null",
   }),
-  // Parent-side: NATIONAL rows pick which surface is the customer-facing
-  // entity. Only read on `role='NATIONAL'`.
-  defaultDisplay: text("default_display", { enum: ["NATIONAL", "LOCAL"] }),
-  // LOCAL_OFFICE-side: parent-controlled gate. Default 0 — parent's
-  // default_display always wins until the parent explicitly grants
-  // override. Read only on `role='LOCAL_OFFICE'`.
-  overridePermitted: integer("override_permitted", { mode: "boolean" }).notNull().default(false),
-  // LOCAL_OFFICE-side: child's requested preference. INHERIT falls
-  // through to parent.defaultDisplay. When overridePermitted=true and
-  // displayPreference != 'INHERIT', this wins.
-  displayPreference: text("display_preference", { enum: ["NATIONAL", "LOCAL", "INHERIT"] }),
+  // 8 shapes from the design doc — branch (W-2), franchise (independent
+  // operator), dealer (reseller), member (cooperative), agent (1099),
+  // employee_branch (small-corp branch), government (gov entity),
+  // independent (default — no relationship). SQL CHECK enforces.
+  relationshipType: text("relationship_type", {
+    enum: [
+      "branch",
+      "franchise",
+      "dealer",
+      "member",
+      "agent",
+      "employee_branch",
+      "government",
+      "independent",
+    ],
+  })
+    .notNull()
+    .default("independent"),
+  // Parent-side: what the brand-parent picks as its offices' default
+  // display target. 'self' = each office is its own canonical surface;
+  // 'brand_parent' = offices canonical-up to the brand hub; 'both' =
+  // office is canonical but also shown under the brand. NULL on
+  // non-parent rows.
+  defaultChildDisplay: text("default_child_display", {
+    enum: ["self", "brand_parent", "both"],
+  }),
+  // Child-side: parent-controlled gate. Default 0 — the parent's
+  // defaultChildDisplay always wins until the parent explicitly grants
+  // override. A vendor claim grants edit rights but NEVER bypasses this
+  // gate (spec §4.4 — parent's gate always wins).
+  displayOverridePermitted: integer("display_override_permitted", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  // Child-side: the office's own requested preference. Honored only when
+  // displayOverridePermitted=true AND displayMode != 'inherit'. INHERIT
+  // falls through to parent.defaultChildDisplay.
+  displayMode: text("display_mode", {
+    enum: ["inherit", "self", "brand_parent", "operator_parent", "both"],
+  }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });

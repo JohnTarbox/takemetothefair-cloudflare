@@ -254,21 +254,80 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
 
-    // EH1 Phase 3 (drizzle/0106) — the 5 hierarchy fields. Admin-only by
-    // virtue of this route's admin-role gate at the top. Vendor self-edit
-    // can set display_preference but cannot touch the other four (the
-    // gate stays with admins / parent-vendor owners). See
+    // EH1 Phase 1 (drizzle/0106 + 0107) — hierarchy + relationship fields.
+    // Admin-only by virtue of this route's admin-role gate at the top.
+    // Vendor self-edit can set display_mode but cannot touch the other
+    // seven (the gate stays with admins / brand-parent owners). See
     // resolveVendorDisplay() in src/lib/vendor-hierarchy.ts for how these
     // are consumed at render time. No transition log emitted today —
     // changes are rare and the standard enrichment log captures the
     // field-set list.
+    //
+    // Cycle / self-ref protection for the three FK columns: walk the
+    // chain up to depth 5 via DB lookups and reject anything that would
+    // either self-ref or reach back to this row. The three admin MCP
+    // tools (set_vendor_relationship / set_vendor_alias) carry the same
+    // checks; we duplicate here because the admin form posts straight
+    // here, not through MCP.
+    async function wouldFormCycle(
+      column: "brand_parent_vendor_id" | "operator_parent_vendor_id" | "alias_of_vendor_id",
+      targetId: string | null
+    ): Promise<boolean> {
+      if (targetId == null) return false;
+      if (targetId === id) return true; // self-ref
+      const seen = new Set<string>([id]);
+      let cursor: string | null = targetId;
+      for (let depth = 0; depth < 5; depth++) {
+        if (cursor == null) return false;
+        if (seen.has(cursor)) return true;
+        seen.add(cursor);
+        const [row] = await db
+          .select({
+            brand: vendors.brandParentVendorId,
+            op: vendors.operatorParentVendorId,
+            alias: vendors.aliasOfVendorId,
+          })
+          .from(vendors)
+          .where(eq(vendors.id, cursor))
+          .limit(1);
+        if (!row) return false;
+        // Follow the same column we're testing; cross-column chains
+        // (e.g. brand_parent → alias_of) are not cycles for this column.
+        cursor =
+          column === "brand_parent_vendor_id"
+            ? row.brand
+            : column === "operator_parent_vendor_id"
+              ? row.op
+              : row.alias;
+      }
+      return true; // depth exceeded — treat as cycle
+    }
+
+    for (const [col, val] of [
+      ["brand_parent_vendor_id", data.brand_parent_vendor_id],
+      ["operator_parent_vendor_id", data.operator_parent_vendor_id],
+      ["alias_of_vendor_id", data.alias_of_vendor_id],
+    ] as const) {
+      if (val !== undefined && (await wouldFormCycle(col, val))) {
+        return NextResponse.json(
+          { error: `Invalid ${col}: would create a cycle or self-reference` },
+          { status: 400 }
+        );
+      }
+    }
+
     if (data.role !== undefined) updateData.role = data.role;
-    if (data.parent_vendor_id !== undefined) updateData.parentVendorId = data.parent_vendor_id;
-    if (data.default_display !== undefined) updateData.defaultDisplay = data.default_display;
-    if (data.override_permitted !== undefined)
-      updateData.overridePermitted = data.override_permitted;
-    if (data.display_preference !== undefined)
-      updateData.displayPreference = data.display_preference;
+    if (data.brand_parent_vendor_id !== undefined)
+      updateData.brandParentVendorId = data.brand_parent_vendor_id;
+    if (data.operator_parent_vendor_id !== undefined)
+      updateData.operatorParentVendorId = data.operator_parent_vendor_id;
+    if (data.alias_of_vendor_id !== undefined) updateData.aliasOfVendorId = data.alias_of_vendor_id;
+    if (data.relationship_type !== undefined) updateData.relationshipType = data.relationship_type;
+    if (data.default_child_display !== undefined)
+      updateData.defaultChildDisplay = data.default_child_display;
+    if (data.display_override_permitted !== undefined)
+      updateData.displayOverridePermitted = data.display_override_permitted;
+    if (data.display_mode !== undefined) updateData.displayMode = data.display_mode;
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
