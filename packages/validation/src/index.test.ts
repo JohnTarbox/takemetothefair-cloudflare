@@ -8,6 +8,8 @@ import {
   venueUpdateSchema,
   promoterCreateSchema,
   vendorCreateSchema,
+  vendorUpdateSchema,
+  vendorProfileUpdateSchema,
   eventCreateSchema,
   eventUpdateSchema,
   eventDaySchema,
@@ -851,6 +853,95 @@ describe("validateRequestBody", () => {
     if (!result.success) {
       expect(result.error).toContain("name:");
       expect(result.error).toContain("count:");
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// EH1 Phase 3 — hierarchy fields on vendor schemas
+// ────────────────────────────────────────────────────────────────────────
+
+describe("vendorUpdateSchema — EH1 hierarchy fields (admin)", () => {
+  it("accepts role as a valid enum", () => {
+    const r = vendorUpdateSchema.safeParse({ role: "NATIONAL" });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects role as an unknown enum value", () => {
+    const r = vendorUpdateSchema.safeParse({ role: "FRANCHISE" });
+    expect(r.success).toBe(false);
+  });
+
+  it("accepts parent_vendor_id as a string or null", () => {
+    expect(vendorUpdateSchema.safeParse({ parent_vendor_id: "abc-123" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ parent_vendor_id: null }).success).toBe(true);
+  });
+
+  it("accepts default_display NATIONAL or LOCAL or null", () => {
+    expect(vendorUpdateSchema.safeParse({ default_display: "NATIONAL" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ default_display: "LOCAL" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ default_display: null }).success).toBe(true);
+  });
+
+  it("rejects default_display = INHERIT (only display_preference uses INHERIT)", () => {
+    // INHERIT is a child-side preference, not a parent-side default.
+    const r = vendorUpdateSchema.safeParse({ default_display: "INHERIT" });
+    expect(r.success).toBe(false);
+  });
+
+  it("accepts override_permitted as a boolean", () => {
+    expect(vendorUpdateSchema.safeParse({ override_permitted: true }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ override_permitted: false }).success).toBe(true);
+  });
+
+  it("accepts display_preference NATIONAL / LOCAL / INHERIT / null", () => {
+    expect(vendorUpdateSchema.safeParse({ display_preference: "NATIONAL" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_preference: "LOCAL" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_preference: "INHERIT" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_preference: null }).success).toBe(true);
+  });
+});
+
+describe("vendorProfileUpdateSchema — EH1 self-edit perimeter", () => {
+  it("accepts displayPreference as a valid enum value", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: "NATIONAL" });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts displayPreference = INHERIT (the explicit default-equivalent)", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: "INHERIT" });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts displayPreference = null (caller clearing the preference)", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: null });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects displayPreference with an unknown enum value", () => {
+    const r = vendorProfileUpdateSchema.safeParse({ displayPreference: "BOTH" });
+    expect(r.success).toBe(false);
+  });
+
+  it("does NOT accept role / parentVendorId / defaultDisplay / overridePermitted (admin-only)", () => {
+    // These are admin-only via vendorUpdateSchema. Setting them on a self-edit
+    // payload should be silently stripped because Zod's default `.parse` mode
+    // drops unknown keys. Verify they don't appear in `.data`.
+    const r = vendorProfileUpdateSchema.safeParse({
+      businessName: "Test Office",
+      role: "NATIONAL",
+      parentVendorId: "abc",
+      defaultDisplay: "NATIONAL",
+      overridePermitted: true,
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect("role" in r.data).toBe(false);
+      expect("parentVendorId" in r.data).toBe(false);
+      expect("defaultDisplay" in r.data).toBe(false);
+      expect("overridePermitted" in r.data).toBe(false);
+      // displayPreference NOT in this payload — confirm it's also not present
+      expect("displayPreference" in r.data).toBe(false);
     }
   });
 });

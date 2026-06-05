@@ -254,6 +254,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
     }
 
+    // EH1 Phase 3 (drizzle/0106) — the 5 hierarchy fields. Admin-only by
+    // virtue of this route's admin-role gate at the top. Vendor self-edit
+    // can set display_preference but cannot touch the other four (the
+    // gate stays with admins / parent-vendor owners). See
+    // resolveVendorDisplay() in src/lib/vendor-hierarchy.ts for how these
+    // are consumed at render time. No transition log emitted today —
+    // changes are rare and the standard enrichment log captures the
+    // field-set list.
+    if (data.role !== undefined) updateData.role = data.role;
+    if (data.parent_vendor_id !== undefined) updateData.parentVendorId = data.parent_vendor_id;
+    if (data.default_display !== undefined) updateData.defaultDisplay = data.default_display;
+    if (data.override_permitted !== undefined)
+      updateData.overridePermitted = data.override_permitted;
+    if (data.display_preference !== undefined)
+      updateData.displayPreference = data.display_preference;
+
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
     await recomputeVendorCompleteness(db, id);
