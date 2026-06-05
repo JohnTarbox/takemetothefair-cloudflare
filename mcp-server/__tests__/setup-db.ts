@@ -293,6 +293,14 @@ const SCHEMA_SQL = `
     enrichment_attempted_at INTEGER,
     domain_hijacked INTEGER NOT NULL DEFAULT 0,
     completeness_score INTEGER NOT NULL DEFAULT 0,
+    -- EH1 Phase 1 (drizzle/0106, 2026-06-05) — vendor hierarchy.
+    -- Mirror the 5 columns added to the real vendors table so tests
+    -- using the Drizzle schema can INSERT without "no such column" errors.
+    role TEXT NOT NULL DEFAULT 'INDEPENDENT',
+    parent_vendor_id TEXT,
+    default_display TEXT,
+    override_permitted INTEGER NOT NULL DEFAULT 0,
+    display_preference TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );
