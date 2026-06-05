@@ -481,6 +481,27 @@ export const vendors = sqliteTable("vendors", {
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
   domainHijacked: integer("domain_hijacked", { mode: "boolean" }).notNull().default(false),
   completenessScore: integer("completeness_score").notNull().default(0),
+  // EH1 Phase 1 (drizzle/0106, 2026-06-05) — national-brand / local-office
+  // vendor hierarchy. Data-model only at Phase 1; no public render change
+  // until Phase 2 wires display resolution. See drizzle/0106 + the project
+  // memory `project_national_local_vendor_model.md` for the full rationale.
+  role: text("role", { enum: ["NATIONAL", "LOCAL_OFFICE", "INDEPENDENT"] })
+    .notNull()
+    .default("INDEPENDENT"),
+  parentVendorId: text("parent_vendor_id").references((): AnySQLiteColumn => vendors.id, {
+    onDelete: "set null",
+  }),
+  // Parent-side: NATIONAL rows pick which surface is the customer-facing
+  // entity. Only read on `role='NATIONAL'`.
+  defaultDisplay: text("default_display", { enum: ["NATIONAL", "LOCAL"] }),
+  // LOCAL_OFFICE-side: parent-controlled gate. Default 0 — parent's
+  // default_display always wins until the parent explicitly grants
+  // override. Read only on `role='LOCAL_OFFICE'`.
+  overridePermitted: integer("override_permitted", { mode: "boolean" }).notNull().default(false),
+  // LOCAL_OFFICE-side: child's requested preference. INHERIT falls
+  // through to parent.defaultDisplay. When overridePermitted=true and
+  // displayPreference != 'INHERIT', this wins.
+  displayPreference: text("display_preference", { enum: ["NATIONAL", "LOCAL", "INHERIT"] }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
