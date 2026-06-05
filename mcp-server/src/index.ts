@@ -17,6 +17,7 @@ import { registerVendorTools } from "./tools/vendor.js";
 import { registerPromoterTools } from "./tools/promoter.js";
 import { registerAdminTools } from "./tools/admin.js";
 import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.js";
+import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
 import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
@@ -1106,6 +1107,45 @@ async function handleInternalApi(request: Request, env: Env, url: URL): Promise<
     }
 
     return jsonResponse({ ok: true });
+  }
+
+  // D (Dev backlog 2026-06-05). POST /api/admin/internal/correlate-problem-report
+  // — invoked by the main-app web-form route
+  // (src/app/api/report-problem/route.ts) right after its insert, so a
+  // user reporting a broken page during an error_logs burst gets the
+  // severity bumped to HIGH within ~10s of submit. Shares
+  // correlateProblemReportCore with the operator-side MCP tool
+  // `correlate_problem_report` so the severity logic has a single audit.
+  if (
+    url.pathname === "/api/admin/internal/correlate-problem-report" &&
+    request.method === "POST"
+  ) {
+    let body: { id?: unknown; bumpSeverity?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return jsonResponse({ error: "invalid_json" }, 400);
+    }
+    if (typeof body.id !== "string" || body.id.length === 0) {
+      return jsonResponse({ error: "missing_id" }, 400);
+    }
+    const bumpSeverity = typeof body.bumpSeverity === "boolean" ? body.bumpSeverity : true;
+
+    try {
+      const result = await correlateProblemReportCore(getDb(env.DB), body.id, { bumpSeverity });
+      if (!result) {
+        return jsonResponse({ error: "not_found", id: body.id }, 404);
+      }
+      return jsonResponse({ ok: true, result });
+    } catch (e) {
+      await logError(env.DB, {
+        source: "mcp:internal-api",
+        message: "correlateProblemReportCore threw in correlate-problem-report endpoint",
+        error: e,
+        context: { id: body.id, bumpSeverity },
+      });
+      return jsonResponse({ error: "correlation_failed" }, 502);
+    }
   }
 
   return null;

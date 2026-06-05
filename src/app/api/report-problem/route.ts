@@ -6,14 +6,17 @@
  * write — going via the MCP Worker over HTTP would add a 100ms+ hop
  * for a one-row insert.
  *
- * Skips the burst-watch correlation that the email path does because
- * the helper lives in mcp-server only. Instead, severity defaults to
- * LOW and operators can re-correlate via the C5 MCP tool
- * `correlate_problem_report(id)`. The HIGH-severity path remains fully
- * wired via email submissions; this matches the typical case (web form
- * reports are usually feature requests / individual data fixes, not
- * outage alerts — those land via the user clicking "Report a problem"
- * from the error boundary, where path context is the strongest signal).
+ * D — UR1 Phase 2 (Dev backlog 2026-06-05): after the local insert, fires
+ * a fire-and-forget HTTP correlation call to mcp-server's
+ * `/api/admin/internal/correlate-problem-report` endpoint. Pre-D, the web
+ * form left severity=LOW and waited for the operator to manually re-run
+ * the `correlate_problem_report` MCP tool. Post-D, the at-intake call
+ * turns "user reports broken page during outage" into a real-time HIGH
+ * alert routed through B3 within ~10s of submit. The call has a 5s
+ * timeout and fails open — if mcp-server is unreachable, the report still
+ * lands (severity=LOW) and the operator path still works as the
+ * backstop. The HIGH-severity path remains fully wired via email
+ * submissions; D closes the corresponding gap on the web form.
  *
  * Anti-spam:
  *   - Honeypot `website` field — must be empty.
@@ -88,8 +91,9 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  // Insert. Severity defaults to LOW — the email path runs burst-watch
-  // correlation; the web path defers that to C5's MCP tool.
+  // Insert. Severity defaults to LOW. D (Dev backlog 2026-06-05) wires
+  // an at-intake correlation call below; pre-D, severity could only be
+  // bumped by an operator running the correlate_problem_report MCP tool.
   const db = getCloudflareDb();
   const id = crypto.randomUUID();
   try {
@@ -118,7 +122,82 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  // D — Phase 2: fire-and-forget burst-watch correlation against
+  // mcp-server. Fails open on any error (timeout, 5xx, network) — the
+  // operator's correlate_problem_report MCP tool remains the backstop.
+  // We don't await this; the user's redirect should not block on
+  // mcp-server availability.
+  triggerCorrelation(id).catch(async (e) => {
+    await logError(db, {
+      level: "warn",
+      message: "triggerCorrelation threw",
+      error: e,
+      source: SOURCE,
+      context: { id },
+    });
+  });
+
   return NextResponse.redirect(new URL("/report-problem/thanks", req.url), 303);
+}
+
+const MCP_DEFAULT_URL = "https://mcp.meetmeatthefair.com";
+const CORRELATION_TIMEOUT_MS = 5000;
+
+/**
+ * POST to mcp-server's correlate-problem-report endpoint. Fire-and-forget
+ * from the route; bounded timeout so a hanging mcp-server doesn't pin a
+ * Worker until the 30s cap.
+ *
+ * Failure modes that fall through cleanly:
+ *   - Network error / 5xx       → logged as warn, severity stays LOW.
+ *   - 5s timeout                → AbortError, logged as warn.
+ *   - Missing INTERNAL_API_KEY  → endpoint returns 401, treated as
+ *                                 misconfig and logged as error.
+ */
+async function triggerCorrelation(problemReportId: string): Promise<void> {
+  const env = getCloudflareEnv() as unknown as {
+    MCP_SERVER_URL?: string;
+    INTERNAL_API_KEY?: string;
+  };
+  const baseUrl = env.MCP_SERVER_URL || MCP_DEFAULT_URL;
+  const apiKey = env.INTERNAL_API_KEY;
+  if (!apiKey) {
+    // Misconfig — the endpoint would 401. Log and bail.
+    await logError(getCloudflareDb(), {
+      level: "error",
+      message: "INTERNAL_API_KEY missing; cannot trigger problem-report correlation",
+      source: SOURCE,
+      context: { problemReportId },
+    });
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CORRELATION_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${baseUrl}/api/admin/internal/correlate-problem-report`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Internal-Key": apiKey,
+      },
+      body: JSON.stringify({ id: problemReportId }),
+      signal: controller.signal,
+    });
+    if (!res.ok && res.status !== 404) {
+      // 404 means the row vanished — race with deletion or another
+      // operator. Don't treat as an outage. Other non-2xx is worth
+      // a log line.
+      await logError(getCloudflareDb(), {
+        level: "warn",
+        message: `correlate-problem-report returned ${res.status}`,
+        source: SOURCE,
+        context: { problemReportId, status: res.status },
+      });
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function badRequest(msg: string): Response {
