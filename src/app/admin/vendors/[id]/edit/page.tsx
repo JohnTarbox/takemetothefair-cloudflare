@@ -53,6 +53,16 @@ interface Vendor {
   // Verified Pro tier (drizzle/0052) — same pattern.
   verifiedPro: boolean;
   verifiedProAt: string | null;
+  // EH1 hierarchy (drizzle/0106). Phase 4 surfaces these in the form;
+  // API perimeter shipped in #341. Display resolution rule:
+  // override_permitted && display_preference != 'INHERIT' → preference
+  // else → parent.default_display. Pure function in
+  // src/lib/vendor-hierarchy.ts.
+  role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
+  parentVendorId: string | null;
+  defaultDisplay: "NATIONAL" | "LOCAL" | null;
+  overridePermitted: boolean;
+  displayPreference: "NATIONAL" | "LOCAL" | "INHERIT" | null;
 }
 
 export default function EditVendorPage() {
@@ -83,6 +93,14 @@ export default function EditVendorPage() {
     paymentMethods: [] as string[],
     licenseInfo: "",
     insuranceInfo: "",
+    // EH1 hierarchy fields. UI uses camelCase; submit handler maps them to
+    // snake_case (role / parent_vendor_id / default_display / etc.) which
+    // is what vendorUpdateSchema expects.
+    role: "INDEPENDENT" as "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT",
+    parentVendorId: "",
+    defaultDisplay: "" as "" | "NATIONAL" | "LOCAL",
+    overridePermitted: false,
+    displayPreference: "" as "" | "NATIONAL" | "LOCAL" | "INHERIT",
   });
 
   useEffect(() => {
@@ -129,6 +147,12 @@ export default function EditVendorPage() {
           paymentMethods,
           licenseInfo: data.licenseInfo || "",
           insuranceInfo: data.insuranceInfo || "",
+          // EH1 hierarchy
+          role: data.role ?? "INDEPENDENT",
+          parentVendorId: data.parentVendorId ?? "",
+          defaultDisplay: data.defaultDisplay ?? "",
+          overridePermitted: data.overridePermitted ?? false,
+          displayPreference: data.displayPreference ?? "",
         });
       }
     } catch (error) {
@@ -143,10 +167,28 @@ export default function EditVendorPage() {
     setLoading(true);
 
     try {
-      // Transform form data for API
+      // Transform form data for API. EH1 hierarchy fields are sent
+      // snake_case because vendorUpdateSchema accepts snake_case for
+      // these (mirroring the existing enhanced_profile / gallery_images
+      // naming convention in that extend block); everything else stays
+      // camelCase. Empty-string sentinels for the optional enums are
+      // mapped to null so they don't fail Zod's enum gate.
+      const {
+        role,
+        parentVendorId,
+        defaultDisplay,
+        overridePermitted,
+        displayPreference,
+        ...restFormData
+      } = formData;
       const submitData = {
-        ...formData,
+        ...restFormData,
         yearEstablished: formData.yearEstablished ? parseInt(formData.yearEstablished, 10) : null,
+        role,
+        parent_vendor_id: parentVendorId.trim() === "" ? null : parentVendorId.trim(),
+        default_display: defaultDisplay === "" ? null : defaultDisplay,
+        override_permitted: overridePermitted,
+        display_preference: displayPreference === "" ? null : displayPreference,
       };
 
       const res = await fetch(`/api/admin/vendors/${params.id}`, {
@@ -395,6 +437,143 @@ export default function EditVendorPage() {
                     placeholder="Insurance details"
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* EH1 Vendor Hierarchy Section (Phase 4) — exposes the 5
+                national-brand / local-office columns. Most vendors are
+                INDEPENDENT and only see the role select; the other
+                fields conditionally appear based on the chosen role. */}
+            <div className="border-t pt-6">
+              <h3 className="text-lg font-medium mb-4">Vendor Hierarchy</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Most vendors are <strong>Independent</strong>. Use <strong>National</strong> for
+                parent brands (e.g. LeafFilter HQ) and <strong>Local Office</strong> for franchise /
+                regional offices that should show under a national parent.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="role">Role</Label>
+                  <select
+                    id="role"
+                    value={formData.role}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        role: e.target.value as Vendor["role"],
+                      })
+                    }
+                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                  >
+                    <option value="INDEPENDENT">Independent (default)</option>
+                    <option value="NATIONAL">National (parent brand)</option>
+                    <option value="LOCAL_OFFICE">Local Office (under a parent)</option>
+                  </select>
+                </div>
+
+                {/* Parent picker — only for LOCAL_OFFICE. ID input rather
+                    than a search picker for now (only ~2 NATIONAL parents
+                    today; pasting the id from /admin/vendors is fine).
+                    Phase 5 can upgrade to a typeahead. */}
+                {formData.role === "LOCAL_OFFICE" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="parentVendorId">Parent Vendor ID</Label>
+                    <Input
+                      id="parentVendorId"
+                      value={formData.parentVendorId}
+                      onChange={(e) => setFormData({ ...formData, parentVendorId: e.target.value })}
+                      placeholder="UUID of the NATIONAL parent vendor"
+                    />
+                    <p className="text-xs text-gray-500">
+                      Look up the NATIONAL parent at <code>/admin/vendors</code> and paste its{" "}
+                      <code>id</code> here.
+                    </p>
+                  </div>
+                )}
+
+                {/* Default display — only for NATIONAL. Decides what the
+                    public sees when a child has NO override (the common
+                    case). LOCAL means franchise pages surface; NATIONAL
+                    means franchise pages canonical-up to the hub. */}
+                {formData.role === "NATIONAL" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="defaultDisplay">Default Display (for children)</Label>
+                    <select
+                      id="defaultDisplay"
+                      value={formData.defaultDisplay}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          defaultDisplay: e.target.value as "" | "NATIONAL" | "LOCAL",
+                        })
+                      }
+                      className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                    >
+                      <option value="">— Unset —</option>
+                      <option value="LOCAL">LOCAL (children pages indexed)</option>
+                      <option value="NATIONAL">NATIONAL (children canonical-up to this hub)</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Override gate — only meaningful on LOCAL_OFFICE. Default
+                    OFF: child can REQUEST a preference but the parent's
+                    default_display wins. Flip ON to grant the child its
+                    self-selected display. */}
+                {formData.role === "LOCAL_OFFICE" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="overridePermitted">Override Permitted (gate)</Label>
+                    <div className="flex items-center gap-2 pt-2">
+                      <input
+                        type="checkbox"
+                        id="overridePermitted"
+                        checked={formData.overridePermitted}
+                        onChange={(e) =>
+                          setFormData({ ...formData, overridePermitted: e.target.checked })
+                        }
+                        className="rounded border-gray-300"
+                      />
+                      <span className="text-sm text-gray-600">
+                        Let this office&apos;s preference override the parent&apos;s default
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Child preference — only meaningful on LOCAL_OFFICE.
+                    INHERIT = fall through to parent's default_display.
+                    Setting NATIONAL or LOCAL here only takes effect when
+                    override_permitted is ON. */}
+                {formData.role === "LOCAL_OFFICE" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="displayPreference">Display Preference</Label>
+                    <select
+                      id="displayPreference"
+                      value={formData.displayPreference}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          displayPreference: e.target.value as
+                            | ""
+                            | "NATIONAL"
+                            | "LOCAL"
+                            | "INHERIT",
+                        })
+                      }
+                      className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                    >
+                      <option value="">— Unset —</option>
+                      <option value="INHERIT">INHERIT (fall through to parent)</option>
+                      <option value="LOCAL">
+                        LOCAL (this office&apos;s page is the canonical)
+                      </option>
+                      <option value="NATIONAL">NATIONAL (canonical-up to parent hub)</option>
+                    </select>
+                    <p className="text-xs text-gray-500">
+                      Only takes effect when the parent grants <em>Override Permitted</em>.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
