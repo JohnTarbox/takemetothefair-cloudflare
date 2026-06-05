@@ -16,8 +16,8 @@ import { and, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { problemReports, errorLogs, inboundEmails, users, adminActions } from "../schema.js";
 import type { Db } from "../db.js";
 import { jsonContent } from "../helpers.js";
-import { getErrorLogsBurstWindow } from "../error-logs-burst.js";
-import { HIGH_THRESHOLD, LOOKBACK_MINUTES, LOOKAHEAD_MINUTES } from "../problem-reports/intake.js";
+import { LOOKBACK_MINUTES, LOOKAHEAD_MINUTES } from "../problem-reports/intake.js";
+import { correlateProblemReportCore } from "../problem-reports/correlate.js";
 
 export function registerAdminProblemReportTools(server: McpServer, db: Db) {
   // ── list_problem_reports ────────────────────────────────────────
@@ -271,58 +271,21 @@ export function registerAdminProblemReportTools(server: McpServer, db: Db) {
         ),
     },
     async (params) => {
-      const [row] = await db
-        .select()
-        .from(problemReports)
-        .where(eq(problemReports.id, params.id))
-        .limit(1);
-      if (!row) {
+      // D (Dev backlog 2026-06-05): logic extracted into
+      // correlateProblemReportCore so the new internal HTTP endpoint
+      // (POST /api/admin/internal/correlate-problem-report) and this
+      // MCP tool share one code path. See ../problem-reports/correlate.ts.
+      const result = await correlateProblemReportCore(db, params.id, {
+        bumpSeverity: params.bump_severity,
+      });
+      if (!result) {
         return {
           content: [{ type: "text" as const, text: `No row id=${params.id}.` }],
           isError: true,
         };
       }
-
-      const since = new Date(row.createdAt.getTime() - LOOKBACK_MINUTES * 60_000);
-      const until = new Date(row.createdAt.getTime() + LOOKAHEAD_MINUTES * 60_000);
-      const burst = await getErrorLogsBurstWindow(db, {
-        since,
-        until,
-        minCount: HIGH_THRESHOLD,
-        topSourcesLimit: 10,
-      });
-
-      const newSeverity: "LOW" | "HIGH" = burst.totalErrors >= HIGH_THRESHOLD ? "HIGH" : "LOW";
-      const bumped = params.bump_severity !== false; // default true
-      let mutated = false;
-      if (
-        bumped &&
-        (burst.totalErrors !== row.correlatedErrorCount || newSeverity !== row.severity)
-      ) {
-        await db
-          .update(problemReports)
-          .set({
-            severity: newSeverity,
-            correlatedErrorCount: burst.totalErrors,
-          })
-          .where(eq(problemReports.id, params.id));
-        mutated = true;
-      }
-
       return {
-        content: [
-          jsonContent({
-            id: row.id,
-            previousSeverity: row.severity,
-            previousCorrelatedErrorCount: row.correlatedErrorCount,
-            newSeverity,
-            newCorrelatedErrorCount: burst.totalErrors,
-            crossed: burst.tripped,
-            mutated,
-            bySource: burst.bySource,
-            window: { since: since.toISOString(), until: until.toISOString() },
-          }),
-        ],
+        content: [jsonContent(result)],
       };
     }
   );
