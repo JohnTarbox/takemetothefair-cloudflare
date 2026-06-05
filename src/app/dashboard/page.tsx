@@ -25,8 +25,9 @@ import {
   eventVendors,
   venues,
 } from "@/lib/db/schema";
-import { eq, count, and, gte, asc } from "drizzle-orm";
+import { eq, count, and, asc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { logError } from "@/lib/logger";
 import { formatDateRange } from "@/lib/utils";
 import { computeVendorCompleteness } from "@/lib/vendor-completeness";
@@ -142,7 +143,8 @@ async function getUpcomingEvents() {
       .select()
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(and(isPublicEventStatus(), gte(events.endDate, new Date())))
+      // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+      .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date())))
       .orderBy(asc(events.startDate))
       .limit(3);
 

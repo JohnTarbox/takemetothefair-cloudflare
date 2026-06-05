@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
-import { eq, and, gte, like, or } from "drizzle-orm";
+import { eq, and, like, or } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { auth } from "@/lib/auth";
 import { sanitizeLikeInput } from "@/lib/utils";
 import { logError } from "@/lib/logger";
@@ -36,7 +37,8 @@ export async function GET(request: Request) {
     const conditions = [isPublicEventStatus()];
 
     if (includePast !== "true") {
-      conditions.push(gte(events.endDate, new Date()));
+      // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+      conditions.push(upcomingEndPredicate(new Date()));
     }
 
     if (query) {

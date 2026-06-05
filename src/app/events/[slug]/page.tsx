@@ -35,10 +35,11 @@ import {
   blogPosts,
   contentLinks,
 } from "@/lib/db/schema";
-import { eq, and, sql, ne, gte, lt, like, desc, or, isNull } from "drizzle-orm";
+import { eq, and, sql, ne, lt, like, desc, or, isNull } from "drizzle-orm";
 import { isPublicVendorStatus, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
 import { parseJsonArray } from "@/types";
@@ -272,9 +273,12 @@ async function getRelatedEvents(
 ) {
   const db = getCloudflareDb();
   try {
+    // A2 (Dev backlog 2026-06-05): upcoming branch uses the 24h end-of-day
+    // grace per upcomingEndPredicate. Past branch stays strict lt() since
+    // an event with end_date in the past is unambiguously past.
     const dateCondition = isPastEvent
       ? lt(events.endDate, new Date())
-      : gte(events.endDate, new Date());
+      : upcomingEndPredicate(new Date());
     const baseConditions = [ne(events.id, eventId), isPublicEventStatus(), dateCondition];
 
     // Both branches use the narrow projection (D1 100-col cap); see

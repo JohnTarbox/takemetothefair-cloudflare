@@ -46,7 +46,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
-import { evaluateGates } from "@takemetothefair/utils";
+import { evaluateGates, normalizeEventDate } from "@takemetothefair/utils";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
@@ -691,20 +691,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           transform: (v: string[]) => JSON.stringify(v),
         },
         {
+          // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so
+          // a bare YYYY-MM-DD lands at noon UTC (canonical anchor), not the
+          // midnight-UTC `new Date()` default that ships as previous-day-EDT.
           param: "start_date",
           column: "startDate",
-          transform: (v: string) => {
-            const d = new Date(v);
-            return isNaN(d.getTime()) ? undefined : d;
-          },
+          transform: (v: string) => normalizeEventDate(v) ?? undefined,
         },
         {
           param: "end_date",
           column: "endDate",
-          transform: (v: string) => {
-            const d = new Date(v);
-            return isNaN(d.getTime()) ? undefined : d;
-          },
+          transform: (v: string) => normalizeEventDate(v) ?? undefined,
         },
       ];
 

@@ -4,8 +4,9 @@ import Image from "next/image";
 import { Calendar, MapPin, Store, FileText, Search } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts, users } from "@/lib/db/schema";
-import { and, gte, eq, sql, desc } from "drizzle-orm";
+import { and, eq, sql, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { formatDateRange } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -52,7 +53,8 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       .where(
         and(
           isPublicEventStatus(),
-          gte(events.endDate, new Date()),
+          // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+          upcomingEndPredicate(new Date()),
           sql`(LOWER(${events.name}) LIKE LOWER(${searchTerm}) OR LOWER(${events.description}) LIKE LOWER(${searchTerm}))`
         )
       )

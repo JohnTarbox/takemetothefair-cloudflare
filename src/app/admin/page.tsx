@@ -3,8 +3,9 @@ import { Calendar, MapPin, Store, Users, Clock, UserPlus, BarChart3 } from "luci
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/db/schema";
-import { eq, count, gte, and } from "drizzle-orm";
+import { eq, count, and } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
@@ -112,7 +113,8 @@ async function getUpcomingEventsWithVendorCounts() {
       .select()
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(and(eq(events.status, "APPROVED"), gte(events.endDate, now)))
+      // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
+      .where(and(eq(events.status, "APPROVED"), upcomingEndPredicate(now)))
       .orderBy(events.startDate)
       .limit(50);
 

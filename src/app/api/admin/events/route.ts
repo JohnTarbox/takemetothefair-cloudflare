@@ -17,6 +17,7 @@ import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { classifySource } from "@/lib/source-classification";
 import { parseDateOnly } from "@/lib/datetime";
+import { normalizeEventDate } from "@/lib/event-dates";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { evaluateGates } from "@/lib/event-date-gates";
@@ -169,9 +170,12 @@ export async function POST(request: NextRequest) {
       existing.map((r) => r.slug)
     );
 
-    // Auto-compute startDate/endDate from eventDays when discontinuous
-    let startDate = data.startDate ? new Date(data.startDate) : null;
-    let endDate = data.endDate ? new Date(data.endDate) : null;
+    // Auto-compute startDate/endDate from eventDays when discontinuous.
+    // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so a
+    // bare YYYY-MM-DD lands at noon UTC (canonical anchor) rather than
+    // the midnight-UTC default that renders as previous-day-EDT.
+    let startDate = normalizeEventDate(data.startDate);
+    let endDate = normalizeEventDate(data.endDate);
     if (data.discontinuousDates && data.eventDays && data.eventDays.length > 0) {
       const sorted = data.eventDays.map((d) => d.date).sort();
       startDate = parseDateOnly(sorted[0]);

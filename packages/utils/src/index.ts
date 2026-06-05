@@ -354,3 +354,10 @@ export * from "./source-classification";
 // address-as-name at write time on every venue-create path so the public
 // venues directory never accrues another "18 Spring Street" name.
 export * from "./venue-name";
+
+// A3 (Dev backlog 2026-06-05): canonical noon-UTC normalizer for
+// date-only event ingests. Promoted from src/lib/event-dates.ts so the
+// MCP Worker's update_event / suggest_event tools can wire through the
+// same anchor as the email pipeline. 5 main-app ingest paths bypassed
+// this convention pre-A3.
+export * from "./event-dates";

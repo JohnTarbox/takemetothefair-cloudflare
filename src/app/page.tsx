@@ -8,6 +8,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -54,7 +55,9 @@ async function getFeaturedEvents() {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(isPublicEventStatus(), eq(events.featured, true), gte(events.endDate, new Date())))
+      .where(
+        and(isPublicEventStatus(), eq(events.featured, true), upcomingEndPredicate(new Date()))
+      )
       .orderBy(events.startDate)
       .limit(6);
 
@@ -80,7 +83,7 @@ async function getUpcomingEvents() {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(isPublicEventStatus(), gte(events.endDate, new Date())))
+      .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date())))
       .orderBy(events.startDate)
       .limit(6);
 
@@ -126,7 +129,7 @@ async function getPlatformCounts() {
       db
         .select({ n: count() })
         .from(events)
-        .where(and(isPublicEventStatus(), gte(events.endDate, new Date()))),
+        .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date()))),
       db.select({ n: count() }).from(venues).where(eq(venues.status, "ACTIVE")),
       db.select({ n: count() }).from(vendors),
     ]);

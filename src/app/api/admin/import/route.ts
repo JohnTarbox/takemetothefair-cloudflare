@@ -7,6 +7,7 @@ import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
 import { decodeHtmlEntities } from "@/lib/scrapers/utils";
 import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@/lib/utils";
+import { normalizeEventDate } from "@/lib/event-dates";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
@@ -439,13 +440,13 @@ export async function POST(request: Request) {
               lastSyncedAt: new Date(),
               updatedAt: new Date(),
             };
-            // Only update dates if provided
-            if (eventData.startDate) {
-              updateData.startDate = new Date(eventData.startDate);
-            }
-            if (eventData.endDate) {
-              updateData.endDate = new Date(eventData.endDate);
-            }
+            // Only update dates if provided. A3 (Dev backlog 2026-06-05):
+            // route through normalizeEventDate so bare YYYY-MM-DD lands at
+            // noon UTC (canonical anchor).
+            const updateStart = normalizeEventDate(eventData.startDate);
+            const updateEnd = normalizeEventDate(eventData.endDate);
+            if (updateStart) updateData.startDate = updateStart;
+            if (updateEnd) updateData.endDate = updateEnd;
             if (eventData.datesConfirmed !== undefined) {
               updateData.datesConfirmed = eventData.datesConfirmed;
             }
@@ -501,12 +502,19 @@ export async function POST(request: Request) {
         // resolve to a Tier 3 aggregator host — evaluateGates handles
         // either case. Failures land in PENDING_REVIEW with gate_flags
         // populated so admins can triage from the recommendations panel.
+        // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so
+        // bare YYYY-MM-DD lands at noon UTC (canonical anchor). Normalize
+        // once here and reuse below for both the gate input and the events
+        // INSERT so the two stay in lockstep.
+        const normalizedStart = normalizeEventDate(eventData.startDate);
+        const normalizedEnd = normalizeEventDate(eventData.endDate);
+
         const gateInput = {
           name: decodedNewEventName,
           sourceUrl: eventData.sourceUrl ?? null,
           sourceName: eventData.sourceName ?? null,
-          startDate: eventData.startDate ? new Date(eventData.startDate) : null,
-          endDate: eventData.endDate ? new Date(eventData.endDate) : null,
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
           applicationDeadline: null,
           description: decodedNewDescription,
         };
@@ -523,8 +531,8 @@ export async function POST(request: Request) {
           description: decodedNewDescription,
           promoterId,
           venueId: eventVenueId,
-          startDate: eventData.startDate ? new Date(eventData.startDate) : null,
-          endDate: eventData.endDate ? new Date(eventData.endDate) : null,
+          startDate: normalizedStart,
+          endDate: normalizedEnd,
           datesConfirmed: eventData.datesConfirmed ?? (eventData.startDate ? true : false),
           categories: JSON.stringify(["Fair", "Festival"]),
           tags: JSON.stringify(["imported", eventData.sourceName]),
