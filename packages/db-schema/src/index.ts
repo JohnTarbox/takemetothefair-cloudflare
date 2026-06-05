@@ -1505,17 +1505,26 @@ export const dedupSweepSnapshots = sqliteTable(
 );
 
 // Issue #326 — debounce state for the page-error Slack canary
-// (mcp-server/src/page-error-canary.ts). One row per alert tier so a
-// single sustained outage doesn't spam the channel every cron fire.
-// See drizzle/0103_page_error_canary_state.sql for the rationale.
-export const pageErrorCanaryState = sqliteTable("page_error_canary_state", {
-  // 'RED' | 'YELLOW' — primary key; never more than two rows total.
-  tier: text("tier").primaryKey(),
-  lastAlertedAt: integer("last_alerted_at", { mode: "timestamp" }).notNull(),
-  lastCount: integer("last_count").notNull(),
-  lastTopSource: text("last_top_source"),
-  lastTopCount: integer("last_top_count"),
-});
+// (mcp-server/src/page-error-canary.ts). See drizzle/0103 for the
+// original rationale + drizzle/0105_page_error_canary_state_per_source.sql
+// for the 2026-06-05 B2 follow-up that extended PK to (tier, source) so
+// each source's bursts get their own debounce window.
+export const pageErrorCanaryState = sqliteTable(
+  "page_error_canary_state",
+  {
+    tier: text("tier").notNull(), // 'RED' | 'YELLOW'
+    // Source string, e.g. 'app/events/page.tsx:getEvents'. Part of the
+    // composite PK (tier, source) so a burst on getEvents alone and a
+    // burst on getVenue alone alert independently.
+    source: text("source").notNull(),
+    lastAlertedAt: integer("last_alerted_at", { mode: "timestamp" }).notNull(),
+    lastCount: integer("last_count").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tier, t.source] }),
+    index("idx_page_error_canary_state_source").on(t.source),
+  ]
+);
 
 // UR1 Phase 1 (drizzle/0104, 2026-06-04) — user-reported problem tracking.
 // Direct response to the 6/3-6/4 outage being caught by a user not by
