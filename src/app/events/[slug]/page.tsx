@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import {
-  Calendar,
   MapPin,
   Tag,
   ExternalLink,
@@ -56,7 +55,7 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { ShareButtons } from "@/components/ShareButtons";
-import { getCategoryBadgeClass } from "@/lib/category-colors";
+import { getCategoryBadgeClass, getCategoryColors } from "@/lib/category-colors";
 import { formatAudienceBadge } from "@/lib/event-audience";
 import { buildEventMetaDescription, buildEventTitle } from "@/lib/seo-utils";
 import { haversineDistance, formatDistance } from "@/lib/geo";
@@ -648,29 +647,131 @@ export default async function EventDetailPage({ params }: Props) {
       )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <main className="lg:col-span-2 space-y-6">
-          {event.imageUrl && (
-            <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
-              <Image
-                src={event.imageUrl}
-                alt={event.name}
-                fill
-                priority
-                sizes="(max-width: 1024px) 100vw, 66vw"
-                className="object-cover"
-              />
-            </div>
-          )}
+          {/* UX-A1 item 1 (2026-06-04) — 3-tier hero fallback. Was: rendered
+              nothing when event.imageUrl was null (which is 81% of events
+              per the U9 audit — 179/946 have an image). Now:
+                Tier 1: real imageUrl (existing path, unchanged)
+                Tier 2: location card — venue name + city/state on a
+                        category-tinted background, with a "View on Map"
+                        link. Used when no imageUrl AND venue has coords
+                        (~90% of venues).
+                Tier 3: category banner — pure tinted card with category
+                        name in large type. Used when no imageUrl AND no
+                        venue coords (the rarest case).
+              No external map tiles in tiers 2/3 to keep the page edge-
+              renderable without new deps. Tier 2's "View on Map" link
+              still routes to the existing Google Maps URL elsewhere on
+              the page. */}
+          {(() => {
+            const categoryColors = getCategoryColors(parseJsonArray(event.categories));
+            if (event.imageUrl) {
+              return (
+                <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
+                  <Image
+                    src={event.imageUrl}
+                    alt={event.name}
+                    fill
+                    priority
+                    sizes="(max-width: 1024px) 100vw, 66vw"
+                    className="object-cover"
+                  />
+                </div>
+              );
+            }
+            const hasCoords = !!(event.venue?.latitude && event.venue?.longitude);
+            if (hasCoords && event.venue) {
+              const mapsUrl =
+                event.venue.googleMapsUrl ||
+                `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                  `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state}`
+                )}`;
+              return (
+                <div
+                  className={`aspect-video rounded-xl overflow-hidden ${categoryColors.bg} relative flex items-center justify-center`}
+                >
+                  <div className="text-center px-6">
+                    <MapPin
+                      className={`w-12 h-12 ${categoryColors.icon} mx-auto mb-3`}
+                      aria-hidden="true"
+                    />
+                    <p className={`text-xl font-semibold ${categoryColors.icon}`}>
+                      {event.venue.name}
+                    </p>
+                    <p className={`text-sm ${categoryColors.icon} opacity-80 mt-1`}>
+                      {event.venue.city}, {event.venue.state}
+                    </p>
+                    <a
+                      href={mapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`inline-flex items-center gap-1 mt-3 text-sm ${categoryColors.icon} underline hover:no-underline`}
+                    >
+                      View on Map <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              );
+            }
+            // Tier 3 — pure category banner. Last-resort but still
+            // branded; never the gray void that was previously shown.
+            const primaryCategory = parseJsonArray(event.categories)[0] || "Event";
+            return (
+              <div
+                className={`aspect-video rounded-xl overflow-hidden ${categoryColors.bg} relative flex items-center justify-center`}
+              >
+                <div className="text-center px-6">
+                  <Tag
+                    className={`w-12 h-12 ${categoryColors.icon} mx-auto mb-3`}
+                    aria-hidden="true"
+                  />
+                  <p className={`text-2xl font-semibold ${categoryColors.icon}`}>
+                    {primaryCategory}
+                  </p>
+                  <p className={`text-sm ${categoryColors.icon} opacity-80 mt-1`}>
+                    Event details below
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
           {(() => {
             const categories = parseJsonArray(event.categories);
             const tags = parseJsonArray(event.tags);
+            // UX-A1 item 4 (2026-06-04) — extended INTERNAL_TAGS to suppress
+            // operational/admin tags that don't belong on the public chip row.
+            // The earlier set covered ingest-source tags; the additions here
+            // catch scheduling-shape ("weekends-only"), workflow-state
+            // ("needs-review"), and admin-flag ("dedup-suspect") tags that
+            // operators apply for internal triage. Tags containing `.` are
+            // already excluded (versioned/qualified, e.g. "fmt.v2").
             const INTERNAL_TAGS = new Set([
+              // Ingest-source
               "imported",
               "url-import",
               "community-suggestion",
               "vendor-submission",
+              // Scheduling-shape (UX-A1)
+              "weekends-only",
+              "weekdays-only",
+              "recurring",
+              "ongoing",
+              // Workflow/admin (UX-A1)
+              "needs-review",
+              "needs-image",
+              "needs-dates",
+              "dedup-suspect",
+              "draft",
+              "internal",
             ]);
-            const publicTags = tags.filter((tag) => !INTERNAL_TAGS.has(tag) && !tag.includes("."));
+            const publicTags = tags.filter(
+              (tag) =>
+                !INTERNAL_TAGS.has(tag) &&
+                !tag.includes(".") &&
+                // Hide anything obviously admin-prefixed (e.g. "admin:hold").
+                !tag.startsWith("admin:") &&
+                !tag.startsWith("internal:")
+            );
             return (
               <>
                 <div>
@@ -873,8 +974,13 @@ export default async function EventDetailPage({ params }: Props) {
         <aside className="space-y-6">
           <Card>
             <CardContent className="p-6 space-y-4">
+              {/* UX-A1 item 2 (V1, 2026-06-04) — dropped the decorative
+                  Calendar icon that sat to the left of the date text. The
+                  AddToCalendar button inside the same row already renders
+                  a calendar icon; having two calendars side-by-side read
+                  as a duplicate to users in the working-notes review.
+                  Date text aligns flush-left instead. */}
               <div className="flex items-start gap-3">
-                <Calendar className="w-5 h-5 text-royal mt-0.5" />
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <p className="font-medium text-gray-900">
@@ -933,7 +1039,18 @@ export default async function EventDetailPage({ params }: Props) {
                         minute: "2-digit",
                       })}
                     </p>
-                  ) : null}
+                  ) : (
+                    // UX-A1 item 3 (2026-06-04) — graceful fallback when an
+                    // event has no event_days AND no discontinuousDates AND
+                    // no startDate. Rare (A2 made start_date required on
+                    // new submissions), but legacy rows can still hit this.
+                    // Previously rendered null — silent missing data. Now:
+                    // a clear "check with organizer" hint.
+                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                      <Clock className="w-4 h-4" />
+                      Hours not listed — check with organizer
+                    </p>
+                  )}
                 </div>
               </div>
 
