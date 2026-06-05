@@ -2,7 +2,17 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc } from "drizzle-orm";
-import { vendors, events, eventSlugHistory, blogPosts, blogSlugHistory } from "@/lib/db/schema";
+import {
+  vendors,
+  events,
+  eventSlugHistory,
+  blogPosts,
+  blogSlugHistory,
+  venues,
+  venueSlugHistory,
+  promoters,
+  promoterSlugHistory,
+} from "@/lib/db/schema";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import { unsafeSlug } from "@/lib/utils";
 
@@ -64,6 +74,12 @@ export const config = {
     // Blog detail pages (single slug only; not /blog itself, not /blog/tag/*,
     // not /blog/feed.xml — feed.xml is excluded by name below).
     "/blog/:slug",
+    // Venue + promoter detail pages — for the slug-history walker added by
+    // E remainder (Dev backlog 2026-06-05). Pre-PR, merge_venue /
+    // merge_promoter wrote tombstone-renamed slugs but the old slugs 404'd
+    // instead of 301-redirecting.
+    "/venues/:slug",
+    "/promoters/:slug",
     // Admin pages + admin API routes — for the Claude read-only Bearer
     // method gate. Matcher does NOT cover /admin or /api/admin themselves
     // (only `/<seg>/*` shapes), so the gate doesn't fire for the listing
@@ -342,6 +358,109 @@ export async function middleware(request: NextRequest) {
       });
     } catch {
       // DB error — let the page handler take over (it has its own check too).
+      return NextResponse.next();
+    }
+  }
+
+  // ── /venues/<slug> ─────────────────────────────────────────────
+  // E remainder (Dev backlog 2026-06-05): slug-rename redirect via
+  // venue_slug_history (drizzle/0109). Same shape as the events branch
+  // above: live row at this slug -> render normally; no row -> walk
+  // history up to 5 hops, verify terminus is a live venue, 301.
+  if (pathname.startsWith("/venues/")) {
+    const slug = pathname.slice("/venues/".length);
+    if (!slug || slug.includes("/")) return NextResponse.next();
+
+    const d1 = env.DB as D1Database | undefined;
+    if (!d1) return NextResponse.next();
+    const db = drizzle(d1);
+
+    try {
+      const [row] = await db
+        .select({ id: venues.id })
+        .from(venues)
+        .where(eq(venues.slug, unsafeSlug(slug)))
+        .limit(1);
+      if (row) return NextResponse.next();
+
+      // Walk slug history.
+      let cursor = slug;
+      const seen = new Set<string>([cursor]);
+      for (let hop = 0; hop < 5; hop++) {
+        const [historyRow] = await db
+          .select({ newSlug: venueSlugHistory.newSlug })
+          .from(venueSlugHistory)
+          .where(eq(venueSlugHistory.oldSlug, unsafeSlug(cursor)))
+          .orderBy(desc(venueSlugHistory.changedAt))
+          .limit(1);
+        if (!historyRow || seen.has(historyRow.newSlug)) break;
+        cursor = historyRow.newSlug;
+        seen.add(cursor);
+      }
+      if (cursor !== slug) {
+        const [target] = await db
+          .select({ id: venues.id })
+          .from(venues)
+          .where(eq(venues.slug, unsafeSlug(cursor)))
+          .limit(1);
+        if (target) {
+          const url = request.nextUrl.clone();
+          url.pathname = `/venues/${cursor}`;
+          return NextResponse.redirect(url, 301);
+        }
+      }
+      return NextResponse.next();
+    } catch {
+      return NextResponse.next();
+    }
+  }
+
+  // ── /promoters/<slug> ──────────────────────────────────────────
+  // E remainder (Dev backlog 2026-06-05): slug-rename redirect via
+  // promoter_slug_history (drizzle/0109). Same shape as venues.
+  if (pathname.startsWith("/promoters/")) {
+    const slug = pathname.slice("/promoters/".length);
+    if (!slug || slug.includes("/")) return NextResponse.next();
+
+    const d1 = env.DB as D1Database | undefined;
+    if (!d1) return NextResponse.next();
+    const db = drizzle(d1);
+
+    try {
+      const [row] = await db
+        .select({ id: promoters.id })
+        .from(promoters)
+        .where(eq(promoters.slug, unsafeSlug(slug)))
+        .limit(1);
+      if (row) return NextResponse.next();
+
+      let cursor = slug;
+      const seen = new Set<string>([cursor]);
+      for (let hop = 0; hop < 5; hop++) {
+        const [historyRow] = await db
+          .select({ newSlug: promoterSlugHistory.newSlug })
+          .from(promoterSlugHistory)
+          .where(eq(promoterSlugHistory.oldSlug, unsafeSlug(cursor)))
+          .orderBy(desc(promoterSlugHistory.changedAt))
+          .limit(1);
+        if (!historyRow || seen.has(historyRow.newSlug)) break;
+        cursor = historyRow.newSlug;
+        seen.add(cursor);
+      }
+      if (cursor !== slug) {
+        const [target] = await db
+          .select({ id: promoters.id })
+          .from(promoters)
+          .where(eq(promoters.slug, unsafeSlug(cursor)))
+          .limit(1);
+        if (target) {
+          const url = request.nextUrl.clone();
+          url.pathname = `/promoters/${cursor}`;
+          return NextResponse.redirect(url, 301);
+        }
+      }
+      return NextResponse.next();
+    } catch {
       return NextResponse.next();
     }
   }

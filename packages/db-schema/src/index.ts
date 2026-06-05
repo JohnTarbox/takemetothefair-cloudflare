@@ -628,6 +628,56 @@ export const eventSlugHistory = sqliteTable(
   })
 );
 
+// Venue slug history — mirrors eventSlugHistory for /venues/[slug].
+// drizzle/0109 (E remainder, Dev backlog 2026-06-05). Populated by
+// merge_venue so the merged-away slug 301-redirects to the keeper via
+// the slug-history walker in src/middleware.ts.
+export const venueSlugHistory = sqliteTable(
+  "venue_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    venueId: text("venue_id")
+      .notNull()
+      .references(() => venues.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => ({
+    oldSlugIdx: index("idx_venue_slug_history_old_slug").on(t.oldSlug),
+    venueIdIdx: index("idx_venue_slug_history_venue_id").on(t.venueId),
+  })
+);
+
+// Promoter slug history — mirrors eventSlugHistory for /promoters/[slug].
+// drizzle/0109 (E remainder, Dev backlog 2026-06-05). Same shape as
+// venueSlugHistory; the merge_promoter tool writes here even though it
+// hard-deletes the duplicate row (ON DELETE CASCADE then runs, which is
+// fine — the rows that mattered for redirects existed at the moment of
+// the merge, and the cascade only fires once the row is gone).
+export const promoterSlugHistory = sqliteTable(
+  "promoter_slug_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    promoterId: text("promoter_id")
+      .notNull()
+      .references(() => promoters.id, { onDelete: "cascade" }),
+    oldSlug: text("old_slug").$type<Slug>().notNull(),
+    newSlug: text("new_slug").$type<Slug>().notNull(),
+    changedAt: integer("changed_at", { mode: "timestamp" }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (t) => ({
+    oldSlugIdx: index("idx_promoter_slug_history_old_slug").on(t.oldSlug),
+    promoterIdIdx: index("idx_promoter_slug_history_promoter_id").on(t.promoterId),
+  })
+);
+
 // Blog slug history — mirrors eventSlugHistory for /blog/[slug].
 // drizzle/0087. blog_post_id points at the SUCCESSOR post so the FK
 // cascade behaves sensibly across both the rename case (post still
