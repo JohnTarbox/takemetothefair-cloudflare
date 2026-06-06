@@ -86,6 +86,9 @@ jobs:
       - name: Check edge runtime declarations
         run: npx tsx scripts/check-edge-runtime.ts
 
+      - name: Check D1 100-column join cap
+        run: npx tsx scripts/check-d1-100col-joins.ts
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest

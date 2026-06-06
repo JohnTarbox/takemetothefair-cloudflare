@@ -5,6 +5,7 @@ import { events, venues, promoters } from "@/lib/db/schema";
 import { publicEventWhere } from "@/lib/event-lifecycle";
 import { unsafeSlug } from "@/lib/utils";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 
 export const runtime = "edge";
 
@@ -73,8 +74,10 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ slug: s
   // directly with no strftime conversion. Convert the anchor's
   // milliseconds-Date to seconds for unit parity.
   const anchorStartSec = Math.floor(anchor.startDate.getTime() / 1000);
+  // Narrow projection via eventJoinProjection — keeps the join under D1's
+  // 100-col cap (events 62 + venue 13 + promoter 7 = 82 cols).
   const rows = await db
-    .select()
+    .select(eventJoinProjection)
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
     .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -93,8 +96,8 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ slug: s
 
   const eventsOut = rows.map((r) => ({
     ...r.events,
-    venue: r.venues,
-    promoter: r.promoters,
+    venue: r.venue,
+    promoter: r.promoter,
   }));
 
   return NextResponse.json(

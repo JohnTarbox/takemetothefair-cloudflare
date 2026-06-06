@@ -16,6 +16,7 @@ import { eventUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { PUBLIC_EVENT_STATUSES } from "@/lib/constants";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { parseTimestamp } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
@@ -40,8 +41,11 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
+    // Narrow projection via eventJoinProjection — keeps the join under D1's
+    // 100-col cap (events 62 + venue 13 + promoter 7 = 82 cols). Was bare
+    // .select() = 107 cols post-P3a, silently returning zero rows.
     const eventResults = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -70,8 +74,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 
     const event = {
       ...eventData.events,
-      venue: eventData.venues,
-      promoter: eventData.promoters,
+      venue: eventData.venue,
+      promoter: eventData.promoter,
       eventVendors: eventVendorResults.map((ev) => ({
         ...ev.event_vendors,
         vendor: ev.vendors,

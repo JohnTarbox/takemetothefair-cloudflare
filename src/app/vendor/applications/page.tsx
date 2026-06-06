@@ -27,8 +27,22 @@ async function getApplications(userId: string): Promise<VendorApplicationRowData
 
     const vendor = vendorResults[0];
 
+    // Narrow venues projection (PR #357 / #359 pattern). The bare .select()
+    // here was 9 (event_vendors) + 62 (events) + 30 (venues) = 101 cols
+    // post-P3a — just over D1's 100-col cap, silently returning zero apps.
+    // Downstream only reads venue name/address/city/state/zip (lines below).
     const applicationResults = await db
-      .select()
+      .select({
+        event_vendors: eventVendors,
+        events: events,
+        venues: {
+          name: venues.name,
+          address: venues.address,
+          city: venues.city,
+          state: venues.state,
+          zip: venues.zip,
+        },
+      })
       .from(eventVendors)
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
