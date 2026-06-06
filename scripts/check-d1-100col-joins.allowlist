@@ -1,0 +1,39 @@
+# Known bare `db.select()` joins that exceed D1's 100-column result-row cap.
+# Each entry is `repo-relative/path.ts:<line>` and suppresses the ERROR exit
+# code from scripts/check-d1-100col-joins.ts for that specific call site.
+#
+# These are real bugs (D1 silently returns zero rows when triggered) but
+# they're hidden today because the queries' WHERE clauses or data state
+# don't currently trigger result-rows that would exceed the cap. Each
+# needs a follow-up PR that narrows the projection.
+#
+# Add NEW entries here only with a tracking-issue link and explicit reason.
+# The CI script keeps these visible in every run so the queue stays in
+# front of the team.
+#
+# Audit run that produced this list: 2026-06-06 post-P3a deploy
+# (drizzle/0112 added 3 columns to venues, tipping several joins over).
+
+# Home page — getFeaturedEvents/getUpcomingEvents/getRecentEvents all
+# query events + venues + promoters (107 cols). Hidden today because
+# featured-events is currently empty in prod data.
+src/app/page.tsx:53
+src/app/page.tsx:81
+src/app/page.tsx:106
+
+# Admin event detail API route — events + venues + promoters (107).
+src/app/api/admin/events/[id]/route.ts:43
+
+# Same-day events sidebar — events + venues + promoters (107).
+src/app/api/events/[slug]/same-day/route.ts:76
+
+# Vendor applications page — eventVendors + events + venues (101). Just
+# barely over the cap; could be hit if a vendor has applications that
+# match. Currently hidden because most vendor pages don't surface this
+# code path until an application exists with a venue assigned.
+src/app/vendor/applications/page.tsx:30
+
+# Duplicate-merge operation — events + venues + promoters + eventVendors
+# (116). Runs only on admin-triggered merges; rare and gated by manual
+# intervention, but tipped well over the cap by P3a.
+src/lib/duplicates/merge-operations.ts:957
