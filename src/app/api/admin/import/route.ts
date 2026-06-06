@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, promoters } from "@/lib/db/schema";
+import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
@@ -558,6 +558,30 @@ export async function POST(request: Request) {
           lastSyncedAt: new Date(),
           commercialVendorsAllowed: eventData.commercialVendorsAllowed ?? true,
         });
+
+        // Persist per-day open/close hours when the scraper extracted them
+        // from the source page. The scraper produces "HH:MM" wall-clock-at-
+        // venue strings (no timezone embedded); conversion to UTC happens at
+        // render time via parseWallClockInVenueZone. Batched in 11-row
+        // chunks — event_days has 9 storage columns; 9 × 11 = 99, just under
+        // D1's 100-bound-parameter cap. Mirrors the url-import pattern in
+        // src/app/api/admin/import-url/route.ts.
+        if (eventData.eventDays && eventData.eventDays.length > 0) {
+          const dayRows = eventData.eventDays.map((d) => ({
+            id: crypto.randomUUID(),
+            eventId: newEventId,
+            date: d.date,
+            openTime: d.openTime,
+            closeTime: d.closeTime,
+            notes: d.notes ?? null,
+            closed: false,
+            vendorOnly: false,
+          }));
+          const CHUNK = 11;
+          for (let i = 0; i < dayRows.length; i += CHUNK) {
+            await db.insert(eventDays).values(dayRows.slice(i, i + CHUNK));
+          }
+        }
 
         await recomputeEventCompleteness(db, newEventId);
 

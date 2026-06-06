@@ -2,7 +2,12 @@
 // Extracts event data from their community calendar page
 
 import type { ScrapedEvent, ScrapeResult } from "./types";
-import { decodeHtmlEntities } from "./utils";
+import {
+  decodeHtmlEntities,
+  parseTimeRange,
+  expandDateRange,
+  monthNameToMidnightUtc,
+} from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
@@ -10,26 +15,24 @@ const SOURCE_NAME = "mainepublic.org";
 const CALENDAR_URL = "https://www.mainepublic.org/community-calendar";
 const MAX_PAGES = 10; // Limit pages to scrape
 
-// Parse date strings like "February 15, 2026" or "Feb 15"
+// Parse date strings like "February 15, 2026" or "Feb 15" → midnight UTC Date.
+//
+// Per the date-only storage convention (#358/P3c), all scraper-produced
+// Dates anchor at midnight UTC. The previous shape `new Date('Feb 15, 2026')`
+// interpreted the string in the runtime's local zone — fine on Cloudflare
+// Workers (UTC), but wrong in non-UTC test runners. Switching to
+// monthNameToMidnightUtc closes that gap.
 function parseDate(dateText: string, year?: number): Date | null {
   const cleaned = dateText.trim();
-  const currentYear = year || new Date().getFullYear();
+  const currentYear = year || new Date().getUTCFullYear();
 
-  // Try parsing as-is first
-  let date = new Date(cleaned);
-  if (!isNaN(date.getTime())) {
-    return date;
-  }
-
-  // Try adding year if not present
-  if (!cleaned.match(/\d{4}/)) {
-    date = new Date(`${cleaned}, ${currentYear}`);
-    if (!isNaN(date.getTime())) {
-      return date;
-    }
-  }
-
-  return null;
+  // Match "Month Day, Year" or "Month Day" (optionally with comma).
+  const m = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?/);
+  if (!m) return null;
+  const monthName = m[1];
+  const day = parseInt(m[2], 10);
+  const parsedYear = m[3] ? parseInt(m[3], 10) : currentYear;
+  return monthNameToMidnightUtc(monthName, day, parsedYear);
 }
 
 // Parse time string like "03:00 PM" to hours and minutes
@@ -47,8 +50,9 @@ function parseTime(timeText: string): { hours: number; minutes: number } | null 
   return { hours, minutes };
 }
 
-// Parse the HTML to extract events
-function parseEventsFromHtml(html: string): ScrapedEvent[] {
+// Parse the HTML to extract events. Exported for unit testing — pure
+// transformation (HTML in → events out, no I/O).
+export function parseEventsFromHtml(html: string): ScrapedEvent[] {
   const events: ScrapedEvent[] = [];
 
   // Look for event cards/links
@@ -84,21 +88,27 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     let startDate: Date | undefined;
     let endDate: Date | undefined;
 
+    let eventDaysExtracted: ScrapedEvent["eventDays"];
     if (dateMatch) {
       const parsed = parseDate(dateMatch[0]);
       if (parsed) {
-        // P3c: startDate / endDate are stored as date-only midnight UTC
-        // anchors. The previous shape set artificial 9am/9pm times and
-        // then overwrote them with any times found in the source page —
-        // both behaviors baked a non-midnight time portion into
-        // events.startDate, off the storage convention. Source-page
-        // times (e.g. "9:00 AM - 5:00 PM") are intentionally NOT applied
-        // here; when this scraper grows event_days support, those times
-        // will land as "HH:MM" openTime/closeTime on event_days rows
-        // (wall-clock-in-venue-zone per the convention in
-        // src/lib/url-import/types.ts).
+        // startDate/endDate stay midnight-UTC anchors per the date-only
+        // convention. Wall-clock time-of-day from the source (e.g.
+        // "9:00 AM - 5:00 PM") goes into eventDays as "HH:MM" strings.
+        // Conversion to UTC instants happens at render time via
+        // parseWallClockInVenueZone + venue.timezone (P3b).
         startDate = parsed;
         endDate = new Date(startDate);
+
+        const timeRange = parseTimeRange(section);
+        if (timeRange) {
+          const dates = expandDateRange(startDate, endDate);
+          eventDaysExtracted = dates.map((date) => ({
+            date,
+            openTime: timeRange.openTime,
+            closeTime: timeRange.closeTime,
+          }));
+        }
       }
     }
 
@@ -128,6 +138,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       imageUrl,
       ticketUrl: eventUrl,
       state: "ME",
+      ...(eventDaysExtracted ? { eventDays: eventDaysExtracted } : {}),
     });
   }
 
