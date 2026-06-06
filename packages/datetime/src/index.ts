@@ -170,7 +170,11 @@ export function parseTimestamp(raw: unknown): Date | null {
  *
  * Returns `null` on unparseable inputs.
  */
-export function parseWallClockInVenueZone(dateIso: string, timeIso: string): Date | null {
+export function parseWallClockInVenueZone(
+  dateIso: string,
+  timeIso: string,
+  tz: string = VENUE_TZ
+): Date | null {
   if (typeof dateIso !== "string" || typeof timeIso !== "string") return null;
   const dm = dateIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const tm = timeIso.match(/^(\d{2}):(\d{2})$/);
@@ -198,10 +202,10 @@ export function parseWallClockInVenueZone(dateIso: string, timeIso: string): Dat
   // observed at the tentative ms; second pass uses the offset observed at the
   // first-pass result, which catches cases where the answer crosses a DST
   // boundary (e.g. wall-clock 3:00 AM on spring-forward Sunday — the tentative
-  // lands in EST but the answer is in EDT).
+  // lands in EST but the answer is in EDT). DST-exempt zones (Saskatchewan,
+  // Arizona) converge after pass 1.
   let result = targetMs;
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: VENUE_TZ,
+  const fmt = cachedFmt("parseWallClock", tz, DEFAULT_LOCALE, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -229,76 +233,35 @@ export function parseWallClockInVenueZone(dateIso: string, timeIso: string): Dat
 }
 
 // ── Internal formatter cache ────────────────────────────────────────
-// Intl.DateTimeFormat construction is non-trivial; cache the formatters
-// so hot paths don't pay the cost on every render.
+// Intl.DateTimeFormat construction is non-trivial; cache formatters so
+// hot paths don't pay the cost on every render. Cache key is
+// `${name}|${tz}|${locale}` — name disambiguates the option set (e.g.
+// `dateOnly` vs `dateMedium` differ in whether weekday is shown), tz and
+// locale capture per-venue / per-language variation (P3a, 2026-06-06).
+// For the dominant America/New_York + en-US case the cache hits after
+// the first render in the lifetime of the worker, so this is no slower
+// than the prior const-formatter shape.
 
-const dateOnlyFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  weekday: "short",
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-});
+const fmtCache = new Map<string, Intl.DateTimeFormat>();
 
-// Variants of dateOnlyFmt for sites that don't want a weekday or year. All
-// UTC-anchored — date-only fields are stored as midnight UTC, so rendering
-// in UTC is the only TZ-correct choice.
-const dateMediumFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-});
+function cachedFmt(
+  name: string,
+  tz: string,
+  locale: string,
+  options: Intl.DateTimeFormatOptions
+): Intl.DateTimeFormat {
+  const key = `${name}|${tz}|${locale}`;
+  let fmt = fmtCache.get(key);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat(locale, { ...options, timeZone: tz });
+    fmtCache.set(key, fmt);
+  }
+  return fmt;
+}
 
-const dateLongFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
-
-const dateShortFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  month: "short",
-  day: "numeric",
-});
-
-const monthShortFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  month: "short",
-});
-
-const eventDateTimeFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: VENUE_TZ,
-  weekday: "short",
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
-  timeZoneName: "short",
-});
-
-const timeOfDayFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: VENUE_TZ,
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
-  timeZoneName: "short",
-});
-
-const timestampUtcFmt = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  weekday: "short",
-  year: "numeric",
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-  hour12: true,
-  timeZoneName: "short",
-});
+// Cross-zone default. Existing call sites pass no tz/locale → these
+// defaults reproduce the pre-P3a Eastern-US render byte-for-byte.
+const DEFAULT_LOCALE = "en-US";
 
 function coerce(d: Date | string | number | null | undefined): Date | null {
   if (d == null) return null;
@@ -313,12 +276,23 @@ function coerce(d: Date | string | number | null | undefined): Date | null {
  * dates are stored as midnight UTC. No timezone label — date-only fields
  * don't carry meaningful tz semantics.
  *
+ * Optional `locale` for venue-specific display (e.g. "sam. 30 avr. 2026"
+ * with `"fr-CA"`). Defaults to `"en-US"` for backward compatibility.
+ *
  * Returns `""` on null / Invalid Date.
  */
-export function formatDateOnly(d: Date | string | number | null | undefined): string {
+export function formatDateOnly(
+  d: Date | string | number | null | undefined,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return dateOnlyFmt.format(date);
+  return cachedFmt("dateOnly", "UTC", locale, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 /**
@@ -352,24 +326,42 @@ export function formatDateRange(
  * stripped the weekday from `formatDateOnly` output via regex; this is the
  * direct form.
  *
+ * Optional `locale` — see `formatDateOnly`.
+ *
  * Returns `""` on null / Invalid Date.
  */
-export function formatDateMedium(d: Date | string | number | null | undefined): string {
+export function formatDateMedium(
+  d: Date | string | number | null | undefined,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return dateMediumFmt.format(date);
+  return cachedFmt("dateMedium", "UTC", locale, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 /**
  * Date-only display with long month name, e.g. "April 30, 2026". UTC-anchored.
  * Use for marketing-style display (blog post bylines, hero metadata).
  *
+ * Optional `locale` — see `formatDateOnly`.
+ *
  * Returns `""` on null / Invalid Date.
  */
-export function formatDateLong(d: Date | string | number | null | undefined): string {
+export function formatDateLong(
+  d: Date | string | number | null | undefined,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return dateLongFmt.format(date);
+  return cachedFmt("dateLong", "UTC", locale, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(date);
 }
 
 /**
@@ -377,12 +369,20 @@ export function formatDateLong(d: Date | string | number | null | undefined): st
  * Use for near-term chips/badges where the year is implied (the deadline
  * chip on event cards: "Applies by Apr 30").
  *
+ * Optional `locale` — see `formatDateOnly`.
+ *
  * Returns `""` on null / Invalid Date.
  */
-export function formatDateShort(d: Date | string | number | null | undefined): string {
+export function formatDateShort(
+  d: Date | string | number | null | undefined,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return dateShortFmt.format(date);
+  return cachedFmt("dateShort", "UTC", locale, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 /**
@@ -391,17 +391,28 @@ export function formatDateShort(d: Date | string | number | null | undefined): s
  * separate visual element (e.g. event-card date badge: month on top,
  * day-of-month below).
  *
+ * Optional `locale` — see `formatDateOnly`.
+ *
  * Returns `""` on null / Invalid Date.
  */
-export function formatMonthShort(d: Date | string | number | null | undefined): string {
+export function formatMonthShort(
+  d: Date | string | number | null | undefined,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return monthShortFmt.format(date);
+  return cachedFmt("monthShort", "UTC", locale, {
+    month: "short",
+  }).format(date);
 }
 
 /**
  * Time-of-day in the venue's zone, e.g. "5:00 PM EDT" / "5:00 PM EST".
  * Used for event open/close times.
+ *
+ * Optional `tz` (IANA) + `locale` (BCP 47) — defaults to America/New_York
+ * + en-US for backward compatibility. When threaded through from a venue
+ * row with timezone='America/Halifax', produces "5:00 PM ADT" / "AST".
  *
  * Refuses `DateOnly` at compile time — there is no time of day on a
  * midnight-UTC calendar anchor. Pass a real instant (e.g. event_day open/
@@ -410,10 +421,19 @@ export function formatMonthShort(d: Date | string | number | null | undefined): 
  *
  * Returns `""` on null / Invalid Date.
  */
-export function formatTimeOfDay(d: Instant | string | number | null | undefined): string {
+export function formatTimeOfDay(
+  d: Instant | string | number | null | undefined,
+  tz: string = VENUE_TZ,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return timeOfDayFmt.format(date);
+  return cachedFmt("timeOfDay", tz, locale, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(date);
 }
 
 /**
@@ -421,13 +441,28 @@ export function formatTimeOfDay(d: Instant | string | number | null | undefined)
  * "Sat, Apr 30, 2026, 5:00 PM EDT". For application deadlines and other
  * event-bearing timestamps where both date and time matter.
  *
+ * Optional `tz` + `locale` — see `formatTimeOfDay`.
+ *
  * Refuses `DateOnly` at compile time for the same reason `formatTimeOfDay`
  * does — there is no time component on a calendar anchor.
  */
-export function formatEventDateTime(d: Instant | string | number | null | undefined): string {
+export function formatEventDateTime(
+  d: Instant | string | number | null | undefined,
+  tz: string = VENUE_TZ,
+  locale: string = DEFAULT_LOCALE
+): string {
   const date = coerce(d);
   if (!date) return "";
-  return eventDateTimeFmt.format(date);
+  return cachedFmt("eventDateTime", tz, locale, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(date);
 }
 
 /**
@@ -466,7 +501,16 @@ export function formatTimestamp(d: Date | string | number | null | undefined): s
 export function formatTimestampForServer(d: Date | string | number | null | undefined): string {
   const date = coerce(d);
   if (!date) return "";
-  return timestampUtcFmt.format(date);
+  return cachedFmt("timestampUtc", "UTC", DEFAULT_LOCALE, {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(date);
 }
 
 // ── ISO helpers ────────────────────────────────────────────────────
@@ -542,11 +586,13 @@ export function formatIcsUtc(d: Date | string | number | null | undefined): stri
  * times (no offset) are ambiguous and schema.org best practice is to
  * include the offset. Returns "" on Invalid Date.
  */
-export function formatIsoInVenueZone(d: Date | string | number | null | undefined): string {
+export function formatIsoInVenueZone(
+  d: Date | string | number | null | undefined,
+  tz: string = VENUE_TZ
+): string {
   const date = coerce(d);
   if (!date) return "";
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: VENUE_TZ,
+  const parts = cachedFmt("isoInVenueZone", tz, DEFAULT_LOCALE, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -574,15 +620,15 @@ export function formatIsoInVenueZone(d: Date | string | number | null | undefine
  * in other zones get correct local times.
  */
 export function formatIcsVenueZone(
-  d: Date | string | number | null | undefined
+  d: Date | string | number | null | undefined,
+  tz: string = VENUE_TZ
 ): { value: string; tzid: string } | null {
   const date = coerce(d);
   if (!date) return null;
   // Render the wall-clock time in the venue's zone, then reformat into the
   // compact ICS form. We use Intl with explicit parts so we don't depend on
   // the runtime's local zone being UTC.
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: VENUE_TZ,
+  const parts = cachedFmt("icsVenueZone", tz, DEFAULT_LOCALE, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -598,7 +644,7 @@ export function formatIcsVenueZone(
   if (hour === "24") hour = "00";
   return {
     value: `${get("year")}${get("month")}${get("day")}T${hour}${get("minute")}${get("second")}`,
-    tzid: VENUE_TZ,
+    tzid: tz,
   };
 }
 
@@ -630,3 +676,33 @@ export const VTIMEZONE_AMERICA_NEW_YORK = [
   "END:STANDARD",
   "END:VTIMEZONE",
 ].join("\r\n");
+
+/**
+ * Registry of RFC 5545 VTIMEZONE blocks per IANA zone. Phase 3a (2026-06-06)
+ * ships only the America/New_York entry — that's the only zone with a venue
+ * today. When a non-Eastern venue is created (Phase 3b or later), the
+ * corresponding block must be added here before its ICS export can carry a
+ * TZID reference; otherwise `getVtimezoneBlock` returns null and the caller
+ * must fall back to UTC (`formatIcsUtc`) or floating time.
+ *
+ * The intentional simplicity of this shape — a flat record, not a builder —
+ * is so future-readers can audit "what zones do we support for ICS export?"
+ * by reading the keys of one constant.
+ */
+export const VTIMEZONE_REGISTRY: Record<string, string> = {
+  "America/New_York": VTIMEZONE_AMERICA_NEW_YORK,
+  // Future entries (add when the first non-Eastern venue is created):
+  //   "America/Halifax":   VTIMEZONE_AMERICA_HALIFAX,
+  //   "America/St_Johns":  VTIMEZONE_AMERICA_ST_JOHNS,
+  //   "America/Regina":    VTIMEZONE_AMERICA_REGINA,   // DST-exempt
+  //   "America/Phoenix":   VTIMEZONE_AMERICA_PHOENIX,  // DST-exempt
+};
+
+/**
+ * Look up the RFC 5545 VTIMEZONE block for an IANA zone. Returns `null`
+ * if the zone isn't in the registry — caller decides whether to fall
+ * back to floating times, refuse the ICS export, or convert to UTC.
+ */
+export function getVtimezoneBlock(tz: string): string | null {
+  return VTIMEZONE_REGISTRY[tz] ?? null;
+}

@@ -108,6 +108,14 @@ export const venues = sqliteTable(
     status: text("status", { enum: ["ACTIVE", "INACTIVE"] })
       .default("ACTIVE")
       .notNull(),
+    // Cross-zone columns (drizzle/0112, P3a — 2026-06-06). Every existing
+    // venue row defaults to US-Eastern via the migration's NOT NULL DEFAULT
+    // clauses, so this is zero-behavior-change at deploy. Phase 3b will
+    // thread these per-row values through the helper call sites; today
+    // they're capability-only.
+    timezone: text("timezone").default("America/New_York").notNull(), // IANA zone
+    locale: text("locale").default("en-US").notNull(), // BCP 47 locale tag
+    country: text("country").default("US").notNull(), // ISO 3166-1 alpha-2
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },

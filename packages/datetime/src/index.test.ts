@@ -25,6 +25,8 @@ import {
   formatIsoInVenueZone,
   unsafeDateOnly,
   VTIMEZONE_AMERICA_NEW_YORK,
+  VTIMEZONE_REGISTRY,
+  getVtimezoneBlock,
   type DateOnly,
 } from "./index";
 
@@ -508,5 +510,103 @@ describe("ICS helpers", () => {
     expect(VTIMEZONE_AMERICA_NEW_YORK).toContain("BEGIN:STANDARD");
     expect(VTIMEZONE_AMERICA_NEW_YORK).toContain("TZNAME:EST");
     expect(VTIMEZONE_AMERICA_NEW_YORK).toContain("END:VTIMEZONE");
+  });
+});
+
+// ── P3a cross-zone acceptance tests ──────────────────────────────────
+// These tests validate that the helper signatures accept and use the
+// optional `tz` / `locale` params correctly, NOT that any particular
+// venue is configured. Permanent regression protection for the day a
+// non-Eastern venue is created.
+
+describe("cross-zone helpers (P3a)", () => {
+  it("parseWallClockInVenueZone accepts tz param and uses it (Halifax ADT, summer)", () => {
+    // 9:00 AM ADT (UTC-3) on July 15, 2026 = 12:00 UTC.
+    const d = parseWallClockInVenueZone("2026-07-15", "09:00", "America/Halifax");
+    expect(d?.toISOString()).toBe("2026-07-15T12:00:00.000Z");
+  });
+
+  it("parseWallClockInVenueZone accepts tz param and uses it (Halifax AST, winter)", () => {
+    // 9:00 AM AST (UTC-4) on January 15, 2026 = 13:00 UTC.
+    const d = parseWallClockInVenueZone("2026-01-15", "09:00", "America/Halifax");
+    expect(d?.toISOString()).toBe("2026-01-15T13:00:00.000Z");
+  });
+
+  it("formatTimeOfDay accepts tz param and produces the zone's abbreviation", () => {
+    // 13:00 UTC in July at America/Halifax = 10:00 AM ADT.
+    const out = formatTimeOfDay(new Date("2026-07-15T13:00:00Z"), "America/Halifax");
+    expect(out).toMatch(/10:00\s?AM/);
+    expect(out).toContain("ADT");
+  });
+
+  it("Newfoundland 30-minute offset works end-to-end (the canonical TZ trap)", () => {
+    // NDT in summer is UTC-2:30. 9:00 AM NDT on July 15 = 11:30 UTC.
+    const parsed = parseWallClockInVenueZone("2026-07-15", "09:00", "America/St_Johns");
+    expect(parsed?.toISOString()).toBe("2026-07-15T11:30:00.000Z");
+    // formatIsoInVenueZone with St_Johns should reproduce the -02:30 offset.
+    const iso = formatIsoInVenueZone(parsed!, "America/St_Johns");
+    expect(iso).toBe("2026-07-15T09:00:00-02:30");
+  });
+
+  it("Newfoundland 30-minute offset works in winter (NST UTC-3:30)", () => {
+    // NST in winter is UTC-3:30. 9:00 AM NST on Jan 15 = 12:30 UTC.
+    const parsed = parseWallClockInVenueZone("2026-01-15", "09:00", "America/St_Johns");
+    expect(parsed?.toISOString()).toBe("2026-01-15T12:30:00.000Z");
+    const iso = formatIsoInVenueZone(parsed!, "America/St_Johns");
+    expect(iso).toBe("2026-01-15T09:00:00-03:30");
+  });
+
+  it("Saskatchewan is DST-exempt — July and January wall-clock instants have the same offset", () => {
+    // America/Regina is CST (UTC-6) year-round. 9:00 AM Regina = 15:00 UTC,
+    // both in July (when most North America is in DST) and in January.
+    const summer = parseWallClockInVenueZone("2026-07-15", "09:00", "America/Regina");
+    const winter = parseWallClockInVenueZone("2026-01-15", "09:00", "America/Regina");
+    expect(summer?.toISOString()).toBe("2026-07-15T15:00:00.000Z");
+    expect(winter?.toISOString()).toBe("2026-01-15T15:00:00.000Z");
+  });
+
+  it("formatTimeOfDay backward compat: no extra args reproduces Eastern-US output", () => {
+    // The contract that protects every existing call site: passing no tz
+    // and no locale must produce byte-identical output to the pre-P3a
+    // implementation. Same instant the 'EDT in summer' test pins below.
+    const d = new Date("2026-07-15T21:00:00Z");
+    expect(formatTimeOfDay(d)).toBe(formatTimeOfDay(d, VENUE_TZ, "en-US"));
+    expect(formatTimeOfDay(d)).toMatch(/5:00\s?PM/);
+    expect(formatTimeOfDay(d)).toContain("EDT");
+  });
+
+  it("formatDateMedium accepts a locale param (fr-CA produces French month abbr)", () => {
+    // April in French Canadian abbreviated form is "avr.".
+    const out = formatDateMedium(new Date("2026-04-30T00:00:00Z"), "fr-CA");
+    expect(out).toContain("avr");
+    expect(out).toContain("2026");
+    expect(out).toContain("30");
+  });
+
+  it("formatIcsVenueZone returns the passed tz as tzid (Halifax)", () => {
+    const result = formatIcsVenueZone(new Date("2026-07-15T13:00:00Z"), "America/Halifax");
+    expect(result?.tzid).toBe("America/Halifax");
+    // 13:00 UTC in July at Halifax = 10:00:00 local. ICS form: YYYYMMDDTHHMMSS
+    expect(result?.value).toBe("20260715T100000");
+  });
+});
+
+describe("VTIMEZONE_REGISTRY (P3a)", () => {
+  it("contains the America/New_York seed entry", () => {
+    expect(VTIMEZONE_REGISTRY["America/New_York"]).toBe(VTIMEZONE_AMERICA_NEW_YORK);
+  });
+
+  it("getVtimezoneBlock returns the block for a registered zone", () => {
+    const block = getVtimezoneBlock("America/New_York");
+    expect(block).not.toBeNull();
+    expect(block).toContain("TZID:America/New_York");
+  });
+
+  it("getVtimezoneBlock returns null for an unregistered zone", () => {
+    // Halifax is intentionally NOT in the registry yet — added when the
+    // first non-Eastern venue is created. The null return lets callers
+    // fall back to UTC export rather than emitting a broken VTIMEZONE.
+    expect(getVtimezoneBlock("America/Halifax")).toBeNull();
+    expect(getVtimezoneBlock("Europe/London")).toBeNull();
   });
 });

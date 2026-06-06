@@ -51,6 +51,9 @@ const SCHEMA_SQL = `
     accessibility TEXT,
     parking TEXT,
     status TEXT NOT NULL DEFAULT 'ACTIVE',
+    timezone TEXT NOT NULL DEFAULT 'America/New_York',
+    locale TEXT NOT NULL DEFAULT 'en-US',
+    country TEXT NOT NULL DEFAULT 'US',
     created_at INTEGER,
     updated_at INTEGER
   );
