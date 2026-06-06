@@ -29,6 +29,7 @@ import {
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
+import { runScheduledCompletenessRecompute } from "./completeness-recompute-canary.js";
 import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
@@ -1319,7 +1320,17 @@ export default {
         // cluster count growth. Polls /api/admin/duplicates/sweep, snapshots
         // dedup_sweep_snapshots, alerts on RED (+1 day-over-day, always) or
         // YELLOW (>10% vs 7-day avg, 72h-debounced).
-        runScheduledDedupSweepCanary(env),
+        //
+        // B — DQ1 (2026-06-06) — venue + promoter parity. Runs the same
+        // canary three times (events / venues / promoters), each writing
+        // its own (snapshot_date, surface) row to dedup_sweep_snapshots
+        // and producing its own RED/YELLOW dispatch with surface name in
+        // the subject. Sequential within one Worker invocation — cheaper
+        // than three separate cron registrations and the three sweeps
+        // share the same internal-key auth round-trip cost.
+        runScheduledDedupSweepCanary(env, "events"),
+        runScheduledDedupSweepCanary(env, "venues"),
+        runScheduledDedupSweepCanary(env, "promoters"),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
@@ -1339,6 +1350,12 @@ export default {
           alertEmail: env.ALERT_EMAIL_TECHNICAL ?? null,
           emailQueue: env.EMAIL_JOBS ?? null,
         }).then(() => undefined),
+        // D — DQ3 safety-net (2026-06-06) — daily recompute of
+        // completeness_score for rows touched in the last 24h. Catches
+        // cache rot from ad-hoc D1 bulk-enrichment writes that bypass
+        // recompute*Completeness. Cosmetic-failsoft: any per-row error
+        // is swallowed inside the helper; the cron always resolves.
+        runScheduledCompletenessRecompute(getDb(env.DB)).then(() => undefined),
       ]).then(() => undefined)
     );
   },

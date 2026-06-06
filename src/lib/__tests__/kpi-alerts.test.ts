@@ -36,6 +36,9 @@ const { formatValue, buildSlackPayload, CATEGORY_BY_KPI, YELLOW_DEBOUNCE_HOURS }
 
 interface MockDbState {
   yellowCountByKpi: Record<string, number>;
+  /** Rows returned by the stale-flap previous-row lookup. The dispatcher
+   *  reads `[current, previous]` from this list (index 1 = previous). */
+  staleFlapHistory?: Array<{ value: number | null }>;
 }
 
 function makeMockDb(state: MockDbState) {
@@ -43,11 +46,26 @@ function makeMockDb(state: MockDbState) {
     select: () => ({
       from: () => ({
         where: () => {
-          // The debounce query selects COUNT(*) — we don't decode the where
-          // clause; tests set yellowCountByKpi per scenario.
-          return Promise.resolve([{ c: state.yellowCountByKpi["__current"] ?? 0 }]);
+          // The YELLOW-debounce path awaits `where()` directly to get a count.
+          // The stale-flap path chains `.orderBy().limit()` to read history.
+          // Return a thenable that supports both — Promise.resolve for the
+          // debounce, and an orderBy/limit chain for the stale-flap probe.
+          const debounceRows = [{ c: state.yellowCountByKpi["__current"] ?? 0 }];
+          const historyRows = state.staleFlapHistory ?? [];
+          const thenable = Promise.resolve(debounceRows) as Promise<unknown> & {
+            orderBy: () => { limit: () => Promise<unknown> };
+          };
+          thenable.orderBy = () => ({
+            limit: () => Promise.resolve(historyRows),
+          });
+          return thenable;
         },
       }),
+    }),
+    // Stale-flap suppression writes an admin_actions audit row via
+    // `db.insert(...).values(...).catch(...)`. Mock the insert as a no-op.
+    insert: () => ({
+      values: () => Promise.resolve(),
     }),
   } as unknown as Parameters<typeof dispatchKpiAlert>[0];
 }
@@ -289,5 +307,146 @@ describe("buildSlackPayload", () => {
 describe("YELLOW_DEBOUNCE_HOURS", () => {
   it("is 72h per spec", () => {
     expect(YELLOW_DEBOUNCE_HOURS).toBe(72);
+  });
+});
+
+describe("dispatchKpiAlert — E (ALERT1) STALE-flap suppression", () => {
+  // historyRows[0] is the just-inserted current row; historyRows[1] is the
+  // previous row whose `value` is compared to the dispatcher's `value` arg.
+  it("suppresses STALE→RED when value is unchanged across the flip", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
+    const db = makeMockDb({
+      yellowCountByKpi: { __current: 1 },
+      staleFlapHistory: [{ value: 0.5478 }, { value: 0.5478 }],
+    });
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "sitemap_quality",
+      fromState: "STALE",
+      toState: "RED",
+      value: 0.5478,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe("stale-flap-suppressed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(sendEmailSpy).not.toHaveBeenCalled();
+  });
+
+  it("suppresses RED→STALE when value is unchanged", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
+    const db = makeMockDb({
+      yellowCountByKpi: { __current: 1 },
+      staleFlapHistory: [{ value: 0.5478 }, { value: 0.5478 }],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 }))
+    );
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "sitemap_quality",
+      fromState: "RED",
+      toState: "STALE",
+      value: 0.5478,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(false);
+    expect(result.reason).toBe("stale-flap-suppressed");
+  });
+
+  it("suppresses GREEN→STALE when both values are null (feed went away mid-flap)", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
+    const db = makeMockDb({
+      yellowCountByKpi: { __current: 1 },
+      staleFlapHistory: [{ value: null }, { value: null }],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 }))
+    );
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "brand_share",
+      fromState: "GREEN",
+      toState: "STALE",
+      value: null,
+      detectedAt: new Date(),
+    });
+    expect(result.reason).toBe("stale-flap-suppressed");
+  });
+
+  it("FIRES on STALE→RED when value DID move (genuine value wobble, not just freshness)", async () => {
+    // Matches the live 2026-06-06 10:10 sitemap_quality case the email lists
+    // as a noise alert — 0.5478 → 0.5481 is a real numerical wobble, so
+    // option-(a) semantics correctly do NOT suppress it. Operator can widen
+    // the predicate later if even tiny wobbles should be silenced.
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
+    const db = makeMockDb({
+      yellowCountByKpi: { __current: 1 },
+      staleFlapHistory: [{ value: 0.5481 }, { value: 0.5478 }],
+    });
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "sitemap_quality",
+      fromState: "STALE",
+      toState: "RED",
+      value: 0.5481,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("does NOT suppress a RED→YELLOW transition (no STALE involvement)", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_BUSINESS = "https://hooks.slack.com/business";
+    const db = makeMockDb({
+      yellowCountByKpi: { __current: 1 },
+      // History rows present but irrelevant — predicate's early-return
+      // on `involvesStale=false` short-circuits before the DB read.
+      staleFlapHistory: [{ value: 0.005 }, { value: 0.005 }],
+    });
+    const fetchSpy = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () => new Response("ok", { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "site_ctr",
+      fromState: "RED",
+      toState: "YELLOW",
+      value: 0.005,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(true);
+  });
+
+  it("does NOT suppress when no previous history row exists (first-ever STALE)", async () => {
+    MOCK_ENV.SLACK_WEBHOOK_URL_TECHNICAL = "https://hooks.slack.com/tech";
+    const db = makeMockDb({
+      yellowCountByKpi: { __current: 1 },
+      staleFlapHistory: [{ value: 0.5 }], // only the current row, no previous
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("ok", { status: 200 }))
+    );
+
+    const result = await dispatchKpiAlert(db, {
+      kpiName: "sitemap_quality",
+      fromState: null,
+      toState: "STALE",
+      value: 0.5,
+      detectedAt: new Date(),
+    });
+    expect(result.dispatched).toBe(true);
   });
 });

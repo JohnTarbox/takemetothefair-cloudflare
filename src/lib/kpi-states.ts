@@ -26,6 +26,7 @@ import { getMaxGa4DateWithUsers, getOrganicSessions, type Ga4Env } from "@/lib/g
 import { getMaxGscDataDate, getSiteSearchQueries, type ScEnv } from "@/lib/search-console";
 import { classifyKpi, KPI_NAMES, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
 import { dispatchKpiAlert } from "@/lib/kpi-alerts";
+import { publicEventWhere } from "@/lib/event-lifecycle";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -252,6 +253,12 @@ async function readSitemapQuality(db: Db): Promise<KpiValueResult> {
   // Staleness signal: D1 is real-time; we use max(updated_at) across both
   // tables to detect "the catalog hasn't moved" (true outage). 1h SLA
   // means a tightly-managed catalog should never show STALE in practice.
+  // D — DQ3 (2026-06-06): the events denominator + numerator must filter
+  // to the same status set the sitemap uses (APPROVED/TENTATIVE editorial
+  // AND non-CANCELLED/non-NO_SHOW lifecycle). Pre-fix the bare `from(events)`
+  // counted CANCELLED/DRAFT/REJECTED-test rows in the denominator, pulling
+  // the ratio down without those rows ever being eligible to fail the gate.
+  // Vendor side already filters `deletedAt IS NULL`; keep that filter as-is.
   const [vTotal, vPass, eTotal, ePass, vMax, eMax] = await Promise.all([
     db
       .select({ n: count() })
@@ -266,11 +273,11 @@ async function readSitemapQuality(db: Db): Promise<KpiValueResult> {
           gte(vendors.completenessScore, SITEMAP_MIN_COMPLETENESS)
         )
       ),
-    db.select({ n: count() }).from(events),
+    db.select({ n: count() }).from(events).where(publicEventWhere()),
     db
       .select({ n: count() })
       .from(events)
-      .where(gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS)),
+      .where(and(publicEventWhere(), gte(events.completenessScore, SITEMAP_MIN_COMPLETENESS))),
     db
       .select({ ts: sql<number | null>`max(${vendors.updatedAt})` })
       .from(vendors)
@@ -509,7 +516,7 @@ export async function recomputeKpiStates(
       // Belt-and-suspenders: dispatchKpiAlert already swallows internally,
       // but if a future change introduces a throw path we don't want it
       // breaking the recompute return.
-       
+
       console.error(`[kpi-alerts] dispatch failed for ${t.kpi}:`, err);
     }
   }
