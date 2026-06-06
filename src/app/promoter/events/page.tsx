@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/utils";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventVendors } from "@/lib/db/schema";
+import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, desc, inArray, sql } from "drizzle-orm";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
@@ -53,8 +54,9 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
       .limit(1);
     if (!promoter) return [];
 
+    // Narrow projection — 62 + 7 = 69 cols (was 92).
     const rows = await db
-      .select()
+      .select(eventVenueJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .where(eq(events.promoterId, promoter.id))
@@ -104,7 +106,7 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
       featured: r.events.featured,
       viewCount: r.events.viewCount,
       description: r.events.description,
-      venueName: r.venues?.name || "Unknown",
+      venueName: r.venue?.name || "Unknown",
       vendorCounts: countByEvent.get(r.events.id) ?? { applied: 0, confirmed: 0, total: 0 },
     }));
   } catch (e) {

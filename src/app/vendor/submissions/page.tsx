@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
+import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { formatDateRange } from "@/lib/utils";
@@ -12,7 +13,10 @@ import { redirect } from "next/navigation";
 
 export const runtime = "edge";
 
-const statusConfig: Record<string, { label: string; variant: "default" | "success" | "warning" | "danger" | "info" }> = {
+const statusConfig: Record<
+  string,
+  { label: string; variant: "default" | "success" | "warning" | "danger" | "info" }
+> = {
   TENTATIVE: { label: "Tentative", variant: "info" },
   APPROVED: { label: "Approved", variant: "success" },
   PENDING: { label: "Pending Review", variant: "warning" },
@@ -24,8 +28,9 @@ const statusConfig: Record<string, { label: string; variant: "default" | "succes
 async function getSubmissions(userId: string) {
   const db = getCloudflareDb();
 
+  // Narrow projection — 62 + 7 = 69 cols (was 92).
   const results = await db
-    .select()
+    .select(eventVenueJoinProjection)
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
     .where(eq(events.submittedByUserId, userId))
@@ -33,7 +38,7 @@ async function getSubmissions(userId: string) {
 
   return results.map((r) => ({
     ...r.events,
-    venue: r.venues,
+    venue: r.venue,
   }));
 }
 
@@ -51,9 +56,7 @@ export default async function VendorSubmissionsPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">My Submissions</h1>
-          <p className="text-gray-600 mt-1">
-            Events you&apos;ve suggested to the platform
-          </p>
+          <p className="text-gray-600 mt-1">Events you&apos;ve suggested to the platform</p>
         </div>
         <Link href="/vendor/suggest-event">
           <Button>
@@ -76,7 +79,9 @@ export default async function VendorSubmissionsPage() {
       ) : (
         <Card>
           <CardHeader>
-            <p className="text-sm text-gray-600">{submissions.length} submission{submissions.length !== 1 ? "s" : ""}</p>
+            <p className="text-sm text-gray-600">
+              {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
+            </p>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -85,13 +90,20 @@ export default async function VendorSubmissionsPage() {
                   <tr className="border-b border-gray-200">
                     <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Event</th>
                     <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Dates</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Status</th>
-                    <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">Actions</th>
+                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
+                      Status
+                    </th>
+                    <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {submissions.map((event) => {
-                    const config = statusConfig[event.status] || { label: event.status, variant: "default" as const };
+                    const config = statusConfig[event.status] || {
+                      label: event.status,
+                      variant: "default" as const,
+                    };
                     const isPublic = event.status === "TENTATIVE" || event.status === "APPROVED";
 
                     return (
@@ -99,7 +111,9 @@ export default async function VendorSubmissionsPage() {
                         <td className="py-3 px-4">
                           <p className="font-medium text-gray-900">{event.name}</p>
                           {event.venue && (
-                            <p className="text-sm text-gray-500">{event.venue.name}, {event.venue.city}</p>
+                            <p className="text-sm text-gray-500">
+                              {event.venue.name}, {event.venue.city}
+                            </p>
                           )}
                         </td>
                         <td className="py-3 px-4 text-sm text-gray-600">

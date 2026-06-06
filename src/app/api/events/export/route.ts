@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
+import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, and, like, or } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
@@ -60,18 +61,19 @@ export async function GET(request: Request) {
       conditions.push(eq(events.commercialVendorsAllowed, true));
     }
 
-    // Fetch all events with venue data
+    // Fetch all events with venue data. Narrow projection via
+    // eventVenueJoinProjection — drops the join from 92 → 69 cols.
     let results;
     if (state) {
       results = await db
-        .select()
+        .select(eventVenueJoinProjection)
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .where(and(...conditions, eq(venues.state, state)))
         .orderBy(events.startDate);
     } else {
       results = await db
-        .select()
+        .select(eventVenueJoinProjection)
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
         .where(and(...conditions))
@@ -103,9 +105,9 @@ export async function GET(request: Request) {
     const headers = ["Event", "Venue", "City", "State", "Start Date", "End Date", "Website"];
     const rows = results.map((r) => [
       escapeCSV(r.events.name),
-      escapeCSV(r.venues?.name),
-      escapeCSV(r.venues?.city),
-      escapeCSV(r.venues?.state),
+      escapeCSV(r.venue?.name),
+      escapeCSV(r.venue?.city),
+      escapeCSV(r.venue?.state),
       formatDate(r.events.startDate!),
       formatDate(r.events.endDate!),
       escapeCSV(r.events.ticketUrl),

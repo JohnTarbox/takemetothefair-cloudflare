@@ -28,6 +28,7 @@ import {
 import { eq, count, and, asc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
+import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { logError } from "@/lib/logger";
 import { formatDateRange } from "@/lib/utils";
 import { computeVendorCompleteness } from "@/lib/vendor-completeness";
@@ -139,8 +140,9 @@ async function getDashboardState(
 async function getUpcomingEvents() {
   try {
     const db = getCloudflareDb();
+    // Narrow projection — 62 + 7 = 69 cols (was 92, only 8-col headroom).
     const results = await db
-      .select()
+      .select(eventVenueJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
@@ -155,7 +157,7 @@ async function getUpcomingEvents() {
       startDate: r.events.startDate,
       endDate: r.events.endDate,
       imageUrl: r.events.imageUrl,
-      venue: r.venues ? { name: r.venues.name, city: r.venues.city, state: r.venues.state } : null,
+      venue: r.venue ? { name: r.venue.name, city: r.venue.city, state: r.venue.state } : null,
     }));
   } catch {
     return [];
