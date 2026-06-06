@@ -8,6 +8,7 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
@@ -50,8 +51,13 @@ export const metadata: Metadata = {
 async function getFeaturedEvents() {
   try {
     const db = getCloudflareDb();
+    // Narrow projection via eventJoinProjection — keeps the join under D1's
+    // 100-col cap (events 62 + venue 13 + promoter 7 = 82 cols). The bare
+    // `.select()` shape this replaces summed to 62+30+15=107 post-P3a and
+    // silently returned zero rows; the bug was hidden by no featured events
+    // existing in prod data. See PR #359 audit script + #357 hotfix.
     const results = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -61,10 +67,16 @@ async function getFeaturedEvents() {
       .orderBy(events.startDate)
       .limit(6);
 
+    // Cast the narrow venue/promoter projection back to full row types so
+    // the EventCard/EventList prop contract compiles unchanged. Sound
+    // because every consumer field is present in the projection (same
+    // pattern as src/app/events/[slug]/page.tsx).
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     const flat = results.map((r) => ({
       ...r.events,
-      venue: r.venues!,
-      promoter: r.promoters!,
+      venue: r.venue as FullVenue,
+      promoter: r.promoter as FullPromoter,
     }));
     // Cohort 7 follow-up (2026-06-01) — attach event_days so EventCard's
     // date badge resolves the next occurrence instead of falling back
@@ -78,8 +90,9 @@ async function getFeaturedEvents() {
 async function getUpcomingEvents() {
   try {
     const db = getCloudflareDb();
+    // Narrow projection — see getFeaturedEvents above.
     const results = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
@@ -87,10 +100,16 @@ async function getUpcomingEvents() {
       .orderBy(events.startDate)
       .limit(6);
 
+    // Cast the narrow venue/promoter projection back to full row types so
+    // the EventCard/EventList prop contract compiles unchanged. Sound
+    // because every consumer field is present in the projection (same
+    // pattern as src/app/events/[slug]/page.tsx).
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     const flat = results.map((r) => ({
       ...r.events,
-      venue: r.venues!,
-      promoter: r.promoters!,
+      venue: r.venue as FullVenue,
+      promoter: r.promoter as FullPromoter,
     }));
     return await attachEventDayDates(db, flat);
   } catch {
@@ -103,18 +122,25 @@ async function getWeekendEvents() {
     const db = getCloudflareDb();
     const now = new Date();
     const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    // Narrow projection — see getFeaturedEvents above.
     const results = await db
-      .select()
+      .select(eventJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(and(isPublicEventStatus(), gte(events.endDate, now), lte(events.startDate, horizon)))
       .orderBy(events.startDate)
       .limit(4);
+    // Cast the narrow venue/promoter projection back to full row types so
+    // the EventCard/EventList prop contract compiles unchanged. Sound
+    // because every consumer field is present in the projection (same
+    // pattern as src/app/events/[slug]/page.tsx).
+    type FullVenue = typeof venues.$inferSelect;
+    type FullPromoter = typeof promoters.$inferSelect;
     const flat = results.map((r) => ({
       ...r.events,
-      venue: r.venues!,
-      promoter: r.promoters!,
+      venue: r.venue as FullVenue,
+      promoter: r.promoter as FullPromoter,
     }));
     return await attachEventDayDates(db, flat);
   } catch {

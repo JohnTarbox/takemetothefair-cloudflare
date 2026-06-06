@@ -96,17 +96,20 @@ describe("GET /api/events/[slug]/same-day", () => {
           endDate: new Date("2026-09-26T23:00:00Z"),
         },
       ]);
+    // Mock shape matches eventJoinProjection (singular `venue`/`promoter`
+    // keys), which the route adopted in #360 to drop the join under D1's
+    // 100-col cap. Pre-#360 shape used plural keys (raw bare-select result).
     ctl.overlapMock = () =>
       Promise.resolve([
         {
           events: { id: "other-1", name: "Overlapping Fair", slug: "overlapping-fair" },
-          venues: { id: "v-1", name: "Town Hall" },
-          promoters: null,
+          venue: { id: "v-1", name: "Town Hall" },
+          promoter: null,
         },
         {
           events: { id: "other-2", name: "Same-Day Market", slug: "same-day-market" },
-          venues: null,
-          promoters: { id: "p-1", companyName: "Local Promoter" },
+          venue: null,
+          promoter: { id: "p-1", companyName: "Local Promoter" },
         },
       ]);
 
