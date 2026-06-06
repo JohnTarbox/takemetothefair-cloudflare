@@ -10,6 +10,7 @@ import {
   Minus,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatTimestampForServer } from "@/lib/datetime";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
   Ga4ApiError,
@@ -327,12 +328,8 @@ function DetailView({
       </div>
 
       <p className="text-xs text-gray-500 mt-6">
-        Property {data.propertyId} · Generated{" "}
-        {new Date(data.generatedAt).toLocaleString("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        })}{" "}
-        · Cached up to 10 min (Search Console up to 15 min)
+        Property {data.propertyId} · Generated {formatTimestampForServer(data.generatedAt)} · Cached
+        up to 10 min (Search Console up to 15 min)
       </p>
     </>
   );

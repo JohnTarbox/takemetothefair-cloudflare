@@ -18,6 +18,7 @@ import { ArticleSchema } from "@/components/seo/ArticleSchema";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { extractBlogFaqItems } from "@/lib/blog-faq";
 import { FAQ_MIN_ITEMS, type FaqItem } from "@/lib/event-faq";
+import { formatDateLong, formatDateMedium } from "@/lib/datetime";
 import {
   extractFirstImage,
   estimateReadingTime,
@@ -203,14 +204,7 @@ export default async function BlogPostPage({ params }: Props) {
     featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),
   }));
 
-  const publishDate = post.publishDate
-    ? new Date(post.publishDate).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        timeZone: "UTC",
-      })
-    : null;
+  const publishDate = post.publishDate ? formatDateLong(post.publishDate) : null;
 
   const url = `https://meetmeatthefair.com/blog/${post.slug}`;
 
@@ -457,28 +451,8 @@ export default async function BlogPostPage({ params }: Props) {
           {/* Post info */}
           <Card>
             <CardContent className="p-4 text-xs text-gray-500 space-y-1">
-              {post.createdAt && (
-                <p>
-                  Created:{" "}
-                  {new Date(post.createdAt).toLocaleDateString("en-US", {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                    timeZone: "UTC",
-                  })}
-                </p>
-              )}
-              {post.updatedAt && (
-                <p>
-                  Updated:{" "}
-                  {new Date(post.updatedAt).toLocaleDateString("en-US", {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                    timeZone: "UTC",
-                  })}
-                </p>
-              )}
+              {post.createdAt && <p>Created: {formatDateMedium(post.createdAt)}</p>}
+              {post.updatedAt && <p>Updated: {formatDateMedium(post.updatedAt)}</p>}
             </CardContent>
           </Card>
         </aside>
@@ -512,12 +486,7 @@ export default async function BlogPostPage({ params }: Props) {
                   </p>
                   {event.startDate && (
                     <p className="text-xs text-gray-500 mt-1">
-                      {new Date(event.startDate).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                        timeZone: "UTC",
-                      })}
+                      {formatDateMedium(event.startDate)}
                     </p>
                   )}
                   {event.venueName && (

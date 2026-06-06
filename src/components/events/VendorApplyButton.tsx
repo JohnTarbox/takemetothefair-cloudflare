@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getErrorMessage } from "@/lib/error-messages";
 import { trackEvent } from "@/lib/analytics";
-import { formatDateOnly } from "@/lib/datetime";
+import { formatDateMedium } from "@/lib/datetime";
 
 interface VendorApplyButtonProps {
   eventId: string;
@@ -31,8 +31,8 @@ function formatRelativeDeadline(iso: string | null | undefined): string | null {
   if (diffDays < 0) return null; // passed — skip
   // Application deadlines are date-only (no time component) — render via the
   // canonical formatter so they're consistent with other date-only renders
-  // and don't carry a TZ label.
-  const formatted = formatDateOnly(d).replace(/^[A-Za-z]{3}, /, ""); // drop weekday for "Apr 30, 2026"
+  // and don't carry a TZ label. `formatDateMedium` already omits the weekday.
+  const formatted = formatDateMedium(d);
   if (diffDays === 0) return `Applications close today (${formatted})`;
   if (diffDays === 1) return `Applications close tomorrow (${formatted})`;
   if (diffDays <= 14) return `Applications close in ${diffDays} days (${formatted})`;

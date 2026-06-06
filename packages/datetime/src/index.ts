@@ -240,6 +240,34 @@ const dateOnlyFmt = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
 });
 
+// Variants of dateOnlyFmt for sites that don't want a weekday or year. All
+// UTC-anchored — date-only fields are stored as midnight UTC, so rendering
+// in UTC is the only TZ-correct choice.
+const dateMediumFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+const dateLongFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+const dateShortFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  month: "short",
+  day: "numeric",
+});
+
+const monthShortFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "UTC",
+  month: "short",
+});
+
 const eventDateTimeFmt = new Intl.DateTimeFormat("en-US", {
   timeZone: VENUE_TZ,
   weekday: "short",
@@ -315,6 +343,60 @@ export function formatDateRange(
     return formatDateOnly(startDate);
   }
   return `${formatDateOnly(startDate)} - ${formatDateOnly(endDate)}`;
+}
+
+/**
+ * Date-only display without weekday, e.g. "Apr 30, 2026". UTC-anchored.
+ * Use when the weekday is noise — compact card metadata, table rows,
+ * deadline labels, blog publish dates. Existing call sites previously
+ * stripped the weekday from `formatDateOnly` output via regex; this is the
+ * direct form.
+ *
+ * Returns `""` on null / Invalid Date.
+ */
+export function formatDateMedium(d: Date | string | number | null | undefined): string {
+  const date = coerce(d);
+  if (!date) return "";
+  return dateMediumFmt.format(date);
+}
+
+/**
+ * Date-only display with long month name, e.g. "April 30, 2026". UTC-anchored.
+ * Use for marketing-style display (blog post bylines, hero metadata).
+ *
+ * Returns `""` on null / Invalid Date.
+ */
+export function formatDateLong(d: Date | string | number | null | undefined): string {
+  const date = coerce(d);
+  if (!date) return "";
+  return dateLongFmt.format(date);
+}
+
+/**
+ * Compact date display without year, e.g. "Apr 30". UTC-anchored.
+ * Use for near-term chips/badges where the year is implied (the deadline
+ * chip on event cards: "Applies by Apr 30").
+ *
+ * Returns `""` on null / Invalid Date.
+ */
+export function formatDateShort(d: Date | string | number | null | undefined): string {
+  const date = coerce(d);
+  if (!date) return "";
+  return dateShortFmt.format(date);
+}
+
+/**
+ * Month abbreviation only, e.g. "Apr". UTC-anchored.
+ * Use for calendar-style badges where the day number is rendered as a
+ * separate visual element (e.g. event-card date badge: month on top,
+ * day-of-month below).
+ *
+ * Returns `""` on null / Invalid Date.
+ */
+export function formatMonthShort(d: Date | string | number | null | undefined): string {
+  const date = coerce(d);
+  if (!date) return "";
+  return monthShortFmt.format(date);
 }
 
 /**

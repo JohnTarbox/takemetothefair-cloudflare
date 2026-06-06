@@ -6,6 +6,10 @@ import {
   parseTimestamp,
   parseWallClockInVenueZone,
   formatDateOnly,
+  formatDateMedium,
+  formatDateLong,
+  formatDateShort,
+  formatMonthShort,
   formatDateRange,
   formatTimeOfDay,
   formatEventDateTime,
@@ -227,6 +231,68 @@ describe("formatDateOnly", () => {
     // Mid-DST date — in EDT this is May 1 21:00 the prior day, but UTC-anchored.
     const utcMay1 = new Date("2026-05-01T00:00:00Z");
     expect(formatDateOnly(utcMay1)).toContain("May 1");
+  });
+});
+
+describe("formatDateMedium", () => {
+  it("renders without weekday: 'Apr 30, 2026'", () => {
+    const out = formatDateMedium(new Date("2026-04-30T00:00:00Z"));
+    expect(out).toBe("Apr 30, 2026");
+  });
+
+  it("uses short month name (not long)", () => {
+    expect(formatDateMedium(new Date("2026-01-15T00:00:00Z"))).toBe("Jan 15, 2026");
+  });
+
+  it("returns '' on null / Invalid Date / garbage", () => {
+    expect(formatDateMedium(null)).toBe("");
+    expect(formatDateMedium(undefined)).toBe("");
+    expect(formatDateMedium(new Date("not a date"))).toBe("");
+    expect(formatDateMedium("garbage")).toBe("");
+  });
+});
+
+describe("formatDateLong", () => {
+  it("renders with long month name: 'April 30, 2026'", () => {
+    const out = formatDateLong(new Date("2026-04-30T00:00:00Z"));
+    expect(out).toBe("April 30, 2026");
+  });
+
+  it("returns '' on null / Invalid Date", () => {
+    expect(formatDateLong(null)).toBe("");
+    expect(formatDateLong("garbage")).toBe("");
+  });
+});
+
+describe("formatDateShort", () => {
+  it("renders without year: 'Apr 30'", () => {
+    const out = formatDateShort(new Date("2026-04-30T00:00:00Z"));
+    expect(out).toBe("Apr 30");
+  });
+
+  it("returns '' on null / Invalid Date", () => {
+    expect(formatDateShort(null)).toBe("");
+    expect(formatDateShort("garbage")).toBe("");
+  });
+});
+
+describe("formatMonthShort", () => {
+  it("renders just the month abbreviation: 'Apr'", () => {
+    const out = formatMonthShort(new Date("2026-04-30T00:00:00Z"));
+    expect(out).toBe("Apr");
+  });
+
+  it("is UTC-anchored (Apr 30T23:00Z midnight-UTC-next-day → Apr, not May)", () => {
+    // The whole point of UTC anchoring on date-only formatters: a Date that
+    // is "May 1 at 03:00 UTC" reading from a midnight-UTC-anchored column
+    // would NOT happen (the column is midnight UTC), so this test pins the
+    // simpler case: Apr 30 23:00 UTC stays "Apr".
+    expect(formatMonthShort(new Date("2026-04-30T23:00:00Z"))).toBe("Apr");
+  });
+
+  it("returns '' on null / Invalid Date", () => {
+    expect(formatMonthShort(null)).toBe("");
+    expect(formatMonthShort("garbage")).toBe("");
   });
 });
 

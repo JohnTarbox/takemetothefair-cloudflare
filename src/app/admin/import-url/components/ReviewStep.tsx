@@ -16,6 +16,7 @@ import { ConfidenceBadge } from "@/components/ui/confidence-badge";
 import { ConfidenceLegend } from "./ConfidenceLegend";
 import type { ExtractedEventData, FieldConfidence, ExtractedEvent } from "@/lib/url-import/types";
 import { EVENT_CATEGORIES } from "@/lib/constants";
+import { addDaysIso, todayIsoUtc } from "@/lib/datetime";
 
 interface ReviewStepProps {
   fetchedContent: string;
@@ -290,14 +291,12 @@ export function ReviewStep({
                     size="sm"
                     onClick={() => {
                       const dates = extractedData.specificDates || [];
-                      const lastDate =
-                        dates.length > 0
-                          ? dates[dates.length - 1]
-                          : new Date().toISOString().substring(0, 10);
-                      const next = new Date(lastDate + "T12:00:00");
-                      next.setDate(next.getDate() + 7);
+                      const lastDate = dates.length > 0 ? dates[dates.length - 1] : todayIsoUtc();
+                      // UTC-anchored date math via addDaysIso — operates on
+                      // "YYYY-MM-DD" strings, no browser-zone interpretation.
+                      const next = addDaysIso(lastDate, 7);
                       onUpdateData({
-                        specificDates: [...dates, next.toISOString().substring(0, 10)].sort(),
+                        specificDates: [...dates, next].sort(),
                       });
                     }}
                     className="text-xs"
