@@ -2,12 +2,13 @@
 // Extracts fair/event data from the Vermont/NH Fairs Association pages
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
-import { decodeHtmlEntities, createSlugFromName } from "./utils";
+import { decodeHtmlEntities, createSlugFromName, monthNameToMidnightUtc } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 // Parse date strings like "April 25-27th", "June 6 - 8", "July 29 - August 2"
-// Returns null for dates, with datesConfirmed=false for TBD/unknown dates
+// Returns null for dates, with datesConfirmed=false for TBD/unknown dates.
+// All produced Dates anchor at midnight UTC (date-only convention).
 function parseDateRange(
   dateText: string,
   year: number
@@ -32,18 +33,9 @@ function parseDateRange(
   // Try to match patterns like "July 29 - August 2" (cross-month)
   const crossMonthMatch = cleaned.match(/(\w+)\s+(\d+)\s*[-–]\s*(\w+)\s+(\d+)/i);
   if (crossMonthMatch) {
-    const startMonth = crossMonthMatch[1];
-    const startDay = parseInt(crossMonthMatch[2]);
-    const endMonth = crossMonthMatch[3];
-    const endDay = parseInt(crossMonthMatch[4]);
-
-    const start = new Date(`${startMonth} ${startDay}, ${year}`);
-    const end = new Date(`${endMonth} ${endDay}, ${year}`);
-
-    start.setHours(9, 0, 0, 0);
-    end.setHours(21, 0, 0, 0);
-
-    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+    const start = monthNameToMidnightUtc(crossMonthMatch[1], parseInt(crossMonthMatch[2]), year);
+    const end = monthNameToMidnightUtc(crossMonthMatch[3], parseInt(crossMonthMatch[4]), year);
+    if (start && end) {
       return { start, end, datesConfirmed: true };
     }
   }
@@ -51,17 +43,9 @@ function parseDateRange(
   // Try to match patterns like "June 6 - 8" or "April 25-27" (same month)
   const sameMonthMatch = cleaned.match(/(\w+)\s+(\d+)\s*[-–]\s*(\d+)/i);
   if (sameMonthMatch) {
-    const month = sameMonthMatch[1];
-    const startDay = parseInt(sameMonthMatch[2]);
-    const endDay = parseInt(sameMonthMatch[3]);
-
-    const start = new Date(`${month} ${startDay}, ${year}`);
-    const end = new Date(`${month} ${endDay}, ${year}`);
-
-    start.setHours(9, 0, 0, 0);
-    end.setHours(21, 0, 0, 0);
-
-    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+    const start = monthNameToMidnightUtc(sameMonthMatch[1], parseInt(sameMonthMatch[2]), year);
+    const end = monthNameToMidnightUtc(sameMonthMatch[1], parseInt(sameMonthMatch[3]), year);
+    if (start && end) {
       return { start, end, datesConfirmed: true };
     }
   }
@@ -69,15 +53,9 @@ function parseDateRange(
   // Try single date like "June 11" or "July 19"
   const singleMatch = cleaned.match(/(\w+)\s+(\d+)/i);
   if (singleMatch) {
-    const month = singleMatch[1];
-    const day = parseInt(singleMatch[2]);
-    const date = new Date(`${month} ${day}, ${year}`);
-    date.setHours(9, 0, 0, 0);
-    const endDate = new Date(date);
-    endDate.setHours(21, 0, 0, 0);
-
-    if (!isNaN(date.getTime())) {
-      return { start: date, end: endDate, datesConfirmed: true };
+    const date = monthNameToMidnightUtc(singleMatch[1], parseInt(singleMatch[2]), year);
+    if (date) {
+      return { start: date, end: date, datesConfirmed: true };
     }
   }
 

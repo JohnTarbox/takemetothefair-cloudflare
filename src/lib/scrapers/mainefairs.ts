@@ -5,7 +5,7 @@
 export type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
 export { decodeHtmlEntities } from "./utils";
 
-import { decodeHtmlEntities } from "./utils";
+import { decodeHtmlEntities, monthNameToMidnightUtc } from "./utils";
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
@@ -16,27 +16,23 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
   const cleaned = dateText.trim();
 
   // Try to match patterns like "June 11 - June 14" or "June 11-14"
+  // P3c: midnight-UTC anchors via monthNameToMidnightUtc per the date-only
+  // storage convention. Earlier `new Date('Month Day, Year').setHours(9, …)`
+  // ran in worker-local zone (UTC on CF Workers) and baked a 9-hour offset
+  // into events.startDate, off the midnight-UTC anchor.
   const rangeMatch = cleaned.match(/(\w+)\s+(\d+)\s*[-–]\s*(?:(\w+)\s+)?(\d+)/i);
-
   if (rangeMatch) {
     const startMonth = rangeMatch[1];
-    const startDay = parseInt(rangeMatch[2]);
     const endMonth = rangeMatch[3] || startMonth;
-    const endDay = parseInt(rangeMatch[4]);
+    const start = monthNameToMidnightUtc(startMonth, parseInt(rangeMatch[2]), year);
+    let end = monthNameToMidnightUtc(endMonth, parseInt(rangeMatch[4]), year);
 
-    const start = new Date(`${startMonth} ${startDay}, ${year}`);
-    const end = new Date(`${endMonth} ${endDay}, ${year}`);
-
-    // If end is before start, it might span years
-    if (end < start) {
-      end.setFullYear(year + 1);
+    // If end is before start, it might span years.
+    if (start && end && end < start) {
+      end = monthNameToMidnightUtc(endMonth, parseInt(rangeMatch[4]), year + 1);
     }
 
-    // Set times
-    start.setHours(9, 0, 0, 0);
-    end.setHours(21, 0, 0, 0);
-
-    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+    if (start && end) {
       return { start, end };
     }
   }
@@ -44,15 +40,9 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
   // Try single date like "June 11"
   const singleMatch = cleaned.match(/(\w+)\s+(\d+)/i);
   if (singleMatch) {
-    const month = singleMatch[1];
-    const day = parseInt(singleMatch[2]);
-    const date = new Date(`${month} ${day}, ${year}`);
-    date.setHours(9, 0, 0, 0);
-    const endDate = new Date(date);
-    endDate.setHours(21, 0, 0, 0);
-
-    if (!isNaN(date.getTime())) {
-      return { start: date, end: endDate };
+    const date = monthNameToMidnightUtc(singleMatch[1], parseInt(singleMatch[2]), year);
+    if (date) {
+      return { start: date, end: new Date(date) };
     }
   }
 
@@ -384,17 +374,20 @@ export async function scrapeEventDetails(eventUrl: string): Promise<Partial<Scra
         const startStr = dateMatch[1].includes(",") ? dateMatch[1] : `${dateMatch[1]}, ${year}`;
         const endStr = dateMatch[2].includes(",") ? dateMatch[2] : `${dateMatch[2]}, ${year}`;
 
+        // P3c: `new Date(str)` parses 'Month Day, Year' as midnight in the
+        // runtime's local zone (UTC on Cloudflare Workers), matching the
+        // date-only midnight-UTC anchor convention. The historical
+        // `.setHours(9, …)` / `.setHours(21, …)` lines that used to be here
+        // shifted the anchor off midnight UTC and were dropped.
         if (!details.startDate) {
           const start = new Date(startStr);
           if (!isNaN(start.getTime())) {
-            start.setHours(9, 0, 0, 0);
             details.startDate = start;
           }
         }
         if (!details.endDate) {
           const end = new Date(endStr);
           if (!isNaN(end.getTime())) {
-            end.setHours(21, 0, 0, 0);
             details.endDate = end;
           }
         }

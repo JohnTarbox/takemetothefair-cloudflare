@@ -57,11 +57,11 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
     const month = monthMap[monthName];
 
     if (month !== undefined) {
-      // Date.UTC for explicit, host-zone-independent construction. Scraper
-      // semantics treat the times as venue-local (ET); we keep the existing
-      // behavior of storing them as if-UTC for now and let Phase 5 reinterpret.
-      const start = new Date(Date.UTC(year, month, startDay, 9, 0, 0));
-      const end = new Date(Date.UTC(year, month, endDay, 16, 0, 0)); // Shows run 9am-4pm
+      // P3c (2026-06-06): midnight-UTC anchors per the date-only storage
+      // convention. The previous "9am-4pm UTC" anchor was deterministic but
+      // off-convention vs other scrapers that produce midnight UTC.
+      const start = new Date(Date.UTC(year, month, startDay));
+      const end = new Date(Date.UTC(year, month, endDay));
       if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
         return { start, end };
       }
@@ -78,9 +78,9 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
     const month = monthMap[monthName];
 
     if (month !== undefined) {
-      const start = new Date(Date.UTC(year, month, day, 9, 0, 0));
-      const end = new Date(Date.UTC(year, month, day, 16, 0, 0));
-      if (!isNaN(start.getTime())) {
+      const start = new Date(Date.UTC(year, month, day));
+      const end = new Date(Date.UTC(year, month, day));
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
         return { start, end };
       }
     }
