@@ -2,7 +2,12 @@
  * Canonical date/time helpers for the project.
  *
  * Storage policy:
- *   - All Date columns store UTC ms-epoch (the implicit codebase invariant).
+ *   - All Date columns store UTC SECONDS-epoch — every `integer(..., { mode:
+ *     "timestamp" })` column. Drizzle reads these as `new Date(value * 1000)`.
+ *     The seconds-vs-ms distinction is load-bearing; see
+ *     `drizzle/0045_fix_timestamp_columns_back_to_seconds.sql` for the
+ *     corrective migration that established this invariant.
+ *     (`mode: "timestamp_ms"` would store ms-epoch — the project does not use it.)
  *   - Calendar dates (event start/end) are stored as midnight UTC.
  *   - Instants (createdAt, lastCrawledAt, etc.) are stored as the actual moment.
  *

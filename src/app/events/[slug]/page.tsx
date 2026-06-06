@@ -1035,21 +1035,7 @@ export default async function EventDetailPage({ params }: Props) {
                       <Clock className="w-4 h-4" />
                       Recurring event — see description for specific dates
                     </p>
-                  ) : event.startDate ? (
-                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                      <Clock className="w-4 h-4" />
-                      {new Date(event.startDate).toLocaleTimeString("en-US", {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </p>
                   ) : (
-                    // UX-A1 item 3 (2026-06-04) — graceful fallback when an
-                    // event has no event_days AND no discontinuousDates AND
-                    // no startDate. Rare (A2 made start_date required on
-                    // new submissions), but legacy rows can still hit this.
-                    // Previously rendered null — silent missing data. Now:
-                    // a clear "check with organizer" hint.
                     <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                       <Clock className="w-4 h-4" />
                       Hours not listed — check with organizer
