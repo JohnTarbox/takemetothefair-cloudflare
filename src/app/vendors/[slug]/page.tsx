@@ -96,8 +96,30 @@ async function getVendor(slug: string) {
     // associations). The §6.6 SEO predicate uses a separate, status-agnostic
     // count below so the page-level noindex matches the sitemap's gate
     // exactly — see commit ab17bc4 for the SQL it mirrors.
+    //
+    // Narrow venues projection (P3a aftermath, 2026-06-06): before P3a this
+    // join's bare .select() returned 9 (event_vendors) + 62 (events) + 27
+    // (venues) = 98 columns — just under D1's 100-col result-row cap. P3a
+    // added 3 columns to venues (timezone/locale/country, drizzle/0112),
+    // tipping the total to 101 and silently returning no rows from D1 →
+    // every vendor detail page rendered "Vendor Not Found" until this fix.
+    // Per memory feedback_d1_100_col_result_cap, the response is to narrow
+    // the projection. Downstream consumers in this file only access venue
+    // name/address/city/state/zip (lines 703, 715); narrowing to those keeps
+    // total cols at 9 + 62 + 6 = 77.
     const eventVendorResults = await db
-      .select()
+      .select({
+        event_vendors: eventVendors,
+        events: events,
+        venues: {
+          id: venues.id,
+          name: venues.name,
+          address: venues.address,
+          city: venues.city,
+          state: venues.state,
+          zip: venues.zip,
+        },
+      })
       .from(eventVendors)
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
