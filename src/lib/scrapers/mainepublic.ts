@@ -7,6 +7,7 @@ import {
   parseTimeRange,
   expandDateRange,
   monthNameToMidnightUtc,
+  parseTimeToHHMM,
 } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
@@ -35,20 +36,8 @@ function parseDate(dateText: string, year?: number): Date | null {
   return monthNameToMidnightUtc(monthName, day, parsedYear);
 }
 
-// Parse time string like "03:00 PM" to hours and minutes
-function parseTime(timeText: string): { hours: number; minutes: number } | null {
-  const match = timeText.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-  if (!match) return null;
-
-  let hours = parseInt(match[1]);
-  const minutes = parseInt(match[2]);
-  const period = match[3]?.toUpperCase();
-
-  if (period === "PM" && hours < 12) hours += 12;
-  if (period === "AM" && hours === 12) hours = 0;
-
-  return { hours, minutes };
-}
+// (Local parseTime helper removed alongside the detail-path event_days
+//  conversion — superseded by the shared parseTimeToHHMM in ./utils.)
 
 // Parse the HTML to extract events. Exported for unit testing — pure
 // transformation (HTML in → events out, no I/O).
@@ -461,23 +450,29 @@ export async function scrapeMainePublicEventDetails(
         const monthNum = months[monthStr.toLowerCase()];
 
         if (monthNum !== undefined) {
-          const startTime = parseTime(startTimeStr);
-          const endTime = parseTime(endTimeStr);
-
-          if (startTime) {
-            // Date.UTC for explicit, host-zone-independent construction.
-            details.startDate = new Date(
-              Date.UTC(year, monthNum, day, startTime.hours, startTime.minutes)
-            );
+          // startDate / endDate anchor at midnight UTC (date-only convention).
+          // Time-of-day from the source goes into eventDays as "HH:MM" strings
+          // — wall-clock-at-venue, conversion to UTC at render time per P3b.
+          // The previous shape baked startTime.hours/minutes into startDate
+          // via Date.UTC(y, m, d, h, m) — silently lost on display because
+          // formatDateRange/etc. all render with timeZone:"UTC" on a date-
+          // only formatter. This restores those times into event_days
+          // (same shape as the list-page fix in this PR).
+          const dateOnly = new Date(Date.UTC(year, monthNum, day));
+          if (!isNaN(dateOnly.getTime())) {
+            details.startDate = dateOnly;
+            details.endDate = new Date(dateOnly);
             details.datesConfirmed = true;
             console.log(
-              `[MainePublic Scraper] Found date: ${details.startDate.toISOString()} for ${eventUrl}`
+              `[MainePublic Scraper] Found date: ${dateOnly.toISOString()} for ${eventUrl}`
             );
-          }
-          if (endTime) {
-            details.endDate = new Date(
-              Date.UTC(year, monthNum, day, endTime.hours, endTime.minutes)
-            );
+            const openTime = parseTimeToHHMM(startTimeStr);
+            const closeTime = parseTimeToHHMM(endTimeStr);
+            if (openTime !== null && closeTime !== null) {
+              details.eventDays = [
+                { date: dateOnly.toISOString().slice(0, 10), openTime, closeTime },
+              ];
+            }
           }
         }
       }
@@ -525,9 +520,16 @@ export async function scrapeMainePublicEventDetails(
         const monthNum = months[monthStr.toLowerCase()];
 
         if (monthNum !== undefined) {
-          details.startDate = new Date(Date.UTC(year, monthNum, day, 9, 0));
-          details.endDate = new Date(Date.UTC(year, monthNum, day, 17, 0));
-          details.datesConfirmed = true;
+          // Midnight-UTC anchors per the date-only convention. Previous
+          // shape used arbitrary 9am/5pm UTC defaults — meaningless
+          // decoration that was off-convention. No time info in this
+          // fallback path, so no eventDays — admin can add manually.
+          const dateOnly = new Date(Date.UTC(year, monthNum, day));
+          if (!isNaN(dateOnly.getTime())) {
+            details.startDate = dateOnly;
+            details.endDate = new Date(dateOnly);
+            details.datesConfirmed = true;
+          }
         }
       }
     }
