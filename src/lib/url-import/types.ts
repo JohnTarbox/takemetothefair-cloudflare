@@ -1,10 +1,35 @@
+/**
+ * Date/time storage convention (P3c, 2026-06-06)
+ * -----------------------------------------------
+ * - `startDate` / `endDate` / `applicationDeadline`: ISO 8601 calendar dates
+ *   in "YYYY-MM-DD" form (no time component). These flow into date-only D1
+ *   columns anchored at midnight UTC. Producers should NOT attach a time-of-
+ *   day, even if the source page mentions one — the storage convention is
+ *   date-only and downstream renders use `timeZone: "UTC"`.
+ *
+ * - `startTime` / `endTime`: "HH:MM" 24-hour wall-clock strings, interpreted
+ *   as "the clock on the wall at the venue when the event opens / closes."
+ *   No timezone is encoded in these strings; the venue's `timezone` column
+ *   (drizzle/0112, P3a) supplies the IANA zone at conversion time via
+ *   `parseWallClockInVenueZone(date, time, venue.timezone)`.
+ *
+ * - The conversion from "HH:MM" wall-clock + venue.timezone → UTC instant
+ *   is intentionally DEFERRED until the venue is resolved. If a scraper or
+ *   AI extractor produces wall-clock times before the venue is known,
+ *   store them as-stated and convert at form submission / event_days
+ *   construction time. Producers MUST NOT assume Eastern time (or any
+ *   specific zone) at extraction; the conversion is the venue's job.
+ *
+ * - `specificDates`: each is a "YYYY-MM-DD" string, same date-only
+ *   convention.
+ */
 export interface ExtractedEventData {
   name: string | null;
   description: string | null;
   startDate: string | null;
   endDate: string | null;
-  startTime: string | null; // "HH:MM" 24-hour format
-  endTime: string | null; // "HH:MM" 24-hour format
+  startTime: string | null; // "HH:MM" 24-hour, wall-clock at venue (see header)
+  endTime: string | null; // "HH:MM" 24-hour, wall-clock at venue (see header)
   hoursVaryByDay: boolean; // AI detected varying hours
   hoursNotes: string | null; // Free text (e.g., "Fri 5-9pm, Sat-Sun 10am-6pm")
   specificDates: string[] | null; // ["YYYY-MM-DD", ...] for non-contiguous dates

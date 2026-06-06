@@ -8,22 +8,43 @@ const SOURCE_NAME = "joycescraftshows.com";
 const BASE_URL = "https://www.joycescraftshows.com";
 
 // Parse date range like "May 17-18, 2026" or "Jul 10-12, 2026"
+//
+// P3c (2026-06-06): produces midnight-UTC anchors (Date.UTC) per the project's
+// date-only storage convention. Earlier versions used `new Date(year, month,
+// day, 10, ...)` which interprets the hour in the runtime's local zone — on
+// Cloudflare Workers (UTC) that produced "10:00 UTC" decoration baked into
+// events.startDate, off the expected midnight-UTC anchor. The time portion
+// was never displayed (every render path uses timeZone:"UTC" on a date-only
+// formatter), but the stored seconds-epoch was technically wrong and could
+// silently misalign with range queries.
 function parseDateRange(dateText: string): { start: Date; end: Date } | null {
-  const cleaned = dateText.trim().replace(/\s+/g, ' ');
+  const cleaned = dateText.trim().replace(/\s+/g, " ");
 
   const monthMap: Record<string, number> = {
-    'january': 0, 'jan': 0,
-    'february': 1, 'feb': 1,
-    'march': 2, 'mar': 2,
-    'april': 3, 'apr': 3,
-    'may': 4,
-    'june': 5, 'jun': 5,
-    'july': 6, 'jul': 6,
-    'august': 7, 'aug': 7,
-    'september': 8, 'sep': 8, 'sept': 8,
-    'october': 9, 'oct': 9,
-    'november': 10, 'nov': 10,
-    'december': 11, 'dec': 11,
+    january: 0,
+    jan: 0,
+    february: 1,
+    feb: 1,
+    march: 2,
+    mar: 2,
+    april: 3,
+    apr: 3,
+    may: 4,
+    june: 5,
+    jun: 5,
+    july: 6,
+    jul: 6,
+    august: 7,
+    aug: 7,
+    september: 8,
+    sep: 8,
+    sept: 8,
+    october: 9,
+    oct: 9,
+    november: 10,
+    nov: 10,
+    december: 11,
+    dec: 11,
   };
 
   // "Month DD-DD, YYYY"
@@ -32,8 +53,8 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
   if (rangeMatch) {
     const month = monthMap[rangeMatch[1].toLowerCase()];
     if (month !== undefined) {
-      const start = new Date(parseInt(rangeMatch[4]), month, parseInt(rangeMatch[2]), 10, 0, 0);
-      const end = new Date(parseInt(rangeMatch[4]), month, parseInt(rangeMatch[3]), 16, 0, 0);
+      const start = new Date(Date.UTC(parseInt(rangeMatch[4]), month, parseInt(rangeMatch[2])));
+      const end = new Date(Date.UTC(parseInt(rangeMatch[4]), month, parseInt(rangeMatch[3])));
       if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
         return { start, end };
       }
@@ -46,8 +67,8 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
   if (singleMatch) {
     const month = monthMap[singleMatch[1].toLowerCase()];
     if (month !== undefined) {
-      const start = new Date(parseInt(singleMatch[3]), month, parseInt(singleMatch[2]), 10, 0, 0);
-      const end = new Date(parseInt(singleMatch[3]), month, parseInt(singleMatch[2]), 17, 0, 0);
+      const start = new Date(Date.UTC(parseInt(singleMatch[3]), month, parseInt(singleMatch[2])));
+      const end = new Date(Date.UTC(parseInt(singleMatch[3]), month, parseInt(singleMatch[2])));
       if (!isNaN(start.getTime())) {
         return { start, end };
       }
@@ -56,7 +77,6 @@ function parseDateRange(dateText: string): { start: Date; end: Date } | null {
 
   return null;
 }
-
 
 interface JoycesEvent {
   name: string;
@@ -77,7 +97,8 @@ const knownEvents: JoycesEvent[] = [
     address: "120 Laconia Rd Rt 3",
     city: "Tilton",
     state: "NH",
-    description: "Lakes Region Spring Craft Fair at Tanger Outlets, Tilton NH. 80+ artisans. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Lakes Region Spring Craft Fair at Tanger Outlets, Tilton NH. 80+ artisans. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/lakes-region-spring-craft-fair`,
   },
   {
@@ -87,7 +108,8 @@ const knownEvents: JoycesEvent[] = [
     address: "1 Norcross Circle Rt 16",
     city: "North Conway",
     state: "NH",
-    description: "Memorial Day Weekend Craft Fair at Schouler Park, North Conway NH. 125+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Memorial Day Weekend Craft Fair at Schouler Park, North Conway NH. 125+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/memorial-day-weekend-craft-fair`,
   },
   {
@@ -97,7 +119,8 @@ const knownEvents: JoycesEvent[] = [
     address: "719 Cherry Valley Rd Rt 11A",
     city: "Gilford",
     state: "NH",
-    description: "4th of July Weekend Gunstock Craft Fair at Gunstock Mountain Resort, Gilford NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "4th of July Weekend Gunstock Craft Fair at Gunstock Mountain Resort, Gilford NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/4th-of-july-weekend-gunstock-craft-fair`,
   },
   {
@@ -107,7 +130,8 @@ const knownEvents: JoycesEvent[] = [
     address: "80 Academy Dr",
     city: "Wolfeboro",
     state: "NH",
-    description: "On The Green July Craft Fair at Brewster Academy, Wolfeboro NH. 100+ exhibitors. Friday-Sunday 10am-5pm (Sunday 10am-4pm). Free admission, free parking.",
+    description:
+      "On The Green July Craft Fair at Brewster Academy, Wolfeboro NH. 100+ exhibitors. Friday-Sunday 10am-5pm (Sunday 10am-4pm). Free admission, free parking.",
     sourceUrl: `${BASE_URL}/on-the-green-july-craft-fair`,
   },
   {
@@ -117,7 +141,8 @@ const knownEvents: JoycesEvent[] = [
     address: "1 Norcross Circle Rt 16",
     city: "North Conway",
     state: "NH",
-    description: "Mt. Washington Valley July Craft Fair at Schouler Park, North Conway NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Mt. Washington Valley July Craft Fair at Schouler Park, North Conway NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/mt-washington-valley-july-craft-fair`,
   },
   {
@@ -127,7 +152,8 @@ const knownEvents: JoycesEvent[] = [
     address: "80 Academy Dr",
     city: "Wolfeboro",
     state: "NH",
-    description: "On The Green 2 August Craft Fair at Brewster Academy, Wolfeboro NH. 110+ exhibitors. Friday-Sunday 10am-5pm (Sunday 10am-4pm). Free admission, free parking.",
+    description:
+      "On The Green 2 August Craft Fair at Brewster Academy, Wolfeboro NH. 110+ exhibitors. Friday-Sunday 10am-5pm (Sunday 10am-4pm). Free admission, free parking.",
     sourceUrl: `${BASE_URL}/on-the-green-2-august-craft-fair`,
   },
   {
@@ -137,7 +163,8 @@ const knownEvents: JoycesEvent[] = [
     address: "1 Norcross Circle Rt 16",
     city: "North Conway",
     state: "NH",
-    description: "Mt. Washington Valley August Craft Fair at Schouler Park, North Conway NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Mt. Washington Valley August Craft Fair at Schouler Park, North Conway NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/mt-washington-valley-august-craft-fair`,
   },
   {
@@ -147,7 +174,8 @@ const knownEvents: JoycesEvent[] = [
     address: "719 Cherry Valley Rd Rt 11A",
     city: "Gilford",
     state: "NH",
-    description: "Gunstock Labor Day Craft Fair at Gunstock Mountain Resort, Gilford NH. 100+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Gunstock Labor Day Craft Fair at Gunstock Mountain Resort, Gilford NH. 100+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/gunstock-labor-day-craft-fair`,
   },
   {
@@ -157,7 +185,8 @@ const knownEvents: JoycesEvent[] = [
     address: "120 Laconia Rd Rt 3",
     city: "Tilton",
     state: "NH",
-    description: "Falling Leaves Craft Fair at Tanger Outlets, Tilton NH. 90+ artisans. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Falling Leaves Craft Fair at Tanger Outlets, Tilton NH. 90+ artisans. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/falling-leaves-craft-fair-at-tanger`,
   },
   {
@@ -167,7 +196,8 @@ const knownEvents: JoycesEvent[] = [
     address: "1 Norcross Circle Rt 16",
     city: "North Conway",
     state: "NH",
-    description: "Mt. Washington Valley Fall Craft Fair at Schouler Park, North Conway NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Mt. Washington Valley Fall Craft Fair at Schouler Park, North Conway NH. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/mt-washington-valley-fall-craft-fair`,
   },
   {
@@ -177,7 +207,8 @@ const knownEvents: JoycesEvent[] = [
     address: "719 Cherry Valley Rd Rt 11A",
     city: "Gilford",
     state: "NH",
-    description: "Columbus Day Weekend Gunstock Craft Fair at Gunstock Mountain Resort, Gilford NH. 70+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Columbus Day Weekend Gunstock Craft Fair at Gunstock Mountain Resort, Gilford NH. 70+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/columbus-day-weekend-gunstock-craft-fair`,
   },
   {
@@ -187,7 +218,8 @@ const knownEvents: JoycesEvent[] = [
     address: "120 Laconia Rd Rt 3",
     city: "Tilton",
     state: "NH",
-    description: "Silver Bells Craft Fair at Tanger Outlets, Tilton NH. 90+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
+    description:
+      "Silver Bells Craft Fair at Tanger Outlets, Tilton NH. 90+ exhibitors. Saturday 10am-5pm, Sunday 10am-4pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/silver-bells-craft-fair-at-tanger`,
   },
   {
@@ -197,7 +229,8 @@ const knownEvents: JoycesEvent[] = [
     address: "",
     city: "Nashua",
     state: "NH",
-    description: "Holly Jolly Craft Fair at DoubleTree by Hilton, Nashua NH. Saturday 10am-5pm. Free admission, free parking.",
+    description:
+      "Holly Jolly Craft Fair at DoubleTree by Hilton, Nashua NH. Saturday 10am-5pm. Free admission, free parking.",
     sourceUrl: `${BASE_URL}/holly-jolly-craft-fair-at-doubletree`,
   },
 ];
@@ -210,7 +243,7 @@ export async function scrapeJoycesCraftShows(): Promise<ScrapeResult> {
     if (!dates) continue;
 
     const sourceId = createSlugFromName(eventInfo.name);
-    if (events.some(e => e.sourceId === sourceId)) continue;
+    if (events.some((e) => e.sourceId === sourceId)) continue;
 
     const venue: ScrapedVenue = {
       name: eventInfo.venue,
@@ -243,6 +276,8 @@ export async function scrapeJoycesCraftShows(): Promise<ScrapeResult> {
 }
 
 // All event data is hardcoded inline, so detail scraping returns empty
-export async function scrapeJoycesCraftShowsEventDetails(_eventUrl: string): Promise<Partial<ScrapedEvent>> {
+export async function scrapeJoycesCraftShowsEventDetails(
+  _eventUrl: string
+): Promise<Partial<ScrapedEvent>> {
   return {};
 }

@@ -87,25 +87,18 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
     if (dateMatch) {
       const parsed = parseDate(dateMatch[0]);
       if (parsed) {
+        // P3c: startDate / endDate are stored as date-only midnight UTC
+        // anchors. The previous shape set artificial 9am/9pm times and
+        // then overwrote them with any times found in the source page —
+        // both behaviors baked a non-midnight time portion into
+        // events.startDate, off the storage convention. Source-page
+        // times (e.g. "9:00 AM - 5:00 PM") are intentionally NOT applied
+        // here; when this scraper grows event_days support, those times
+        // will land as "HH:MM" openTime/closeTime on event_days rows
+        // (wall-clock-in-venue-zone per the convention in
+        // src/lib/url-import/types.ts).
         startDate = parsed;
-        startDate.setHours(9, 0, 0, 0);
         endDate = new Date(startDate);
-        endDate.setHours(21, 0, 0, 0);
-      }
-    }
-
-    // Try to extract time
-    const timeMatch = section.match(
-      /(\d{1,2}:\d{2}\s*(?:AM|PM))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:AM|PM))/i
-    );
-    if (timeMatch && startDate && endDate) {
-      const startTime = parseTime(timeMatch[1]);
-      const endTime = parseTime(timeMatch[2]);
-      if (startTime) {
-        startDate.setHours(startTime.hours, startTime.minutes, 0, 0);
-      }
-      if (endTime) {
-        endDate.setHours(endTime.hours, endTime.minutes, 0, 0);
       }
     }
 

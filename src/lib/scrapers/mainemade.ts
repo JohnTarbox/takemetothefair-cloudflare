@@ -2,7 +2,7 @@
 // Extracts event data from their events page with pagination support
 
 import type { ScrapedEvent, ScrapeResult } from "./types";
-import { decodeHtmlEntities } from "./utils";
+import { decodeHtmlEntities, monthNameToMidnightUtc } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
@@ -61,28 +61,25 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       : "";
 
     // Pattern: "February 7 @ 2:00 PM - 7:00 PM" or "March 21 - March 22"
+    //
+    // P3c (2026-06-06): startDate/endDate are stored as date-only midnight UTC
+    // anchors. Any wall-clock time-of-day in the source page (e.g. "@ 2:00 PM")
+    // is intentionally NOT baked into events.startDate — that field is date-
+    // only and downstream renders use timeZone:"UTC". When this scraper grows
+    // event_days support, those time-of-day strings should land as "HH:MM"
+    // openTime/closeTime on event_days rows (wall-clock-in-venue-zone, per
+    // url-import convention). For now, just normalize to midnight UTC.
     const dateMatch = (dateText || fullDateContent).match(
       /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i
     );
     if (dateMatch) {
-      const year = new Date().getFullYear();
-      const month = dateMatch[1];
-      const day = dateMatch[2];
+      const year = new Date().getUTCFullYear();
+      const monthName = dateMatch[1];
+      const day = parseInt(dateMatch[2]);
 
-      startDate = new Date(`${month} ${day}, ${year}`);
-      if (!isNaN(startDate.getTime())) {
-        // Check for time in full content
-        const timeMatch = fullDateContent.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (timeMatch) {
-          let hours = parseInt(timeMatch[1]);
-          const minutes = parseInt(timeMatch[2]);
-          if (timeMatch[3].toUpperCase() === "PM" && hours < 12) hours += 12;
-          if (timeMatch[3].toUpperCase() === "AM" && hours === 12) hours = 0;
-          startDate.setHours(hours, minutes, 0, 0);
-        } else {
-          startDate.setHours(9, 0, 0, 0);
-        }
-
+      const parsedStart = monthNameToMidnightUtc(monthName, day, year);
+      if (parsedStart) {
+        startDate = parsedStart;
         // Check for end date from itemprop span first
         if (endDateSpanMatch) {
           const endDateText = endDateSpanMatch[1];
@@ -90,25 +87,18 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
             /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i
           );
           if (endDateParsed) {
-            endDate = new Date(`${endDateParsed[1]} ${endDateParsed[2]}, ${year}`);
-            endDate.setHours(21, 0, 0, 0);
+            const parsedEnd = monthNameToMidnightUtc(
+              endDateParsed[1],
+              parseInt(endDateParsed[2]),
+              year
+            );
+            if (parsedEnd) endDate = parsedEnd;
           }
         }
 
-        // If no end date from span, check for end time
+        // Fallback: single-day event when no separate endDate span.
         if (!endDate) {
-          const endTimeMatch = fullDateContent.match(/[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-          if (endTimeMatch) {
-            endDate = new Date(startDate);
-            let endHours = parseInt(endTimeMatch[1]);
-            const endMinutes = parseInt(endTimeMatch[2]);
-            if (endTimeMatch[3].toUpperCase() === "PM" && endHours < 12) endHours += 12;
-            if (endTimeMatch[3].toUpperCase() === "AM" && endHours === 12) endHours = 0;
-            endDate.setHours(endHours, endMinutes, 0, 0);
-          } else {
-            endDate = new Date(startDate);
-            endDate.setHours(21, 0, 0, 0);
-          }
+          endDate = new Date(parsedStart);
         }
       }
     }

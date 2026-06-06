@@ -2,11 +2,16 @@
 // Extracts fair/event data from their fairs by date page
 
 import type { ScrapedEvent, ScrapeResult, ScrapedVenue } from "./types";
-import { decodeHtmlEntities, createSlugFromName } from "./utils";
+import { decodeHtmlEntities, createSlugFromName, monthNameToMidnightUtc } from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
 // Parse date strings like "July 15-19", "Aug 7-9", "Sept 4-7", "Oct 2-12"
+// P3c: produces midnight-UTC anchors via monthNameToMidnightUtc per the
+// date-only storage convention. The previous shape used
+// `new Date('Month Day, Year').setHours(9, 0, …)` which interpreted the
+// hour in the runtime's local zone (UTC on CF Workers), baking a 9-hour
+// offset into events.startDate that didn't match other scrapers' anchors.
 function parseDateRange(dateText: string, year: number): { start: Date; end: Date } | null {
   // Clean up the text
   const cleaned = dateText
@@ -15,70 +20,22 @@ function parseDateRange(dateText: string, year: number): { start: Date; end: Dat
     .replace(/\s+/g, " ")
     .trim();
 
-  // Month name mapping (handle abbreviations)
-  const monthMap: Record<string, string> = {
-    jan: "January",
-    january: "January",
-    feb: "February",
-    february: "February",
-    mar: "March",
-    march: "March",
-    apr: "April",
-    april: "April",
-    may: "May",
-    jun: "June",
-    june: "June",
-    jul: "July",
-    july: "July",
-    aug: "August",
-    august: "August",
-    sep: "September",
-    sept: "September",
-    september: "September",
-    oct: "October",
-    october: "October",
-    nov: "November",
-    november: "November",
-    dec: "December",
-    december: "December",
-  };
-
   // Try to match patterns like "July 15-19" or "Aug 7-9" (same month range)
   const sameMonthMatch = cleaned.match(/(\w+)\s+(\d+)\s*-\s*(\d+)/i);
   if (sameMonthMatch) {
-    const monthKey = sameMonthMatch[1].toLowerCase();
-    const month = monthMap[monthKey];
-    if (month) {
-      const startDay = parseInt(sameMonthMatch[2]);
-      const endDay = parseInt(sameMonthMatch[3]);
-
-      const start = new Date(`${month} ${startDay}, ${year}`);
-      const end = new Date(`${month} ${endDay}, ${year}`);
-
-      start.setHours(9, 0, 0, 0);
-      end.setHours(21, 0, 0, 0);
-
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
-        return { start, end };
-      }
+    const start = monthNameToMidnightUtc(sameMonthMatch[1], parseInt(sameMonthMatch[2]), year);
+    const end = monthNameToMidnightUtc(sameMonthMatch[1], parseInt(sameMonthMatch[3]), year);
+    if (start && end) {
+      return { start, end };
     }
   }
 
   // Try single date like "Aug 29" or "Oct 4"
   const singleMatch = cleaned.match(/(\w+)\s+(\d+)$/i);
   if (singleMatch) {
-    const monthKey = singleMatch[1].toLowerCase();
-    const month = monthMap[monthKey];
-    if (month) {
-      const day = parseInt(singleMatch[2]);
-      const date = new Date(`${month} ${day}, ${year}`);
-      date.setHours(9, 0, 0, 0);
-      const endDate = new Date(date);
-      endDate.setHours(21, 0, 0, 0);
-
-      if (!isNaN(date.getTime())) {
-        return { start: date, end: endDate };
-      }
+    const date = monthNameToMidnightUtc(singleMatch[1], parseInt(singleMatch[2]), year);
+    if (date) {
+      return { start: date, end: new Date(date) };
     }
   }
 

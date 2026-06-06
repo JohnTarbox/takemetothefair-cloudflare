@@ -113,9 +113,9 @@ describe("scrapeVtFairs", () => {
     expect(result.events).toHaveLength(1);
     const event = result.events[0];
     expect(event.name).toBe("Champlain Valley Fair");
-    expect(event.startDate?.getMonth()).toBe(6); // July
-    expect(event.startDate?.getDate()).toBe(24);
-    expect(event.endDate?.getDate()).toBe(26);
+    expect(event.startDate?.getUTCMonth()).toBe(6); // July
+    expect(event.startDate?.getUTCDate()).toBe(24);
+    expect(event.endDate?.getUTCDate()).toBe(26);
     expect(event.datesConfirmed).toBe(true);
     expect(event.website).toBe("https://champlainvalleyfair.org");
     expect(event.ticketUrl).toBe("https://champlainvalleyfair.org");
@@ -132,10 +132,10 @@ describe("scrapeVtFairs", () => {
 
     const result = await scrapeVtFairs();
 
-    expect(result.events[0].startDate?.getMonth()).toBe(6); // July
-    expect(result.events[0].startDate?.getDate()).toBe(29);
-    expect(result.events[0].endDate?.getMonth()).toBe(7); // August
-    expect(result.events[0].endDate?.getDate()).toBe(2);
+    expect(result.events[0].startDate?.getUTCMonth()).toBe(6); // July
+    expect(result.events[0].startDate?.getUTCDate()).toBe(29);
+    expect(result.events[0].endDate?.getUTCMonth()).toBe(7); // August
+    expect(result.events[0].endDate?.getUTCDate()).toBe(2);
   });
 
   it("strips ordinal suffixes ('25th', '27th') from dates", async () => {
@@ -147,8 +147,8 @@ describe("scrapeVtFairs", () => {
 
     const result = await scrapeVtFairs();
 
-    expect(result.events[0].startDate?.getDate()).toBe(25);
-    expect(result.events[0].endDate?.getDate()).toBe(27);
+    expect(result.events[0].startDate?.getUTCDate()).toBe(25);
+    expect(result.events[0].endDate?.getUTCDate()).toBe(27);
     expect(result.events[0].datesConfirmed).toBe(true);
   });
 
@@ -161,9 +161,9 @@ describe("scrapeVtFairs", () => {
 
     const result = await scrapeVtFairs();
 
-    expect(result.events[0].startDate?.getMonth()).toBe(8); // September
-    expect(result.events[0].startDate?.getDate()).toBe(12);
-    expect(result.events[0].endDate?.getDate()).toBe(12);
+    expect(result.events[0].startDate?.getUTCMonth()).toBe(8); // September
+    expect(result.events[0].startDate?.getUTCDate()).toBe(12);
+    expect(result.events[0].endDate?.getUTCDate()).toBe(12);
   });
 
   it("flags datesConfirmed=false for 'TBD' / 'To be determined' dates", async () => {
