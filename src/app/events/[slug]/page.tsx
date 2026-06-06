@@ -68,6 +68,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
+import { formatDateMedium } from "@/lib/datetime";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -1175,10 +1176,7 @@ export default async function EventDetailPage({ params }: Props) {
                       <p
                         className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-red-600" : "text-gray-900"}`}
                       >
-                        Deadline:{" "}
-                        {new Date(event.applicationDeadline).toLocaleDateString(undefined, {
-                          timeZone: "UTC",
-                        })}
+                        Deadline: {formatDateMedium(event.applicationDeadline)}
                         {new Date(event.applicationDeadline) < new Date() && " (Passed)"}
                       </p>
                     )}
@@ -1412,14 +1410,7 @@ export default async function EventDetailPage({ params }: Props) {
                   <p className="text-sm text-gray-500 mt-2 line-clamp-2">{post.excerpt}</p>
                 )}
                 {post.publishDate && (
-                  <p className="text-xs text-gray-600 mt-2">
-                    {new Date(post.publishDate).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                      timeZone: "UTC",
-                    })}
-                  </p>
+                  <p className="text-xs text-gray-600 mt-2">{formatDateMedium(post.publishDate)}</p>
                 )}
               </Link>
             ))}

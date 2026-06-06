@@ -8,6 +8,7 @@ import { and, eq, sql, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { formatDateRange } from "@/lib/utils";
+import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 
@@ -203,16 +204,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                           <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
                         )}
                         <div className="flex items-center gap-3 text-xs text-gray-600 mt-2">
-                          {post.publishDate && (
-                            <span>
-                              {new Date(post.publishDate).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                                timeZone: "UTC",
-                              })}
-                            </span>
-                          )}
+                          {post.publishDate && <span>{formatDateMedium(post.publishDate)}</span>}
                           {post.authorName && <span>{post.authorName}</span>}
                         </div>
                       </div>

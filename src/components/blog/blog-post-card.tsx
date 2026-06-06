@@ -7,6 +7,7 @@ import { Calendar, FileText, Tag } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatAuthorName } from "@/lib/utils";
+import { formatDateLong } from "@/lib/datetime";
 
 interface BlogPostCardProps {
   post: {
@@ -26,14 +27,7 @@ interface BlogPostCardProps {
 export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
   const [imgError, setImgError] = useState(false);
 
-  const publishDate = post.publishDate
-    ? new Date(post.publishDate).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        timeZone: "UTC",
-      })
-    : null;
+  const publishDate = post.publishDate ? formatDateLong(post.publishDate) : null;
 
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">

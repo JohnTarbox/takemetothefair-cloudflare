@@ -16,7 +16,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
-import { formatTimestamp } from "@/lib/datetime";
+import { formatTimestamp, formatDateMedium } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -483,7 +483,7 @@ export default function AdminInboundEmailsPage() {
                         </Badge>
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap text-gray-500">
-                        {new Date(s.lastSeen).toLocaleDateString()}
+                        {formatDateMedium(s.lastSeen)}
                       </td>
                     </tr>
                   ))}

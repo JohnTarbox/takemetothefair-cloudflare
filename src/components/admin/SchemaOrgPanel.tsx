@@ -12,7 +12,7 @@ import {
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatDateOnly } from "@/lib/datetime";
+import { formatDateOnly, formatTimestamp } from "@/lib/datetime";
 import type { EventSchemaOrg } from "@/lib/db/schema";
 
 interface EventData {
@@ -444,9 +444,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               {/* Last fetched info */}
               <div className="mt-4 pt-4 border-t text-xs text-gray-600">
                 Last fetched:{" "}
-                {schemaOrg.lastFetchedAt
-                  ? new Date(schemaOrg.lastFetchedAt).toLocaleString()
-                  : "Never"}
+                {schemaOrg.lastFetchedAt ? formatTimestamp(schemaOrg.lastFetchedAt) : "Never"}
                 {schemaOrg.fetchCount && ` (${schemaOrg.fetchCount} total fetches)`}
                 {schemaOrg.ticketUrl && (
                   <>

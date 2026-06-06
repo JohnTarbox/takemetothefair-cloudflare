@@ -16,6 +16,7 @@ import { AddToCalendar } from "./AddToCalendar";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getCategoryColors, getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
 import { getStateName } from "@/lib/states";
+import { formatDateMedium, formatDateShort, formatMonthShort } from "@/lib/datetime";
 
 type Event = typeof events.$inferSelect;
 type Venue = typeof venues.$inferSelect;
@@ -68,11 +69,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     } else if (diffDays === 1) {
       setDeadlineChipText("Applies in 1 day");
     } else {
-      const short = new Date(event.applicationDeadline).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        timeZone: "UTC",
-      });
+      const short = formatDateShort(event.applicationDeadline);
       setDeadlineChipText(`Applies by ${short}`);
     }
   }, [event.applicationDeadline]);
@@ -97,9 +94,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     new Date()
   );
   const badgeDate = occurrence?.date ?? (displayStartDate ? new Date(displayStartDate) : null);
-  const monthAbbr = badgeDate
-    ? badgeDate.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase()
-    : null;
+  const monthAbbr = badgeDate ? formatMonthShort(badgeDate).toUpperCase() : null;
   const dayNum = badgeDate ? badgeDate.getUTCDate() : null;
 
   return (
@@ -272,7 +267,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
               {deadlineChipText && (
                 <Badge
                   className="bg-amber-light text-amber-bg-fg"
-                  title={`Vendor applications close ${new Date(event.applicationDeadline!).toLocaleDateString(undefined, { timeZone: "UTC" })}`}
+                  title={`Vendor applications close ${formatDateMedium(event.applicationDeadline!)}`}
                 >
                   {deadlineChipText}
                 </Badge>

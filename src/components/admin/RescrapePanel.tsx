@@ -4,6 +4,7 @@ import { useState } from "react";
 import { RefreshCw, ExternalLink, CheckCircle, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { formatTimestamp } from "@/lib/datetime";
 
 interface RescrapePanelProps {
   eventId: string;
@@ -52,9 +53,7 @@ export function RescrapePanel({
       const data = (await res.json()) as RescrapeResult;
 
       if (!res.ok) {
-        throw new Error(
-          (data as unknown as { error: string }).error || "Re-scrape failed"
-        );
+        throw new Error((data as unknown as { error: string }).error || "Re-scrape failed");
       }
 
       setResult(data);
@@ -73,15 +72,7 @@ export function RescrapePanel({
   }
 
   const detail = result?.details?.[0];
-  const formattedSyncDate = lastSyncedAt
-    ? new Date(lastSyncedAt).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : "Never";
+  const formattedSyncDate = lastSyncedAt ? formatTimestamp(lastSyncedAt) : "Never";
 
   return (
     <Card>
@@ -99,9 +90,7 @@ export function RescrapePanel({
             onClick={handleRescrape}
             disabled={loading || !sourceUrl}
           >
-            <RefreshCw
-              className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`}
-            />
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
             {loading ? "Scraping..." : "Re-scrape"}
           </Button>
         </div>
