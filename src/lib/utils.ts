@@ -7,6 +7,8 @@ import {
   parseWallClockInVenueZone,
   formatIcsUtc,
   formatIcsVenueZone,
+  getVtimezoneBlock,
+  VENUE_TZ,
   VTIMEZONE_AMERICA_NEW_YORK,
 } from "@/lib/datetime";
 
@@ -235,10 +237,14 @@ interface MultiDayCalendarParams {
   location?: string;
   url?: string;
   eventDays: EventDayForICS[];
+  /** Venue's IANA timezone (P3b). When omitted, falls back to VENUE_TZ
+   *  (America/New_York) for backward compatibility with Eastern-US-only
+   *  callers. Required for correct ICS output at non-Eastern venues. */
+  venueTimezone?: string;
 }
 
 export function generateMultiDayICSContent(params: MultiDayCalendarParams): string {
-  const { title, description, location, url, eventDays } = params;
+  const { title, description, location, url, eventDays, venueTimezone = VENUE_TZ } = params;
 
   const openDays = eventDays.filter((d) => !d.closed);
 
@@ -247,14 +253,17 @@ export function generateMultiDayICSContent(params: MultiDayCalendarParams): stri
     : description || "";
 
   // Per-day open/close times are wall-clock in the venue's zone, not UTC.
-  // Emit them with TZID=America/New_York and include a VTIMEZONE block in
+  // Emit them with TZID=<venueTimezone> + a matching VTIMEZONE block in
   // the calendar body so Google/Apple/Outlook compute the right local time
-  // for attendees in any zone.
+  // for attendees in any zone. If the venue's zone isn't in the registry
+  // (e.g. a venue in a zone we haven't added a VTIMEZONE block for yet),
+  // fall back to the Eastern block — incorrect for non-Eastern venues but
+  // safer than emitting a TZID with no matching definition.
   const events = openDays.map((day) => {
-    const startWallClock = parseWallClockInVenueZone(day.date, day.openTime);
-    const endWallClock = parseWallClockInVenueZone(day.date, day.closeTime);
-    const startIcs = formatIcsVenueZone(startWallClock);
-    const endIcs = formatIcsVenueZone(endWallClock);
+    const startWallClock = parseWallClockInVenueZone(day.date, day.openTime, venueTimezone);
+    const endWallClock = parseWallClockInVenueZone(day.date, day.closeTime, venueTimezone);
+    const startIcs = formatIcsVenueZone(startWallClock, venueTimezone);
+    const endIcs = formatIcsVenueZone(endWallClock, venueTimezone);
     const dayTitle = day.notes ? `${title} - ${day.notes}` : title;
 
     return [
@@ -272,11 +281,12 @@ export function generateMultiDayICSContent(params: MultiDayCalendarParams): stri
       .join("\r\n");
   });
 
+  const vtimezoneBlock = getVtimezoneBlock(venueTimezone) ?? VTIMEZONE_AMERICA_NEW_YORK;
   return [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
     "PRODID:-//Meet Me at the Fair//EN",
-    VTIMEZONE_AMERICA_NEW_YORK,
+    vtimezoneBlock,
     ...events,
     "END:VCALENDAR",
   ].join("\r\n");

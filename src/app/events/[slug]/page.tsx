@@ -589,6 +589,7 @@ export default async function EventDetailPage({ params }: Props) {
                 zip: event.venue.zip,
                 latitude: event.venue.latitude,
                 longitude: event.venue.longitude,
+                timezone: event.venue.timezone,
               }
             : null
         }

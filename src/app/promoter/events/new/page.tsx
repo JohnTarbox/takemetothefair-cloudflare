@@ -32,6 +32,9 @@ interface Venue {
   city: string;
   state: string;
   googlePlaceId: string | null;
+  // IANA timezone (drizzle/0112, P3b). Used to interpret promoter-entered
+  // wall-clock times in the venue's zone rather than the project default.
+  timezone: string;
 }
 
 type Stage = "basics" | "schedule" | "vendor" | "review";
@@ -102,7 +105,8 @@ const EMPTY_FORM: FormState = {
 function buildRequestBody(
   form: FormState,
   discontinuousDates: boolean,
-  eventDays: EventDayInput[]
+  eventDays: EventDayInput[],
+  venueTimezone?: string
 ): Record<string, unknown> {
   let startDateISO: string | null = null;
   let endDateISO: string | null = null;
@@ -112,12 +116,22 @@ function buildRequestBody(
     endDateISO = parseDateOnly(sorted[sorted.length - 1])?.toISOString() ?? null;
   } else if (form.startDate && form.endDate) {
     // Promoter-entered times are wall-clock in the venue's zone (per the
-    // datetime architecture decision), not browser-local. parseWallClockInVenueZone
-    // converts "9:00 AM" entered by a promoter in any zone into 9:00 AM ET → UTC.
+    // datetime architecture decision), not browser-local. P3b threads
+    // `venueTimezone` through so a Halifax venue's 9:00 AM is interpreted
+    // as 9:00 AM ADT (12:00 UTC summer), not 9:00 AM ET. Omitted (legacy
+    // / no-venue case) falls back to VENUE_TZ inside the helper.
     startDateISO =
-      parseWallClockInVenueZone(form.startDate, form.startTime || "09:00")?.toISOString() ?? null;
+      parseWallClockInVenueZone(
+        form.startDate,
+        form.startTime || "09:00",
+        venueTimezone
+      )?.toISOString() ?? null;
     endDateISO =
-      parseWallClockInVenueZone(form.endDate, form.endTime || "17:00")?.toISOString() ?? null;
+      parseWallClockInVenueZone(
+        form.endDate,
+        form.endTime || "17:00",
+        venueTimezone
+      )?.toISOString() ?? null;
   }
 
   return {
@@ -315,8 +329,9 @@ function CreateEventWizard() {
   const saveDraft = async (submit = false): Promise<{ ok: boolean; id?: string }> => {
     setSaving(true);
     try {
+      const venueTimezone = venues.find((v) => v.id === form.venueId)?.timezone;
       const body = {
-        ...buildRequestBody(form, discontinuousDates, eventDays),
+        ...buildRequestBody(form, discontinuousDates, eventDays, venueTimezone),
         id: draftId ?? undefined,
         submit,
       };

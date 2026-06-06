@@ -54,6 +54,12 @@ interface AddToCalendarProps {
   // generateMultiDayICSDataUrl path below and emits one VEVENT per
   // occurrence (no RRULE needed).
   recurrenceRule?: string | null;
+  /** Venue's IANA timezone (P3b, 2026-06-06). Threaded into the
+   *  multi-day ICS path so DTSTART/DTEND/VTIMEZONE all reference the
+   *  venue's local clock. Omit (or pass undefined) at venues whose
+   *  timezone is the project default America/New_York — the helper
+   *  falls back to VENUE_TZ for backward compat. */
+  venueTimezone?: string;
 }
 
 export function AddToCalendar({
@@ -67,6 +73,7 @@ export function AddToCalendar({
   className = "",
   eventDays = [],
   recurrenceRule = null,
+  venueTimezone,
 }: AddToCalendarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -115,6 +122,7 @@ export function AddToCalendar({
         location,
         url,
         eventDays: openDays,
+        venueTimezone,
       })
     : generateICSDataUrl(eventParams);
 

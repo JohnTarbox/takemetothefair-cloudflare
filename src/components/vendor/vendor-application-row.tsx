@@ -27,6 +27,10 @@ export interface VendorApplicationRowData {
       city: string;
       state: string;
       zip: string | null;
+      // IANA timezone (drizzle/0112, P3b). Optional because legacy callers
+      // building this shape may not have selected it from D1 yet — the
+      // helper falls back to VENUE_TZ when undefined.
+      timezone?: string | null;
     } | null;
   };
 }
@@ -126,6 +130,7 @@ export function VendorApplicationRow({ application, conflicts, highlighted }: Pr
                     endDate={application.event.endDate}
                     url={`https://meetmeatthefair.com/events/${application.event.slug}`}
                     variant="icon"
+                    venueTimezone={application.event.venue?.timezone ?? undefined}
                   />
                 </div>
                 <div className="flex items-center gap-2">

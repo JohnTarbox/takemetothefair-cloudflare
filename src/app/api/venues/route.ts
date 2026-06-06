@@ -19,6 +19,7 @@ export async function GET(request: Request) {
         city: venues.city,
         state: venues.state,
         googlePlaceId: venues.googlePlaceId,
+        timezone: venues.timezone,
       })
       .from(venues)
       .where(eq(venues.status, "ACTIVE"))
@@ -135,6 +136,7 @@ export async function POST(request: Request) {
         city: venues.city,
         state: venues.state,
         googlePlaceId: venues.googlePlaceId,
+        timezone: venues.timezone,
       })
       .from(venues)
       .where(eq(venues.id, venueId))
@@ -163,9 +165,6 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(
-      { error: "Failed to create venue" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to create venue" }, { status: 500 });
   }
 }

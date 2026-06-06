@@ -40,6 +40,12 @@ interface EventSchemaProps {
     zip?: string | null;
     latitude?: number | null;
     longitude?: number | null;
+    /** Venue's IANA timezone (P3b, drizzle/0112). Threaded into the
+     *  sub-event startDate/endDate ISO offsets so the JSON-LD `-04:00`
+     *  / `-05:00` (Eastern) is replaced by the venue's actual offset for
+     *  non-Eastern locations. Optional for backward compat — falls back
+     *  to VENUE_TZ when omitted. */
+    timezone?: string | null;
   } | null;
   stateCode?: string | null;
   organizer?: {
@@ -265,15 +271,22 @@ export function EventSchema({
           .filter((d) => !d.closed)
           .map((day, i) => {
             // Sub-event open/close times are wall-clock in the venue's zone.
-            // Emit them as ISO with the proper offset (`-04:00`/`-05:00`)
-            // so calendar consumers and search crawlers don't have to guess.
-            const startWall = parseWallClockInVenueZone(day.date, day.openTime);
-            const endWall = parseWallClockInVenueZone(day.date, day.closeTime);
+            // Emit them as ISO with the proper offset (`-04:00`/`-05:00` at
+            // Eastern, `-02:30`/`-03:30` at Newfoundland, etc.) so calendar
+            // consumers and search crawlers don't have to guess. P3b threads
+            // `venue.timezone` through; absent venue uses VENUE_TZ default.
+            const venueTz = venue?.timezone ?? undefined;
+            const startWall = parseWallClockInVenueZone(day.date, day.openTime, venueTz);
+            const endWall = parseWallClockInVenueZone(day.date, day.closeTime, venueTz);
             return {
               "@type": "Event",
               name: `${name} - Day ${i + 1}`,
-              startDate: formatIsoInVenueZone(startWall) || undefined,
-              endDate: formatIsoInVenueZone(endWall) || undefined,
+              startDate: venueTz
+                ? formatIsoInVenueZone(startWall, venueTz) || undefined
+                : formatIsoInVenueZone(startWall) || undefined,
+              endDate: venueTz
+                ? formatIsoInVenueZone(endWall, venueTz) || undefined
+                : formatIsoInVenueZone(endWall) || undefined,
               description: day.notes || description || `${name} - Day ${i + 1}`,
               location,
               image: resolvedImage,

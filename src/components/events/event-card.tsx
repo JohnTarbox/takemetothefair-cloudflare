@@ -178,6 +178,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                 endDate={event.endDate}
                 url={`https://meetmeatthefair.com/events/${event.slug}`}
                 variant="icon"
+                venueTimezone={event.venue?.timezone}
               />
             </div>
             {event.isStatewide ? (

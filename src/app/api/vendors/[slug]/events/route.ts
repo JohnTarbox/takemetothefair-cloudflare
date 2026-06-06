@@ -43,6 +43,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
         venueState: venues.state,
         venueAddress: venues.address,
         venueZip: venues.zip,
+        venueTimezone: venues.timezone,
       })
       .from(eventVendors)
       .leftJoin(events, eq(eventVendors.eventId, events.id))
@@ -70,6 +71,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
           state: e.venueState || "",
           address: e.venueAddress,
           zip: e.venueZip,
+          timezone: e.venueTimezone || "America/New_York",
         },
       }));
 

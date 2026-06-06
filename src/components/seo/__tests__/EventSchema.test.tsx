@@ -219,3 +219,67 @@ describe("EventSchema participationType performer/sponsor split", () => {
     expect(ld.sponsor).toBeUndefined();
   });
 });
+
+describe("EventSchema venue.timezone threading (P3b)", () => {
+  const eventDays = [
+    { date: "2026-07-15", openTime: "09:00", closeTime: "17:00" },
+    { date: "2026-07-16", openTime: "09:00", closeTime: "17:00" },
+  ];
+
+  it("default (no venue) emits Eastern offset for sub-event startDate (back-compat)", () => {
+    const { container } = render(<EventSchema {...baseProps} eventDays={eventDays} />);
+    const ld = extractJsonLd(container);
+    const subs = ld.subEvent as Array<{ startDate: string; endDate: string }>;
+    // 9:00 AM EDT in July = -04:00 offset
+    expect(subs[0].startDate).toBe("2026-07-15T09:00:00-04:00");
+    expect(subs[0].endDate).toBe("2026-07-15T17:00:00-04:00");
+  });
+
+  it("venue.timezone='America/Halifax' shifts sub-event offset to -03:00 (ADT, summer)", () => {
+    const halifaxVenue = {
+      name: "Halifax Fairgrounds",
+      city: "Halifax",
+      state: "NS",
+      timezone: "America/Halifax",
+    };
+    const { container } = render(
+      <EventSchema {...baseProps} venue={halifaxVenue} eventDays={eventDays} />
+    );
+    const ld = extractJsonLd(container);
+    const subs = ld.subEvent as Array<{ startDate: string; endDate: string }>;
+    expect(subs[0].startDate).toBe("2026-07-15T09:00:00-03:00");
+    expect(subs[0].endDate).toBe("2026-07-15T17:00:00-03:00");
+  });
+
+  it("venue.timezone='America/St_Johns' emits the Newfoundland 30-minute offset", () => {
+    const newfoundlandVenue = {
+      name: "St. John's Exhibition Grounds",
+      city: "St. John's",
+      state: "NL",
+      timezone: "America/St_Johns",
+    };
+    const { container } = render(
+      <EventSchema {...baseProps} venue={newfoundlandVenue} eventDays={eventDays} />
+    );
+    const ld = extractJsonLd(container);
+    const subs = ld.subEvent as Array<{ startDate: string; endDate: string }>;
+    // NDT in summer is UTC-2:30 — the canonical 30-min-offset acceptance.
+    expect(subs[0].startDate).toBe("2026-07-15T09:00:00-02:30");
+    expect(subs[0].endDate).toBe("2026-07-15T17:00:00-02:30");
+  });
+
+  it("venue without timezone field falls back to default (legacy callers)", () => {
+    const legacyVenue = {
+      name: "Old Venue",
+      city: "Portland",
+      state: "ME",
+      // No timezone field — pre-P3b shape
+    };
+    const { container } = render(
+      <EventSchema {...baseProps} venue={legacyVenue} eventDays={eventDays} />
+    );
+    const ld = extractJsonLd(container);
+    const subs = ld.subEvent as Array<{ startDate: string; endDate: string }>;
+    expect(subs[0].startDate).toBe("2026-07-15T09:00:00-04:00");
+  });
+});
