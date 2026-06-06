@@ -36,8 +36,8 @@
 
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import type * as schema from "@/lib/db/schema";
-import { kpiStateHistory } from "@/lib/db/schema";
-import { eq, and, gte, sql } from "drizzle-orm";
+import { kpiStateHistory, adminActions } from "@/lib/db/schema";
+import { eq, and, gte, desc, sql } from "drizzle-orm";
 import { sendEmail } from "@/lib/email/send";
 import { logError } from "@/lib/logger";
 import { formatTimestampForServer } from "@/lib/datetime";
@@ -96,6 +96,62 @@ function loadConfig(category: AlertCategory): AlertConfig {
     slackWebhookUrl: getEnvVar("SLACK_WEBHOOK_URL_TECHNICAL"),
     alertEmail: getEnvVar("ALERT_EMAIL_TECHNICAL"),
   };
+}
+
+/** Float-equality epsilon for KPI value comparison (E — ALERT1). The
+ *  values that flap between STALE and not-STALE are identical in
+ *  practice (the email's evidence shows `sitemap_quality` staying at
+ *  exactly 0.548 across all five flips), but an epsilon guard is cheap
+ *  insurance against an analytics-layer rounding wobble being read as
+ *  a genuine value change. 1e-9 is far below any rendered precision. */
+const STALE_FLAP_VALUE_EPSILON = 1e-9;
+
+/**
+ * E — ALERT1 (2026-06-06): suppress STALE↔{RED,YELLOW,GREEN} transitions
+ * where only data-freshness toggled and the underlying KPI value is
+ * unchanged. STALE is keyed on catalog freshness (dataAgeSeconds >
+ * staleSlaSeconds), not on the KPI value being uncomputable — so the
+ * value is often identical across the flip, making the transition pure
+ * noise. (The email cites 7 such alerts on 2026-06-06: 5 sitemap_quality
+ * STALE↔RED flaps + 2 GREEN/YELLOW→STALE at midnight, all with values
+ * unchanged across the flip.)
+ *
+ * Returns `true` when the transition is a pure STALE flap and should be
+ * suppressed. Caller is `dispatchKpiAlert`.
+ *
+ * "Value identical" tolerates both-null (e.g. RED with null value flipping
+ * to STALE with null value because the catalog stopped updating). Float
+ * comparison uses STALE_FLAP_VALUE_EPSILON.
+ */
+async function isStaleFlap(
+  db: Db,
+  kpiName: KpiName,
+  fromState: KpiState | null,
+  toState: KpiState,
+  currentValue: number | null
+): Promise<boolean> {
+  // Must be a transition INTO or OUT OF STALE — anything else is a real
+  // state change and never suppressed here.
+  const involvesStale = fromState === "STALE" || toState === "STALE";
+  if (!involvesStale) return false;
+  // Need a previous row to compare value. The most-recent history row
+  // for this KPI IS the just-inserted current row (recomputeKpiStates
+  // calls dispatch AFTER the insert), so the second-most-recent is the
+  // previous. Reuse the same idx_kpi_state_history_kpi_name index the
+  // YELLOW debounce uses.
+  const recent = await db
+    .select({ value: kpiStateHistory.value })
+    .from(kpiStateHistory)
+    .where(eq(kpiStateHistory.kpiName, kpiName))
+    .orderBy(desc(kpiStateHistory.computedAt))
+    .limit(2);
+  if (recent.length < 2) return false;
+  const prevValue = recent[1]?.value ?? null;
+  // null == null → identical (e.g. RED-with-null → STALE-with-null when
+  // the feed genuinely went away mid-flap).
+  if (currentValue === null && prevValue === null) return true;
+  if (currentValue === null || prevValue === null) return false;
+  return Math.abs(prevValue - currentValue) < STALE_FLAP_VALUE_EPSILON;
 }
 
 /**
@@ -258,6 +314,42 @@ export async function dispatchKpiAlert(
     return { dispatched: false, channel: "none", reason: "non-actionable-state" };
   }
 
+  // E — ALERT1 (2026-06-06): STALE-flap suppression. When ONLY the
+  // STALE-ness changed and the value is identical across the flip, the
+  // transition is a false positive (catalog freshness ticked past the
+  // SLA threshold, value didn't move). Suppress + audit. Genuine state
+  // changes (value moved into RED, etc.) are unaffected because the
+  // value-equality check fails for them.
+  const staleFlap = await isStaleFlap(db, kpiName, fromState, toState, value).catch(() => false);
+  if (staleFlap) {
+    await db
+      .insert(adminActions)
+      .values({
+        action: "kpi.alert_suppressed_stale_flap",
+        actorUserId: null,
+        targetType: "kpi",
+        targetId: kpiName,
+        payloadJson: JSON.stringify({
+          kpi: kpiName,
+          fromState,
+          toState,
+          value,
+          reason: "stale-flap-value-unchanged",
+        }),
+        createdAt: detectedAt,
+      })
+      .catch(async (err) => {
+        // Audit-row failure must not derail the suppression — log and continue.
+        await logError(db, {
+          level: "warn",
+          source: "kpi-alerts:suppress-audit",
+          message: `Failed to write stale-flap audit row: ${err instanceof Error ? err.message : String(err)}`,
+          context: { kpiName, fromState, toState },
+        });
+      });
+    return { dispatched: false, channel: "none", reason: "stale-flap-suppressed" };
+  }
+
   // YELLOW debounce. RED and STALE bypass — both are incident-level.
   if (toState === "YELLOW") {
     const ok = await shouldSendYellowAlert(db, kpiName);
@@ -321,9 +413,11 @@ export async function dispatchKpiAlert(
 // Exported for unit tests.
 export const __test = {
   shouldSendYellowAlert,
+  isStaleFlap,
   buildSlackPayload,
   buildEmailBody,
   CATEGORY_BY_KPI,
   YELLOW_DEBOUNCE_HOURS,
+  STALE_FLAP_VALUE_EPSILON,
   formatValue,
 };

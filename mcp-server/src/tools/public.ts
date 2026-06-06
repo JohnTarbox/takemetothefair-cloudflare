@@ -699,6 +699,17 @@ export function registerPublicTools(server: McpServer, db: Db) {
           city: vendors.city,
           state: vendors.state,
           createdAt: vendors.createdAt,
+          // EH1 hierarchy + relationship model (drizzle/0106 + 0107).
+          // Surfaced here so operators can verify hierarchy state with a
+          // single read instead of inferring from migration UPDATE filters.
+          role: vendors.role,
+          brandParentVendorId: vendors.brandParentVendorId,
+          operatorParentVendorId: vendors.operatorParentVendorId,
+          aliasOfVendorId: vendors.aliasOfVendorId,
+          relationshipType: vendors.relationshipType,
+          defaultChildDisplay: vendors.defaultChildDisplay,
+          displayOverridePermitted: vendors.displayOverridePermitted,
+          displayMode: vendors.displayMode,
         })
         .from(vendors)
         .where(condition)
@@ -709,6 +720,26 @@ export function registerPublicTools(server: McpServer, db: Db) {
       }
 
       const vendor = rows[0];
+
+      // EH1 bonus — resolve brand/operator parent in a single batch so a
+      // single read shows the full hierarchy without a second roundtrip.
+      // Skipped (single empty SELECT) when both parent ids are null.
+      const parentIds = [vendor.brandParentVendorId, vendor.operatorParentVendorId].filter(
+        (id): id is string => typeof id === "string" && id.length > 0
+      );
+      const parents = parentIds.length
+        ? await db
+            .select({ id: vendors.id, slug: vendors.slug, businessName: vendors.businessName })
+            .from(vendors)
+            .where(inArray(vendors.id, parentIds))
+        : [];
+      const parentById = new Map(parents.map((p) => [p.id, p]));
+      const brandParent = vendor.brandParentVendorId
+        ? (parentById.get(vendor.brandParentVendorId) ?? null)
+        : null;
+      const operatorParent = vendor.operatorParentVendorId
+        ? (parentById.get(vendor.operatorParentVendorId) ?? null)
+        : null;
 
       // Count upcoming confirmed events for this vendor
       const confirmedEvents = await db
@@ -743,6 +774,17 @@ export function registerPublicTools(server: McpServer, db: Db) {
             city: vendor.city,
             state: vendor.state,
             upcomingEventCount: confirmedEvents.length,
+            // EH1 hierarchy (raw column values + resolved parent objects)
+            role: vendor.role,
+            brandParentVendorId: vendor.brandParentVendorId,
+            operatorParentVendorId: vendor.operatorParentVendorId,
+            aliasOfVendorId: vendor.aliasOfVendorId,
+            relationshipType: vendor.relationshipType,
+            defaultChildDisplay: vendor.defaultChildDisplay,
+            displayOverridePermitted: vendor.displayOverridePermitted,
+            displayMode: vendor.displayMode,
+            brandParent,
+            operatorParent,
           }),
         ],
       };

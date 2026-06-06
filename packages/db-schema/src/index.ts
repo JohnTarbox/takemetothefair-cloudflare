@@ -1663,9 +1663,21 @@ export const dedupSweepSnapshots = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     snapshotDate: text("snapshot_date").notNull(), // YYYY-MM-DD (UTC)
+    // B — DQ1 (drizzle/0113, 2026-06-06): per-surface snapshots so one
+    // table covers events + venues + promoters. Default 'events' keeps
+    // legacy rows interpretable. CHECK constraint at SQL level.
+    surface: text("surface", { enum: ["events", "venues", "promoters"] })
+      .notNull()
+      .default("events"),
     totalClusters: integer("total_clusters").notNull(),
+    // Events-specific sub-breakdowns. For non-events surfaces these are
+    // carried as 0 — the match shapes don't apply (venue dedup keys on
+    // name+city+state; promoter dedup keys on name only).
     venueDateClusters: integer("venue_date_clusters").notNull(),
     cityStateDateClusters: integer("city_state_date_clusters").notNull(),
+    // Re-purposed semantically per surface: events → events involved in
+    // a cluster; venues → venues in a cluster; promoters → promoters in
+    // a cluster. The shared name keeps the snapshot table single-shape.
     eventsInClusters: integer("events_in_clusters").notNull(),
     // Seconds-epoch of the most-recent YELLOW dispatch — drives the 72h
     // debounce check. NULL = never YELLOW-alerted. RED bypasses entirely.
@@ -1674,7 +1686,7 @@ export const dedupSweepSnapshots = sqliteTable(
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => [uniqueIndex("idx_dedup_snapshot_date").on(t.snapshotDate)]
+  (t) => [uniqueIndex("idx_dedup_snapshot_date_surface").on(t.snapshotDate, t.surface)]
 );
 
 // Issue #326 — debounce state for the page-error Slack canary
