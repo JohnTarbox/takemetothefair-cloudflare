@@ -63,6 +63,13 @@ export const eventJoinProjection = {
     latitude: venues.latitude,
     longitude: venues.longitude,
     googleMapsUrl: venues.googleMapsUrl,
+    // Cross-zone fields (drizzle/0112, P3a). Threaded into ICS export,
+    // JSON-LD startDate offset, and the promoter wall-clock form (P3b).
+    // Every existing venue defaults to America/New_York / en-US / US so
+    // adding these is byte-identical render until a non-Eastern venue exists.
+    timezone: venues.timezone,
+    locale: venues.locale,
+    country: venues.country,
   },
   promoter: {
     id: promoters.id,

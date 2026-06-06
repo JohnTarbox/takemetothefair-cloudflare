@@ -27,6 +27,9 @@ interface Event {
     state: string;
     address: string | null;
     zip: string | null;
+    // IANA timezone (drizzle/0112, P3b). Threaded into AddToCalendar's
+    // ICS export so the venue's local clock is used for DTSTART/DTEND.
+    timezone: string;
   };
 }
 
@@ -249,6 +252,7 @@ export default function VendorEventsPage() {
                             endDate={event.endDate}
                             url={`https://meetmeatthefair.com/events/${event.slug}`}
                             variant="icon"
+                            venueTimezone={event.venue.timezone}
                           />
                         )}
                       </div>
@@ -312,6 +316,7 @@ export default function VendorEventsPage() {
                             endDate={event.endDate}
                             url={`https://meetmeatthefair.com/events/${event.slug}`}
                             variant="icon"
+                            venueTimezone={event.venue.timezone}
                           />
                         )}
                       </div>
