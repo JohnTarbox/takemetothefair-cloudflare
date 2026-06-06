@@ -24,49 +24,18 @@ import { isPublicEventStatus } from "@/lib/event-status";
 
 export type SitemapType = "static" | "events" | "venues" | "vendors" | "promoters" | "blog";
 
-// Sanity guard for the ms-as-seconds data divergence found in vendors.
-// Background: every table's `updated_at` is declared `mode: "timestamp"`
-// (seconds-epoch) in the Drizzle schema, but some rows in `vendors` were
-// historically written as milliseconds-epoch (~1.78e12) instead of
-// seconds (~1.78e9). When Drizzle reads such a row, its mode:"timestamp"
-// converter blindly multiplies by 1000 → produces a Date in year ~58308
-// (raw 1.78e12 → ×1000 → 1.78e15 ms → year 58308). The MAX(updated_at)
-// across the table picks the largest underlying integer, which is
-// always the corrupted ms-epoch row when both kinds exist — so the
-// vendors sitemap-index lastmod was emitting year 58308.
-//
-// This guard detects a Date whose ms value is implausibly far in the
-// future and divides by 1000 to recover the original ms-epoch.
-// Threshold: 1e14 ms ≈ year 5138. No legitimate updated_at can be that
-// far out; anything past it is the double-multiplied artifact above.
-// Mirrors the seconds-vs-ms guard pattern in memory
-// `feedback_idempotent_migration_guards.md` (the 1e11 boundary for raw
-// integers; 1e14 is the same boundary in the Date-object domain after
-// Drizzle's ×1000 conversion).
-//
-// Pre-existing per-URL lastmods in sitemap-vendors.xml have the same
-// bug for individual corrupted rows; this guard only fixes the index-
-// level MAX. Fixing the per-URL case + backfilling the bad data is
-// scoped to a separate follow-up.
-const MAX_PLAUSIBLE_MS = 1e14;
-
-function correctMsOverflow(d: Date): Date {
-  const ms = d.getTime();
-  if (ms > MAX_PLAUSIBLE_MS) {
-    // The underlying value was ms-epoch, but Drizzle treated it as
-    // seconds-epoch and multiplied by 1000. Undo the extra ×1000.
-    return new Date(ms / 1000);
-  }
-  return d;
-}
-
+// Vendor rows were historically written as ms-epoch where the Drizzle
+// `mode: "timestamp"` convention expects seconds-epoch; reading such rows
+// produced a Date in year ~58308. Backfilled in
+// drizzle/0111_backfill_vendor_updated_at_to_seconds.sql; the defensive
+// correctMsOverflow guard that used to live here has been removed.
 async function maxFor(query: Promise<Array<{ value: Date | null }>>): Promise<Date | null> {
   try {
     const rows = await query;
     const v = rows[0]?.value;
     if (!v) return null;
     if (!(v instanceof Date) || isNaN(v.getTime())) return null;
-    return correctMsOverflow(v);
+    return v;
   } catch (err) {
     console.error("sitemap-lastmod: query failed", err);
     return null;

@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
+import { formatTimestamp } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -605,7 +606,7 @@ export default function AdminInboundEmailsPage() {
                         onClick={() => setExpandedId(expanded ? null : row.id)}
                       >
                         <td className="px-3 py-2 whitespace-nowrap text-gray-600">
-                          {new Date(row.receivedAt).toLocaleString()}
+                          {formatTimestamp(row.receivedAt)}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">{row.fromAddress}</td>
                         <td className="px-3 py-2 whitespace-nowrap">

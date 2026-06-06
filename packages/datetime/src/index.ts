@@ -2,7 +2,12 @@
  * Canonical date/time helpers for the project.
  *
  * Storage policy:
- *   - All Date columns store UTC ms-epoch (the implicit codebase invariant).
+ *   - All Date columns store UTC SECONDS-epoch — every `integer(..., { mode:
+ *     "timestamp" })` column. Drizzle reads these as `new Date(value * 1000)`.
+ *     The seconds-vs-ms distinction is load-bearing; see
+ *     `drizzle/0045_fix_timestamp_columns_back_to_seconds.sql` for the
+ *     corrective migration that established this invariant.
+ *     (`mode: "timestamp_ms"` would store ms-epoch — the project does not use it.)
  *   - Calendar dates (event start/end) are stored as midnight UTC.
  *   - Instants (createdAt, lastCrawledAt, etc.) are stored as the actual moment.
  *
@@ -20,6 +25,57 @@
 
 export const VENUE_TZ = "America/New_York";
 
+// ── Branded types ──────────────────────────────────────────────────
+//
+// `DateOnly` and `Instant` mirror the `Slug`/`unsafeSlug` pattern from
+// `@takemetothefair/utils`. Background: every `mode: "timestamp"` column
+// produces a JS `Date`, but the column's semantics fall into two camps:
+//
+//   - Calendar dates anchored at midnight UTC (events.startDate, endDate,
+//     applicationDeadline). Calling `.getHours()` or `.toLocaleTimeString()`
+//     on these is a category error — there is no time of day. On CF Workers
+//     (UTC) the result silently looks correct ("12:00 AM") but is
+//     meaningless.
+//   - Actual instants (createdAt, lastCrawledAt, lastSyncedAt, …) where
+//     time-of-day IS meaningful.
+//
+// Today the brand is enforced at the canonical-helper boundary: `parseDateOnly`
+// returns `DateOnly`, and `formatTimeOfDay` / `formatEventDateTime` refuse
+// `DateOnly` at compile time via the `Instant` constraint. Applying
+// `.$type<DateOnly>()` to the schema columns would catch a broader class of
+// read-side mistakes (e.g. directly passing `event.startDate` to a time-of-day
+// formatter), but ripples into every event-write site (~30 files: scrapers,
+// API routes, tests) which all currently pass plain `Date`. That sweep is
+// deferred to a follow-up — see the date/time audit plan.
+//
+// The `dateOnlyBrand` symbol is `declare const` (no runtime). `unsafeDateOnly`
+// is the searchable boundary cast for places where a `DateOnly` is being
+// reconstituted from a JSON or DB value not yet flowing through the typed
+// pipeline.
+
+declare const dateOnlyBrand: unique symbol;
+
+/**
+ * A `Date` representing midnight UTC of a calendar day — the events.startDate
+ * shape. Carries the brand so time-of-day formatters can refuse it.
+ */
+export type DateOnly = Date & { readonly [dateOnlyBrand]: true };
+
+/**
+ * A `Date` that is NOT a `DateOnly` — i.e. an actual instant. The negative
+ * brand (`?: never`) means a plain `Date` satisfies it (no property present)
+ * but a `DateOnly` does not (its `true` brand is not assignable to `never`).
+ */
+export type Instant = Date & { readonly [dateOnlyBrand]?: never };
+
+/**
+ * Boundary cast. Use at JSON/DB-read sites that produce a `Date` representing
+ * a date-only value but haven't been retyped to `DateOnly` yet. Searchable.
+ */
+export function unsafeDateOnly(d: Date): DateOnly {
+  return d as DateOnly;
+}
+
 // ── Parsers ────────────────────────────────────────────────────────
 
 /**
@@ -32,7 +88,7 @@ export const VENUE_TZ = "America/New_York";
  *
  * Rejects calendar-invalid dates: "2026-02-30", "2026-13-01", "2026-04-31".
  */
-export function parseDateOnly(s: unknown): Date | null {
+export function parseDateOnly(s: unknown): DateOnly | null {
   if (typeof s !== "string") return null;
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
@@ -45,7 +101,7 @@ export function parseDateOnly(s: unknown): Date | null {
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
     return null;
   }
-  return d;
+  return unsafeDateOnly(d);
 }
 
 /**
@@ -265,9 +321,14 @@ export function formatDateRange(
  * Time-of-day in the venue's zone, e.g. "5:00 PM EDT" / "5:00 PM EST".
  * Used for event open/close times.
  *
+ * Refuses `DateOnly` at compile time — there is no time of day on a
+ * midnight-UTC calendar anchor. Pass a real instant (e.g. event_day open/
+ * close, application_deadline if it ever becomes time-bearing) or coerce
+ * via `unsafeDateOnly` explicitly if you really mean it.
+ *
  * Returns `""` on null / Invalid Date.
  */
-export function formatTimeOfDay(d: Date | string | number | null | undefined): string {
+export function formatTimeOfDay(d: Instant | string | number | null | undefined): string {
   const date = coerce(d);
   if (!date) return "";
   return timeOfDayFmt.format(date);
@@ -277,8 +338,11 @@ export function formatTimeOfDay(d: Date | string | number | null | undefined): s
  * Full event datetime in venue zone with TZ label, e.g.
  * "Sat, Apr 30, 2026, 5:00 PM EDT". For application deadlines and other
  * event-bearing timestamps where both date and time matter.
+ *
+ * Refuses `DateOnly` at compile time for the same reason `formatTimeOfDay`
+ * does — there is no time component on a calendar anchor.
  */
-export function formatEventDateTime(d: Date | string | number | null | undefined): string {
+export function formatEventDateTime(d: Instant | string | number | null | undefined): string {
   const date = coerce(d);
   if (!date) return "";
   return eventDateTimeFmt.format(date);

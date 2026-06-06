@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { formatTimestamp } from "@/lib/datetime";
 
 export const runtime = "edge";
 
@@ -139,7 +140,7 @@ export default function EmailSourceSuggestionsPage() {
                   <div className="flex items-center justify-between">
                     <h2 className="font-mono text-base">{row.host}</h2>
                     <span className="text-xs text-gray-500">
-                      {new Date(row.createdAt).toLocaleString()}
+                      {formatTimestamp(row.createdAt)}
                     </span>
                   </div>
                 </CardHeader>
@@ -172,7 +173,7 @@ export default function EmailSourceSuggestionsPage() {
                       <>
                         <dt className="text-gray-500">Reviewed</dt>
                         <dd>
-                          {new Date(row.reviewedAt).toLocaleString()}
+                          {formatTimestamp(row.reviewedAt)}
                           {row.reviewedByUserId ? ` by ${row.reviewedByUserId.slice(0, 8)}` : ""}
                         </dd>
                       </>

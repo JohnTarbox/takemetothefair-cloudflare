@@ -19,7 +19,9 @@ import {
   formatIcsUtc,
   formatIcsVenueZone,
   formatIsoInVenueZone,
+  unsafeDateOnly,
   VTIMEZONE_AMERICA_NEW_YORK,
+  type DateOnly,
 } from "./index";
 
 describe("parseDateOnly", () => {
@@ -288,6 +290,38 @@ describe("formatEventDateTime", () => {
 
   it("returns empty string for Invalid Date", () => {
     expect(formatEventDateTime("garbage")).toBe("");
+  });
+});
+
+describe("DateOnly brand (compile-time regression guard)", () => {
+  // Regression for the May 2026 bug at events/[slug]/page.tsx:1041 where
+  // `new Date(event.startDate).toLocaleTimeString(...)` was called on a
+  // date-only column. parseDateOnly now returns DateOnly, and the time-of-
+  // day formatters refuse DateOnly inputs. The next two assertions are
+  // executable proof that branding holds.
+  it("parseDateOnly returns a DateOnly that is also a Date instance", () => {
+    const d = parseDateOnly("2026-04-30");
+    expect(d).toBeInstanceOf(Date);
+    // Compile-time witness — typed pin without a runtime assertion.
+    const asDateOnly: DateOnly | null = d;
+    void asDateOnly;
+  });
+
+  it("formatTimeOfDay rejects DateOnly at the type layer", () => {
+    const d = parseDateOnly("2026-04-30");
+    if (!d) throw new Error("unreachable");
+    // @ts-expect-error — DateOnly is not assignable to Instant.
+    formatTimeOfDay(d);
+    // @ts-expect-error — same for formatEventDateTime.
+    formatEventDateTime(d);
+    // unsafeDateOnly-on-a-Date is the boundary escape hatch; plain Date is fine.
+    const instant: Date = new Date();
+    expect(typeof formatTimeOfDay(instant)).toBe("string");
+    expect(typeof formatEventDateTime(instant)).toBe("string");
+    // unsafeDateOnly turns a Date into DateOnly explicitly — searchable.
+    const branded = unsafeDateOnly(new Date(Date.UTC(2026, 3, 30)));
+    // @ts-expect-error — explicit branding also fails the time-of-day formatters.
+    formatTimeOfDay(branded);
   });
 });
 
