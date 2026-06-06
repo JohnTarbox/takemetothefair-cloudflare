@@ -40,6 +40,7 @@ import { kpiStateHistory } from "@/lib/db/schema";
 import { eq, and, gte, sql } from "drizzle-orm";
 import { sendEmail } from "@/lib/email/send";
 import { logError } from "@/lib/logger";
+import { formatTimestampForServer } from "@/lib/datetime";
 import type { KpiName, KpiState } from "@/lib/kpi-thresholds";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 
@@ -186,7 +187,7 @@ function buildSlackPayload(p: AlertPayload): { text: string; blocks: unknown[] }
         elements: [
           {
             type: "mrkdwn",
-            text: `Detected ${p.detectedAt.toISOString()} · <https://meetmeatthefair.com/admin/analytics|Open Analytics>`,
+            text: `Detected ${formatTimestampForServer(p.detectedAt)} · <https://meetmeatthefair.com/admin/analytics|Open Analytics>`,
           },
         ],
       },
@@ -203,12 +204,12 @@ function buildEmailBody(p: AlertPayload): { subject: string; html: string; text:
     `${p.displayName}\n` +
     `State: ${transition}\n` +
     `Value: ${valueStr}\n` +
-    `Detected: ${p.detectedAt.toISOString()}\n\n` +
+    `Detected: ${formatTimestampForServer(p.detectedAt)}\n\n` +
     `Open Analytics: https://meetmeatthefair.com/admin/analytics\n`;
   const html =
     `<p><strong>${emoji} ${p.displayName}</strong> transitioned <strong>${transition}</strong>.</p>` +
     `<ul><li>Value: ${valueStr}</li>` +
-    `<li>Detected: ${p.detectedAt.toISOString()}</li></ul>` +
+    `<li>Detected: ${formatTimestampForServer(p.detectedAt)}</li></ul>` +
     `<p><a href="https://meetmeatthefair.com/admin/analytics">Open Analytics</a></p>`;
   return { subject, html, text };
 }
