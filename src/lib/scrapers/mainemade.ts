@@ -2,7 +2,12 @@
 // Extracts event data from their events page with pagination support
 
 import type { ScrapedEvent, ScrapeResult } from "./types";
-import { decodeHtmlEntities, monthNameToMidnightUtc } from "./utils";
+import {
+  decodeHtmlEntities,
+  monthNameToMidnightUtc,
+  parseTimeRange,
+  expandDateRange,
+} from "./utils";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 
@@ -10,8 +15,9 @@ const SOURCE_NAME = "mainemade.com";
 const BASE_URL = "https://www.mainemade.com/events/";
 const MAX_PAGES = 10; // Safety limit
 
-// Parse events from HTML
-function parseEventsFromHtml(html: string): ScrapedEvent[] {
+// Parse events from HTML. Exported for unit testing — the function is pure
+// (HTML in → events out, no I/O).
+export function parseEventsFromHtml(html: string): ScrapedEvent[] {
   const events: ScrapedEvent[] = [];
 
   // Split by event item divs - the site uses "all_events__container__item" class
@@ -62,13 +68,11 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
 
     // Pattern: "February 7 @ 2:00 PM - 7:00 PM" or "March 21 - March 22"
     //
-    // P3c (2026-06-06): startDate/endDate are stored as date-only midnight UTC
-    // anchors. Any wall-clock time-of-day in the source page (e.g. "@ 2:00 PM")
-    // is intentionally NOT baked into events.startDate — that field is date-
-    // only and downstream renders use timeZone:"UTC". When this scraper grows
-    // event_days support, those time-of-day strings should land as "HH:MM"
-    // openTime/closeTime on event_days rows (wall-clock-in-venue-zone, per
-    // url-import convention). For now, just normalize to midnight UTC.
+    // startDate/endDate are stored as date-only midnight UTC anchors per the
+    // project convention. Wall-clock time-of-day (e.g. "@ 2:00 PM") goes
+    // into eventDays as "HH:MM" strings — venue-zone-agnostic; conversion to
+    // UTC happens at render time via parseWallClockInVenueZone (P3b).
+    let eventDaysExtracted: ScrapedEvent["eventDays"];
     const dateMatch = (dateText || fullDateContent).match(
       /(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i
     );
@@ -100,6 +104,21 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
         if (!endDate) {
           endDate = new Date(parsedStart);
         }
+
+        // Extract per-day open/close hours from the source. The
+        // fullDateContent string typically reads "February 7 @ 2:00 PM -
+        // 7:00 PM". parseTimeRange returns null if the source has no
+        // time info OR the hours are ambiguous — in either case we skip
+        // emitting eventDays and let the admin fill in manually.
+        const timeRange = parseTimeRange(fullDateContent);
+        if (timeRange) {
+          const dates = expandDateRange(startDate, endDate);
+          eventDaysExtracted = dates.map((date) => ({
+            date,
+            openTime: timeRange.openTime,
+            closeTime: timeRange.closeTime,
+          }));
+        }
       }
     }
 
@@ -126,6 +145,7 @@ function parseEventsFromHtml(html: string): ScrapedEvent[] {
       imageUrl,
       ticketUrl: eventUrl,
       state: "ME",
+      ...(eventDaysExtracted ? { eventDays: eventDaysExtracted } : {}),
     });
   }
 
