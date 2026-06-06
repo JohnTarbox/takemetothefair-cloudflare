@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, venues, eventDays } from "@/lib/db/schema";
+import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, desc, or, gt, lt, and } from "drizzle-orm";
 import {
   createSlug,
@@ -39,8 +40,10 @@ export async function GET(request: NextRequest) {
 
     const promoter = promoterResults[0];
 
+    // Narrow projection via eventVenueJoinProjection (62 + 7 = 69 cols
+    // vs bare 62 + 30 = 92). Consumer only reads venue.name.
     const eventResults = await db
-      .select()
+      .select(eventVenueJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .where(eq(events.promoterId, promoter.id))
@@ -48,7 +51,7 @@ export async function GET(request: NextRequest) {
 
     const eventsList = eventResults.map((r) => ({
       ...r.events,
-      venue: r.venues ? { name: r.venues.name } : null,
+      venue: r.venue ? { name: r.venue.name } : null,
     }));
 
     return NextResponse.json(eventsList);

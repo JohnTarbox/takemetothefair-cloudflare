@@ -10,22 +10,10 @@
 # Add NEW entries here only with a tracking-issue link and explicit reason.
 # The CI script keeps these visible in every run so the queue stays in
 # front of the team.
-
-# ── FALSE POSITIVE — script limitation, not a real bug ────────────────────
 #
-# At src/lib/duplicates/merge-operations.ts:957 the audit script reports
-# `events + venues + promoters + eventVendors = 116 cols`. The actual code
-# is a `db.batch([...])` array containing FOUR independent `db.select()`
-# calls — three of which are narrow projections like
-#   `db.select({ name: venues.name }).from(venues)`
-#
-# Only the first is a bare `db.select().from(events)`, which is a single-
-# table 62-col select (safe). The audit script's chain-detection treats
-# the whole `db.batch([...])` array as one statement and sums tables from
-# all contained selects, missing the per-select narrowing.
-#
-# Allowlisting until the script learns about `db.batch([...])` arrays.
-# Tracking improvement: improve the audit script to recognize that
-# `db.select(...)` calls inside `db.batch([...])` arrays are independent
-# statements with their own projection arguments.
-src/lib/duplicates/merge-operations.ts:957
+# Empty as of the PR that cleared the last entries (see #361). All real
+# violations have been narrowed; the former false-positive entries
+# (db.batch arrays) were resolved by the chain-detection improvement in
+# scripts/check-d1-100col-joins.ts (collectJoinChainTables stops at the
+# first non-from/join chain method, so independent selects inside a
+# db.batch([...]) array are evaluated correctly).

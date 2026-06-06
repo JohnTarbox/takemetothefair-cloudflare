@@ -175,23 +175,46 @@ interface Violation {
 }
 
 const BARE_SELECT_RE = /\bdb\s*\.\s*select\s*\(\s*\)/g;
-const FROM_RE = /\.\s*from\s*\(\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\)/g;
-const JOIN_RE = /\.\s*(?:left|inner|right|full)?Join\s*\(\s*([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
+// Drizzle chain method recognizer. `.from(` and any `Join(` belong to the
+// join-chain phase. Anything else (`.where`, `.orderBy`, `.limit`, etc.)
+// ends the join chain.
+const CHAIN_METHOD_RE = /^\s*\.\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(\s*([a-zA-Z_$][a-zA-Z0-9_$]*)?/;
 
-function findStatementEnd(src: string, start: number): number {
-  // Scan forward for the next top-level `;` outside any nested ()/[]/{}.
-  let depth = 0;
-  for (let i = start; i < src.length; i++) {
-    const c = src[i];
-    if (c === "(" || c === "[" || c === "{") depth++;
-    else if (c === ")" || c === "]" || c === "}") {
-      if (depth === 0) return i;
-      depth--;
-    } else if (c === ";" && depth === 0) {
-      return i;
+function collectJoinChainTables(src: string, start: number): string[] {
+  // Walk forward from `start` (just after `db.select()`), collecting tables
+  // from `.from(X)` and `.<X>Join(Y)` calls. STOP at the first chain method
+  // that isn't a from/join. This naturally separates independent selects
+  // inside `db.batch([sel1, sel2, ...])` — each select's chain terminates
+  // at its own `.where()` (or other non-join method), so we don't sum
+  // tables across selects.
+  const tables: string[] = [];
+  let i = start;
+  // Skip whitespace + leading newlines after `db.select()`.
+  while (i < src.length) {
+    const remainder = src.slice(i);
+    const match = remainder.match(CHAIN_METHOD_RE);
+    if (!match) break;
+    const method = match[1];
+    const arg = match[2]; // may be undefined for methods that take expressions
+    const isFrom = method === "from";
+    const isJoin = method.endsWith("Join"); // leftJoin/innerJoin/rightJoin/fullJoin
+    if (!isFrom && !isJoin) break; // any other chain method ends the join chain
+    if (arg !== undefined) tables.push(arg);
+    // Advance past this method's argument: find the matching closing `)`
+    // and continue from just after it.
+    const openIdx = i + match[0].length - 1;
+    let depth = 1;
+    let j = openIdx + 1;
+    while (j < src.length && depth > 0) {
+      const c = src[j];
+      if (c === "(") depth++;
+      else if (c === ")") depth--;
+      j++;
     }
+    if (depth !== 0) break; // unbalanced — give up
+    i = j;
   }
-  return src.length;
+  return tables;
 }
 
 function findViolations(file: string, tableColCounts: Map<string, number>): Violation[] {
@@ -200,13 +223,8 @@ function findViolations(file: string, tableColCounts: Map<string, number>): Viol
 
   for (const selectMatch of src.matchAll(BARE_SELECT_RE)) {
     const selectStart = selectMatch.index ?? 0;
-    const end = findStatementEnd(src, selectStart + selectMatch[0].length);
-    const chain = src.slice(selectStart, end);
-
-    // Extract tables from .from(...) and .join(...) calls.
-    const tables: string[] = [];
-    for (const fm of chain.matchAll(FROM_RE)) tables.push(fm[1]);
-    for (const jm of chain.matchAll(JOIN_RE)) tables.push(jm[1]);
+    const chainStart = selectStart + selectMatch[0].length;
+    const tables = collectJoinChainTables(src, chainStart);
 
     if (tables.length === 0) continue;
 

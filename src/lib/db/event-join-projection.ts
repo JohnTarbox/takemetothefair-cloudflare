@@ -47,6 +47,33 @@
 import { events, venues, promoters } from "@/lib/db/schema";
 
 /** Use as the named-projection arg to `db.select(...)` when joining
+ *  `events → venues` (no promoter). Result row shape:
+ *    { events: Event, venue: VenueLite | null }
+ *
+ *  Mirrors the venue subset from `eventJoinProjection` but omits the
+ *  promoter table — for surfaces that need event metadata + the venue's
+ *  identity/location only (admin lists, dashboards, exports, listing
+ *  filters, etc.). Sum: events(62) + venue(7) = 69 cols, 31 cols of
+ *  headroom below D1's 100-col cap.
+ *
+ *  Added 2026-06-06 alongside PR #360 follow-up to clear 9 sites flagged
+ *  WARN by `scripts/check-d1-100col-joins.ts` (events+venues = 92 cols,
+ *  only 8 cols of headroom).
+ */
+export const eventVenueJoinProjection = {
+  events: events,
+  venue: {
+    id: venues.id,
+    name: venues.name,
+    slug: venues.slug,
+    address: venues.address,
+    city: venues.city,
+    state: venues.state,
+    zip: venues.zip,
+  },
+} as const;
+
+/** Use as the named-projection arg to `db.select(...)` when joining
  *  events → venues → promoters. Result row shape:
  *    { events: Event, venue: VenueLite | null, promoter: PromoterLite | null }
  *  (the leftJoins make `venue` and `promoter` nullable). */

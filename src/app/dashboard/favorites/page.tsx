@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
+import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, inArray, desc } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
@@ -36,17 +37,20 @@ async function getFavorites(userId: string) {
     const BATCH_SIZE = 50;
 
     async function batchFetchEvents(ids: string[]) {
-      const results: {
-        events: typeof events.$inferSelect;
-        venues: typeof venues.$inferSelect | null;
-      }[] = [];
-      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-        const batch = ids.slice(i, i + BATCH_SIZE);
-        const batchResults = await db
-          .select()
+      // Narrow projection — 62 + 7 = 69 cols (was 92). Result type
+      // inferred from .select(eventVenueJoinProjection): { events: Event,
+      // venue: VenueLite | null }[].
+      const results: Awaited<ReturnType<typeof selectFirstBatch>> = [];
+      async function selectFirstBatch(batch: string[]) {
+        return db
+          .select(eventVenueJoinProjection)
           .from(events)
           .leftJoin(venues, eq(events.venueId, venues.id))
           .where(inArray(events.id, batch));
+      }
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const batchResults = await selectFirstBatch(batch);
         results.push(...batchResults);
       }
       return results;
@@ -79,10 +83,11 @@ async function getFavorites(userId: string) {
       vendorIds.length > 0 ? batchFetchVendors(vendorIds) : [],
     ]);
 
+    type FullVenue = typeof venues.$inferSelect;
     return {
       events: eventsList.map((e) => ({
         ...e.events,
-        venue: e.venues!,
+        venue: e.venue as FullVenue,
       })),
       venues: venuesList,
       vendors: vendorsList,

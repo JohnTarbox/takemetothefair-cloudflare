@@ -6,7 +6,7 @@ import { events, venues, vendors, promoters, users, eventVendors } from "@/lib/d
 import { eq, count, and } from "drizzle-orm";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
-import { eventJoinProjection } from "@/lib/db/event-join-projection";
+import { eventJoinProjection, eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
@@ -108,9 +108,11 @@ async function getUpcomingEventsWithVendorCounts() {
   try {
     const now = new Date();
 
-    // Get upcoming approved events
+    // Get upcoming approved events. Narrow projection via
+    // eventVenueJoinProjection — bare .select() = 62 + 30 = 92 cols, 8
+    // cols of headroom below D1's 100 cap. Narrowed = 62 + 7 = 69 cols.
     const upcomingEvents = await db
-      .select()
+      .select(eventVenueJoinProjection)
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate.
@@ -132,9 +134,10 @@ async function getUpcomingEventsWithVendorCounts() {
 
     const countMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
 
+    type FullVenue = typeof venues.$inferSelect;
     return upcomingEvents.map((e) => ({
       ...e.events,
-      venue: e.venues,
+      venue: e.venue as FullVenue | null,
       vendorCount: countMap.get(e.events.id) || 0,
     }));
   } catch (e) {
