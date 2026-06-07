@@ -19,23 +19,25 @@ compatibility_flags = ["nodejs_compat"]
 # a routing loop).
 UPSTREAM = "https://takemetothefair.pages.dev"
 
-# Route claim DEFERRED to Phase C — DO NOT uncomment in PR 2.
+# K2 Phase C (2026-06-07): apex route CLAIMED. This Worker now sits
+# in front of Pages for every request to meetmeatthefair.com.
 #
-# Phase C will uncomment this block to claim the apex route. Until
-# then, the Worker is only reachable at
-#   https://meetmeatthefair-edge.<account>.workers.dev
-# which is what we verify against before cutover.
+# Why this works: a wildcard Worker route beats a Pages custom-domain
+# route at the apex on Cloudflare's tiebreak (precedent: 2026-04-25
+# sitemap hotfix Worker, see CLAUDE.md). The Pages project at
+# takemetothefair.pages.dev stays reachable — UPSTREAM points at it,
+# and the Worker proxies every request through.
 #
-# Per CLAUDE.md's historical note on the 2026-04-25 sitemap hotfix
-# Worker: a wildcard Worker route beats a Pages custom-domain route at
-# the apex on Cloudflare's tiebreak. So claiming meetmeatthefair.com/*
-# will move traffic through this Worker WITHOUT changing the Pages
-# project config.
-#
-# Rollback in Phase C: comment this block + re-deploy (Worker stays
-# alive, route releases back to Pages). See apex-worker/README.md
-# (added in Phase C) for full rollback runbook.
-#
-# [[routes]]
-# pattern = "meetmeatthefair.com/*"
-# zone_name = "meetmeatthefair.com"
+# ROLLBACK: see apex-worker/README.md for the 3-tier rollback runbook.
+# Fastest rollback is to delete the Worker route via the Cloudflare
+# dashboard (Workers & Pages → Routes → delete) — Pages takes over
+# instantly without a re-deploy.
+[[routes]]
+pattern = "meetmeatthefair.com/*"
+zone_name = "meetmeatthefair.com"
+
+# The www. subdomain redirects to apex via Cloudflare DNS rules in the
+# dashboard — claiming it here would be redundant and would NOT help
+# with the K2 status-rewrite goal (the apex Worker only inspects
+# responses from UPSTREAM, which already serves both apex and www
+# content). Leaving www. routing as-is.
