@@ -270,7 +270,15 @@ async function getVendor(slug: string) {
       source: "app/vendors/[slug]/page.tsx:getVendor",
       context: { slug },
     });
-    return null;
+    // K2 (2026-06-06): throw FetchError so error.tsx renders + HTTP 500
+    // bubbles to the edge. Previously this returned null, which the page
+    // component routed to notFound() (HTTP 404) — making D1 failures look
+    // like "vendor doesn't exist" rather than the transient outage they
+    // really are. The empty-results case (rows.length === 0 → return null
+    // INSIDE the try block) is still a legitimate 404 and stays unchanged.
+    // Mirrors REL1' §1 pattern in venues/[slug]/page.tsx.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/vendors/[slug]/page.tsx:getVendor", e);
   }
 }
 

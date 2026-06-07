@@ -163,7 +163,10 @@ async function getVenues(searchParams: SearchParams, favoriteUserId?: string) {
       source: "app/venues/page.tsx:getVenues",
       context: { searchParams },
     });
-    return [];
+    // K2 (2026-06-06): throw FetchError so error.tsx renders + HTTP 500
+    // bubbles to the edge. Mirrors REL1' §1 pattern in events/page.tsx.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/venues/page.tsx:getVenues", e);
   }
 }
 
@@ -186,7 +189,8 @@ async function getStates() {
       error: e,
       source: "app/venues/page.tsx:getStates",
     });
-    return [];
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/venues/page.tsx:getStates", e);
   }
 }
 
