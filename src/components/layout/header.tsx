@@ -231,7 +231,11 @@ export function Header() {
             <IconButton
               size="md"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+<<<<<<< HEAD
               icon={mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+=======
+              className="text-muted-foreground hover:text-foreground p-2.5 -mr-2.5"
+>>>>>>> d27fa57 (feat(design-system PR 3/5): surface sweep — event detail + vendor detail + header)
               aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
               className="-mr-2"
             />
