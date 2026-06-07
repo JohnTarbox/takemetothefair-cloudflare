@@ -38,7 +38,7 @@ export function Header() {
 
   return (
     <header
-      className={`bg-white border-b border-gray-200 transition-shadow ${scrolled ? "shadow-sm" : ""}`}
+      className={`bg-card border-b border-border transition-shadow ${scrolled ? "shadow-sm" : ""}`}
     >
       {/* Skip navigation link for accessibility */}
       <a
@@ -64,27 +64,27 @@ export function Header() {
                     <Link
                       href={item.href}
                       aria-current={isActive ? "page" : undefined}
-                      className={`font-medium transition-colors ${isActive ? "text-royal" : "text-gray-600 hover:text-gray-900"}`}
+                      className={`font-medium transition-colors ${isActive ? "text-royal" : "text-muted-foreground hover:text-foreground"}`}
                     >
                       {item.name}
                     </Link>
                     <div className="absolute left-0 top-full pt-2 hidden group-hover:block group-focus-within:block z-50">
-                      <div className="bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[160px]">
+                      <div className="bg-card rounded-lg shadow-lg border border-border py-1 min-w-[160px]">
                         <Link
                           href="/events"
-                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          className="block px-4 py-2 text-sm text-foreground hover:bg-muted"
                         >
                           Upcoming Events
                         </Link>
                         <Link
                           href="/events/past"
-                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          className="block px-4 py-2 text-sm text-foreground hover:bg-muted"
                         >
                           Past Events
                         </Link>
                         <Link
                           href="/events/all"
-                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          className="block px-4 py-2 text-sm text-foreground hover:bg-muted"
                         >
                           All Events
                         </Link>
@@ -98,7 +98,7 @@ export function Header() {
                   key={item.name}
                   href={item.href}
                   aria-current={isActive ? "page" : undefined}
-                  className={`font-medium transition-colors ${isActive ? "text-royal" : "text-gray-600 hover:text-gray-900"}`}
+                  className={`font-medium transition-colors ${isActive ? "text-royal" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   {item.name}
                 </Link>
@@ -109,12 +109,12 @@ export function Header() {
           <div className="hidden md:flex md:items-center md:space-x-4">
             <GlobalSearch />
             {status === "loading" ? (
-              <div className="h-8 w-20 bg-gray-200 rounded animate-pulse" />
+              <div className="h-8 w-20 bg-muted rounded animate-pulse" />
             ) : session ? (
               <div className="relative">
                 <button
                   onClick={() => setUserMenuOpen(!userMenuOpen)}
-                  className="flex items-center space-x-2 text-gray-700 hover:text-gray-900"
+                  className="flex items-center space-x-2 text-foreground hover:text-foreground"
                 >
                   <div className="w-8 h-8 rounded-full bg-brand-blue-light flex items-center justify-center">
                     {session.user.image ? (
@@ -149,12 +149,12 @@ export function Header() {
                 </button>
 
                 {userMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+                  <div className="absolute right-0 mt-2 w-48 bg-card rounded-lg shadow-lg border border-border py-1 z-50">
                     {userNavigation.map((item) => (
                       <Link
                         key={item.name}
                         href={item.href}
-                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        className="flex items-center px-4 py-2 text-sm text-foreground hover:bg-muted"
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <item.icon className="w-4 h-4 mr-2" />
@@ -171,7 +171,7 @@ export function Header() {
                     {session.user.roles?.includes("ADMIN") && (
                       <Link
                         href="/admin"
-                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        className="flex items-center px-4 py-2 text-sm text-foreground hover:bg-muted"
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <Calendar className="w-4 h-4 mr-2" />
@@ -181,7 +181,7 @@ export function Header() {
                     {session.user.roles?.includes("PROMOTER") && (
                       <Link
                         href="/promoter/events"
-                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        className="flex items-center px-4 py-2 text-sm text-foreground hover:bg-muted"
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <Calendar className="w-4 h-4 mr-2" />
@@ -191,7 +191,7 @@ export function Header() {
                     {session.user.roles?.includes("VENDOR") && (
                       <Link
                         href="/vendor/profile"
-                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                        className="flex items-center px-4 py-2 text-sm text-foreground hover:bg-muted"
                         onClick={() => setUserMenuOpen(false)}
                       >
                         <Store className="w-4 h-4 mr-2" />
@@ -201,7 +201,7 @@ export function Header() {
                     <hr className="my-1" />
                     <button
                       onClick={() => signOut()}
-                      className="flex items-center w-full px-4 py-2 text-sm text-red-600 hover:bg-gray-50"
+                      className="flex items-center w-full px-4 py-2 text-sm text-destructive hover:bg-muted"
                     >
                       <LogOut className="w-4 h-4 mr-2" />
                       Sign Out
@@ -239,7 +239,7 @@ export function Header() {
         </div>
 
         {mobileMenuOpen && (
-          <div className="md:hidden py-4 border-t border-gray-200">
+          <div className="md:hidden py-4 border-t border-border">
             <div className="space-y-2">
               {navigation.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -248,7 +248,7 @@ export function Header() {
                     <Link
                       href={item.href}
                       aria-current={isActive ? "page" : undefined}
-                      className={`block px-3 py-2 rounded-lg ${isActive ? "text-royal bg-brand-blue-light font-medium" : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"}`}
+                      className={`block px-3 py-2 rounded-lg ${isActive ? "text-royal bg-brand-blue-light font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted"}`}
                       onClick={() => setMobileMenuOpen(false)}
                     >
                       {item.name}
@@ -256,7 +256,7 @@ export function Header() {
                     {item.href === "/events" && (
                       <Link
                         href="/events/past"
-                        className="block px-6 py-1.5 text-sm text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
+                        className="block px-6 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg"
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         Past Events
@@ -269,7 +269,7 @@ export function Header() {
                 <>
                   <Link
                     href="/login"
-                    className="block px-3 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg"
+                    className="block px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg"
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     Sign In

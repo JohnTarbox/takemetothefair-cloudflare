@@ -685,7 +685,7 @@ export default async function EventDetailPage({ params }: Props) {
             const categoryColors = getCategoryColors(parseJsonArray(event.categories));
             if (event.imageUrl) {
               return (
-                <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
+                <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
                   <Image
                     src={event.imageUrl}
                     alt={event.name}
@@ -821,7 +821,7 @@ export default async function EventDetailPage({ params }: Props) {
                     ))}
                   </div>
                   <div className="flex items-start justify-between gap-4">
-                    <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{event.name}</h1>
+                    <h1 className="text-3xl md:text-4xl font-bold text-foreground">{event.name}</h1>
                     <div className="flex items-center gap-2">
                       <FavoriteButton type="EVENT" id={event.id} size="lg" />
                       <ShareButtons
@@ -832,7 +832,7 @@ export default async function EventDetailPage({ params }: Props) {
                     </div>
                   </div>
                   {(event.viewCount ?? 0) > 10 && (
-                    <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                       <Eye className="w-3.5 h-3.5" />
                       {(event.viewCount ?? 0).toLocaleString()} views
                     </p>
@@ -840,7 +840,7 @@ export default async function EventDetailPage({ params }: Props) {
                 </div>
 
                 <div className="prose prose-gray max-w-none">
-                  <p className="text-gray-600 whitespace-pre-wrap">
+                  <p className="text-muted-foreground whitespace-pre-wrap">
                     {event.description || "No description available."}
                   </p>
                 </div>
@@ -850,7 +850,7 @@ export default async function EventDetailPage({ params }: Props) {
                     {publicTags.map((tag) => (
                       <span
                         key={tag}
-                        className="px-2 py-1 bg-gray-100 text-gray-600 text-sm rounded"
+                        className="px-2 py-1 bg-muted text-muted-foreground text-sm rounded"
                       >
                         #{tag}
                       </span>
@@ -908,9 +908,9 @@ export default async function EventDetailPage({ params }: Props) {
                 <Link
                   key={ev.vendor.id}
                   href={`/vendors/${ev.vendor.slug}`}
-                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted transition-colors"
                 >
-                  <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center relative overflow-hidden">
                     {ev.vendor.logoUrl ? (
                       <Image
                         src={ev.vendor.logoUrl}
@@ -920,11 +920,11 @@ export default async function EventDetailPage({ params }: Props) {
                         className="object-cover"
                       />
                     ) : (
-                      <Store className="w-5 h-5 text-gray-600" />
+                      <Store className="w-5 h-5 text-muted-foreground" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 flex items-center gap-2">
+                    <p className="font-medium text-foreground flex items-center gap-2">
                       <span className="truncate">{ev.vendor.businessName}</span>
                       {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
                           custom (text-[10px], rounded not rounded-full) to preserve
@@ -937,7 +937,9 @@ export default async function EventDetailPage({ params }: Props) {
                       )}
                     </p>
                     {ev.vendor.vendorType && (
-                      <p className="text-sm text-gray-500 truncate">{ev.vendor.vendorType}</p>
+                      <p className="text-sm text-muted-foreground truncate">
+                        {ev.vendor.vendorType}
+                      </p>
                     )}
                   </div>
                 </Link>
@@ -960,7 +962,7 @@ export default async function EventDetailPage({ params }: Props) {
                 }
                 return (
                   <div key={group.key} className="space-y-3">
-                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                       {group.heading}
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{cards}</div>
@@ -974,7 +976,7 @@ export default async function EventDetailPage({ params }: Props) {
                     <Card>
                       <CardHeader>
                         <div className="flex items-center justify-between">
-                          <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                          <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
                             <Store className="w-5 h-5" />
                             Exhibitors ({exhibitors.length})
                           </h2>
@@ -1027,7 +1029,7 @@ export default async function EventDetailPage({ params }: Props) {
                   {sponsors.length > 0 && (
                     <Card>
                       <CardHeader>
-                        <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                        <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
                           <Store className="w-5 h-5" />
                           Sponsors ({sponsors.length})
                         </h2>
@@ -1062,7 +1064,7 @@ export default async function EventDetailPage({ params }: Props) {
               <div className="flex items-start gap-3">
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
-                    <p className="font-medium text-gray-900">
+                    <p className="font-medium text-foreground">
                       {event.discontinuousDates && event.eventDays?.length
                         ? formatDiscontinuousDates(
                             isAdmin || isVendor
@@ -1106,12 +1108,12 @@ export default async function EventDetailPage({ params }: Props) {
                     // May–October" stored as just a start/end range with the
                     // flag). Give the user a recurring/periodic cue rather
                     // than letting the bare multi-month range carry no signal.
-                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                       <Clock className="w-4 h-4" />
                       Recurring event — see description for specific dates
                     </p>
                   ) : (
-                    <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                       <Clock className="w-4 h-4" />
                       Hours not listed — check with organizer
                     </p>
@@ -1125,11 +1127,11 @@ export default async function EventDetailPage({ params }: Props) {
                   <div>
                     <Link
                       href={`/venues/${event.venue.slug}`}
-                      className="font-medium text-gray-900 hover:text-navy"
+                      className="font-medium text-foreground hover:text-navy"
                     >
                       {event.venue.name}
                     </Link>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-muted-foreground">
                       {event.venue.address}
                       <br />
                       {event.venue.city}, {event.venue.state} {event.venue.zip}
@@ -1155,9 +1157,9 @@ export default async function EventDetailPage({ params }: Props) {
                 </div>
               ) : (
                 <div className="flex items-start gap-3">
-                  <MapPin className="w-5 h-5 text-gray-600 mt-0.5" />
+                  <MapPin className="w-5 h-5 text-muted-foreground mt-0.5" />
                   <div>
-                    <p className="text-sm text-gray-500">Venue to be announced</p>
+                    <p className="text-sm text-muted-foreground">Venue to be announced</p>
                   </div>
                 </div>
               )}
@@ -1165,7 +1167,7 @@ export default async function EventDetailPage({ params }: Props) {
               <div className="flex items-start gap-3">
                 <Tag className="w-5 h-5 text-royal mt-0.5" />
                 <div>
-                  <p className="font-medium text-gray-900">
+                  <p className="font-medium text-foreground">
                     {formatPrice(event.ticketPriceMinCents, event.ticketPriceMaxCents)}
                   </p>
                 </div>
@@ -1176,12 +1178,12 @@ export default async function EventDetailPage({ params }: Props) {
                 <div className="flex items-start gap-3">
                   <DollarSign className="w-5 h-5 text-green-600 mt-0.5" />
                   <div>
-                    <p className="text-sm text-gray-500">Vendor/Booth Fee</p>
-                    <p className="font-medium text-gray-900">
+                    <p className="text-sm text-muted-foreground">Vendor/Booth Fee</p>
+                    <p className="font-medium text-foreground">
                       {formatPrice(event.vendorFeeMinCents, event.vendorFeeMaxCents)}
                     </p>
                     {event.vendorFeeNotes && (
-                      <p className="text-xs text-gray-500 mt-0.5">{event.vendorFeeNotes}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{event.vendorFeeNotes}</p>
                     )}
                   </div>
                 </div>
@@ -1195,7 +1197,7 @@ export default async function EventDetailPage({ params }: Props) {
                     <Trees className="w-5 h-5 text-green-500 mt-0.5" />
                   )}
                   <div>
-                    <p className="font-medium text-gray-900">
+                    <p className="font-medium text-foreground">
                       {event.indoorOutdoor === "INDOOR"
                         ? "Indoor"
                         : event.indoorOutdoor === "OUTDOOR"
@@ -1211,12 +1213,12 @@ export default async function EventDetailPage({ params }: Props) {
                   <Users className="w-5 h-5 text-purple-500 mt-0.5" />
                   <div>
                     {event.estimatedAttendance && (
-                      <p className="font-medium text-gray-900">
+                      <p className="font-medium text-foreground">
                         ~{event.estimatedAttendance.toLocaleString()} attendees
                       </p>
                     )}
                     {event.eventScale && (
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {event.eventScale === "SMALL"
                           ? "Small community event"
                           : event.eventScale === "MEDIUM"
@@ -1234,7 +1236,7 @@ export default async function EventDetailPage({ params }: Props) {
                 <div className="flex items-start gap-3">
                   <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
                   <div>
-                    <p className="font-medium text-gray-900">Walk-in Vendors Welcome</p>
+                    <p className="font-medium text-foreground">Walk-in Vendors Welcome</p>
                   </div>
                 </div>
               )}
@@ -1245,17 +1247,17 @@ export default async function EventDetailPage({ params }: Props) {
                 <div className="flex items-start gap-3">
                   <FileText className="w-5 h-5 text-amber-500 mt-0.5" />
                   <div>
-                    <p className="text-sm text-gray-500">Vendor Applications</p>
+                    <p className="text-sm text-muted-foreground">Vendor Applications</p>
                     {event.applicationDeadline && (
                       <p
-                        className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-red-600" : "text-gray-900"}`}
+                        className={`text-sm font-medium ${new Date(event.applicationDeadline) < new Date() ? "text-destructive" : "text-foreground"}`}
                       >
                         Deadline: {formatDateMedium(event.applicationDeadline)}
                         {new Date(event.applicationDeadline) < new Date() && " (Passed)"}
                       </p>
                     )}
                     {event.applicationInstructions && (
-                      <p className="text-xs text-gray-500 mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {event.applicationInstructions}
                       </p>
                     )}
@@ -1305,7 +1307,7 @@ export default async function EventDetailPage({ params }: Props) {
           {vendorInfo && (
             <Card id="vendor-apply">
               <CardHeader>
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
                   <Store className="w-5 h-5" />
                   Vendor Participation
                 </h3>
@@ -1322,7 +1324,7 @@ export default async function EventDetailPage({ params }: Props) {
                     >
                       Application {vendorInfo.existingApplication.status}
                     </Badge>
-                    <p className="text-sm text-gray-500 mt-2">
+                    <p className="text-sm text-muted-foreground mt-2">
                       {vendorInfo.existingApplication.status === "APPLIED" &&
                         "Your application is being reviewed."}
                       {vendorInfo.existingApplication.status === "WAITLISTED" &&
@@ -1346,7 +1348,7 @@ export default async function EventDetailPage({ params }: Props) {
                 ) : vendorInfo.vendor.commercial && !event.commercialVendorsAllowed ? (
                   <div className="text-center">
                     <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
-                    <p className="text-sm text-gray-600">
+                    <p className="text-sm text-muted-foreground">
                       This event does not allow commercial vendors.
                     </p>
                   </div>
@@ -1379,8 +1381,8 @@ export default async function EventDetailPage({ params }: Props) {
           {!session && (
             <Card id="vendor-apply">
               <CardContent className="p-6 text-center">
-                <Store className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                <p className="text-sm text-gray-600 mb-3">Are you a vendor?</p>
+                <Store className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground mb-3">Are you a vendor?</p>
                 <Link href="/login">
                   <Button variant="outline" className="w-full">
                     Login to Apply
@@ -1393,14 +1395,14 @@ export default async function EventDetailPage({ params }: Props) {
           {event.promoter && (
             <Card>
               <CardHeader>
-                <h3 className="font-semibold text-gray-900">Presented By</h3>
+                <h3 className="font-semibold text-foreground">Presented By</h3>
               </CardHeader>
               <CardContent>
                 <Link
                   href={`/promoters/${event.promoter.slug}`}
                   className="flex items-center gap-3 group"
                 >
-                  <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center relative overflow-hidden">
+                  <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center relative overflow-hidden">
                     {event.promoter.logoUrl ? (
                       <Image
                         src={event.promoter.logoUrl}
@@ -1410,11 +1412,11 @@ export default async function EventDetailPage({ params }: Props) {
                         className="object-cover"
                       />
                     ) : (
-                      <User className="w-6 h-6 text-gray-600" />
+                      <User className="w-6 h-6 text-muted-foreground" />
                     )}
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900 group-hover:text-royal">
+                    <p className="font-medium text-foreground group-hover:text-royal">
                       {event.promoter.companyName}
                     </p>
                     {/* Strict equality so any non-true value (legacy 0,
@@ -1442,8 +1444,8 @@ export default async function EventDetailPage({ params }: Props) {
 
       {/* Related Events */}
       {relatedEvents && relatedEvents.events.length > 0 && (
-        <div className="mt-12 border-t border-gray-200 pt-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">{relatedEvents.heading}</h2>
+        <div className="mt-12 border-t border-border pt-8">
+          <h2 className="text-2xl font-bold text-foreground mb-6">{relatedEvents.heading}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {relatedEvents.events.map((relEvent) => (
               <EventCard key={relEvent.id} event={relEvent} />
@@ -1463,28 +1465,30 @@ export default async function EventDetailPage({ params }: Props) {
           matches are unlabeled fallback filler when there aren't 3 direct
           links. See Phase: content-entity link index. */}
       {relatedBlogPosts.length > 0 && (
-        <div className="mt-12 border-t border-gray-200 pt-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">Related Blog Posts</h2>
+        <div className="mt-12 border-t border-border pt-8">
+          <h2 className="text-2xl font-bold text-foreground mb-6">Related Blog Posts</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {relatedBlogPosts.map((post) => (
               <Link
                 key={post.slug}
                 href={`/blog/${post.slug}`}
-                className="p-4 bg-white rounded-lg border border-gray-200 hover:border-amber hover:shadow-sm transition-all group"
+                className="p-4 bg-card rounded-lg border border-border hover:border-amber hover:shadow-sm transition-all group"
               >
                 {post.kind === "direct" && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-2 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                     Written about this event
                   </span>
                 )}
-                <p className="font-medium text-gray-900 group-hover:text-navy line-clamp-2">
+                <p className="font-medium text-foreground group-hover:text-navy line-clamp-2">
                   {post.title}
                 </p>
                 {post.excerpt && (
-                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">{post.excerpt}</p>
+                  <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{post.excerpt}</p>
                 )}
                 {post.publishDate && (
-                  <p className="text-xs text-gray-600 mt-2">{formatDateMedium(post.publishDate)}</p>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {formatDateMedium(post.publishDate)}
+                  </p>
                 )}
               </Link>
             ))}
