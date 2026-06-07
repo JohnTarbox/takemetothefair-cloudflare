@@ -25,12 +25,23 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     const baseStyles =
       "inline-flex items-center justify-center font-medium rounded-lg transition-colors disabled:opacity-50 disabled:pointer-events-none";
 
+    // Design System keystone PR 2 (2026-06-07) — token migration.
+    // - `primary` is the brand amber CTA; `--primary-foreground` is the
+    //   amber-bg-fg pair (UX-R3) which gives 9.7:1 AAA on --primary vs
+    //   the prior `text-navy` (5.4:1 AA). Minor pixel diff is intentional
+    //   and matches the spec's "UX-R3 closure" goal.
+    // - `secondary` (Button variant) stays neutral gray — it's a "secondary
+    //   action" button, not a "brand secondary" button. Maps to --muted
+    //   tokens, NOT to --secondary (which is the navy brand color, only
+    //   used by surfaces that explicitly want navy).
+    // - `outline` / `ghost` use surface + content tokens.
+    // - `danger` maps to --destructive (the new shadcn-convention name).
     const variants = {
-      primary: "bg-amber text-navy hover:bg-amber-dark",
-      secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200",
-      outline: "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50",
-      ghost: "text-gray-700 hover:bg-gray-100",
-      danger: "bg-red-600 text-white hover:bg-red-700",
+      primary: "bg-primary text-primary-foreground hover:bg-primary/90",
+      secondary: "bg-muted text-foreground hover:bg-muted/80",
+      outline: "border border-input bg-background text-foreground hover:bg-muted",
+      ghost: "text-foreground hover:bg-muted",
+      danger: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
     };
 
     const sizes = {

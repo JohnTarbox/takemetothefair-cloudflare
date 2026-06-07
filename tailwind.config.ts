@@ -70,6 +70,26 @@ const config: Config = {
           DEFAULT: "var(--destructive)",
           foreground: "var(--destructive-foreground)",
         },
+        // Status SOFT variants — PR 2 extension. Used by Badge variants
+        // for pill-shaped status indicators (success/warning/danger/info).
+        // Distinct from solid status colors (--success/--warning/--danger
+        // are still available as `bg-success` etc. for icons + accents).
+        "success-soft": {
+          DEFAULT: "var(--success-soft)",
+          foreground: "var(--success-soft-foreground)",
+        },
+        "warning-soft": {
+          DEFAULT: "var(--warning-soft)",
+          foreground: "var(--warning-soft-foreground)",
+        },
+        "danger-soft": {
+          DEFAULT: "var(--danger-soft)",
+          foreground: "var(--danger-soft-foreground)",
+        },
+        "info-soft": {
+          DEFAULT: "var(--info-soft)",
+          foreground: "var(--info-soft-foreground)",
+        },
         // Category accent palette (PR 2 migration target for
         // src/lib/category-colors.ts). Exposed as `bg-accent-gold`,
         // `text-accent-sage`, etc.

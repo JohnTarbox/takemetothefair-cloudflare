@@ -46,17 +46,27 @@ const ICON_SIZE: Record<IconButtonSize, string> = {
   lg: "w-6 h-6",
 };
 
+// Design System keystone PR 2 (2026-06-07) — token migration.
+// - `ghost` (default) is the neutral icon-on-surface treatment for
+//   header/toolbar icons. Maps to muted-foreground content + muted
+//   hover bg.
+// - `solid` retains the royal/navy brand pattern but routes through
+//   semantic tokens: bg-primary (amber brand) is reserved for primary
+//   CTAs; the solid IconButton variant uses bg-secondary (navy) since
+//   the original was bg-royal hover:bg-navy. --secondary-foreground
+//   provides the AAA white text on navy.
+// - `danger` migrates to --destructive (the shadcn-convention name).
 const VARIANT: Record<IconButtonVariant, string> = {
-  ghost: "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
-  solid: "bg-royal text-white hover:bg-navy shadow-sm",
-  danger: "text-red-600 hover:bg-red-50 hover:text-red-700",
+  ghost: "text-muted-foreground hover:bg-muted hover:text-foreground",
+  solid: "bg-secondary text-secondary-foreground hover:bg-secondary/85 shadow-sm",
+  danger: "text-destructive hover:bg-destructive/10 hover:text-destructive",
 };
 
 // Common to button + link. inline-flex centers the icon; rounded
-// matches existing button styles; focus-visible ring matches
-// /components/ui/button.tsx.
+// matches existing button styles; focus-visible ring uses --ring
+// (token equivalent of the prior `royal/40` literal).
 const BASE_CLASSES =
-  "inline-flex items-center justify-center rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-royal/40 disabled:opacity-50 disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 disabled:cursor-not-allowed";
 
 interface IconButtonOwnProps {
   /** Required for screen readers. Always required by the type — the

@@ -67,6 +67,22 @@
   --warning: #c47a1f;
   --danger: #a13834;
 
+  /* Status SOFT variants — light bg + dark fg pairs for pills/badges.
+     PR 2 extends the PR 1 set: Badge variants (success/danger/info)
+     consume these. Distinct from solid status colors so a status
+     ICON can use --success (#2F7D4E) on white while a status BADGE
+     uses --success-soft + --success-soft-foreground. All pairs
+     pre-validated AA on the bg they sit on.
+     Naming: shadcn convention is `bg-success-soft text-success-soft-foreground`. */
+  --success-soft: #dcfce7; /* green-100 */
+  --success-soft-foreground: #166534; /* green-800 — on --success-soft: 6.4:1 AAA */
+  --warning-soft: #fff3d6; /* amber.light */
+  --warning-soft-foreground: #1f1a0a; /* amber-bg-fg — on --warning-soft: ~17:1 AAA (matches UX-R3) */
+  --danger-soft: #fee2e2; /* red-100 */
+  --danger-soft-foreground: #991b1b; /* red-800 — on --danger-soft: 7.5:1 AAA */
+  --info-soft: #ebe5da; /* stone-100 — same neutral feel as default-info today */
+  --info-soft-foreground: #1e2761; /* navy — on --info-soft: 11.4:1 AAA */
+
   /* Category accent palette (5 colors) — the JS-rendered accent bars
      in src/lib/category-colors.ts emit these hex values today as
      literal strings. PR 2 will migrate that file to read these vars
