@@ -36,6 +36,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
+import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -137,9 +138,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       url,
       siteName: "Meet Me at the Fair",
       type: "website",
+      // IMG1 (2026-06-07) — both branches routed through cdn-cgi/image
+      // for sized 1200×630 derivatives + gravity=auto smart crop. Venue
+      // images, when present, are typically wide fairground panoramas;
+      // smart-crop avoids chopping signage/entry markers at the edges.
       images: [
         {
-          url: venue.imageUrl || "https://meetmeatthefair.com/og-default.png",
+          url: cdnImage(venue.imageUrl || "https://meetmeatthefair.com/og-default.png", OG_EVENT),
           width: 1200,
           height: 630,
           alt: name,
@@ -150,7 +155,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       card: "summary_large_image",
       title: name,
       description,
-      images: [venue.imageUrl || "https://meetmeatthefair.com/og-default.png"],
+      images: [cdnImage(venue.imageUrl || "https://meetmeatthefair.com/og-default.png", OG_EVENT)],
     },
   };
 }

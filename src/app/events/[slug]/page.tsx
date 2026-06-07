@@ -70,6 +70,7 @@ import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { formatDateMedium } from "@/lib/datetime";
+import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -495,7 +496,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
           // Cloudflare bundle cap (satori + resvg-wasm was ~476 KiB
           // compiled). 81% of events have no per-event image so this
           // was the common case; matches every other index page.
-          url: event.imageUrl || "https://meetmeatthefair.com/og-default.png",
+          //
+          // IMG1 (2026-06-07) — both real images and the og-default are
+          // now routed through `cdn-cgi/image` so social previews get
+          // exactly the 1200×630 derivative with `gravity=auto` smart
+          // crop (saves the 1942×809 panorama case where the old raw
+          // URL forced platforms to letterbox/zoom).
+          url: cdnImage(event.imageUrl || "https://meetmeatthefair.com/og-default.png", OG_EVENT),
           width: 1200,
           height: 630,
           alt: title,
@@ -506,7 +513,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       card: "summary_large_image",
       title,
       description,
-      images: [event.imageUrl || "https://meetmeatthefair.com/og-default.png"],
+      images: [cdnImage(event.imageUrl || "https://meetmeatthefair.com/og-default.png", OG_EVENT)],
     },
     other: {
       "og:type": "event",

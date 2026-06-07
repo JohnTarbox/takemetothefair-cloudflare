@@ -3,14 +3,31 @@ import { setupDevPlatform } from "@cloudflare/next-on-pages/next-dev";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    // Cloudflare Pages doesn't support Next.js image optimization by default
-    // Use unoptimized for external URLs, but still get lazy loading benefits
-    unoptimized: true,
+    // IMG1 (2026-06-07) — wired Cloudflare URL-based Image Resizing as
+    // a custom Next/Image loader. Drops `unoptimized: true` (which
+    // dormant'd Next's responsive srcSet) and routes every <Image src>
+    // through src/lib/image-loader.ts → cdn-cgi/image/<params>/<src>.
+    // Same-zone proxy, no new binding required (the upload pipeline at
+    // src/lib/image-optim.ts already uses the same cf.image API in prod).
+    //
+    // Pre-IMG1 `hostname: "**"` was a CSRF/SSRF surface — any HTTPS host
+    // could be rendered via Next/Image. Tightened to the four hosts
+    // that actually appear in render-time `<Image src=...>` paths:
+    //   - cdn.meetmeatthefair.com — events/vendors/venues hero + logo
+    //     assets (the only column-backed image source).
+    //   - meetmeatthefair.com — same-zone og-default fallback used by
+    //     generateMetadata when an entity has no own image.
+    //   - lh3.googleusercontent.com — Google OAuth avatar (today rendered
+    //     via bare <img> at header.tsx:121, but allowlisted defensively
+    //     in case a future surface uses <Image>).
+    //   - graph.facebook.com — Facebook OAuth avatar, same rationale.
+    loader: "custom",
+    loaderFile: "./src/lib/image-loader.ts",
     remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "**",
-      },
+      { protocol: "https", hostname: "cdn.meetmeatthefair.com" },
+      { protocol: "https", hostname: "meetmeatthefair.com" },
+      { protocol: "https", hostname: "lh3.googleusercontent.com" },
+      { protocol: "https", hostname: "graph.facebook.com" },
     ],
   },
   async redirects() {
@@ -60,7 +77,11 @@ const nextConfig = {
       { source: "/vendors/:path*", headers: [cdnCache(600, 300)] },
       // Public API — short CDN cache
       { source: "/api/search", headers: [cdnCache(60)] },
-      { source: "/api/og", headers: [cdnCache(86400)] },
+      // IMG1 (2026-06-07) — /api/og was retired in PR #333 to fit the
+      // 25 MiB Cloudflare Worker bundle cap. The CDN cache header for
+      // it has been dead-config since 2026-06-04; removed here while
+      // touching the file. og:image emissions now use sized cdn-cgi
+      // derivatives via cdnImage() in each entity's generateMetadata.
       // Sitemap & RSS — short CDN cache so new content appears quickly
       { source: "/sitemap.xml", headers: [cdnCache(300, 300)] },
       { source: "/blog/feed.xml", headers: [cdnCache(300, 300)] },
