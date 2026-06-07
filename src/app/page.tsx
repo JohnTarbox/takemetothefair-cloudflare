@@ -263,7 +263,7 @@ export default async function HomePage() {
               <Link href="/events">
                 <Button
                   size="lg"
-                  className="w-full sm:w-auto bg-amber text-navy font-semibold hover:bg-amber/90"
+                  className="w-full sm:w-auto bg-amber text-primary-foreground font-semibold hover:bg-amber/90"
                 >
                   <Search className="w-5 h-5 mr-2" />
                   Browse Events
@@ -469,7 +469,7 @@ export default async function HomePage() {
             <Link href="/register?role=promoter">
               <Button
                 size="lg"
-                className="w-full sm:w-auto bg-amber text-navy font-semibold hover:bg-amber/90"
+                className="w-full sm:w-auto bg-amber text-primary-foreground font-semibold hover:bg-amber/90"
               >
                 I&apos;m a Promoter
               </Button>

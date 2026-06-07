@@ -180,9 +180,13 @@
   --popover-foreground: #f5f1ea;
   --muted-foreground: #b8af9e; /* stone-300 on --background: ~7.1:1 AAA */
 
-  /* Border + form-field */
-  --border: #2a2d35; /* on --background: 3.1:1 (UI threshold) */
-  --input: #2a2d35;
+  /* Border + form-field — contrast follow-up (2026-06-07).
+     Was #2a2d35; failed WCAG 1.4.11 (UI 3:1) against --background (1.30)
+     and --card (1.17). Lifted to #6b707a per analytical audit so both
+     pass: bg=3.62:1, card=3.20:1. Visually a heavier separator than
+     before but compliance-correct. */
+  --border: #6b707a;
+  --input: #6b707a;
 
   /* Focus ring — lifted royal (#3B6FD4 → #5C8DEC for AA on dark) */
   --ring: #5c8dec;
@@ -191,7 +195,7 @@
   /* Brand — amber stays vibrant; navy + terracotta lifted */
   --primary: #e8960c; /* amber unchanged — brand identity */
   --primary-foreground: #1f1a0a; /* amber-bg-fg unchanged; on amber 9.7:1 AAA */
-  --secondary: #5c8dec; /* navy → sky-royal for dark-bg AA */
+  --secondary: #7aa6ee; /* navy → sky-royal lifted (was #5c8dec, contrast follow-up) */
   --secondary-foreground: #15171c; /* dark text on light blue: ~7.6:1 AAA */
   --accent: #e89175; /* terracotta lifted */
   --accent-foreground: #15171c; /* dark text on lift-terracotta: ~5.5:1 AA */
@@ -239,9 +243,14 @@
    *   - brand-blue-light flips from soft-blue-bg to dark-navy-bg so the
    *     "blue tint" surface intent (sign-in role badges, etc.) survives.
    * ===================================================================== */
-  --navy: #5c8dec; /* on --background: 7.6:1 AAA — matches --secondary dark */
-  --navy-dark: #3b6fd4; /* on --background: 5.2:1 AA */
-  --royal: #7aa6ee; /* link/accent on dark — 9.1:1 AAA */
+  /* Contrast follow-up (2026-06-07) — analytical audit found navy needed
+     additional lift to pass on bg-stone-100 (admin pairings). Aligning
+     --navy with --royal at #7aa6ee gives 7.27:1 on --background and
+     improves card / stone-100 readability. --navy-dark lifted to the
+     previous --navy value as a one-stop-darker hue for emphasis. */
+  --navy: #7aa6ee; /* on --background: 7.27:1 AAA */
+  --navy-dark: #5c8dec; /* on --background: 5.53:1 AAA */
+  --royal: #7aa6ee; /* link/accent on dark — 7.27:1 AAA */
   --amber: #e8960c; /* unchanged — brand identity */
   --amber-light: #2d2010; /* warm-dark backdrop for pills/chips */
   --amber-dark: #f4ae3e; /* amber text on dark bg: 6.9:1 AAA */
