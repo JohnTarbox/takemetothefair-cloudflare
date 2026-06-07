@@ -49,6 +49,7 @@ import { logError } from "@/lib/logger";
 import { VendorApplyButton } from "@/components/events/VendorApplyButton";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { EventSchema } from "@/components/seo/EventSchema";
+import { groupVendorsByDay } from "@/lib/k18-vendor-grouping";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { EventFAQSection } from "@/components/events/EventFAQSection";
@@ -623,6 +624,11 @@ export default async function EventDetailPage({ params }: Props) {
             | "SPONSOR_ONLY"
             | "SPONSOR_AND_EXHIBITOR"
             | undefined,
+          // K18 Phase 2 (2026-06-06): per-occurrence scoping. NULL = series-
+          // wide -> appears in top-level performer/sponsor arrays. Non-NULL
+          // = scoped to that occurrence -> EventSchema emits the vendor
+          // under the matching subEvent's performer/sponsor array instead.
+          eventDayId: ev.eventDayId ?? null,
         }))}
         createdAt={event.createdAt}
         // TAX1 Phase 3 (2026-06-02). Audience/access drives the
@@ -866,6 +872,14 @@ export default async function EventDetailPage({ params }: Props) {
               // Alphabetical sort within each section comes from the
               // upstream query order (event-vendor list sorted by businessName
               // COLLATE NOCASE — see memory project_event_lifecycle.md).
+              //
+              // K18 Phase 2 (drizzle/0114, 2026-06-06): within each section
+              // we layer one MORE split — by event_day_id. groupVendorsByDay
+              // suppresses headings entirely when the lineup is purely
+              // series-wide (today's data, all event_day_id IS NULL), so
+              // pre-K18 events render exactly as before. When per-day links
+              // exist, "Regular participants" appears first, then each date
+              // chronologically.
               type EvRow = (typeof event.eventVendors)[number];
               const isExhib = (ev: EvRow) =>
                 ev.participationType === "EXHIBITOR" ||
@@ -879,6 +893,9 @@ export default async function EventDetailPage({ params }: Props) {
 
               const exhibitors = event.eventVendors.filter(isExhib);
               const sponsors = event.eventVendors.filter(isSponsor);
+
+              const exhibitorGroups = groupVendorsByDay(exhibitors, event.eventDays);
+              const sponsorGroups = groupVendorsByDay(sponsors, event.eventDays);
 
               const renderVendorCard = (ev: EvRow, showSponsorBadge: boolean) => (
                 <Link
@@ -915,6 +932,31 @@ export default async function EventDetailPage({ params }: Props) {
                 </Link>
               );
 
+              // Render a single group's vendor cards (with optional heading
+              // when grouping is active). When `heading` is empty string,
+              // the group is the only group (pre-K18-style flat render) and
+              // we skip the heading + extra wrapper.
+              const renderGroupBody = (
+                group: (typeof exhibitorGroups)[number],
+                renderBadge: (ev: EvRow) => boolean,
+                takeLimit: number | null
+              ) => {
+                const cards = (
+                  takeLimit != null ? group.vendors.slice(0, takeLimit) : group.vendors
+                ).map((ev) => renderVendorCard(ev, renderBadge(ev)));
+                if (group.heading === "") {
+                  return <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{cards}</div>;
+                }
+                return (
+                  <div key={group.key} className="space-y-3">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+                      {group.heading}
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{cards}</div>
+                  </div>
+                );
+              };
+
               return (
                 <>
                   {exhibitors.length > 0 && (
@@ -936,14 +978,28 @@ export default async function EventDetailPage({ params }: Props) {
                         </div>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {exhibitors
-                            .slice(0, 8)
-                            .map((ev) =>
-                              renderVendorCard(ev, ev.participationType === "SPONSOR_AND_EXHIBITOR")
+                        {exhibitorGroups.length === 1 && exhibitorGroups[0].heading === "" ? (
+                          // Pre-K18 / single-day path -- render flat, exactly as before.
+                          renderGroupBody(
+                            exhibitorGroups[0],
+                            (ev) => ev.participationType === "SPONSOR_AND_EXHIBITOR",
+                            8
+                          )
+                        ) : (
+                          // K18 grouped path -- one section per group, with headings.
+                          // No per-group cap here; the section-level "View all"
+                          // link absorbs the size for events with deep lineups.
+                          <div className="space-y-6">
+                            {exhibitorGroups.map((group) =>
+                              renderGroupBody(
+                                group,
+                                (ev) => ev.participationType === "SPONSOR_AND_EXHIBITOR",
+                                null
+                              )
                             )}
-                        </div>
-                        {exhibitors.length > 8 && (
+                          </div>
+                        )}
+                        {exhibitors.length > 8 && exhibitorGroups.length === 1 && (
                           <div className="mt-4 text-center">
                             <Link
                               href={`/events/${event.slug}/vendors`}
@@ -966,9 +1022,15 @@ export default async function EventDetailPage({ params }: Props) {
                         </h2>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {sponsors.slice(0, 8).map((ev) => renderVendorCard(ev, false))}
-                        </div>
+                        {sponsorGroups.length === 1 && sponsorGroups[0].heading === "" ? (
+                          renderGroupBody(sponsorGroups[0], () => false, 8)
+                        ) : (
+                          <div className="space-y-6">
+                            {sponsorGroups.map((group) =>
+                              renderGroupBody(group, () => false, null)
+                            )}
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   )}

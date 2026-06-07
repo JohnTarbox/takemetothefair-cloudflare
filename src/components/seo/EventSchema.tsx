@@ -22,6 +22,13 @@ interface EventVendor {
   /** Optional — drives schema.org performer-vs-sponsor placement (drizzle/0071,
    *  2026-05-16). Omit for legacy callers; treated as EXHIBITOR. */
   participationType?: "EXHIBITOR" | "SPONSOR_ONLY" | "SPONSOR_AND_EXHIBITOR" | null;
+  /** K18 Phase 2 (drizzle/0114, 2026-06-06) — per-occurrence scoping.
+   *  - null/undefined: series-wide vendor; appears in the top-level
+   *    performer/sponsor arrays (preserves pre-K18 emission).
+   *  - non-null: scoped to that event_day_id; appears under the matching
+   *    subEvent's performer/sponsor arrays and is OMITTED from the
+   *    top-level arrays so the emitted graph doesn't double-count. */
+  eventDayId?: string | null;
 }
 
 interface EventSchemaProps {
@@ -265,6 +272,53 @@ export function EventSchema({
       }
     : undefined;
 
+  // K18 Phase 2 (2026-06-06): bucket the vendor lineup once so subEvent
+  // emission and the top-level performer/sponsor arrays can share the
+  // partition without re-walking the list. Series-wide vendors keep
+  // appearing at the top level (per pre-K18 contract); per-day vendors
+  // get attached to the matching subEvent and OMITTED from the top level
+  // to avoid double-counting in the emitted JSON-LD graph.
+  const vendorsByDay = new Map<string, EventVendor[]>();
+  const seriesWideVendors: EventVendor[] = [];
+  if (vendors && vendors.length > 0) {
+    for (const v of vendors) {
+      if (v.eventDayId == null) {
+        seriesWideVendors.push(v);
+      } else {
+        const arr = vendorsByDay.get(v.eventDayId) ?? [];
+        arr.push(v);
+        vendorsByDay.set(v.eventDayId, arr);
+      }
+    }
+  }
+
+  // Helper: produce schema.org performer/sponsor arrays for a given vendor
+  // bucket using the same EXHIBITOR-vs-SPONSOR rule the top-level emitter
+  // uses. Returns `undefined` (so the property is dropped) when empty.
+  function vendorBucketToPerformerSponsor(bucket: EventVendor[]) {
+    if (bucket.length === 0) return { performer: undefined, sponsor: undefined };
+    const exhibitors = bucket.filter(
+      (v) =>
+        v.participationType == null ||
+        v.participationType === "EXHIBITOR" ||
+        v.participationType === "SPONSOR_AND_EXHIBITOR"
+    );
+    const sponsorsList = bucket.filter(
+      (v) =>
+        v.participationType === "SPONSOR_ONLY" || v.participationType === "SPONSOR_AND_EXHIBITOR"
+    );
+    return {
+      performer:
+        exhibitors.length > 0
+          ? exhibitors.map((v) => ({ "@type": "Organization", name: v.name, url: v.url }))
+          : undefined,
+      sponsor:
+        sponsorsList.length > 0
+          ? sponsorsList.map((v) => ({ "@type": "Organization", name: v.name, url: v.url }))
+          : undefined,
+    };
+  }
+
   const subEvents =
     eventDays && eventDays.length > 0
       ? eventDays
@@ -278,6 +332,12 @@ export function EventSchema({
             const venueTz = venue?.timezone ?? undefined;
             const startWall = parseWallClockInVenueZone(day.date, day.openTime, venueTz);
             const endWall = parseWallClockInVenueZone(day.date, day.closeTime, venueTz);
+            // K18 Phase 2: per-day performer/sponsor — only the vendors
+            // scoped specifically to this event_day. Absent or empty -> the
+            // properties are dropped from emission (no empty arrays).
+            const dayBucket = day.id ? (vendorsByDay.get(day.id) ?? []) : [];
+            const { performer: dayPerformer, sponsor: daySponsor } =
+              vendorBucketToPerformerSponsor(dayBucket);
             return {
               "@type": "Event",
               name: `${name} - Day ${i + 1}`,
@@ -293,6 +353,8 @@ export function EventSchema({
               eventStatus,
               offers,
               organizer: organizerBlock,
+              performer: dayPerformer,
+              sponsor: daySponsor,
             };
           })
       : undefined;
@@ -348,28 +410,13 @@ export function EventSchema({
     // SPONSOR_AND_EXHIBITOR appears in BOTH arrays (honest signal that the
     // org is funding the event AND has a booth on the floor). Legacy
     // vendors without participationType set default to EXHIBITOR.
-    performer: (() => {
-      if (!vendors || vendors.length === 0) return undefined;
-      const exhibitors = vendors.filter(
-        (v) =>
-          v.participationType == null ||
-          v.participationType === "EXHIBITOR" ||
-          v.participationType === "SPONSOR_AND_EXHIBITOR"
-      );
-      return exhibitors.length > 0
-        ? exhibitors.map((v) => ({ "@type": "Organization", name: v.name, url: v.url }))
-        : undefined;
-    })(),
-    sponsor: (() => {
-      if (!vendors || vendors.length === 0) return undefined;
-      const sponsors = vendors.filter(
-        (v) =>
-          v.participationType === "SPONSOR_ONLY" || v.participationType === "SPONSOR_AND_EXHIBITOR"
-      );
-      return sponsors.length > 0
-        ? sponsors.map((v) => ({ "@type": "Organization", name: v.name, url: v.url }))
-        : undefined;
-    })(),
+    //
+    // K18 Phase 2 (2026-06-06): the top-level arrays carry SERIES-WIDE
+    // vendors only (vendorsByDay rows are emitted under their subEvent
+    // entry above). Pre-K18 lineups have everything in seriesWideVendors,
+    // so the emission is unchanged for events that haven't adopted
+    // per-day scoping.
+    ...vendorBucketToPerformerSponsor(seriesWideVendors),
     offers,
   };
 
