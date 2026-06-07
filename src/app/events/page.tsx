@@ -560,7 +560,7 @@ function EventsFilter({
   const clearHref = `/events${clearParams.toString() ? `?${clearParams.toString()}` : ""}`;
 
   return (
-    <form className="bg-white p-4 rounded-lg border border-gray-200 space-y-4">
+    <form className="bg-card p-4 rounded-lg border border-border space-y-4">
       {searchParams.view && <input type="hidden" name="view" value={searchParams.view} />}
 
       {/* Vendor-only filter */}
@@ -586,7 +586,7 @@ function EventsFilter({
       )}
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="events-search">
+        <label className="block text-sm font-medium text-foreground mb-1" htmlFor="events-search">
           Search
         </label>
         {/* A5 (2026-06-04): inline submit button gives the search field a
@@ -596,14 +596,14 @@ function EventsFilter({
             Submitting still posts the whole filter form (same URL state),
             so the behavior is unchanged — just visible. */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input
             id="events-search"
             type="text"
             name="query"
             defaultValue={searchParams.query}
             placeholder="Search events..."
-            className="w-full pl-10 pr-12 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+            className="w-full pl-10 pr-12 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
           />
           <button
             type="submit"
@@ -616,11 +616,11 @@ function EventsFilter({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+        <label className="block text-sm font-medium text-foreground mb-1">Category</label>
         <select
           name="category"
           defaultValue={searchParams.category}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
         >
           <option value="">All Categories</option>
           {categories.map((cat) => (
@@ -632,11 +632,11 @@ function EventsFilter({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
+        <label className="block text-sm font-medium text-foreground mb-1">State</label>
         <select
           name="state"
           defaultValue={searchParams.state}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
         >
           <option value="">All States</option>
           {states.map((state) => (
@@ -648,11 +648,11 @@ function EventsFilter({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Indoor/Outdoor</label>
+        <label className="block text-sm font-medium text-foreground mb-1">Indoor/Outdoor</label>
         <select
           name="indoorOutdoor"
           defaultValue={searchParams.indoorOutdoor}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
         >
           <option value="">Any</option>
           <option value="INDOOR">Indoor</option>
@@ -662,11 +662,11 @@ function EventsFilter({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Event Scale</label>
+        <label className="block text-sm font-medium text-foreground mb-1">Event Scale</label>
         <select
           name="scale"
           defaultValue={searchParams.scale}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+          className="w-full px-3 py-2 border border-input rounded-lg focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
         >
           <option value="">Any size</option>
           <option value="SMALL">Small</option>
@@ -682,13 +682,13 @@ function EventsFilter({
           name="featured"
           value="true"
           defaultChecked={searchParams.featured === "true"}
-          className="rounded border-gray-300 text-royal focus:ring-royal"
+          className="rounded border-input text-royal focus:ring-royal"
         />
-        <span className="text-sm text-gray-700">Featured only</span>
+        <span className="text-sm text-foreground">Featured only</span>
       </label>
 
-      <fieldset className="border-t border-gray-200 pt-3">
-        <legend className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+      <fieldset className="border-t border-border pt-3">
+        <legend className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
           Vendor & event type
         </legend>
 
@@ -698,11 +698,11 @@ function EventsFilter({
             name="commercialVendors"
             value="true"
             defaultChecked={searchParams.commercialVendors === "true"}
-            className="mt-0.5 rounded border-gray-300 text-royal focus:ring-royal"
+            className="mt-0.5 rounded border-input text-royal focus:ring-royal"
           />
-          <span className="text-sm text-gray-700">
+          <span className="text-sm text-foreground">
             Only shows that allow commercial vendors
-            <span className="block text-xs text-gray-500">
+            <span className="block text-xs text-muted-foreground">
               Hides events whose listing indicates only craft, food, or farm vendors.
             </span>
           </span>
@@ -714,9 +714,9 @@ function EventsFilter({
             name="excludeFarmersMarkets"
             value="true"
             defaultChecked={searchParams.excludeFarmersMarkets === "true"}
-            className="mt-0.5 rounded border-gray-300 text-royal focus:ring-royal"
+            className="mt-0.5 rounded border-input text-royal focus:ring-royal"
           />
-          <span className="text-sm text-gray-700">Hide farmers markets</span>
+          <span className="text-sm text-foreground">Hide farmers markets</span>
         </label>
       </fieldset>
 
@@ -726,9 +726,9 @@ function EventsFilter({
           name="includePast"
           value="true"
           defaultChecked={searchParams.includePast === "true"}
-          className="rounded border-gray-300 text-royal focus:ring-royal"
+          className="rounded border-input text-royal focus:ring-royal"
         />
-        <span className="text-sm text-gray-700">Include past events</span>
+        <span className="text-sm text-foreground">Include past events</span>
       </label>
 
       {isLoggedIn && (
@@ -738,10 +738,10 @@ function EventsFilter({
             name="favorites"
             value="true"
             defaultChecked={searchParams.favorites === "true"}
-            className="rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+            className="rounded border-input text-pink-600 focus:ring-pink-500"
           />
           <Heart className="w-4 h-4 text-pink-500" />
-          <span className="text-sm text-gray-700">My Favorites</span>
+          <span className="text-sm text-foreground">My Favorites</span>
         </label>
       )}
 
@@ -755,7 +755,7 @@ function EventsFilter({
         </button>
         <a
           href={clearHref}
-          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+          className="px-4 py-2 border border-input text-foreground rounded-lg hover:bg-muted transition-colors"
         >
           Clear
         </a>
@@ -825,8 +825,8 @@ export default async function EventsPage({
         pageUrl="https://meetmeatthefair.com/events"
       />
       <div className="mb-8 print:hidden">
-        <h1 className="text-3xl font-bold text-gray-900">Browse Events</h1>
-        <p className="mt-2 text-gray-600">
+        <h1 className="text-3xl font-bold text-foreground">Browse Events</h1>
+        <p className="mt-2 text-muted-foreground">
           Discover upcoming fairs, festivals, and community events
         </p>
       </div>
@@ -862,9 +862,9 @@ export default async function EventsPage({
             myEvents={params.myEvents === "true"}
             vendorCoords={vendorCoords}
           />
-          <div className="mt-8 bg-gray-50 rounded-lg p-6 text-center border border-gray-200 print:hidden">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Looking for past events?</h3>
-            <p className="text-sm text-gray-600 mb-3">
+          <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border print:hidden">
+            <h3 className="text-lg font-semibold text-foreground mb-2">Looking for past events?</h3>
+            <p className="text-sm text-muted-foreground mb-3">
               Browse fairs and festivals from previous seasons, including event details and vendor
               information.
             </p>

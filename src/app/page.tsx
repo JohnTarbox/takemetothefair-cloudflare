@@ -273,7 +273,7 @@ export default async function HomePage() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="w-full sm:w-auto bg-transparent border-white text-white hover:bg-white/10"
+                  className="w-full sm:w-auto bg-transparent border-white text-white hover:bg-card/10"
                 >
                   List Your Event
                 </Button>
@@ -316,14 +316,14 @@ export default async function HomePage() {
       {/* This Weekend — replaces the old intent-router cards which just
           duplicated the top nav. Shows events happening in the next 7 days. */}
       {weekendEvents.length > 0 && (
-        <section className="py-16 bg-gray-50">
+        <section className="py-16 bg-muted">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-baseline justify-between mb-8">
               <div>
-                <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+                <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
                   This weekend
                 </h2>
-                <p className="mt-1 text-gray-600">
+                <p className="mt-1 text-muted-foreground">
                   Events happening in the next 7 days across New England.
                 </p>
               </div>
@@ -346,7 +346,7 @@ export default async function HomePage() {
       {/* Browse by State */}
       <section className="py-12">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900 mb-6 text-center">
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground mb-6 text-center">
             Browse Events by State
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -359,17 +359,17 @@ export default async function HomePage() {
               <Link
                 key={state.slug}
                 href={`/events/${state.slug}`}
-                className="flex items-center justify-center gap-2 p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all text-center group"
+                className="flex items-center justify-center gap-2 p-4 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all text-center group"
               >
-                <MapPin className="w-4 h-4 text-gray-600 group-hover:text-navy" />
-                <span className="font-medium text-gray-900 group-hover:text-navy">
+                <MapPin className="w-4 h-4 text-muted-foreground group-hover:text-navy" />
+                <span className="font-medium text-foreground group-hover:text-navy">
                   {state.name}
                 </span>
               </Link>
             ))}
           </div>
 
-          <h3 className="text-lg font-semibold text-gray-900 mt-8 mb-4 text-center">
+          <h3 className="text-lg font-semibold text-foreground mt-8 mb-4 text-center">
             Browse by Event Type
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
@@ -384,7 +384,7 @@ export default async function HomePage() {
               <Link
                 key={cat.slug}
                 href={`/events/${cat.slug}`}
-                className="px-3 py-2 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all text-center text-sm font-medium text-gray-700 hover:text-navy"
+                className="px-3 py-2 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all text-center text-sm font-medium text-foreground hover:text-navy"
               >
                 {cat.name}
               </Link>
@@ -398,7 +398,7 @@ export default async function HomePage() {
         <section className="py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
                 Featured Events
               </h2>
               <Link
@@ -414,10 +414,10 @@ export default async function HomePage() {
       )}
 
       {/* Upcoming Events */}
-      <section className="py-16 bg-gray-50">
+      <section className="py-16 bg-muted">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between mb-8">
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
               Upcoming Events
             </h2>
             <Link
@@ -436,7 +436,7 @@ export default async function HomePage() {
         <section className="py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
                 Latest from the Blog
               </h2>
               <Link
@@ -478,7 +478,7 @@ export default async function HomePage() {
               <Button
                 size="lg"
                 variant="outline"
-                className="w-full sm:w-auto bg-transparent border-white text-white hover:bg-white/10"
+                className="w-full sm:w-auto bg-transparent border-white text-white hover:bg-card/10"
               >
                 I&apos;m a Vendor
               </Button>
@@ -488,10 +488,10 @@ export default async function HomePage() {
       </section>
 
       {/* Help Section */}
-      <section className="py-12 border-t border-gray-200">
+      <section className="py-12 border-t border-border">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 text-center">
-            <p className="text-gray-600">Need help getting started?</p>
+            <p className="text-muted-foreground">Need help getting started?</p>
             <div className="flex gap-4">
               <Link href="/faq" className="text-royal hover:text-navy font-medium">
                 FAQ
