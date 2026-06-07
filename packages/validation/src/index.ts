@@ -461,6 +461,12 @@ const participationTypeEnum = z.enum([
 ]);
 
 // Event vendor schemas
+//
+// F — K18 Phase 1 (2026-06-06): all three schemas accept an optional
+// `eventDayId` to scope the link to a specific occurrence of a recurring
+// event. Omitted / null → series-wide (preserves pre-K18 behavior).
+// Backward-compatible: existing callers that don't pass eventDayId
+// continue to produce series-wide links exactly as before.
 export const eventVendorCreateSchema = z.object({
   eventId: z.string().uuid(),
   vendorId: z.string().uuid(),
@@ -468,6 +474,7 @@ export const eventVendorCreateSchema = z.object({
   status: eventVendorStatusEnum.optional().default(EVENT_VENDOR_STATUS.APPLIED),
   paymentStatus: paymentStatusEnum.optional().default(PAYMENT_STATUS.NOT_REQUIRED),
   participationType: participationTypeEnum.optional().default(PARTICIPATION_TYPE.EXHIBITOR),
+  eventDayId: z.string().uuid().optional().nullable(),
 });
 
 // Schema for adding vendor to event (eventId comes from URL params)
@@ -477,6 +484,7 @@ export const eventVendorAddSchema = z.object({
   status: eventVendorStatusEnum.optional().default(EVENT_VENDOR_STATUS.CONFIRMED),
   paymentStatus: paymentStatusEnum.optional().default(PAYMENT_STATUS.NOT_REQUIRED),
   participationType: participationTypeEnum.optional().default(PARTICIPATION_TYPE.EXHIBITOR),
+  eventDayId: z.string().uuid().optional().nullable(),
 });
 
 export const eventVendorUpdateSchema = z.object({
@@ -485,6 +493,10 @@ export const eventVendorUpdateSchema = z.object({
   status: eventVendorStatusEnum.optional(),
   paymentStatus: paymentStatusEnum.optional(),
   participationType: participationTypeEnum.optional(),
+  // PATCH can move a link from series-wide to per-day (or vice versa, or
+  // between dates). Use `null` to explicitly clear an existing eventDayId.
+  // Omit the field entirely to leave it unchanged.
+  eventDayId: z.string().uuid().optional().nullable(),
 });
 
 // User schemas

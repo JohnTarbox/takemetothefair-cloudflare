@@ -1545,10 +1545,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── list_event_vendors_admin ───────────────────────────────────
   server.tool(
     "list_event_vendors_admin",
-    "List all vendors for any event with full status details. Admin only.",
+    "List all vendors for any event with full status details. Admin only. K18 Phase 1: each row returns its `event_day_id` + resolved date; series-wide links have `event_day_id: null`. Optional `event_day_id` filter narrows to one occurrence.",
     {
       event_id: z.string().describe("Event ID"),
       status: z.enum(VENDOR_STATUS_ENUM).optional().describe("Filter by vendor application status"),
+      // K18 Phase 1 — optional per-occurrence filter. Default behavior
+      // returns ALL links (series-wide + per-day); operator UI groups by
+      // date itself.
+      event_day_id: z
+        .string()
+        .optional()
+        .describe(
+          "K18 Phase 1: filter to links scoped to this specific occurrence. Omit for all links (series-wide + per-day)."
+        ),
       limit: z.number().int().min(1).max(100).optional().describe("Max results (default 50)"),
       offset: z
         .number()
@@ -1579,7 +1588,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.status) {
         conditions.push(eq(eventVendors.status, params.status));
       }
+      if (params.event_day_id) {
+        conditions.push(eq(eventVendors.eventDayId, params.event_day_id));
+      }
 
+      // K18 Phase 1: LEFT JOIN event_days to surface the resolved date
+      // string alongside the eventDayId. NULL eventDayId → NULL date.
       const rows = await db
         .select({
           applicationId: eventVendors.id,
@@ -1593,9 +1607,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           vendorType: vendors.vendorType,
           products: vendors.products,
           commercial: vendors.commercial,
+          eventDayId: eventVendors.eventDayId,
+          eventDayDate: eventDays.date,
         })
         .from(eventVendors)
         .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+        .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
         .where(and(...conditions))
         .orderBy(sql`${vendors.businessName} COLLATE NOCASE`)
         .limit(limit)
@@ -1607,6 +1624,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         paymentStatus: r.paymentStatus,
         boothInfo: r.boothInfo,
         appliedAt: r.createdAt?.toISOString() || null,
+        event_day_id: r.eventDayId,
+        event_day_date: r.eventDayDate, // YYYY-MM-DD or null for series-wide
         vendor: {
           id: r.vendorId,
           businessName: r.businessName,

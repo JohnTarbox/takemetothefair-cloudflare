@@ -370,12 +370,23 @@ const SCHEMA_SQL = `
     payment_status TEXT NOT NULL DEFAULT 'NOT_REQUIRED',
     participation_type TEXT NOT NULL DEFAULT 'EXHIBITOR',
     booth_info TEXT,
+    -- F — K18 Phase 1 (drizzle/0114, 2026-06-06): optional per-occurrence
+    -- scoping. NULL = series-wide (today's behavior). Set = vendor on that
+    -- specific event_day only.
+    event_day_id TEXT,
     created_at INTEGER,
     updated_at INTEGER
   );
 
-  CREATE UNIQUE INDEX idx_eventvendors_event_vendor_unique
-    ON event_vendors (event_id, vendor_id);
+  -- K18 Phase 1 partial unique indexes (SQLite NULL-distinct gotcha).
+  -- Mirrors drizzle/0114 exactly so vitest's create_or_link_vendor dedup
+  -- exercises the same constraint shape as prod.
+  CREATE UNIQUE INDEX idx_eventvendors_series_unique
+    ON event_vendors (event_id, vendor_id)
+    WHERE event_day_id IS NULL;
+  CREATE UNIQUE INDEX idx_eventvendors_perday_unique
+    ON event_vendors (event_id, vendor_id, event_day_id)
+    WHERE event_day_id IS NOT NULL;
 
   CREATE TABLE event_days (
     id TEXT PRIMARY KEY,
@@ -386,7 +397,12 @@ const SCHEMA_SQL = `
     notes TEXT,
     closed INTEGER DEFAULT 0,
     vendor_only INTEGER DEFAULT 0,
-    status TEXT
+    status TEXT,
+    -- Drizzle eventDays schema declares createdAt with a $defaultFn so
+    -- INSERTs always carry this column even when the caller does not pass it.
+    -- Without this in the test schema, the K18 seedEventDay helpers fail
+    -- with "table event_days has no column named created_at" at insert time.
+    created_at INTEGER
   );
 
   CREATE TABLE vendor_outreach_attempts (

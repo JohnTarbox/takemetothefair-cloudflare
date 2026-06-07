@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { eventVendors, events, vendors } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eventDays, eventVendors, events, vendors } from "@/lib/db/schema";
+import { eq, and, isNull, sql } from "drizzle-orm";
 import {
   eventVendorAddSchema,
   eventVendorUpdateSchema,
@@ -78,15 +78,56 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
-    // Check if vendor is already added to this event
+    // K18 Phase 1 — resolve + validate optional per-occurrence scoping.
+    // eventDayId must (a) exist and (b) belong to THIS event. Cross-event
+    // ids are rejected before any write. NULL/omitted → series-wide.
+    const eventDayId = data.eventDayId ?? null;
+    if (eventDayId !== null) {
+      const dayRows = await db
+        .select({ eventId: eventDays.eventId })
+        .from(eventDays)
+        .where(eq(eventDays.id, eventDayId))
+        .limit(1);
+      if (dayRows.length === 0) {
+        return NextResponse.json({ error: `event_day not found: ${eventDayId}` }, { status: 400 });
+      }
+      if (dayRows[0].eventId !== id) {
+        return NextResponse.json(
+          {
+            error: `event_day_id ${eventDayId} belongs to a different event. Cross-event scoping is not allowed.`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Dedup keys on (event_id, vendor_id, event_day_id) — partial-unique
+    // indexes (drizzle/0114) allow a vendor to have a series-wide link
+    // AND a per-day link for the same event. NULL is a distinct slot.
     const existing = await db
       .select()
       .from(eventVendors)
-      .where(and(eq(eventVendors.eventId, id), eq(eventVendors.vendorId, data.vendorId)))
+      .where(
+        and(
+          eq(eventVendors.eventId, id),
+          eq(eventVendors.vendorId, data.vendorId),
+          eventDayId === null
+            ? isNull(eventVendors.eventDayId)
+            : eq(eventVendors.eventDayId, eventDayId)
+        )
+      )
       .limit(1);
 
     if (existing.length > 0) {
-      return NextResponse.json({ error: "Vendor is already added to this event" }, { status: 400 });
+      return NextResponse.json(
+        {
+          error:
+            eventDayId === null
+              ? "Vendor is already added to this event (series-wide)"
+              : "Vendor is already added to this occurrence",
+        },
+        { status: 400 }
+      );
     }
 
     const eventVendorId = crypto.randomUUID();
@@ -98,6 +139,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       boothInfo: data.boothInfo,
       paymentStatus: data.paymentStatus,
       participationType: data.participationType,
+      eventDayId,
     });
 
     const [newEventVendor] = await db
@@ -148,6 +190,36 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.boothInfo !== undefined) updateData.boothInfo = data.boothInfo;
     if (data.paymentStatus !== undefined) updateData.paymentStatus = data.paymentStatus;
     if (data.participationType !== undefined) updateData.participationType = data.participationType;
+
+    // K18 Phase 1 — moving a link between series-wide / per-day / different
+    // day. PATCH semantics:
+    //   - field omitted → eventDayId unchanged
+    //   - field === null → move to series-wide
+    //   - field === <uuid> → move to that occurrence (must belong to this event)
+    if (data.eventDayId !== undefined) {
+      if (data.eventDayId !== null) {
+        const dayRows = await db
+          .select({ eventId: eventDays.eventId })
+          .from(eventDays)
+          .where(eq(eventDays.id, data.eventDayId))
+          .limit(1);
+        if (dayRows.length === 0) {
+          return NextResponse.json(
+            { error: `event_day not found: ${data.eventDayId}` },
+            { status: 400 }
+          );
+        }
+        if (dayRows[0].eventId !== id) {
+          return NextResponse.json(
+            {
+              error: `event_day_id ${data.eventDayId} belongs to a different event. Cross-event scoping is not allowed.`,
+            },
+            { status: 400 }
+          );
+        }
+      }
+      updateData.eventDayId = data.eventDayId;
+    }
 
     // Validate status transition if changing status
     if (data.status) {

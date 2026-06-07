@@ -344,13 +344,22 @@ export function registerPublicTools(server: McpServer, db: Db) {
   // ── list_event_vendors ─────────────────────────────────────────
   server.tool(
     "list_event_vendors",
-    "List vendors participating in an event (approved/confirmed only). Pass either event_id or event_slug — adjacent tools (get_event_lifecycle_history, list_event_citations, update_event_status) key on event_id, so accepting both keeps the MCP surface consistent.",
+    "List vendors participating in an event (approved/confirmed only). Pass either event_id or event_slug — adjacent tools (get_event_lifecycle_history, list_event_citations, update_event_status) key on event_id, so accepting both keeps the MCP surface consistent. K18 Phase 1: each link returns its `event_day_id` + resolved date when scoped to a specific occurrence; series-wide links have `event_day_id: null`. Optional `event_day_id` filter narrows results to one occurrence.",
     {
       // K6 (analyst, 2026-05-31): accept event_id OR event_slug to match the
       // rest of the event-tool surface. One must be provided; if both are,
       // event_id wins. Avoids a forced slug round-trip mid-workflow.
       event_id: z.string().min(1).optional().describe("Event ID (UUID or legacy hex)."),
       event_slug: z.string().min(1).optional().describe("Event slug."),
+      // K18 Phase 1 — optional per-occurrence filter. When set, returns only
+      // links matching that specific event_day; when omitted, returns ALL
+      // links (series-wide + per-day) so the UI can group by date itself.
+      event_day_id: z
+        .string()
+        .optional()
+        .describe(
+          "K18 Phase 1: filter to vendors on this specific occurrence only. Omit for all links (series-wide + per-day)."
+        ),
       limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
       offset: z
         .number()
@@ -384,6 +393,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
         return { content: [{ type: "text", text: "Event not found." }], isError: true };
       }
 
+      // K18 Phase 1: LEFT JOIN event_days to surface the resolved date
+      // string alongside the eventDayId. NULL eventDayId → NULL date
+      // (series-wide). Filter by eventDayId when the caller pinned one.
+      const eventDayFilter = params.event_day_id
+        ? eq(eventVendors.eventDayId, params.event_day_id)
+        : undefined;
       const rows = await db
         .select({
           vendorId: vendors.id,
@@ -393,13 +408,17 @@ export function registerPublicTools(server: McpServer, db: Db) {
           products: vendors.products,
           description: vendors.description,
           boothInfo: eventVendors.boothInfo,
+          eventDayId: eventVendors.eventDayId,
+          eventDayDate: eventDays.date,
         })
         .from(eventVendors)
         .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+        .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
         .where(
           and(
             eq(eventVendors.eventId, eventRows[0].id),
-            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES])
+            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
+            ...(eventDayFilter ? [eventDayFilter] : [])
           )
         )
         .orderBy(sql`${vendors.businessName} COLLATE NOCASE`)
@@ -417,6 +436,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         products: parseJsonArray(r.products),
         description: r.description ? r.description.slice(0, 200) : null,
         boothInfo: r.boothInfo,
+        event_day_id: r.eventDayId,
+        event_day_date: r.eventDayDate, // YYYY-MM-DD or null for series-wide
       }));
 
       return {

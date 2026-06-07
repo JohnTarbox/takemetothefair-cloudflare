@@ -10,7 +10,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { registerAdminTools } from "../src/tools/admin.js";
-import { adminActions, eventVendors, events, promoters, users, vendors } from "../src/schema.js";
+import {
+  adminActions,
+  eventDays,
+  eventVendors,
+  events,
+  promoters,
+  users,
+  vendors,
+} from "../src/schema.js";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 const ENV = { MAIN_APP_URL: "https://meetmeatthefair.com", INTERNAL_API_KEY: "test-key" };
@@ -512,5 +520,147 @@ describe("regression: match-existing on Maine Cardworks shape (2026-06-05)", () 
     expect(fuzzy.isError).toBe(false);
     expect(fuzzy.payload?.was_created).toBe(false);
     expect(fuzzy.payload?.vendor_id).toBe("adc1d1b4");
+  });
+});
+
+// K18 Phase 1 — per-occurrence vendor links (drizzle/0114) -------------------
+
+function seedEventDay(eventId: string, id: string, date: string) {
+  db.insert(eventDays).values({ id, eventId, date, openTime: "10:00", closeTime: "18:00" }).run();
+  return id;
+}
+
+describe("K18 Phase 1 — event_day_id scoping", () => {
+  it("links a vendor series-wide by default (event_day_id omitted)", async () => {
+    const eid = seedEvent();
+    const { payload, isError } = await invoke({
+      event_id: eid,
+      business_name: "Series-wide Vendor",
+    });
+    expect(isError).toBe(false);
+    expect(payload?.was_linked).toBe(true);
+    const rows = db.select().from(eventVendors).where(eq(eventVendors.eventId, eid)).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].eventDayId).toBeNull();
+  });
+
+  it("scopes the link to a specific event_day when event_day_id is set", async () => {
+    const eid = seedEvent();
+    const dayId = seedEventDay(eid, "day-1", "2026-07-04");
+    const { payload, isError } = await invoke({
+      event_id: eid,
+      business_name: "Per-Day Vendor",
+      event_day_id: dayId,
+    });
+    expect(isError).toBe(false);
+    expect(payload?.was_linked).toBe(true);
+    const rows = db.select().from(eventVendors).where(eq(eventVendors.eventId, eid)).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].eventDayId).toBe(dayId);
+  });
+
+  it("allows a vendor to have BOTH a series-wide link AND a per-day link", async () => {
+    // The partial unique indexes treat NULL eventDayId as a distinct slot
+    // from any non-NULL — so "regular participant, plus has a featured slot
+    // on Jul 4" semantics work without manual deduplication.
+    const eid = seedEvent();
+    const dayId = seedEventDay(eid, "day-1", "2026-07-04");
+
+    const seriesWide = await invoke({ event_id: eid, business_name: "Hybrid Vendor" });
+    expect(seriesWide.isError).toBe(false);
+    expect(seriesWide.payload?.was_linked).toBe(true);
+
+    const perDay = await invoke({
+      event_id: eid,
+      business_name: "Hybrid Vendor",
+      event_day_id: dayId,
+      dedup_strategy: "strict",
+    });
+    expect(perDay.isError).toBe(false);
+    expect(perDay.payload?.was_linked).toBe(true);
+    // Both rows should exist for the same (event, vendor) — separated only
+    // by event_day_id (NULL vs the day uuid).
+    const rows = db.select().from(eventVendors).where(eq(eventVendors.eventId, eid)).all();
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.eventDayId === null)).toBe(true);
+    expect(rows.some((r) => r.eventDayId === dayId)).toBe(true);
+  });
+
+  it("re-running the same series-wide call is idempotent (was_already_linked)", async () => {
+    // The dedup query keys on (event_id, vendor_id, IS NULL event_day_id)
+    // for the second call, finds the first row, and returns the existing
+    // link rather than failing on the partial-unique-index.
+    const eid = seedEvent();
+    const first = await invoke({ event_id: eid, business_name: "Repeat Vendor" });
+    expect(first.payload?.was_linked).toBe(true);
+    const second = await invoke({
+      event_id: eid,
+      business_name: "Repeat Vendor",
+      dedup_strategy: "strict",
+    });
+    expect(second.isError).toBe(false);
+    expect(second.payload?.was_already_linked).toBe(true);
+    expect(second.payload?.was_linked).toBe(false);
+    const rows = db.select().from(eventVendors).where(eq(eventVendors.eventId, eid)).all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("re-running the same per-day call is idempotent", async () => {
+    const eid = seedEvent();
+    const dayId = seedEventDay(eid, "day-1", "2026-07-04");
+    const first = await invoke({
+      event_id: eid,
+      business_name: "Repeat Per-Day Vendor",
+      event_day_id: dayId,
+    });
+    expect(first.payload?.was_linked).toBe(true);
+    const second = await invoke({
+      event_id: eid,
+      business_name: "Repeat Per-Day Vendor",
+      event_day_id: dayId,
+      dedup_strategy: "strict",
+    });
+    expect(second.isError).toBe(false);
+    expect(second.payload?.was_already_linked).toBe(true);
+    const rows = db.select().from(eventVendors).where(eq(eventVendors.eventId, eid)).all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("rejects an event_day_id that doesn't exist", async () => {
+    const eid = seedEvent();
+    const { isError, errorText } = await invoke({
+      event_id: eid,
+      business_name: "Missing Day Vendor",
+      event_day_id: "nonexistent-day-id",
+    });
+    expect(isError).toBe(true);
+    expect(errorText).toContain("event_day_id not found");
+  });
+
+  it("rejects an event_day_id that belongs to a different event", async () => {
+    seedEvent({ id: "event-A", slug: "ev-a" });
+    const eidB = seedEvent({ id: "event-B", slug: "ev-b", promoterId: "promoter-1" });
+    const dayOfA = seedEventDay("event-A", "day-of-a", "2026-08-01");
+    const { isError, errorText } = await invoke({
+      event_id: eidB,
+      business_name: "Cross-Event Vendor",
+      event_day_id: dayOfA,
+    });
+    expect(isError).toBe(true);
+    expect(errorText).toContain("Cross-event scoping is not allowed");
+  });
+
+  it("supports two vendors on the same event_day (partial unique allows distinct vendor_ids)", async () => {
+    const eid = seedEvent();
+    const dayId = seedEventDay(eid, "day-1", "2026-07-04");
+    const a = await invoke({ event_id: eid, business_name: "Vendor A", event_day_id: dayId });
+    const b = await invoke({ event_id: eid, business_name: "Vendor B", event_day_id: dayId });
+    expect(a.isError).toBe(false);
+    expect(b.isError).toBe(false);
+    expect(a.payload?.was_linked).toBe(true);
+    expect(b.payload?.was_linked).toBe(true);
+    const rows = db.select().from(eventVendors).where(eq(eventVendors.eventId, eid)).all();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.eventDayId === dayId)).toBe(true);
   });
 });
