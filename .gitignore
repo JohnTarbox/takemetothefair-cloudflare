@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /mcp-server/node_modules
+/apex-worker/node_modules
 /packages/*/node_modules
 /.pnp
 .pnp.js
