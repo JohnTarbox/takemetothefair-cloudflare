@@ -29,6 +29,7 @@ import { formatAuthorName, unsafeSlug } from "@/lib/utils";
 import { TableOfContents } from "@/components/blog/table-of-contents";
 import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
+import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300;
@@ -149,9 +150,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       siteName: "Meet Me at the Fair",
       type: "article",
       ...(post.publishDate && { publishedTime: new Date(post.publishDate).toISOString() }),
+      // IMG1 (2026-06-07) — sized 1200×630 derivatives + format=auto so
+      // social previews don't drag the full upload-pipeline master.
       images: [
         {
-          url: post.featuredImageUrl || "https://meetmeatthefair.com/og-default.png",
+          url: cdnImage(
+            post.featuredImageUrl || "https://meetmeatthefair.com/og-default.png",
+            OG_EVENT
+          ),
           width: 1200,
           height: 630,
           alt: post.title,
@@ -162,7 +168,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       card: "summary_large_image",
       title: post.title,
       description,
-      images: [post.featuredImageUrl || "https://meetmeatthefair.com/og-default.png"],
+      images: [
+        cdnImage(post.featuredImageUrl || "https://meetmeatthefair.com/og-default.png", OG_EVENT),
+      ],
     },
   };
 }

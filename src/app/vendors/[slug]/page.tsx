@@ -50,6 +50,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { canonicalParentSlugFor, type DisplayableParent } from "@/lib/vendor-hierarchy";
+import { cdnImage, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -400,11 +401,22 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       url,
       siteName: "Meet Me at the Fair",
       type: "website",
+      // IMG1 (2026-06-07) — sized derivatives for both branches.
+      // Vendor logos use OG_SQUARE (1200×1200) since most vendor "images"
+      // are square logos that would crop badly into 1200×630. Square OG
+      // shows correctly in Slack/iMessage previews and FB/LinkedIn
+      // letterbox cleanly. Vendors without a logo fall back to the
+      // landscape og-default at OG_EVENT (1200×630).
       images: [
         vendor.logoUrl
-          ? { url: vendor.logoUrl, width: 400, height: 400, alt: businessName }
+          ? {
+              url: cdnImage(vendor.logoUrl, OG_SQUARE),
+              width: 1200,
+              height: 1200,
+              alt: businessName,
+            }
           : {
-              url: "https://meetmeatthefair.com/og-default.png",
+              url: cdnImage("https://meetmeatthefair.com/og-default.png", OG_EVENT),
               width: 1200,
               height: 630,
               alt: businessName,
@@ -415,7 +427,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       card: "summary_large_image",
       title: businessName,
       description,
-      images: [vendor.logoUrl || "https://meetmeatthefair.com/og-default.png"],
+      images: [
+        cdnImage(
+          vendor.logoUrl || "https://meetmeatthefair.com/og-default.png",
+          vendor.logoUrl ? OG_SQUARE : OG_EVENT
+        ),
+      ],
     },
   };
 }

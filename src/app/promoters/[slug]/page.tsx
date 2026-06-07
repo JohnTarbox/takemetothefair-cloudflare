@@ -38,6 +38,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { unsafeSlug } from "@/lib/utils";
+import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300; // 5-minute ISR
@@ -148,7 +149,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     `${promoter.companyName}${locationStr ? ` in ${locationStr}` : ""} hosts ${eventCount > 0 ? `${eventCount} event${eventCount === 1 ? "" : "s"}` : "events"} on Meet Me at the Fair. Browse upcoming and past events, contact the organizer, and discover their work.`;
   const url = `https://meetmeatthefair.com/promoters/${promoter.slug}`;
 
-  const og = promoter.logoUrl ?? "https://meetmeatthefair.com/og-default.png";
+  // IMG1 (2026-06-07) — landscape (1200×630) variant matches the existing
+  // declared OG dims. Promoter logos that happen to be square will be
+  // letterboxed (fit=cover would chop them); accepting that trade-off
+  // to stay consistent with the original declaration. If a square OG
+  // variant for promoters is desired later, mirror the vendor split
+  // (logoUrl → OG_SQUARE, fallback → OG_EVENT).
+  const og = cdnImage(promoter.logoUrl ?? "https://meetmeatthefair.com/og-default.png", OG_EVENT);
   return {
     title,
     description,
