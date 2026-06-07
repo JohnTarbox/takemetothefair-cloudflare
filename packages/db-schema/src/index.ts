@@ -779,16 +779,36 @@ export const eventVendors = sqliteTable(
     })
       .default("EXHIBITOR")
       .notNull(),
+    // F — K18 Phase 1 (drizzle/0114, 2026-06-06). Optional per-occurrence
+    // scoping for recurring-event series. NULL = series-wide (regular
+    // participant, applies to every occurrence — preserves pre-K18
+    // behavior). Set = vendor participates on THIS event_day only.
+    // ON DELETE CASCADE — when an event_day is deleted, its date-scoped
+    // vendor links go with it; series-wide (NULL) links are untouched.
+    eventDayId: text("event_day_id").references(() => eventDays.id, { onDelete: "cascade" }),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
   (table) => [
     index("idx_eventvendors_eventid_status").on(table.eventId, table.status),
     index("idx_eventvendors_vendorid").on(table.vendorId),
-    // Closes the race in update_vendor_status / create_or_link_vendor where
-    // SELECT-then-INSERT could yield duplicate (event,vendor) rows under
-    // concurrent calls. Added 2026-05-10.
-    uniqueIndex("idx_eventvendors_event_vendor_unique").on(table.eventId, table.vendorId),
+    // K18 Phase 1: new index shapes for per-occurrence queries.
+    index("idx_eventvendors_event_day_id").on(table.eventId, table.eventDayId),
+    index("idx_eventvendors_vendor_day_id").on(table.vendorId, table.eventDayId),
+    // K18 Phase 1 replaces the unconditional (event_id, vendor_id) unique
+    // with two partial indexes (SQLite NULL-distinct gotcha — a bare
+    // UNIQUE(event_id, vendor_id, event_day_id) would NOT prevent two
+    // series-wide rows for the same pair). Partial (a) enforces at most
+    // one series-wide row per (event, vendor); partial (b) enforces at
+    // most one per-day row per (event, vendor, event_day_id). A vendor
+    // linked both series-wide AND on a specific date is intentionally
+    // allowed — "regular participant, plus has a featured slot on Jul 3".
+    uniqueIndex("idx_eventvendors_series_unique")
+      .on(table.eventId, table.vendorId)
+      .where(sql`${table.eventDayId} IS NULL`),
+    uniqueIndex("idx_eventvendors_perday_unique")
+      .on(table.eventId, table.vendorId, table.eventDayId)
+      .where(sql`${table.eventDayId} IS NOT NULL`),
   ]
 );
 

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { and, eq, isNull, like } from "drizzle-orm";
-import { adminActions, eventVendors, events, users, vendors } from "../schema.js";
+import { adminActions, eventDays, eventVendors, events, users, vendors } from "../schema.js";
 import {
   PARTICIPATION_TYPE_ENUM,
   PAYMENT_STATUS_ENUM,
@@ -217,6 +217,13 @@ export function registerCreateOrLinkVendorTool(
         .describe(
           "If true, queue the IndexNow ping in pending_search_pings instead of firing inline. Drain with flush_pending_search_pings at end of batch. Default false."
         ),
+      event_day_id: z
+        .string()
+        .optional()
+        .nullable()
+        .describe(
+          "K18 Phase 1: optional per-occurrence scoping for recurring-event series. Omitted / null → series-wide (regular participant, applies to every occurrence — default, preserves pre-K18 behavior). Set → vendor participates on THIS event_day only. The id MUST belong to an event_day of `event_id`; cross-event ids are rejected. A vendor linked both series-wide AND on a specific date is allowed."
+        ),
     },
     async (params) => {
       // Runtime defaults + sanitization. Zod handles these at the boundary in
@@ -392,6 +399,40 @@ export function registerCreateOrLinkVendorTool(
       }
 
       // 4. UPSERT event_vendors
+      // K18 Phase 1 — resolve + validate optional per-occurrence scoping.
+      // `event_day_id` must (a) exist and (b) belong to the same event the
+      // link is being created on. Cross-event ids are a data-quality error
+      // and we reject before any write. NULL/omitted → series-wide.
+      const eventDayId = params.event_day_id ?? null;
+      if (eventDayId !== null) {
+        const dayRows = await db
+          .select({ id: eventDays.id, eventId: eventDays.eventId })
+          .from(eventDays)
+          .where(eq(eventDays.id, eventDayId))
+          .limit(1);
+        if (dayRows.length === 0) {
+          return {
+            content: [{ type: "text", text: `event_day_id not found: ${eventDayId}` }],
+            isError: true,
+          };
+        }
+        if (dayRows[0].eventId !== params.event_id) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `event_day_id ${eventDayId} belongs to event ${dayRows[0].eventId}, not ${params.event_id}. Cross-event scoping is not allowed.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      // Dedup keys on (event_id, vendor_id, event_day_id). The partial-
+      // unique-index split in drizzle/0114 means a series-wide row and a
+      // per-day row for the same (event, vendor) pair are both allowed —
+      // so we look up by the FULL key, treating NULL as a distinct slot.
       const linkRows = await db
         .select({
           id: eventVendors.id,
@@ -400,7 +441,15 @@ export function registerCreateOrLinkVendorTool(
           participationType: eventVendors.participationType,
         })
         .from(eventVendors)
-        .where(and(eq(eventVendors.eventId, params.event_id), eq(eventVendors.vendorId, vendorId)))
+        .where(
+          and(
+            eq(eventVendors.eventId, params.event_id),
+            eq(eventVendors.vendorId, vendorId),
+            eventDayId === null
+              ? isNull(eventVendors.eventDayId)
+              : eq(eventVendors.eventDayId, eventDayId)
+          )
+        )
         .limit(1);
 
       let was_linked = false;
@@ -418,6 +467,7 @@ export function registerCreateOrLinkVendorTool(
           paymentStatus,
           participationType,
           boothInfo: params.booth_info ?? null,
+          eventDayId,
         });
         was_linked = true;
       } else {
@@ -503,6 +553,7 @@ export function registerCreateOrLinkVendorTool(
         payloadJson: JSON.stringify({
           event_id: params.event_id,
           vendor_id: vendorId,
+          event_day_id: eventDayId,
           was_created,
           was_linked,
           was_already_linked,
