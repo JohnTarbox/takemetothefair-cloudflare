@@ -53,7 +53,7 @@ export function DirectClaimButton({ vendorSlug }: Props) {
   return (
     <div className="mt-3 inline-flex flex-col gap-2">
       <Button size="sm" onClick={handleClick} disabled={status === "sending"}>
-        {status === "sending" ? "Claiming…" : "Claim this listing now"}
+        {status === "sending" ? "Claiming…" : "Claim this free listing now"}
       </Button>
       {message && (
         <p className="text-sm text-terracotta max-w-md" role="alert">

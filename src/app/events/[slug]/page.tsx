@@ -919,8 +919,12 @@ export default async function EventDetailPage({ params }: Props) {
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-gray-900 flex items-center gap-2">
                       <span className="truncate">{ev.vendor.businessName}</span>
+                      {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
+                          custom (text-[10px], rounded not rounded-full) to preserve
+                          the inline-with-business-name layout; only the color pair
+                          moves to amber-light + amber-bg-fg (~17:1 contrast). */}
                       {showSponsorBadge && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800">
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-light text-amber-bg-fg">
                           Sponsor
                         </span>
                       )}

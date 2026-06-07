@@ -6,6 +6,7 @@ import { useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { Menu, X, User, LogOut, Settings, Calendar, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { GlobalSearch } from "./global-search";
 
 export function Header() {
@@ -221,13 +222,19 @@ export function Header() {
           </div>
 
           <div className="md:hidden">
-            <button
+            {/* U7 (2026-06-07) — migrated to IconButton primitive so the
+                hit-area floor (min 40×40 at size="md") is enforced at the
+                type level and the required-aria-label prop guarantees a
+                WCAG 4.1.2 name even if a future refactor strips the prop.
+                Dynamic aria-label still works at runtime. -mr-2 keeps the
+                prior visual alignment against the viewport edge. */}
+            <IconButton
+              size="md"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="text-gray-600 hover:text-gray-900 p-2.5 -mr-2.5"
+              icon={mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
               aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
-            >
-              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
+              className="-mr-2"
+            />
           </div>
         </div>
 

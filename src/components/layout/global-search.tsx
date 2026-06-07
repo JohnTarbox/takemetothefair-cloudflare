@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import { trackEvent, trackSearchResults, trackZeroResults } from "@/lib/analytics";
 import { displayVenueName } from "@/lib/venue-display";
 
@@ -98,14 +99,16 @@ export function GlobalSearch() {
       results.blogPosts.length > 0);
 
   if (!open) {
+    // U7 (2026-06-07) — migrated trigger to IconButton. Primitive enforces
+    // a 40×40 min hit area at size="md" (up from the prior ~28×28 of
+    // icon + p-1 padding), satisfying WCAG 2.2 AA 2.5.8 on dense headers.
     return (
-      <button
+      <IconButton
+        size="md"
         onClick={() => setOpen(true)}
-        className="text-gray-500 hover:text-gray-700 transition-colors p-1"
+        icon={<Search className="w-5 h-5" />}
         aria-label="Search"
-      >
-        <Search className="w-5 h-5" />
-      </button>
+      />
     );
   }
 
@@ -127,16 +130,21 @@ export function GlobalSearch() {
           placeholder="Search events, venues, vendors, blog..."
           className="w-40 md:w-56 text-sm border-none outline-none bg-transparent"
         />
-        <button
+        {/* U7 (2026-06-07) — pre-migration this <button> rendered an
+            icon-only X with NO aria-label (WCAG 4.1.2 violation) and no
+            explicit hit area. IconButton's required-aria-label prop catches
+            the missing-name shape at compile time; size="sm" enforces the
+            32×32 hit-area floor. */}
+        <IconButton
+          size="sm"
           onClick={() => {
             setOpen(false);
             setQuery("");
             setResults(null);
           }}
-          className="text-gray-600 hover:text-gray-600"
-        >
-          <X className="w-4 h-4" />
-        </button>
+          icon={<X className="w-4 h-4" />}
+          aria-label="Close search"
+        />
       </div>
 
       {/* Dropdown */}
