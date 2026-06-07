@@ -13,39 +13,51 @@ type CategoryColors = {
   accent: string;
 };
 
+// Design System keystone PR 2 (2026-06-07) — migrate raw hex `accent`
+// literals to `var(--accent-*)` references. The hex values themselves
+// don't change in PR 2 (light theme equivalent), but reading via CSS
+// vars means PR 4's `.dark` selector can re-theme all category accent
+// bars in one place. JS callers continue to consume the `accent` field
+// as a string (CSS supports `var()` inside `style={{ backgroundColor }}`,
+// so consumers like the inline accent-bar rendering work without change).
+//
+// Backgrounds/icons/badges still use Tailwind utility classes; those
+// migrate per-surface in PR 3 (event-detail / vendor-detail sweep) as
+// part of the broader gray-literal → semantic-token migration.
+
 const GOLD: CategoryColors = {
   bg: "bg-amber-light",
   icon: "text-amber-fg",
   badge: "bg-amber-light text-amber-bg-fg",
-  accent: "#E8960C",
+  accent: "var(--accent-gold)",
 };
 
 const TERRACOTTA: CategoryColors = {
   bg: "bg-terracotta-light",
   icon: "text-terracotta",
   badge: "bg-terracotta-light text-stone-900",
-  accent: "#D97757",
+  accent: "var(--accent-terracotta)",
 };
 
 const SAGE: CategoryColors = {
   bg: "bg-sage-50",
   icon: "text-sage-700",
   badge: "bg-sage-50 text-sage-700",
-  accent: "#6B7E5E",
+  accent: "var(--accent-sage)",
 };
 
 const NAVY_SOFT: CategoryColors = {
   bg: "bg-stone-100",
   icon: "text-navy",
   badge: "bg-stone-100 text-navy",
-  accent: "#1E2761",
+  accent: "var(--accent-navy-soft)",
 };
 
 const STONE_CRAFT: CategoryColors = {
   bg: "bg-stone-50",
   icon: "text-stone-600",
   badge: "bg-stone-50 text-stone-900",
-  accent: "#6F6455",
+  accent: "var(--accent-stone)",
 };
 
 const CATEGORY_COLORS: Record<string, CategoryColors> = {
