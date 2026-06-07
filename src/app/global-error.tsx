@@ -115,6 +115,11 @@ export default function GlobalError({
               </div>
             </div>
 
+            {/* B5 SMOKE DEPENDENCY (K2 Phase A, 2026-06-07): the post-deploy
+                smoke at .github/workflows/deploy.yml greps for the FetchError
+                H1 text below to fail on error-UI-rendered-at-200. Coordinate
+                any copy change with the smoke step. See
+                docs/k2-spike-status-rewrite.md for the underlying K2 context. */}
             <h1
               style={{
                 fontSize: "1.5rem",

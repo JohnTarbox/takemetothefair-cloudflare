@@ -123,14 +123,28 @@ jobs:
             head -c 2000 /tmp/smoke-events.html
             exit 1
           fi
-          echo "Smoke: known-good venue must return 200"
-          test "$(curl -fsS -o /dev/null -w '%{http_code}' \
-            'https://meetmeatthefair.com/venues/abbot-square')" = "200" \
-            || { echo "FAIL: /venues/abbot-square not 200"; exit 1; }
-          echo "Smoke: known-good promoter must return 200"
-          test "$(curl -fsS -o /dev/null -w '%{http_code}' \
-            'https://meetmeatthefair.com/promoters/american-consumer-shows')" = "200" \
-            || { echo "FAIL: /promoters/american-consumer-shows not 200"; exit 1; }
+          # K2 Phase A (d) (2026-06-07): extend status-only smoke to also
+          # assert the K1 FetchError UI was NOT rendered. `curl -fsS` saving
+          # to disk inherits the existing status-200 check; the grep covers
+          # the error-UI-rendered-at-200 case the 2026-06-04 D1 outage
+          # surfaced (page renders error.tsx but HTTP status is still 200,
+          # so smoke + crawlers + monitoring all think it's healthy). The
+          # H1 text grepped here is set in src/app/error.tsx — see the JSX
+          # comment above that H1 before changing copy.
+          echo "Smoke: known-good venue must return 200 AND not render K1 error UI"
+          curl -fsS 'https://meetmeatthefair.com/venues/abbot-square' -o /tmp/smoke-venue.html
+          if grep -q 'Service temporarily unavailable' /tmp/smoke-venue.html; then
+            echo "FAIL: /venues/abbot-square rendered the K1 error UI (FetchError)"
+            head -c 2000 /tmp/smoke-venue.html
+            exit 1
+          fi
+          echo "Smoke: known-good promoter must return 200 AND not render K1 error UI"
+          curl -fsS 'https://meetmeatthefair.com/promoters/american-consumer-shows' -o /tmp/smoke-promoter.html
+          if grep -q 'Service temporarily unavailable' /tmp/smoke-promoter.html; then
+            echo "FAIL: /promoters/american-consumer-shows rendered the K1 error UI (FetchError)"
+            head -c 2000 /tmp/smoke-promoter.html
+            exit 1
+          fi
           echo "Smoke passed."
 
   deploy-mcp-server:
