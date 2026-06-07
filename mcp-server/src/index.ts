@@ -321,12 +321,24 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
       | undefined;
     if (!transport || typeof transport.send !== "function") return;
 
-    // Per-DO map of intake-recorded (requestId -> connection.id). Each
-    // entry is removed when send() is called for that id. We only consult
-    // it on the collision branch, so a missed delete on the happy path
-    // leaks at most one entry per request — bounded by concurrent in-
-    // flight count, not by lifetime traffic.
-    const intakeConnByReqId = new Map<unknown, string>();
+    // Per-DO map of intake-recorded (requestId -> Set<connection.id>).
+    //
+    // K19 (2026-06-07): upgraded from `Map<unknown, string>` to a multi-
+    // valued set so two concurrent intakes that share a JSON-RPC id no
+    // longer clobber each other. The original wrap correctly handled the
+    // single-collision case at send time, but `intakeConnByReqId.set(id,
+    // connId)` overwrote on key collision — so when subagent B's intake
+    // arrived after A's with id=1, A's tracking was lost, A's send picked
+    // up B's connection id from the map, and A's response was routed to
+    // B's socket. The test file explicitly documented this gap at
+    // transport-collision-fix.test.ts:213-251 but didn't fix it.
+    //
+    // We remove a specific connection.id from its set at send time once
+    // we know which connection that response was for (via the routing
+    // decision). If the set goes empty, the key is dropped. Memory is
+    // bounded by concurrent in-flight count, same as the single-valued
+    // version was.
+    const intakeConnByReqId = new Map<unknown, Set<string>>();
 
     // Hook onmessage to record the originating connection at intake time.
     // Defense in depth: any throw inside the recording branch is caught so
@@ -339,7 +351,14 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
           const message = m as { id?: unknown };
           if (message && message.id !== undefined && message.id !== null) {
             const { connection } = getCurrentAgent();
-            if (connection?.id) intakeConnByReqId.set(message.id, connection.id);
+            if (connection?.id) {
+              let set = intakeConnByReqId.get(message.id);
+              if (!set) {
+                set = new Set<string>();
+                intakeConnByReqId.set(message.id, set);
+              }
+              set.add(connection.id);
+            }
           }
         } catch {
           /* never block intake on tracking failure */
@@ -352,32 +371,72 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
     const getConnsArr = (): ConnectionLike[] =>
       Array.from(this.getConnections() ?? []) as ConnectionLike[];
 
+    // Remove a single connection.id from the intake set for `reqId`,
+    // dropping the key when the set is exhausted. No-op if reqId is
+    // nullish or the set is missing. Called from each routing branch
+    // with the connection.id we actually routed to (or attempted to);
+    // the surviving entries belong to other concurrent in-flight calls.
+    const consumeIntake = (reqId: unknown, connectionId: string | undefined): void => {
+      if (reqId === undefined || reqId === null) return;
+      const set = intakeConnByReqId.get(reqId);
+      if (!set) return;
+      if (connectionId) set.delete(connectionId);
+      // Clear the key if exhausted, OR if we couldn't identify the
+      // connection (no connectionId) — that branch falls back to the
+      // pre-K19 behavior of dropping the key, preventing an unbounded
+      // leak when both signals are unavailable.
+      if (!connectionId || set.size === 0) {
+        intakeConnByReqId.delete(reqId);
+      }
+    };
+
     transport.send = async (m: unknown, o?: { relatedRequestId?: unknown }) => {
       const message = m as { id?: unknown };
       const reqId = o?.relatedRequestId ?? message?.id;
 
-      const tracked =
+      const intakeConnectionIds =
         reqId !== undefined && reqId !== null ? intakeConnByReqId.get(reqId) : undefined;
-      if (reqId !== undefined && reqId !== null) intakeConnByReqId.delete(reqId);
 
-      const decision = decideSendRouting(getConnsArr(), reqId, tracked);
+      // K19: read the send-time async-context connection as the strongest
+      // disambiguating signal. When ALS propagates from intake → tool
+      // callback → send (the common case), this uniquely identifies the
+      // originating connection regardless of how many concurrent intakes
+      // collided on the same id. Wrapped in try/catch because some SDK
+      // paths historically broke ALS, in which case we fall back to the
+      // intake set.
+      let sendTimeConnectionId: string | undefined;
+      try {
+        sendTimeConnectionId = getCurrentAgent().connection?.id;
+      } catch {
+        /* ALS unavailable — rely on intake set */
+      }
+
+      const decision = decideSendRouting(getConnsArr(), reqId, {
+        sendTimeConnectionId,
+        intakeConnectionIds,
+      });
 
       if (decision.kind === "passthrough") {
+        consumeIntake(reqId, decision.matched?.id ?? sendTimeConnectionId);
         return originalSend(m, o);
       }
 
       if (decision.kind === "ambiguous") {
+        // Broken request — drop the entire key so subsequent calls aren't
+        // poisoned by stale intake entries from the failed batch.
+        if (reqId !== undefined && reqId !== null) intakeConnByReqId.delete(reqId);
         console.error(
-          `[MCP/#121] response routing ambiguous for request id ${String(reqId)} — refusing send to prevent wrong-shape response. Matching connections: ${decision.matchedIds.join(", ")}`
+          `[MCP/#121] response routing ambiguous for request id ${String(reqId)} — refusing send to prevent wrong-shape response. Matching connections: ${decision.matchedIds.join(", ")}; sendTimeConn=${sendTimeConnectionId ?? "none"}; intakeConns=${intakeConnectionIds ? Array.from(intakeConnectionIds).join(",") : "none"}`
         );
         throw new Error(
-          `MCP response routing ambiguous for request id ${String(reqId)}; ${decision.matchedIds.length} connections collide and intake-tracked connection is unavailable. Caller should re-fetch the underlying record.`
+          `MCP response routing ambiguous for request id ${String(reqId)}; ${decision.matchedIds.length} connections collide and no send-time signal disambiguates. Caller should re-fetch the underlying record.`
         );
       }
 
       // decision.kind === "fixed" — direct-write to the correct connection.
+      consumeIntake(reqId, decision.connection.id);
       console.warn(
-        `[MCP/#121] collision routed to tracked connection ${decision.connection.id} for request id ${String(reqId)} (bypassed buggy find())`
+        `[MCP/#121] collision routed to connection ${decision.connection.id} via ${decision.via} for request id ${String(reqId)} (bypassed buggy find())`
       );
       await sendViaConnection(transport, decision.connection, m, reqId);
     };

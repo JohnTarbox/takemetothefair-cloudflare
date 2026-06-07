@@ -23,65 +23,118 @@ function conn(id: string, requestIds: unknown[]): ConnectionLike {
 
 describe("decideSendRouting", () => {
   it("passes through when requestId is undefined", () => {
-    expect(decideSendRouting([], undefined, undefined)).toEqual({ kind: "passthrough" });
+    const result = decideSendRouting([], undefined, {});
+    expect(result).toEqual({ kind: "passthrough", matched: undefined });
   });
 
   it("passes through when requestId is null", () => {
     const c = conn("c1", [1]);
-    expect(decideSendRouting([c], null, "c1")).toEqual({ kind: "passthrough" });
+    const result = decideSendRouting([c], null, { sendTimeConnectionId: "c1" });
+    expect(result).toEqual({ kind: "passthrough", matched: undefined });
   });
 
   it("passes through when no connection matches the requestId", () => {
     const c = conn("c1", [99]);
-    expect(decideSendRouting([c], 42, undefined)).toEqual({ kind: "passthrough" });
+    const result = decideSendRouting([c], 42, {});
+    expect(result).toEqual({ kind: "passthrough", matched: undefined });
   });
 
-  it("passes through when exactly one connection matches", () => {
+  it("passes through when exactly one connection matches (matched surfaced for intake cleanup)", () => {
     const c = conn("c1", [42]);
-    expect(decideSendRouting([c], 42, undefined)).toEqual({ kind: "passthrough" });
+    const result = decideSendRouting([c], 42, {});
+    expect(result).toEqual({ kind: "passthrough", matched: c });
   });
 
-  it("returns fixed when multiple connections match and tracked connection is one of them", () => {
+  it("returns fixed via intakeIntersection when multiple match and exactly one intake-recorded connection is among them", () => {
     // Reproduces the analyst-reported bug shape: two parallel MCP calls
-    // both have id=42 in their state. Without a tracked connection, the
-    // original transport's find() would arbitrarily route to c1; the
-    // fix routes to whichever was actually tracked at intake.
+    // both have id=42 in their state. The intake set recorded only one
+    // (the other connection hasn't fired intake yet, or its intake was
+    // already consumed by an earlier send). Without disambiguation the
+    // original transport's find() would arbitrarily route to c1.
     const c1 = conn("c1", [42]);
     const c2 = conn("c2", [42]);
-    const result = decideSendRouting([c1, c2], 42, "c2");
-    expect(result).toEqual({ kind: "fixed", connection: c2 });
+    const result = decideSendRouting([c1, c2], 42, {
+      intakeConnectionIds: new Set(["c2"]),
+    });
+    expect(result).toEqual({ kind: "fixed", connection: c2, via: "intakeIntersection" });
   });
 
-  it("ambiguous when multiple connections match and no tracked connection", () => {
+  it("returns fixed via sendTimeContext when ALS pinpoints the originating connection", () => {
+    // K19 case: two concurrent subagents both have id=42 in flight. The
+    // intake set holds BOTH connection ids (the pre-K19 code would have
+    // overwritten — this multi-value set is the fix). Send-time ALS
+    // identifies which response we're processing right now. sendTime
+    // wins because it's the response's own context identity.
     const c1 = conn("c1", [42]);
     const c2 = conn("c2", [42]);
-    const result = decideSendRouting([c1, c2], 42, undefined);
+    const result = decideSendRouting([c1, c2], 42, {
+      sendTimeConnectionId: "c1",
+      intakeConnectionIds: new Set(["c1", "c2"]),
+    });
+    expect(result).toEqual({ kind: "fixed", connection: c1, via: "sendTimeContext" });
+  });
+
+  it("falls back from sendTime to intakeIntersection when sendTimeConnectionId is not in matches", () => {
+    // Defensive fallback — ALS may have leaked context from an unrelated
+    // path (e.g. a different connection's tick). If sendTime points
+    // outside the match set, we ignore it and try the intake-set.
+    const c1 = conn("c1", [42]);
+    const c2 = conn("c2", [42]);
+    const result = decideSendRouting([c1, c2], 42, {
+      sendTimeConnectionId: "c-vanished",
+      intakeConnectionIds: new Set(["c1"]),
+    });
+    expect(result).toEqual({ kind: "fixed", connection: c1, via: "intakeIntersection" });
+  });
+
+  it("ambiguous when multiple connections match and no signals disambiguate", () => {
+    const c1 = conn("c1", [42]);
+    const c2 = conn("c2", [42]);
+    const result = decideSendRouting([c1, c2], 42, {});
     expect(result.kind).toBe("ambiguous");
     if (result.kind === "ambiguous") {
       expect(result.matchedIds).toEqual(["c1", "c2"]);
     }
   });
 
-  it("ambiguous when tracked connection no longer matches any current connection", () => {
-    // Intake recorded a connection that has since vanished or had its
-    // state replaced — we refuse to send rather than route arbitrarily.
+  it("ambiguous when intake set intersects matches in more than one place and no sendTime signal", () => {
+    // This is the case the pre-K19 single-valued map could NOT detect:
+    // both concurrent intakes recorded, both connections still in
+    // matches, and ALS broke (no sendTime). We refuse rather than guess.
     const c1 = conn("c1", [42]);
     const c2 = conn("c2", [42]);
-    const result = decideSendRouting([c1, c2], 42, "vanished");
+    const result = decideSendRouting([c1, c2], 42, {
+      intakeConnectionIds: new Set(["c1", "c2"]),
+    });
+    expect(result.kind).toBe("ambiguous");
+  });
+
+  it("ambiguous when tracked connection no longer matches any current connection", () => {
+    // All signals point to vanished connections — refuse to send rather
+    // than route arbitrarily.
+    const c1 = conn("c1", [42]);
+    const c2 = conn("c2", [42]);
+    const result = decideSendRouting([c1, c2], 42, {
+      sendTimeConnectionId: "vanished-a",
+      intakeConnectionIds: new Set(["vanished-b"]),
+    });
     expect(result.kind).toBe("ambiguous");
   });
 
   it("handles string requestIds (some clients send strings)", () => {
     const c1 = conn("c1", ["req-1"]);
     const c2 = conn("c2", ["req-1"]);
-    const result = decideSendRouting([c1, c2], "req-1", "c1");
-    expect(result).toEqual({ kind: "fixed", connection: c1 });
+    const result = decideSendRouting([c1, c2], "req-1", {
+      sendTimeConnectionId: "c1",
+    });
+    expect(result).toEqual({ kind: "fixed", connection: c1, via: "sendTimeContext" });
   });
 
   it("ignores connections with missing or non-array state.requestIds", () => {
     const partial: ConnectionLike = { id: "c-broken" };
     const good = conn("c-good", [42]);
-    expect(decideSendRouting([partial, good], 42, undefined)).toEqual({ kind: "passthrough" });
+    const result = decideSendRouting([partial, good], 42, {});
+    expect(result).toEqual({ kind: "passthrough", matched: good });
   });
 
   it("returns the same connection reference (not a copy) on fixed", () => {
@@ -89,7 +142,9 @@ describe("decideSendRouting", () => {
     // call writeSSEEvent and read its state.
     const c1 = conn("c1", [42]);
     const c2 = conn("c2", [42]);
-    const result = decideSendRouting([c1, c2], 42, "c1");
+    const result = decideSendRouting([c1, c2], 42, {
+      sendTimeConnectionId: "c1",
+    });
     expect(result.kind).toBe("fixed");
     if (result.kind === "fixed") {
       expect(result.connection).toBe(c1);
@@ -199,66 +254,38 @@ describe("end-to-end concurrent-response regression", () => {
     return { transport, writeSSEEvent };
   }
 
-  it("routes each response to its originating connection on id collision", async () => {
+  it("interleaved intake/send: each response routes to its originating connection", async () => {
+    // The original (pre-K19) scenario: intake A, send A, intake B, send B.
+    // No concurrent intake collision because send A clears the entry before
+    // B's intake records. The single-valued and multi-valued maps both
+    // handle this identically.
     const { transport, writeSSEEvent } = makeFakeTransport();
     const cA = conn("cA", [1]);
     const cB = conn("cB", [1]);
     const allConnections: ConnectionLike[] = [cA, cB];
 
-    // Intake order: A first, then B — both with id=1.
-    // Track originating connection at intake.
-    const tracked = new Map<unknown, string>();
-    tracked.set(1, "cA"); // A's intake
-    // We can't double-record — only one (id->conn) tracking entry exists
-    // at a time per requestId. When B's intake fires (a moment later),
-    // it overwrites:
-    tracked.set(1, "cB");
-    // Then A's send fires first — but A's tracked entry was clobbered.
-    // The fix handles this correctly: A's send sees the wrong tracked
-    // value and routes to cB. That's WRONG for A.
-    //
-    // Reality is finer-grained: each (connection, requestId) pair is
-    // unique because state.requestIds is set on the originating
-    // connection only. To model this, we record AT INTAKE per request
-    // (which is what the production wrap does), but we also delete
-    // the entry when send fires (also matching production). Let's
-    // walk through the realistic timeline:
-    tracked.clear();
+    const intake = new Map<unknown, Set<string>>();
 
-    // T=0: A's POST arrives. Intake records 1->cA.
-    tracked.set(1, "cA");
-    // T=1: B's POST arrives. Intake records 1->cB — overwriting A's entry.
-    tracked.set(1, "cB");
-    // T=2: A's tool handler completes; transport.send is called for id=1.
-    //      The wrap reads `tracked.get(1)` (now "cB"), routes to cB.
-    //      WRONG.
-    //
-    // This is a known limitation of the single-entry intake map: when
-    // two intakes happen before either send fires, the second clobbers
-    // the first. In practice this rarely matters because the agents
-    // transport sets state.requestIds per-connection, so cA's state only
-    // contains [1] and cB's state only contains [1] — meaning BOTH match,
-    // which is exactly the collision case. The fix favors the most-
-    // recently-tracked connection. To handle the strict-order case we
-    // would need a multi-valued map keyed by (connection.id, requestId),
-    // which requires the connection.id at send time — only available via
-    // async context (getCurrentAgent), which is what the integration
-    // wrap relies on.
-    //
-    // The asserted contract here is the simpler one: when only the most-
-    // recent intake matters (the common case — one POST in flight at a
-    // time, or interleaved send/intake), each response routes to its
-    // tracked connection.
+    const recordIntake = (id: unknown, connectionId: string) => {
+      let set = intake.get(id);
+      if (!set) {
+        set = new Set();
+        intake.set(id, set);
+      }
+      set.add(connectionId);
+    };
 
-    // Re-test with the realistic timeline: intake A, send A (clears),
-    // intake B, send B.
-    tracked.clear();
-
-    tracked.set(1, "cA");
-    let result = decideSendRouting(allConnections, 1, tracked.get(1));
-    tracked.delete(1);
+    // T=0: A's intake.
+    recordIntake(1, "cA");
+    let result = decideSendRouting(allConnections, 1, {
+      intakeConnectionIds: intake.get(1),
+    });
+    intake.delete(1);
     expect(result.kind).toBe("fixed");
-    if (result.kind === "fixed") expect(result.connection.id).toBe("cA");
+    if (result.kind === "fixed") {
+      expect(result.connection.id).toBe("cA");
+      expect(result.via).toBe("intakeIntersection");
+    }
     await sendViaConnection(
       transport,
       (result as { kind: "fixed"; connection: ConnectionLike }).connection,
@@ -266,9 +293,12 @@ describe("end-to-end concurrent-response regression", () => {
       1
     );
 
-    tracked.set(1, "cB");
-    result = decideSendRouting(allConnections, 1, tracked.get(1));
-    tracked.delete(1);
+    // T=1: B's intake.
+    recordIntake(1, "cB");
+    result = decideSendRouting(allConnections, 1, {
+      intakeConnectionIds: intake.get(1),
+    });
+    intake.delete(1);
     expect(result.kind).toBe("fixed");
     if (result.kind === "fixed") expect(result.connection.id).toBe("cB");
     await sendViaConnection(
@@ -278,8 +308,6 @@ describe("end-to-end concurrent-response regression", () => {
       1
     );
 
-    // Identity assertion: each write went to its own connection with its
-    // own payload, NEVER cross-routed.
     expect(writeSSEEvent).toHaveBeenCalledTimes(2);
     const [connFirst, msgFirst] = writeSSEEvent.mock.calls[0];
     const [connSecond, msgSecond] = writeSSEEvent.mock.calls[1];
@@ -289,13 +317,124 @@ describe("end-to-end concurrent-response regression", () => {
     expect((msgSecond as { result: { from: string } }).result.from).toBe("B");
   });
 
-  it("refuses to send when collision is detected with no intake record", async () => {
-    // The defensive-failure path. If somehow we end up at send with a
-    // collision but no tracked connection, the caller must see a loud
-    // error rather than a silent wrong-shape response.
+  it("K19 regression: concurrent intakes with same id, both pending at first send, route correctly via send-time ALS", async () => {
+    // The K19 scenario surfaced 2026-06-04 during the NH Farm, Forest &
+    // Garden Expo roster build. Three parallel subagents each issued
+    // create_vendor with overlapping JSON-RPC ids. The pre-K19 wrap's
+    // single-valued intake map clobbered on each new intake — so when
+    // A's send fired, the intake entry already belonged to whichever
+    // intake arrived last, and A's response was routed to the wrong
+    // socket. The test file at the time (lines 213-251) explicitly
+    // documented this as an unfixed limitation.
+    //
+    // The K19 fix: intake map is now Map<id, Set<connectionId>>, AND
+    // send time reads getCurrentAgent().connection?.id as a direct
+    // signal. When both signals are present, send-time ALS wins.
+    const { transport, writeSSEEvent } = makeFakeTransport();
     const cA = conn("cA", [1]);
     const cB = conn("cB", [1]);
-    const result = decideSendRouting([cA, cB], 1, undefined);
+    const allConnections: ConnectionLike[] = [cA, cB];
+
+    // T=0: A's intake records cA into the set for id=1.
+    // T=1: B's intake records cB into the same set BEFORE either send fires.
+    //      Pre-K19 this clobbered; now both coexist.
+    const intake = new Map<unknown, Set<string>>();
+    intake.set(1, new Set(["cA", "cB"]));
+
+    // T=2: A's tool callback completes; transport.send is called for id=1
+    //      with getCurrentAgent().connection.id === "cA" (ALS held).
+    let result = decideSendRouting(allConnections, 1, {
+      sendTimeConnectionId: "cA",
+      intakeConnectionIds: intake.get(1),
+    });
+    expect(result.kind).toBe("fixed");
+    if (result.kind === "fixed") {
+      expect(result.connection.id).toBe("cA");
+      expect(result.via).toBe("sendTimeContext");
+    }
+    // Send consumes only A's entry; B's stays for B's eventual send.
+    intake.get(1)!.delete("cA");
+    await sendViaConnection(
+      transport,
+      (result as { kind: "fixed"; connection: ConnectionLike }).connection,
+      { jsonrpc: "2.0", id: 1, result: { from: "A" } },
+      1
+    );
+
+    // T=3: B's send fires with ALS pointing at cB.
+    result = decideSendRouting(allConnections, 1, {
+      sendTimeConnectionId: "cB",
+      intakeConnectionIds: intake.get(1),
+    });
+    expect(result.kind).toBe("fixed");
+    if (result.kind === "fixed") {
+      expect(result.connection.id).toBe("cB");
+      expect(result.via).toBe("sendTimeContext");
+    }
+    await sendViaConnection(
+      transport,
+      (result as { kind: "fixed"; connection: ConnectionLike }).connection,
+      { jsonrpc: "2.0", id: 1, result: { from: "B" } },
+      1
+    );
+
+    // Each response went to its own connection — no cross-routing.
+    expect(writeSSEEvent).toHaveBeenCalledTimes(2);
+    const [connFirst, msgFirst] = writeSSEEvent.mock.calls[0];
+    const [connSecond, msgSecond] = writeSSEEvent.mock.calls[1];
+    expect((connFirst as ConnectionLike).id).toBe("cA");
+    expect((msgFirst as { result: { from: string } }).result.from).toBe("A");
+    expect((connSecond as ConnectionLike).id).toBe("cB");
+    expect((msgSecond as { result: { from: string } }).result.from).toBe("B");
+  });
+
+  it("K19 fallback: concurrent intakes survive ALS loss when sends interleave with intake consumption", async () => {
+    // ALS may be lost on some SDK paths (queued / buffered onmessage).
+    // In that case sendTimeConnectionId is undefined and we rely solely
+    // on the intake set. The set's intersection with the current matches
+    // disambiguates ONLY when the other concurrent intake has already
+    // been consumed by its own send. Realistic interleaving:
+    //
+    //   T=0: intake A — set = {cA}
+    //   T=1: intake B — set = {cA, cB}
+    //   T=2: send A (ALS lost) — set still {cA, cB}: ambiguous, refuse.
+    //
+    // This is the residual case the K19 fix doesn't fully close — it
+    // remains a "refuse rather than misroute" outcome. The caller sees a
+    // loud error and can retry. Importantly, the pre-K19 code would
+    // silently misroute here; the K19 fix at minimum turns silent
+    // corruption into a deterministic error.
+    const cA = conn("cA", [1]);
+    const cB = conn("cB", [1]);
+    const intake = new Map<unknown, Set<string>>();
+    intake.set(1, new Set(["cA", "cB"]));
+
+    const result = decideSendRouting([cA, cB], 1, {
+      intakeConnectionIds: intake.get(1),
+    });
+    expect(result.kind).toBe("ambiguous");
+
+    // Now the alternate timeline where B's send fires first (its intake
+    // consumed), then A's send fires alone with the set holding only cA.
+    // This is now disambiguable via intakeIntersection.
+    intake.get(1)!.delete("cB");
+    const second = decideSendRouting([cA, cB], 1, {
+      intakeConnectionIds: intake.get(1),
+    });
+    expect(second.kind).toBe("fixed");
+    if (second.kind === "fixed") {
+      expect(second.connection.id).toBe("cA");
+      expect(second.via).toBe("intakeIntersection");
+    }
+  });
+
+  it("refuses to send when collision is detected with no signals at all", () => {
+    // The defensive-failure path. If somehow we end up at send with a
+    // collision and neither signal disambiguates, the caller must see a
+    // loud error rather than a silent wrong-shape response.
+    const cA = conn("cA", [1]);
+    const cB = conn("cB", [1]);
+    const result = decideSendRouting([cA, cB], 1, {});
     expect(result.kind).toBe("ambiguous");
     if (result.kind === "ambiguous") {
       expect(result.matchedIds).toContain("cA");
