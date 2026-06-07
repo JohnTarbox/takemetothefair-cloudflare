@@ -24,6 +24,7 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 import { Pagination } from "@/components/ui/pagination";
+import { Badge } from "@/components/ui/badge";
 import { formatDateRange } from "@/lib/utils";
 import { haversineDistance } from "@/lib/geo";
 import { trackFilterApplied } from "@/lib/analytics";
@@ -1236,10 +1237,15 @@ export function EventsView({
                       >
                         {event.name}
                       </Link>
+                      {/* UX-R3 (2026-06-07) — consolidated to <Badge variant="warning">,
+                          which now renders amber-light + amber-bg-fg (~17:1 contrast)
+                          via the badge.tsx token migration. Matches the card-variant
+                          Featured badge at event-card.tsx:137 for visual consistency
+                          across grid + list views. */}
                       {event.featured && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                        <Badge variant="warning" className="ml-2">
                           Featured
-                        </span>
+                        </Badge>
                       )}
                       {event.status === "TENTATIVE" && (
                         <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-blue-800">

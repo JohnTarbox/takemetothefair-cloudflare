@@ -38,13 +38,13 @@ export function ClaimListingCTA({ businessName, vendorSlug, eligibleForDirectCla
           <p className="text-sm text-stone-700 mt-1">
             {eligibleForDirectClaim
               ? `Your account email matches the contact email on this listing — we can confirm ownership in one click.`
-              : `Claim ${decoded} to add a description, photos, and contact info — and help customers find you when they search.`}
+              : `Claim ${decoded} for free to add a description, photos, and contact info — and help customers find you when they search.`}
           </p>
           {eligibleForDirectClaim ? (
             <DirectClaimButton vendorSlug={vendorSlug} />
           ) : (
             <Link href={fallbackHref} className="mt-3 inline-block">
-              <Button size="sm">Claim this listing</Button>
+              <Button size="sm">Claim this free listing</Button>
             </Link>
           )}
         </div>

@@ -192,8 +192,12 @@ function RecurringScheduleView({
                       }
                     >
                       {formatTime(day.openTime)} - {formatTime(day.closeTime)}
+                      {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
+                          (text-xs, rounded not rounded-full) to match the inline
+                          time-row layout; color pair moves to amber-light +
+                          amber-bg-fg (~17:1 contrast vs the prior ~5:1). */}
                       {day.vendorOnly && showVendorDays === "badge" && (
-                        <span className="ml-2 inline-flex items-center text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                        <span className="ml-2 inline-flex items-center text-xs bg-amber-light text-amber-bg-fg px-1.5 py-0.5 rounded">
                           Vendor Setup
                         </span>
                       )}

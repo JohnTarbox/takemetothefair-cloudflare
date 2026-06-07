@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Filter, X } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 
 interface Props {
   children: React.ReactNode;
@@ -79,14 +80,18 @@ export function MobileFilterDrawer({ children, label = "Filters", activeCount }:
         >
           <div className="sticky top-0 z-10 flex items-center justify-between bg-white border-b border-stone-100 px-4 py-3">
             <span className="font-semibold text-stone-900">{label}</span>
-            <button
+            {/* U7 (2026-06-07) — migrated to IconButton primitive so the
+                hit-area floor (40×40 at size="md") is enforced at the type
+                level rather than padding-derived. -m-2 negative-margin nudge
+                dropped because IconButton's explicit min-w/h supersedes it
+                and the sticky header has its own px-4 py-3 spacing. */}
+            <IconButton
+              size="md"
               type="button"
               onClick={() => setOpen(false)}
+              icon={<X className="w-5 h-5" aria-hidden />}
               aria-label="Close filters"
-              className="p-2 -m-2 text-stone-600 hover:text-stone-900"
-            >
-              <X className="w-5 h-5" aria-hidden />
-            </button>
+            />
           </div>
           <div className="p-4">{children}</div>
           <div className="sticky bottom-0 bg-white border-t border-stone-100 px-4 py-3">
