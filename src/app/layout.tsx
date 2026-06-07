@@ -60,7 +60,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`bg-cream ${fraunces.variable} ${inter.variable}`}>
+    // Design System keystone PR 4 (2026-06-07):
+    //   - `suppressHydrationWarning` is REQUIRED by next-themes — their
+    //     pre-hydration <script> mutates className before React renders,
+    //     which would otherwise emit a "Warning: Prop className did not
+    //     match" hydration error. Per next-themes docs.
+    //   - Dropped hardcoded `bg-cream` from the className. The page bg
+    //     is now driven by the `:root { --background }` CSS var (defined
+    //     in globals.css PR 1) which the body styles consume. Keeping
+    //     `bg-cream` here would override the .dark theme on <html>.
+    <html lang="en" className={`${fraunces.variable} ${inter.variable}`} suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://www.googletagmanager.com" />
         <link rel="preconnect" href="https://challenges.cloudflare.com" />

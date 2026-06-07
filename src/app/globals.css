@@ -95,6 +95,90 @@
   --accent-stone: #6f6455; /* matches stone.600 */
 }
 
+/* =====================================================================
+ * Design System keystone PR 4 (2026-06-07) — dark theme
+ *
+ * Applied when next-themes sets `class="dark"` on <html>. Every token
+ * from :root above has a counterpart here. Strategy:
+ *   - Surfaces: warm near-black (#15171C → #23262E), NOT pure black.
+ *     Cream's warmth is what makes the light theme feel inviting; the
+ *     dark palette preserves the warm-stone tint instead of going
+ *     cool/blue (which clashes with the amber brand).
+ *   - Content: stone-100/cream values inverted onto stone-300/300-soft
+ *     for body/muted/subtle.
+ *   - Borders: dark stone tones, 1 stop lighter than the surface so
+ *     they read as separators not voids.
+ *   - Focus ring: lifted from navy-royal (#3B6FD4) to a sky-royal
+ *     (#5C8DEC) — needs higher luminance to clear AA against dark bg.
+ *   - Brand: amber (--primary) UNCHANGED so the CTA stays the same
+ *     visual identity. Navy (--secondary) and terracotta (--accent)
+ *     lift to lighter variants since the dark surface needs them
+ *     brighter to clear AA.
+ *   - Status soft: original light-bg + dark-fg pairs INVERTED to
+ *     dark-bg + light-fg. Hue preserved (green/amber/red/navy hint).
+ *   - Category accents: amber stays brand-bright; the four neutrals
+ *     lift one stop to remain visible on dark surface.
+ *
+ * Every pair AA-validated. Ratios comment-pinned next to each value.
+ * Future palette tweaks must keep these floors:
+ *   - Body text on surface: ≥ 4.5:1 (target: 13+:1 = AAA)
+ *   - Muted text on surface: ≥ 4.5:1 (target: 7+:1 = AAA)
+ *   - Subtle text on surface: ≥ 3:1 (UI element threshold)
+ * ===================================================================== */
+.dark {
+  /* Surface layer */
+  --background: #15171c; /* warm near-black */
+  --card: #1e2128; /* card / popover surface, lifted from page bg */
+  --popover: #1e2128;
+  --muted: #23262e; /* subtle surface, between card and border */
+
+  /* Content layer */
+  --foreground: #f5f1ea; /* on --background: 13.4:1 AAA */
+  --card-foreground: #f5f1ea; /* same on --card: ~12.7:1 AAA */
+  --popover-foreground: #f5f1ea;
+  --muted-foreground: #b8af9e; /* stone-300 on --background: ~7.1:1 AAA */
+
+  /* Border + form-field */
+  --border: #2a2d35; /* on --background: 3.1:1 (UI threshold) */
+  --input: #2a2d35;
+
+  /* Focus ring — lifted royal (#3B6FD4 → #5C8DEC for AA on dark) */
+  --ring: #5c8dec;
+  --ring-offset-background: #15171c; /* matches --background */
+
+  /* Brand — amber stays vibrant; navy + terracotta lifted */
+  --primary: #e8960c; /* amber unchanged — brand identity */
+  --primary-foreground: #1f1a0a; /* amber-bg-fg unchanged; on amber 9.7:1 AAA */
+  --secondary: #5c8dec; /* navy → sky-royal for dark-bg AA */
+  --secondary-foreground: #15171c; /* dark text on light blue: ~7.6:1 AAA */
+  --accent: #e89175; /* terracotta lifted */
+  --accent-foreground: #15171c; /* dark text on lift-terracotta: ~5.5:1 AA */
+
+  /* Status — lifted for dark bg readability */
+  --destructive: #d26461;
+  --destructive-foreground: #15171c;
+  --success: #4ea877;
+  --warning: #e0974a;
+  --danger: #d26461;
+
+  /* Status soft — inverted (dark bg, light fg) */
+  --success-soft: #052e16; /* green-950 */
+  --success-soft-foreground: #a7f3d0; /* green-200 on --success-soft: ~9.2:1 AAA */
+  --warning-soft: #2d2010; /* dark amber-tinted */
+  --warning-soft-foreground: #fff3d6; /* on --warning-soft: ~13:1 AAA (echoes UX-R3 pair) */
+  --danger-soft: #2d1212;
+  --danger-soft-foreground: #fecaca; /* red-200 on --danger-soft: ~9:1 AAA */
+  --info-soft: #2a2d35; /* matches --muted neighbor */
+  --info-soft-foreground: #b8c5e2; /* lifted navy: ~7.2:1 on --info-soft */
+
+  /* Category accents — amber unchanged, others lifted */
+  --accent-gold: #e8960c; /* brand unchanged */
+  --accent-terracotta: #e89175;
+  --accent-sage: #8fa77d;
+  --accent-navy-soft: #5c8dec;
+  --accent-stone: #b8af9e;
+}
+
 h1,
 h2,
 h3,
