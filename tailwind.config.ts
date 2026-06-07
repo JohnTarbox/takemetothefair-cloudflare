@@ -98,63 +98,52 @@ const config: Config = {
         "accent-sage": "var(--accent-sage)",
         "accent-navy-soft": "var(--accent-navy-soft)",
         "accent-stone": "var(--accent-stone)",
-        // ===== Existing brand palette (pre-keystone) — preserved as-is.
-        // Subsequent PRs (2-3) will migrate consumers from these names
-        // to the semantic tokens above where appropriate, but the brand
-        // (amber/navy specifically) stays usable both ways so primary
-        // CTAs can keep their visual identity intact across themes.
+        // ===== Brand palette — CSS-var-backed (keystone follow-up, 2026-06-07)
+        //
+        // Originally these were hardcoded hex literals (light-only). Per the
+        // MMATF-UIUX-DarkMode-Punchlist-2026-06.md punch-list, that caused
+        // every `text-navy`, `text-amber-fg`, `text-royal`, `bg-amber-light`
+        // call across 60+ files to NOT theme — logo invisible at 1.16:1,
+        // date badges at 2.73:1, etc. Brand tokens now reference CSS vars
+        // declared in globals.css with light + dark values (see :root and
+        // .dark there), so every existing consumer themes automatically
+        // without a per-callsite migration sweep.
+        //
+        // WCAG contrast notes (Cohort 6 / UX-R3 / Cohort 6 EVE 2026-06-01)
+        // are preserved at the CSS-var declaration site in globals.css.
         navy: {
-          DEFAULT: "#1E2761",
-          dark: "#131838",
+          DEFAULT: "var(--navy)",
+          dark: "var(--navy-dark)",
         },
-        royal: "#3B6FD4",
+        royal: "var(--royal)",
         amber: {
-          DEFAULT: "#E8960C",
-          light: "#FFF3D6",
-          dark: "#B5730A",
-          // Cohort 6 (analyst, 2026-06-01) — WCAG AA-safe foreground
-          // for amber text. amber.DEFAULT (#E8960C) measures 2.39:1
-          // on white — below the 4.5:1 floor — so this token splits
-          // the role: backgrounds keep DEFAULT (no design change),
-          // foreground text uses .fg (≈ 5.7:1 on white, 5.4:1 on
-          // cream #FAF7F2). amber.dark (#B5730A → 4.79:1) was the
-          // pre-existing escape hatch — keep it for badge/icon use
-          // where AA is satisfied. Use .fg for body / label text.
-          fg: "#8B5A05",
-          // UX-R3 (analyst, 2026-06-01 EVE) — dark text token for
-          // text that sits ON an amber surface. amber.dark on
-          // amber.light measures ~3.65:1 (below the 4.5:1 AA floor
-          // for body text), and amber.dark on amber.DEFAULT collapses
-          // entirely (~2.4:1). This near-black achieves AAA on every
-          // amber variant we render: ~17:1 on amber.light (#FFF3D6),
-          // ~9.7:1 on amber.DEFAULT (#E8960C), ~5.4:1 on amber.dark
-          // (#B5730A). Use as `text-amber-bg-fg` everywhere body or
-          // label text sits on an amber background — filter chips,
-          // pills, badges with amber backdrops. Distinct from .fg
-          // (amber text on white) which is the inverse axis.
-          "bg-fg": "#1F1A0A",
+          DEFAULT: "var(--amber)",
+          light: "var(--amber-light)",
+          dark: "var(--amber-dark)",
+          fg: "var(--amber-fg)",
+          "bg-fg": "var(--amber-bg-fg)",
         },
-        cream: "#FAF7F2",
+        cream: "var(--cream)",
         terracotta: {
-          DEFAULT: "#D97757",
-          light: "#F5D9CD",
+          DEFAULT: "var(--terracotta)",
+          light: "var(--terracotta-light)",
         },
         stone: {
-          50: "#F5F1EA",
-          100: "#EBE5DA",
-          300: "#B8AF9E",
-          600: "#6F6455",
-          900: "#2A2521",
+          50: "var(--stone-50)",
+          100: "var(--stone-100)",
+          300: "var(--stone-300)",
+          600: "var(--stone-600)",
+          900: "var(--stone-900)",
         },
         sage: {
-          50: "#EEF2EA",
-          700: "#4A5B3D",
+          50: "var(--sage-50)",
+          700: "var(--sage-700)",
         },
-        success: "#2F7D4E",
-        warning: "#C47A1F",
-        danger: "#A13834",
+        success: "var(--success)",
+        warning: "var(--warning)",
+        danger: "var(--danger)",
         "brand-blue": {
-          light: "#D6E4F7",
+          light: "var(--brand-blue-light)",
         },
       },
       fontFamily: {

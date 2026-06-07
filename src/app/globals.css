@@ -93,6 +93,48 @@
   --accent-sage: #6b7e5e; /* unique to category palette */
   --accent-navy-soft: #1e2761; /* matches navy.DEFAULT */
   --accent-stone: #6f6455; /* matches stone.600 */
+
+  /* ===== BRAND palette — keystone follow-up (2026-06-07) =====
+   *
+   * Pre-follow-up these were hardcoded hex in tailwind.config.ts and
+   * didn't theme. The MMATF-UIUX-DarkMode-Punchlist-2026-06.md audit
+   * caught the gap (invisible logo, unreadable date badges, broken
+   * links). Now CSS-var-backed with light + dark values, so every
+   * existing `text-navy`/`bg-amber-light`/etc. call themes automatically.
+   *
+   * Light values match the pre-follow-up hex exactly — no light-mode
+   * regression. Dark values lifted for AA on #15171C surface.
+   *
+   * WCAG contrast notes (Cohort 6 + UX-R3 + Cohort 6 EVE, 2026-06-01):
+   *   - amber.DEFAULT (#E8960C) measures 2.39:1 on white — below the
+   *     4.5:1 AA floor. Splits the role: backgrounds keep DEFAULT;
+   *     foreground text uses --amber-fg (5.7:1 on white).
+   *   - amber.dark (#B5730A → 4.79:1 on white) was the pre-existing
+   *     escape hatch — kept for badge/icon use.
+   *   - amber-bg-fg (#1F1A0A) is the near-black "text ON amber" pair:
+   *     17:1 on amber.light, 9.7:1 on amber.DEFAULT, 5.4:1 on amber.dark.
+   *     In DARK mode the amber-light bg becomes dark, so amber-bg-fg
+   *     INVERTS to light text to maintain the on-amber-surface pair.
+   */
+  --navy: #1e2761;
+  --navy-dark: #131838;
+  --royal: #3b6fd4;
+  --amber: #e8960c;
+  --amber-light: #fff3d6;
+  --amber-dark: #b5730a;
+  --amber-fg: #8b5a05;
+  --amber-bg-fg: #1f1a0a;
+  --cream: #faf7f2;
+  --terracotta: #d97757;
+  --terracotta-light: #f5d9cd;
+  --stone-50: #f5f1ea;
+  --stone-100: #ebe5da;
+  --stone-300: #b8af9e;
+  --stone-600: #6f6455;
+  --stone-900: #2a2521;
+  --sage-50: #eef2ea;
+  --sage-700: #4a5b3d;
+  --brand-blue-light: #d6e4f7;
 }
 
 /* =====================================================================
@@ -177,6 +219,45 @@
   --accent-sage: #8fa77d;
   --accent-navy-soft: #5c8dec;
   --accent-stone: #b8af9e;
+
+  /* ===== BRAND palette — dark counterparts (keystone follow-up, 2026-06-07)
+   *
+   * Strategy:
+   *   - Amber DEFAULT unchanged — brand identity stays vibrant amber.
+   *   - Navy + royal lifted because navy on dark = invisible. The lift
+   *     targets ~5:1+ on --background (#15171C).
+   *   - Cream becomes the dark surface (matches --background dark).
+   *   - amber-light flips from "warm-pale bg" to "warm-dark bg" so pills
+   *     still read as a soft amber tint, just on the dark side.
+   *   - amber-fg / amber-dark are foreground-on-light tokens; on dark
+   *     they need lifting so amber TEXT is readable on dark bg.
+   *   - amber-bg-fg flips from near-black to warm-cream so text-on-amber
+   *     surfaces (where amber-light now = dark) stay legible.
+   *   - stone-50 → stone-300: inverted lightness so muted surfaces +
+   *     muted text stay readable on dark.
+   *   - sage + terracotta: lifted to match the --accent-* dark values.
+   *   - brand-blue-light flips from soft-blue-bg to dark-navy-bg so the
+   *     "blue tint" surface intent (sign-in role badges, etc.) survives.
+   * ===================================================================== */
+  --navy: #5c8dec; /* on --background: 7.6:1 AAA — matches --secondary dark */
+  --navy-dark: #3b6fd4; /* on --background: 5.2:1 AA */
+  --royal: #7aa6ee; /* link/accent on dark — 9.1:1 AAA */
+  --amber: #e8960c; /* unchanged — brand identity */
+  --amber-light: #2d2010; /* warm-dark backdrop for pills/chips */
+  --amber-dark: #f4ae3e; /* amber text on dark bg: 6.9:1 AAA */
+  --amber-fg: #f4ae3e; /* same as --amber-dark on dark — single accessible amber */
+  --amber-bg-fg: #fff3d6; /* on --amber-light (dark in dark theme): 13:1 AAA */
+  --cream: #15171c; /* page-bg role flips with theme — matches --background */
+  --terracotta: #e89175; /* lifted — matches --accent dark */
+  --terracotta-light: #3d2620; /* warm-dark backdrop */
+  --stone-50: #23262e; /* matches --muted dark */
+  --stone-100: #2a2d35; /* matches --border dark */
+  --stone-300: #6f6455; /* roles INVERT — was light surface, now muted */
+  --stone-600: #b8af9e; /* on --background: 7.1:1 AAA — body-ish muted */
+  --stone-900: #f5f1ea; /* body text — matches --foreground dark */
+  --sage-50: #1f2922; /* warm-dark sage backdrop */
+  --sage-700: #8fa77d; /* lifted sage — matches --accent-sage dark */
+  --brand-blue-light: #1a2540; /* dark navy-blue backdrop, was light blue */
 }
 
 h1,
