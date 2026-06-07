@@ -81,6 +81,17 @@ export default function GlobalError({
   return (
     <html lang="en">
       <body>
+        {/* K2 Phase B marker (2026-06-07): the apex Worker
+            (apex-worker/src/index.ts) inspects the rendered HTML for this
+            data attribute and rewrites the response status to 500 when
+            present. Gated on isFetchError so only true data-fetch
+            failures trigger the rewrite. Test pin:
+            apex-worker/__tests__/inspect.test.ts. */}
+        {isFetchError && (
+          <span data-x-render-error="fetch" hidden>
+            fetch
+          </span>
+        )}
         <div
           style={{
             minHeight: "60vh",

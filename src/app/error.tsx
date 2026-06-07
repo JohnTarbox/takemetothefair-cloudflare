@@ -32,6 +32,16 @@ export default function Error({
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center px-4">
+      {/* K2 Phase B marker (2026-06-07): the apex Worker (apex-worker/src/index.ts)
+          inspects the rendered HTML for this data attribute and rewrites the
+          response status to 500 when present. Gated on isFetchError so only
+          true data-fetch failures trigger the rewrite — non-fatal client-side
+          errors keep their 200. Test pin: apex-worker/__tests__/inspect.test.ts. */}
+      {isFetchError && (
+        <span data-x-render-error="fetch" hidden>
+          fetch
+        </span>
+      )}
       <div className="text-center max-w-md">
         <div className="mb-6 flex justify-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">

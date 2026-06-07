@@ -192,3 +192,53 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: mcp-server
           command: deploy --var GIT_SHA:${{ steps.vars.outputs.git_sha }} --var BUILD_TIME:${{ steps.vars.outputs.build_time }}
+
+  # K2 Phase B (2026-06-07): the apex Worker that proxies
+  # meetmeatthefair.com to the underlying Pages project and rewrites
+  # response status from 200 to 500 when the rendered HTML carries the
+  # K1 FetchError marker. See docs/k2-spike-status-rewrite.md and
+  # apex-worker/src/index.ts for the architecture.
+  #
+  # Phase B (PR 2): the Worker deploys but does NOT claim the apex
+  # route (wrangler.toml [[routes]] block is commented out). It's
+  # reachable only at meetmeatthefair-edge.<account>.workers.dev for
+  # verification.
+  #
+  # Phase C (PR 3): wrangler.toml claims meetmeatthefair.com/*; the
+  # next deploy of this job moves traffic through the Worker. A
+  # wildcard Worker route beats the Pages custom-domain route on
+  # Cloudflare's tiebreak (precedent: 2026-04-25 sitemap hotfix
+  # Worker, see CLAUDE.md).
+  deploy-apex-worker:
+    needs: d1-migrate
+    name: Build & Deploy Apex Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
+
+      - name: Install dependencies (workspace-aware, runs from root)
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy Apex Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apex-worker
+          command: deploy

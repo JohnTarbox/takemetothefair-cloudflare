@@ -5,6 +5,7 @@
   "type": "module",
   "workspaces": [
     "mcp-server",
+    "apex-worker",
     "packages/*"
   ],
   "scripts": {

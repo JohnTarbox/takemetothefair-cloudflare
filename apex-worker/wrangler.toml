@@ -1,0 +1,41 @@
+name = "meetmeatthefair-edge"
+main = "src/index.ts"
+workers_dev = true
+# Match the project-wide compat date established by mcp-server. Bumping
+# this requires re-verifying behavior against the Workers runtime in a
+# preview deploy first.
+compatibility_date = "2026-04-21"
+compatibility_flags = ["nodejs_compat"]
+
+# Smart Placement isn't useful here — the Worker's job is to proxy to
+# Pages, which itself runs at the edge. Default placement keeps the
+# Worker close to the client and lets the upstream fetch handle its own
+# routing.
+
+[vars]
+# Phase B default: proxy to the Pages project's default *.pages.dev URL.
+# This is the canonical reverse-proxy target — it's stable and bypasses
+# the apex custom domain (so the apex Worker can sit in front without
+# a routing loop).
+UPSTREAM = "https://takemetothefair.pages.dev"
+
+# Route claim DEFERRED to Phase C — DO NOT uncomment in PR 2.
+#
+# Phase C will uncomment this block to claim the apex route. Until
+# then, the Worker is only reachable at
+#   https://meetmeatthefair-edge.<account>.workers.dev
+# which is what we verify against before cutover.
+#
+# Per CLAUDE.md's historical note on the 2026-04-25 sitemap hotfix
+# Worker: a wildcard Worker route beats a Pages custom-domain route at
+# the apex on Cloudflare's tiebreak. So claiming meetmeatthefair.com/*
+# will move traffic through this Worker WITHOUT changing the Pages
+# project config.
+#
+# Rollback in Phase C: comment this block + re-deploy (Worker stays
+# alive, route releases back to Pages). See apex-worker/README.md
+# (added in Phase C) for full rollback runbook.
+#
+# [[routes]]
+# pattern = "meetmeatthefair.com/*"
+# zone_name = "meetmeatthefair.com"
