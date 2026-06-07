@@ -242,3 +242,40 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apex-worker
           command: deploy
+
+      # K2 Phase C apex-Worker post-deploy smoke (2026-06-07): after the
+      # cutover (PR 3), the Worker is on the serving path for every apex
+      # request. This smoke verifies known-good URLs continue to return
+      # 200 and that the Worker is NOT falsely rewriting them (no
+      # X-K2-Status-Rewrite header on healthy traffic). Catches catastrophic
+      # cutover regressions before users do. Hardcoded URLs only.
+      - name: Wait for apex Worker propagation
+        run: sleep 30
+      - name: Apex Worker post-deploy smoke
+        run: |
+          set -eu
+          echo "Smoke: apex /events through Worker returns 200 + no rewrite header"
+          curl -fsS -D /tmp/apex-events-headers.txt 'https://meetmeatthefair.com/events' -o /tmp/apex-events.html
+          if grep -qi '^x-k2-status-rewrite' /tmp/apex-events-headers.txt; then
+            echo "FAIL: /events returned X-K2-Status-Rewrite header on healthy traffic"
+            cat /tmp/apex-events-headers.txt
+            exit 1
+          fi
+          if ! grep -qE 'href="/events/[a-z0-9-]+"' /tmp/apex-events.html; then
+            echo "FAIL: /events through Worker rendered no event links"
+            head -c 2000 /tmp/apex-events.html
+            exit 1
+          fi
+          echo "Smoke: apex /venues/abbot-square through Worker returns 200 + no error UI"
+          curl -fsS -D /tmp/apex-venue-headers.txt 'https://meetmeatthefair.com/venues/abbot-square' -o /tmp/apex-venue.html
+          if grep -qi '^x-k2-status-rewrite' /tmp/apex-venue-headers.txt; then
+            echo "FAIL: /venues/abbot-square returned X-K2-Status-Rewrite header on healthy traffic"
+            cat /tmp/apex-venue-headers.txt
+            exit 1
+          fi
+          if grep -q 'Service temporarily unavailable' /tmp/apex-venue.html; then
+            echo "FAIL: /venues/abbot-square through Worker rendered K1 error UI"
+            head -c 2000 /tmp/apex-venue.html
+            exit 1
+          fi
+          echo "Apex Worker smoke passed."
