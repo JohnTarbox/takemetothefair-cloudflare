@@ -89,7 +89,7 @@ export default function ImportUrlPage() {
                 dispatch({ type: "SET_ERROR", error: "" });
                 dispatch({ type: "SET_MANUAL_PASTE", manualPaste: true });
               }}
-              className="inline-flex items-center px-3 py-1.5 rounded-md bg-amber text-navy text-xs font-semibold hover:bg-amber-dark transition-colors flex-shrink-0"
+              className="inline-flex items-center px-3 py-1.5 rounded-md bg-amber text-primary-foreground text-xs font-semibold hover:bg-amber-dark transition-colors flex-shrink-0"
             >
               Paste content manually instead
             </button>

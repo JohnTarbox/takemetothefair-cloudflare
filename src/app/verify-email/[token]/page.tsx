@@ -44,7 +44,7 @@ export default async function VerifyEmailPage({ params }: Props) {
               </p>
               <Link
                 href="/dashboard"
-                className="inline-block px-5 py-2.5 bg-amber text-navy font-semibold rounded-lg hover:bg-amber-dark transition-colors"
+                className="inline-block px-5 py-2.5 bg-amber text-primary-foreground font-semibold rounded-lg hover:bg-amber-dark transition-colors"
               >
                 Go to dashboard
               </Link>

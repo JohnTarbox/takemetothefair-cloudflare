@@ -42,8 +42,11 @@ export function StickyApplyBar({ label, href, scrollTarget }: Props) {
 
   if (!visible) return null;
 
+  // Contrast follow-up (2026-06-07) — text-navy on bg-amber is 5.4:1
+  // light / 1.12:1 dark (unreadable Sticky Apply on event-detail mobile).
+  // text-primary-foreground (#1F1A0A always) = 9.7:1 AAA both themes.
   const className =
-    "flex items-center justify-center w-full gap-2 px-4 py-3 rounded-lg bg-amber text-navy font-semibold shadow-lg";
+    "flex items-center justify-center w-full gap-2 px-4 py-3 rounded-lg bg-amber text-primary-foreground font-semibold shadow-lg";
 
   return (
     <div

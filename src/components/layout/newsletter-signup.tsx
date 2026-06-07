@@ -57,7 +57,10 @@ export function NewsletterSignup() {
           <button
             type="submit"
             disabled={status === "submitting" || !email}
-            className="px-4 py-2 rounded-md bg-amber text-navy font-semibold text-sm hover:bg-amber-dark disabled:opacity-50 transition-colors"
+            // Contrast follow-up (2026-06-07) — text-navy on bg-amber is
+            // 5.4:1 light / 1.12:1 dark (unreadable). text-primary-foreground
+            // (#1F1A0A always) gives 9.7:1 AAA in both themes.
+            className="px-4 py-2 rounded-md bg-amber text-primary-foreground font-semibold text-sm hover:bg-amber-dark disabled:opacity-50 transition-colors"
           >
             {status === "submitting" ? "…" : "Subscribe"}
           </button>
