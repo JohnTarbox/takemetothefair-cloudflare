@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import { Menu, X, User, LogOut, Settings, Calendar, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GlobalSearch } from "./global-search";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export function Header() {
   const { data: session, status } = useSession();
@@ -107,6 +108,10 @@ export function Header() {
 
           <div className="hidden md:flex md:items-center md:space-x-4">
             <GlobalSearch />
+            {/* PR 4 (2026-06-07) — theme toggle next to search.
+                IconButton size="md" (40×40) matches the GlobalSearch
+                trigger so visual alignment stays consistent. */}
+            <ThemeToggle />
             {status === "loading" ? (
               <div className="h-8 w-20 bg-muted rounded animate-pulse" />
             ) : session ? (
