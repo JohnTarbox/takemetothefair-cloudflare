@@ -58,6 +58,7 @@ import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
+import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
 import { registerEmailSenderTools } from "./admin-email-senders.js";
 import { registerSalvageInboundEmailTool } from "./admin-salvage-inbound-email.js";
 import { registerOgImageSweepTool } from "./admin-og-image-sweep.js";
@@ -138,6 +139,15 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // upload_image_bytes. Generic across event/vendor/venue. Phase 1 stores
   // bytes as-is; Phase 2 will add server-side optimization.
   registerUploadImageBytesTool(server, auth, env);
+
+  // K17 (2026-06-07): one-shot upload-slot tool. Returns a URL the
+  // model's local HTTP client can POST raw bytes to, sidestepping the
+  // ~500KB ceiling on base64-in-tool-argument that upload_image_bytes
+  // hits when the model balks at emitting long arg strings. Pairs with
+  // /api/admin/upload-image-slot + /api/admin/upload-image-direct/[token]
+  // on the main app; bytes flow Claude Desktop → main app directly,
+  // never round-tripping through the MCP channel.
+  registerRequestImageUploadSlotTool(server, auth, env);
 
   // Analyst F1 (2026-05-29): MCP wrappers for three highest-leverage
   // admin endpoints added in the 5/26 mega-shipment. Each one lets Claude
