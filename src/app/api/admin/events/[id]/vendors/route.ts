@@ -33,10 +33,19 @@ export async function GET(request: NextRequest, { params }: Params) {
 
   const db = getCloudflareDb();
   try {
+    // K18 Phase 2 (drizzle/0114, 2026-06-06): LEFT JOIN event_days so the
+    // admin UI gets the resolved date string per row in one roundtrip.
+    // event_day_id IS NULL on series-wide links -> eventDayDate is null,
+    // which the UI renders as "Regular participants".
     const eventVendorResults = await db
-      .select()
+      .select({
+        event_vendors: eventVendors,
+        vendors: vendors,
+        eventDayDate: eventDays.date,
+      })
       .from(eventVendors)
       .leftJoin(vendors, eq(eventVendors.vendorId, vendors.id))
+      .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
       .where(eq(eventVendors.eventId, id))
       .orderBy(sql`${vendors.businessName} COLLATE NOCASE`);
 
@@ -44,6 +53,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       .filter((ev) => ev.vendors !== null)
       .map((ev) => ({
         ...ev.event_vendors,
+        eventDayDate: ev.eventDayDate, // YYYY-MM-DD or null
         vendor: ev.vendors,
       }));
 

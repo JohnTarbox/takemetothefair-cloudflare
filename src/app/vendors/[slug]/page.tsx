@@ -18,7 +18,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { decodeHtmlEntities, formatDateRange, unsafeSlug } from "@/lib/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, users, eventVendors, events, venues, vendorSlugHistory } from "@/lib/db/schema";
+import {
+  vendors,
+  users,
+  eventVendors,
+  events,
+  venues,
+  eventDays,
+  vendorSlugHistory,
+} from "@/lib/db/schema";
+import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
 import { eq, and, asc, desc, sql, isNull } from "drizzle-orm";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
@@ -107,6 +116,11 @@ async function getVendor(slug: string) {
     // the projection. Downstream consumers in this file only access venue
     // name/address/city/state/zip (lines 703, 715); narrowing to those keeps
     // total cols at 9 + 62 + 6 = 77.
+    // K18 Phase 2 (drizzle/0114, 2026-06-06): LEFT JOIN event_days so the
+    // per-occurrence date string is available without a second roundtrip.
+    // event_day_id IS NULL for series-wide links -> the LEFT JOIN yields
+    // NULL for eventDayDate, which the render path interprets as "regular
+    // participant" (no per-date subtitle).
     const eventVendorResults = await db
       .select({
         event_vendors: eventVendors,
@@ -119,21 +133,61 @@ async function getVendor(slug: string) {
           state: venues.state,
           zip: venues.zip,
         },
+        eventDayDate: eventDays.date,
       })
       .from(eventVendors)
       .leftJoin(events, eq(eventVendors.eventId, events.id))
       .leftJoin(venues, eq(events.venueId, venues.id))
+      .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
       .where(and(eq(eventVendors.vendorId, vendor.vendors.id), isPublicVendorStatus()))
       .orderBy(asc(events.startDate));
 
-    const vendorEvents = eventVendorResults
-      .filter((ev) => ev.events !== null)
-      .map((ev) => ({
-        ...ev.event_vendors,
-        event: {
-          ...ev.events!,
-          venue: ev.venues ?? null,
-        },
+    // Aggregate by event.id: collapse multiple (event, vendor) links
+    // (e.g. series-wide PLUS a per-day link) into a single per-event row
+    // carrying an `occurrenceDates` array. Series-wide-only events get an
+    // empty occurrenceDates array; per-day-only or mixed events list the
+    // distinct dates the vendor is scoped to.
+    type EventWithVenue = NonNullable<(typeof eventVendorResults)[number]["events"]> & {
+      venue: (typeof eventVendorResults)[number]["venues"] | null;
+    };
+    interface VendorEventEntry {
+      event: EventWithVenue;
+      // The "lead" link row, preserved for the existing fields the render
+      // reads (status, paymentStatus, participationType, etc.).
+      event_vendors: (typeof eventVendorResults)[number]["event_vendors"];
+      /** Distinct per-day dates (YYYY-MM-DD) this vendor is scoped to for
+       *  this event, sorted chronologically. Empty -> series-wide only. */
+      occurrenceDates: string[];
+      /** True when ANY link for this (event, vendor) is series-wide. */
+      hasSeriesWide: boolean;
+    }
+    const byEventId = new Map<string, VendorEventEntry>();
+    for (const row of eventVendorResults) {
+      if (!row.events) continue;
+      const eid = row.events.id;
+      const existing = byEventId.get(eid);
+      if (existing) {
+        if (row.event_vendors.eventDayId == null) {
+          existing.hasSeriesWide = true;
+        } else if (row.eventDayDate && !existing.occurrenceDates.includes(row.eventDayDate)) {
+          existing.occurrenceDates.push(row.eventDayDate);
+        }
+      } else {
+        const isSeriesWide = row.event_vendors.eventDayId == null;
+        byEventId.set(eid, {
+          event: { ...row.events, venue: row.venues ?? null },
+          event_vendors: row.event_vendors,
+          occurrenceDates: !isSeriesWide && row.eventDayDate ? [row.eventDayDate] : [],
+          hasSeriesWide: isSeriesWide,
+        });
+      }
+    }
+    const vendorEvents = [...byEventId.values()]
+      .map((e) => ({
+        ...e.event_vendors,
+        event: e.event,
+        occurrenceDates: [...e.occurrenceDates].sort((a, b) => a.localeCompare(b)),
+        hasSeriesWide: e.hasSeriesWide,
       }))
       .sort((a, b) => {
         const aTime = a.event.startDate ? new Date(a.event.startDate).getTime() : 0;
@@ -708,47 +762,69 @@ export default async function VendorDetailPage({ params }: Props) {
                   )}
                 </div>
                 <div className="space-y-3">
-                  {upcomingEvents.slice(0, 6).map(({ event }) => (
-                    <Card key={event.id} className="hover:shadow-md transition-shadow">
-                      <CardContent className="p-4 flex items-center gap-4">
-                        <Link
-                          href={`/events/${event.slug}`}
-                          className="w-16 h-16 rounded-lg bg-brand-blue-light flex flex-col items-center justify-center text-royal"
-                        >
-                          <Calendar className="w-6 h-6" />
-                        </Link>
-                        <div className="flex-1">
-                          <Link href={`/events/${event.slug}`}>
-                            <h3 className="font-medium text-gray-900 hover:text-navy">
-                              {event.name}
-                            </h3>
+                  {upcomingEvents.slice(0, 6).map((ve) => {
+                    const { event } = ve;
+                    // K18 Phase 2 (2026-06-06): when the vendor has per-day
+                    // links for this event, show the specific occurrence
+                    // dates next to the event name. hasSeriesWide && per-day
+                    // -> "regular participant, with featured slots on ..."
+                    // per-day only -> just the dates. Series-wide only ->
+                    // omit (today's behavior).
+                    const hasPerDay = ve.occurrenceDates.length > 0;
+                    const occurrenceLabel = hasPerDay
+                      ? ve.occurrenceDates.map(formatOccurrenceDate).join(", ")
+                      : null;
+                    return (
+                      <Card key={event.id} className="hover:shadow-md transition-shadow">
+                        <CardContent className="p-4 flex items-center gap-4">
+                          <Link
+                            href={`/events/${event.slug}`}
+                            className="w-16 h-16 rounded-lg bg-brand-blue-light flex flex-col items-center justify-center text-royal"
+                          >
+                            <Calendar className="w-6 h-6" />
                           </Link>
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <span>{formatDateRange(event.startDate, event.endDate)}</span>
-                            <AddToCalendar
-                              title={event.name}
-                              description={event.description || undefined}
-                              location={
-                                event.venue
-                                  ? `${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}`
-                                  : undefined
-                              }
-                              startDate={event.startDate}
-                              endDate={event.endDate}
-                              url={`https://meetmeatthefair.com/events/${event.slug}`}
-                              variant="icon"
-                            />
+                          <div className="flex-1">
+                            <Link href={`/events/${event.slug}`}>
+                              <h3 className="font-medium text-gray-900 hover:text-navy">
+                                {event.name}
+                              </h3>
+                            </Link>
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                              <span>{formatDateRange(event.startDate, event.endDate)}</span>
+                              <AddToCalendar
+                                title={event.name}
+                                description={event.description || undefined}
+                                location={
+                                  event.venue
+                                    ? `${event.venue.name}, ${event.venue.address || ""}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip || ""}`
+                                    : undefined
+                                }
+                                startDate={event.startDate}
+                                endDate={event.endDate}
+                                url={`https://meetmeatthefair.com/events/${event.slug}`}
+                                variant="icon"
+                              />
+                            </div>
+                            {occurrenceLabel && (
+                              <p className="text-sm text-gray-700 mt-1">
+                                {ve.hasSeriesWide ? (
+                                  <>Regular participant + featured: {occurrenceLabel}</>
+                                ) : (
+                                  <>Attending: {occurrenceLabel}</>
+                                )}
+                              </p>
+                            )}
+                            {event.venue && (
+                              <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                                <MapPin className="w-3 h-3" />
+                                {event.venue.name}, {event.venue.city}
+                              </p>
+                            )}
                           </div>
-                          {event.venue && (
-                            <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                              <MapPin className="w-3 h-3" />
-                              {event.venue.name}, {event.venue.city}
-                            </p>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
                 {upcomingEvents.length > 6 && (
                   <div className="mt-4 text-center">

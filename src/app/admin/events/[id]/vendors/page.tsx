@@ -23,6 +23,13 @@ interface Vendor {
   canSelfConfirm: boolean;
 }
 
+interface EventDay {
+  id: string;
+  date: string; // YYYY-MM-DD
+  openTime: string;
+  closeTime: string;
+}
+
 interface EventVendor {
   id: string;
   eventId: string;
@@ -30,6 +37,12 @@ interface EventVendor {
   status: string;
   paymentStatus: string;
   boothInfo: string | null;
+  // K18 Phase 2 (drizzle/0114, 2026-06-06) — per-occurrence scoping.
+  // NULL = series-wide / regular participant; non-NULL = vendor on that
+  // specific date only. eventDayDate is the resolved YYYY-MM-DD from
+  // the LEFT JOIN to event_days in the GET handler.
+  eventDayId?: string | null;
+  eventDayDate?: string | null;
   vendor: Vendor;
 }
 
@@ -37,6 +50,9 @@ interface Event {
   id: string;
   name: string;
   commercialVendorsAllowed: boolean;
+  // K18 Phase 2 — the admin GET /api/admin/events/[id] already returns
+  // this; surfacing it lets the Add Vendor form show a per-day selector.
+  eventDays?: EventDay[];
 }
 
 export default function ManageEventVendorsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -50,6 +66,11 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
   const [showBulkAdd, setShowBulkAdd] = useState(false);
   const [selectedVendorId, setSelectedVendorId] = useState("");
   const [boothInfo, setBoothInfo] = useState("");
+  // K18 Phase 2 (2026-06-06): per-occurrence scoping for the single-vendor
+  // Add form. Empty string = series-wide (today's default); a UUID = scope
+  // to that event_day. Bulk-add uses the same default (series-wide); per-day
+  // bulk-add would need multi-select per row -- deferred to a later cycle.
+  const [selectedEventDayId, setSelectedEventDayId] = useState("");
   const [adding, setAdding] = useState(false);
 
   // Bulk add state
@@ -99,6 +120,9 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
           vendorId: selectedVendorId,
           status: "CONFIRMED",
           boothInfo: boothInfo || undefined,
+          // K18 Phase 2: empty string means series-wide (default); explicit
+          // null is what the API expects to omit the column from the INSERT.
+          eventDayId: selectedEventDayId || null,
         }),
       });
 
@@ -112,6 +136,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
       setShowAddForm(false);
       setSelectedVendorId("");
       setBoothInfo("");
+      setSelectedEventDayId("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add vendor");
     } finally {
@@ -438,6 +463,36 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                 )}
               </div>
 
+              {/* K18 Phase 2 — per-occurrence scoping. Only shown when the
+                  event actually has event_days (recurring or multi-day
+                  events). Single-date / no-event_days events default the
+                  link to series-wide and don't need a selector. */}
+              {event?.eventDays && event.eventDays.length > 0 && (
+                <div>
+                  <Label htmlFor="eventDayId">Scope (optional)</Label>
+                  <select
+                    id="eventDayId"
+                    value={selectedEventDayId}
+                    onChange={(e) => setSelectedEventDayId(e.target.value)}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Regular participant (all dates)</option>
+                    {event.eventDays
+                      .slice()
+                      .sort((a, b) => a.date.localeCompare(b.date))
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.date}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Leave on &quot;Regular participant&quot; for vendors that attend every
+                    occurrence. Pick a specific date for one-time featured slots.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <Label htmlFor="boothInfo">Booth Info (optional)</Label>
                 <Input
@@ -458,6 +513,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                     setShowAddForm(false);
                     setSelectedVendorId("");
                     setBoothInfo("");
+                    setSelectedEventDayId("");
                   }}
                 >
                   Cancel
@@ -510,6 +566,12 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                         </Link>
                         {ev.vendor.commercial && <Badge variant="default">Commercial</Badge>}
                         {ev.vendor.canSelfConfirm && <Badge variant="success">Self-Confirm</Badge>}
+                        {/* K18 Phase 2: per-occurrence scoping badge. Series-
+                            wide links (eventDayId IS NULL) get no badge -- the
+                            absence implies regular-participant per the docs. */}
+                        {ev.eventDayId && ev.eventDayDate && (
+                          <Badge variant="info">{ev.eventDayDate}</Badge>
+                        )}
                       </div>
                       {ev.vendor.vendorType && (
                         <p className="text-sm text-gray-500">{ev.vendor.vendorType}</p>
