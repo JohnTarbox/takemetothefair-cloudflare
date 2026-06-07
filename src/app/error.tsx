@@ -39,6 +39,11 @@ export default function Error({
           </div>
         </div>
 
+        {/* B5 SMOKE DEPENDENCY (K2 Phase A, 2026-06-07): the post-deploy
+            smoke at .github/workflows/deploy.yml greps for the FetchError
+            H1 text below to fail on error-UI-rendered-at-200. Coordinate
+            any copy change with the smoke step. See
+            docs/k2-spike-status-rewrite.md for the underlying K2 context. */}
         <h1 className="text-2xl font-bold text-gray-900 mb-2">
           {isFetchError ? "Service temporarily unavailable" : "Something went wrong"}
         </h1>
