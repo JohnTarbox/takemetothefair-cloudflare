@@ -103,7 +103,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
       <div className="h-1" style={{ backgroundColor: colors.accent }} />
       <Link href={`/events/${event.slug}`} className="block">
         <div
-          className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-gray-100" : colors.bg}`}
+          className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-muted" : colors.bg}`}
         >
           {event.imageUrl && !imgError ? (
             <Image
@@ -126,10 +126,8 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           )}
           {/* Date badge */}
           {monthAbbr && dayNum && (!event.imageUrl || imgError) && (
-            <div className="absolute bottom-3 left-3 bg-white rounded-lg shadow-sm px-2.5 py-1.5 text-center leading-tight">
-              <div className="text-[10px] font-semibold text-amber-fg tracking-wide">
-                {monthAbbr}
-              </div>
+            <div className="absolute bottom-3 left-3 bg-card rounded-lg shadow-sm px-2.5 py-1.5 text-center leading-tight">
+              <div className="text-xs font-semibold text-amber-fg tracking-wide">{monthAbbr}</div>
               <div className="text-lg font-bold text-navy -mt-0.5">{dayNum}</div>
             </div>
           )}
@@ -159,8 +157,8 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           />
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-lg text-gray-900 line-clamp-2">{event.name}</h3>
-          <div className="mt-2 space-y-1 text-sm text-gray-600">
+          <h3 className="font-semibold text-lg text-foreground line-clamp-2">{event.name}</h3>
+          <div className="mt-2 space-y-1 text-sm text-muted-foreground">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
@@ -215,7 +213,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           </div>
           {/* Scale & Indoor/Outdoor indicators */}
           {(event.eventScale || event.indoorOutdoor) && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
               {event.eventScale && (
                 <span
                   className="flex items-center gap-0.5"
@@ -285,8 +283,8 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
 
       {/* Vendors Grid */}
       {vendors.length > 0 && (
-        <div className="px-4 pb-4 pt-2 border-t border-gray-100">
-          <p className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1">
+        <div className="px-4 pb-4 pt-2 border-t border-border">
+          <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
             <Store className="w-3 h-3" />
             Vendors ({vendors.length})
           </p>
@@ -298,7 +296,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                 className="block group"
                 title={vendor.businessName}
               >
-                <div className="aspect-square rounded bg-gray-100 flex items-center justify-center overflow-hidden group-hover:ring-2 ring-royal transition-all relative">
+                <div className="aspect-square rounded bg-muted flex items-center justify-center overflow-hidden group-hover:ring-2 ring-royal transition-all relative">
                   {vendor.logoUrl ? (
                     <Image
                       src={vendor.logoUrl}
@@ -308,7 +306,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                       className="object-cover"
                     />
                   ) : (
-                    <Store className="w-4 h-4 text-gray-600" />
+                    <Store className="w-4 h-4 text-muted-foreground" />
                   )}
                 </div>
               </Link>
@@ -316,7 +314,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             {vendors.length > 8 && (
               <Link
                 href={`/events/${event.slug}`}
-                className="aspect-square rounded bg-gray-100 flex items-center justify-center text-xs text-gray-500 hover:bg-gray-200 transition-colors"
+                className="aspect-square rounded bg-muted flex items-center justify-center text-xs text-muted-foreground hover:bg-muted/80 transition-colors"
               >
                 +{vendors.length - 8}
               </Link>
