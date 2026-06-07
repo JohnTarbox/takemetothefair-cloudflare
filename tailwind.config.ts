@@ -8,6 +8,12 @@ const config: Config = {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
     "../mcw-calendar-grid/dist/**/*.js",
   ],
+  // Design System keystone PR 1 (2026-06-07) — switch from default 'media'
+  // to 'class' so a manual toggle (next-themes, PR 4) can control dark
+  // mode without losing `prefers-color-scheme` honoring. next-themes
+  // applies the `.dark` class to <html> and also respects the OS scheme
+  // by default via `enableSystem`.
+  darkMode: "class",
   theme: {
     extend: {
       keyframes: {
@@ -20,8 +26,63 @@ const config: Config = {
         "slide-up": "slide-up 0.2s ease-out",
       },
       colors: {
+        // ===== Design System keystone PR 1 (2026-06-07) — semantic tokens
+        //
+        // These map to CSS custom properties declared at :root in
+        // src/app/globals.css. PR 1 is pure plumbing (zero behavioral
+        // change); PR 2 migrates the primitives (Button/Badge/etc.) to
+        // these tokens; PR 4 adds dark-theme values under .dark.
+        //
+        // shadcn/ui naming convention is used because textarea.tsx
+        // already references border-input / bg-background /
+        // ring-offset-background / text-muted-foreground / ring-ring —
+        // wiring those names was the trigger for this PR's existence.
         background: "var(--background)",
         foreground: "var(--foreground)",
+        card: {
+          DEFAULT: "var(--card)",
+          foreground: "var(--card-foreground)",
+        },
+        popover: {
+          DEFAULT: "var(--popover)",
+          foreground: "var(--popover-foreground)",
+        },
+        muted: {
+          DEFAULT: "var(--muted)",
+          foreground: "var(--muted-foreground)",
+        },
+        border: "var(--border)",
+        input: "var(--input)",
+        ring: "var(--ring)",
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+        },
+        secondary: {
+          DEFAULT: "var(--secondary)",
+          foreground: "var(--secondary-foreground)",
+        },
+        accent: {
+          DEFAULT: "var(--accent)",
+          foreground: "var(--accent-foreground)",
+        },
+        destructive: {
+          DEFAULT: "var(--destructive)",
+          foreground: "var(--destructive-foreground)",
+        },
+        // Category accent palette (PR 2 migration target for
+        // src/lib/category-colors.ts). Exposed as `bg-accent-gold`,
+        // `text-accent-sage`, etc.
+        "accent-gold": "var(--accent-gold)",
+        "accent-terracotta": "var(--accent-terracotta)",
+        "accent-sage": "var(--accent-sage)",
+        "accent-navy-soft": "var(--accent-navy-soft)",
+        "accent-stone": "var(--accent-stone)",
+        // ===== Existing brand palette (pre-keystone) — preserved as-is.
+        // Subsequent PRs (2-3) will migrate consumers from these names
+        // to the semantic tokens above where appropriate, but the brand
+        // (amber/navy specifically) stays usable both ways so primary
+        // CTAs can keep their visual identity intact across themes.
         navy: {
           DEFAULT: "#1E2761",
           dark: "#131838",
