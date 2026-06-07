@@ -25,28 +25,67 @@ export interface ConnectionLike {
 }
 
 export type RouteDecision =
-  | { kind: "passthrough" }
-  | { kind: "fixed"; connection: ConnectionLike }
+  | { kind: "passthrough"; matched: ConnectionLike | undefined }
+  | { kind: "fixed"; connection: ConnectionLike; via: "sendTimeContext" | "intakeIntersection" }
   | { kind: "ambiguous"; matchedIds: readonly string[] };
+
+/**
+ * Signals available at send-time to disambiguate among colliding connections.
+ *
+ * Both signals are best-effort and may be absent in production:
+ *
+ *  - `sendTimeConnectionId` is `getCurrentAgent().connection?.id` at the
+ *    moment `transport.send` is invoked. When AsyncLocalStorage propagates
+ *    cleanly from intake → tool callback → send (the common case), this
+ *    uniquely identifies the originating connection and is the strongest
+ *    signal. If the SDK breaks ALS along the way (some buffered / queued
+ *    paths historically did), it will be undefined.
+ *
+ *  - `intakeConnectionIds` is the set of connections that recorded an
+ *    intake for this `requestId` and have not yet had their corresponding
+ *    response sent. Populated by the integration wrap's `onmessage` hook.
+ *    May contain ≥1 entries when two clients reuse a JSON-RPC id.
+ *
+ * The two signals are independent — both, either, or neither may be
+ * present. The decision logic prefers send-time ALS when available
+ * because it identifies the exact originating connection regardless of
+ * how many other connections intake-recorded the same id.
+ */
+export interface RoutingSignals {
+  sendTimeConnectionId?: string;
+  intakeConnectionIds?: ReadonlySet<string>;
+}
 
 /**
  * Decide how to route a `transport.send(requestId)` call.
  *
  *  - **passthrough**: no `requestId`, or ≤1 connection matches — the
- *    original transport behavior is correct; defer to it.
- *  - **fixed**: ≥2 connections match (collision) AND `trackedConnectionId`
- *    identifies one of them — direct-write to that connection.
- *  - **ambiguous**: ≥2 connections match AND no tracked connection
- *    disambiguates — refuse to send. Caller should surface a deterministic
- *    error rather than risk a wrong-shape response.
+ *    original transport behavior is correct; defer to it. `matched`
+ *    surfaces the single matching connection (or `undefined` if none)
+ *    so the caller can prune its intake bookkeeping precisely.
+ *  - **fixed**: ≥2 connections match (collision) AND a signal identifies
+ *    one of them — direct-write to that connection. `via` records which
+ *    signal won so production logs / canaries can distinguish "ALS held
+ *    through" from "ALS lost, intake-set saved us."
+ *  - **ambiguous**: ≥2 connections match AND no signal disambiguates —
+ *    refuse to send. Caller should surface a deterministic error rather
+ *    than risk a wrong-shape response.
+ *
+ * Preference order under collision:
+ *   1. `sendTimeConnectionId` (if it's in the match set) — strongest
+ *      because it's the response's own async-context identity.
+ *   2. `intakeConnectionIds ∩ matches`, when that intersection has
+ *      exactly one entry — covers the case where ALS broke but only
+ *      one of the colliding intakes is still in-flight.
+ *   3. ambiguous.
  */
 export function decideSendRouting(
   connections: readonly ConnectionLike[],
   requestId: unknown,
-  trackedConnectionId: string | undefined
+  signals: RoutingSignals
 ): RouteDecision {
   if (requestId === undefined || requestId === null) {
-    return { kind: "passthrough" };
+    return { kind: "passthrough", matched: undefined };
   }
 
   const matches = connections.filter((c) => {
@@ -55,13 +94,26 @@ export function decideSendRouting(
   });
 
   if (matches.length <= 1) {
-    return { kind: "passthrough" };
+    return { kind: "passthrough", matched: matches[0] };
   }
 
-  if (trackedConnectionId) {
-    const correct = matches.find((c) => c.id === trackedConnectionId);
+  // Signal 1: send-time AsyncLocalStorage. Strongest — the response's
+  // own context identifies its originating connection regardless of
+  // what concurrent intakes did.
+  if (signals.sendTimeConnectionId) {
+    const correct = matches.find((c) => c.id === signals.sendTimeConnectionId);
     if (correct) {
-      return { kind: "fixed", connection: correct };
+      return { kind: "fixed", connection: correct, via: "sendTimeContext" };
+    }
+  }
+
+  // Signal 2: intersection of intake-recorded connections with the
+  // current match set. Only definitive when exactly one survives —
+  // anything else is still a collision.
+  if (signals.intakeConnectionIds && signals.intakeConnectionIds.size > 0) {
+    const intersection = matches.filter((c) => signals.intakeConnectionIds!.has(c.id));
+    if (intersection.length === 1) {
+      return { kind: "fixed", connection: intersection[0], via: "intakeIntersection" };
     }
   }
 
