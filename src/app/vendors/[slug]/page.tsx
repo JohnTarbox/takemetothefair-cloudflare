@@ -579,7 +579,7 @@ export default async function VendorDetailPage({ params }: Props) {
             <div className="flex items-start gap-6">
               {isEnhanced ? (
                 <div
-                  className="w-[200px] h-[200px] rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0 relative overflow-hidden"
+                  className="w-[200px] h-[200px] rounded-xl bg-muted flex items-center justify-center flex-shrink-0 relative overflow-hidden"
                   data-testid="vendor-logo-enhanced"
                 >
                   {vendor.logoUrl ? (
@@ -593,19 +593,19 @@ export default async function VendorDetailPage({ params }: Props) {
                   ) : (
                     <VendorTypeIcon
                       vendorType={vendor.vendorType}
-                      className="text-gray-600"
+                      className="text-muted-foreground"
                       size={96}
                     />
                   )}
                 </div>
               ) : (
                 <div
-                  className="w-24 h-24 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0"
+                  className="w-24 h-24 rounded-xl bg-muted flex items-center justify-center flex-shrink-0"
                   data-testid="vendor-logo-free"
                 >
                   <VendorTypeIcon
                     vendorType={vendor.vendorType}
-                    className="text-gray-600"
+                    className="text-muted-foreground"
                     size={48}
                   />
                 </div>
@@ -620,7 +620,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     relationships so the operator portfolio is discoverable
                     while the brand stays the primary association. */}
                 {vendor.role === "LOCAL_OFFICE" && vendor.parent && (
-                  <p className="text-sm text-gray-600 mb-1">
+                  <p className="text-sm text-muted-foreground mb-1">
                     Part of{" "}
                     <Link
                       href={`/vendors/${vendor.parent.slug}`}
@@ -643,7 +643,7 @@ export default async function VendorDetailPage({ params }: Props) {
                   </p>
                 )}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-3xl font-bold text-gray-900">{vendor.businessName}</h1>
+                  <h1 className="text-3xl font-bold text-foreground">{vendor.businessName}</h1>
                   {isEnhanced && vendor.verified && (
                     <span
                       className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5"
@@ -661,7 +661,7 @@ export default async function VendorDetailPage({ params }: Props) {
                   />
                 </div>
                 {vendor.vendorType && (
-                  <p className="mt-1 text-lg text-gray-600">{vendor.vendorType}</p>
+                  <p className="mt-1 text-lg text-muted-foreground">{vendor.vendorType}</p>
                 )}
                 {isEnhanced && (
                   <div className="mt-3">
@@ -677,7 +677,7 @@ export default async function VendorDetailPage({ params }: Props) {
 
             {vendor.description && (
               <div className="prose prose-gray max-w-none">
-                <p className="text-gray-600 whitespace-pre-wrap">{vendor.description}</p>
+                <p className="text-muted-foreground whitespace-pre-wrap">{vendor.description}</p>
               </div>
             )}
 
@@ -685,7 +685,7 @@ export default async function VendorDetailPage({ params }: Props) {
               return (
                 products.length > 0 && (
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-900 mb-3">
+                    <h2 className="text-xl font-semibold text-foreground mb-3">
                       Products & Services
                     </h2>
                     <div className="flex flex-wrap gap-2">
@@ -707,7 +707,7 @@ export default async function VendorDetailPage({ params }: Props) {
             {isNationalHub && vendor.children.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-gray-900">
+                  <h2 className="text-xl font-semibold text-foreground">
                     Local Offices ({vendor.children.length})
                   </h2>
                 </div>
@@ -716,17 +716,17 @@ export default async function VendorDetailPage({ params }: Props) {
                     <Link key={child.id} href={`/vendors/${child.slug}`} className="block">
                       <Card className="hover:shadow-md transition-shadow h-full">
                         <CardContent className="p-4">
-                          <h3 className="font-medium text-gray-900 hover:text-navy">
+                          <h3 className="font-medium text-foreground hover:text-navy">
                             {decodeHtmlEntities(child.businessName)}
                           </h3>
                           {(child.city || child.state) && (
-                            <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                            <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                               <MapPin className="w-3 h-3" />
                               {[child.city, child.state].filter(Boolean).join(", ")}
                             </p>
                           )}
                           {child.contactPhone && (
-                            <p className="text-sm text-gray-600 flex items-center gap-1 mt-1">
+                            <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                               <Phone className="w-3 h-3" />
                               {child.contactPhone}
                             </p>
@@ -741,7 +741,7 @@ export default async function VendorDetailPage({ params }: Props) {
             {/* NATIONAL hub with no children yet — render a gentle empty
                 state instead of leaving the main column visually bare. */}
             {isNationalHub && vendor.children.length === 0 && (
-              <div className="rounded-md border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
+              <div className="rounded-md border border-border bg-muted p-4 text-sm text-muted-foreground">
                 No local offices listed yet.
               </div>
             )}
@@ -749,7 +749,7 @@ export default async function VendorDetailPage({ params }: Props) {
             {!isNationalHub && upcomingEvents.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-gray-900">
+                  <h2 className="text-xl font-semibold text-foreground">
                     Upcoming Events ({upcomingEvents.length})
                   </h2>
                   {vendor.eventVendors.length > 6 && (
@@ -785,11 +785,11 @@ export default async function VendorDetailPage({ params }: Props) {
                           </Link>
                           <div className="flex-1">
                             <Link href={`/events/${event.slug}`}>
-                              <h3 className="font-medium text-gray-900 hover:text-navy">
+                              <h3 className="font-medium text-foreground hover:text-navy">
                                 {event.name}
                               </h3>
                             </Link>
-                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
                               <span>{formatDateRange(event.startDate, event.endDate)}</span>
                               <AddToCalendar
                                 title={event.name}
@@ -806,7 +806,7 @@ export default async function VendorDetailPage({ params }: Props) {
                               />
                             </div>
                             {occurrenceLabel && (
-                              <p className="text-sm text-gray-700 mt-1">
+                              <p className="text-sm text-foreground mt-1">
                                 {ve.hasSeriesWide ? (
                                   <>Regular participant + featured: {occurrenceLabel}</>
                                 ) : (
@@ -815,7 +815,7 @@ export default async function VendorDetailPage({ params }: Props) {
                               </p>
                             )}
                             {event.venue && (
-                              <p className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                              <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                                 <MapPin className="w-3 h-3" />
                                 {event.venue.name}, {event.venue.city}
                               </p>
@@ -842,7 +842,7 @@ export default async function VendorDetailPage({ params }: Props) {
             {!isNationalHub && pastEvents.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-gray-900">
+                  <h2 className="text-xl font-semibold text-foreground">
                     Past Events ({pastEvents.length})
                   </h2>
                   {pastEvents.length > 5 && (
@@ -859,12 +859,12 @@ export default async function VendorDetailPage({ params }: Props) {
                     <Link key={event.id} href={`/events/${event.slug}`}>
                       <Card className="hover:shadow-md transition-shadow opacity-75">
                         <CardContent className="p-4 flex items-center gap-4">
-                          <div className="w-16 h-16 rounded-lg bg-gray-100 flex flex-col items-center justify-center text-gray-600">
+                          <div className="w-16 h-16 rounded-lg bg-muted flex flex-col items-center justify-center text-muted-foreground">
                             <Calendar className="w-6 h-6" />
                           </div>
                           <div className="flex-1">
-                            <h3 className="font-medium text-gray-700">{event.name}</h3>
-                            <p className="text-sm text-gray-500">
+                            <h3 className="font-medium text-foreground">{event.name}</h3>
+                            <p className="text-sm text-muted-foreground">
                               {formatDateRange(event.startDate, event.endDate)}
                             </p>
                           </div>
@@ -911,19 +911,19 @@ export default async function VendorDetailPage({ params }: Props) {
 
             <Card>
               <CardHeader>
-                <h3 className="font-semibold text-gray-900">Contact & Links</h3>
+                <h3 className="font-semibold text-foreground">Contact & Links</h3>
               </CardHeader>
               <CardContent className="space-y-3">
                 {vendor.contactName && (
-                  <div className="flex items-center gap-3 text-gray-700">
-                    <User className="w-5 h-5 text-gray-600" />
+                  <div className="flex items-center gap-3 text-foreground">
+                    <User className="w-5 h-5 text-muted-foreground" />
                     {vendor.contactName}
                   </div>
                 )}
                 {vendor.contactEmail && (
                   <a
                     href={`mailto:${vendor.contactEmail}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
+                    className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Mail className="w-5 h-5 text-royal" />
                     {vendor.contactEmail}
@@ -932,7 +932,7 @@ export default async function VendorDetailPage({ params }: Props) {
                 {vendor.contactPhone && (
                   <a
                     href={`tel:${vendor.contactPhone}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
+                    className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Phone className="w-5 h-5 text-royal" />
                     {vendor.contactPhone}
@@ -943,7 +943,7 @@ export default async function VendorDetailPage({ params }: Props) {
                     href={vendor.website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
+                    className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Globe className="w-5 h-5 text-royal" />
                     Visit Website
@@ -956,7 +956,7 @@ export default async function VendorDetailPage({ params }: Props) {
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-3 text-gray-700 hover:text-navy capitalize"
+                      className="flex items-center gap-3 text-foreground hover:text-navy capitalize"
                     >
                       {platform}
                     </a>
@@ -969,11 +969,11 @@ export default async function VendorDetailPage({ params }: Props) {
             {(vendor.address || vendor.city) && (
               <Card>
                 <CardHeader>
-                  <h3 className="font-semibold text-gray-900">Location</h3>
+                  <h3 className="font-semibold text-foreground">Location</h3>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex items-start gap-3 text-gray-700">
-                    <MapPin className="w-5 h-5 text-gray-600 mt-0.5" />
+                  <div className="flex items-start gap-3 text-foreground">
+                    <MapPin className="w-5 h-5 text-muted-foreground mt-0.5" />
                     <div>
                       {vendor.address && <div>{vendor.address}</div>}
                       {(vendor.city || vendor.state || vendor.zip) && (
@@ -992,20 +992,20 @@ export default async function VendorDetailPage({ params }: Props) {
             {(vendor.yearEstablished || vendor.paymentMethods) && (
               <Card>
                 <CardHeader>
-                  <h3 className="font-semibold text-gray-900">Business Details</h3>
+                  <h3 className="font-semibold text-foreground">Business Details</h3>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {vendor.yearEstablished && (
-                    <div className="flex items-center gap-3 text-gray-700">
-                      <Building className="w-5 h-5 text-gray-600" />
+                    <div className="flex items-center gap-3 text-foreground">
+                      <Building className="w-5 h-5 text-muted-foreground" />
                       <span>Est. {vendor.yearEstablished}</span>
                     </div>
                   )}
                   {(() => {
                     return (
                       paymentMethods.length > 0 && (
-                        <div className="flex items-start gap-3 text-gray-700">
-                          <CreditCard className="w-5 h-5 text-gray-600 mt-0.5" />
+                        <div className="flex items-start gap-3 text-foreground">
+                          <CreditCard className="w-5 h-5 text-muted-foreground mt-0.5" />
                           <div className="flex flex-wrap gap-1">
                             {paymentMethods.map((method) => (
                               <Badge key={method} variant="default" className="text-xs">
@@ -1029,8 +1029,10 @@ export default async function VendorDetailPage({ params }: Props) {
               <Card>
                 <CardContent className="p-6">
                   <div className="text-center">
-                    <p className="text-3xl font-bold text-gray-900">{vendor.eventVendors.length}</p>
-                    <p className="text-sm text-gray-600">Total Events Attended</p>
+                    <p className="text-3xl font-bold text-foreground">
+                      {vendor.eventVendors.length}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Total Events Attended</p>
                   </div>
                 </CardContent>
               </Card>
@@ -1039,21 +1041,23 @@ export default async function VendorDetailPage({ params }: Props) {
             {linkedBlogPosts.length > 0 && (
               <Card>
                 <CardHeader>
-                  <h3 className="font-semibold text-gray-900">Written about this vendor</h3>
+                  <h3 className="font-semibold text-foreground">Written about this vendor</h3>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {linkedBlogPosts.map((post) => (
                     <Link
                       key={post.slug}
                       href={`/blog/${post.slug}`}
-                      className="block p-3 rounded-lg border border-stone-100 hover:border-amber hover:bg-amber-light/40 transition-colors"
+                      className="block p-3 rounded-lg border border-border hover:border-amber hover:bg-amber-light/40 transition-colors"
                     >
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-1 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                         Written about this vendor
                       </span>
-                      <p className="font-medium text-gray-900 line-clamp-2">{post.title}</p>
+                      <p className="font-medium text-foreground line-clamp-2">{post.title}</p>
                       {post.excerpt && (
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                          {post.excerpt}
+                        </p>
                       )}
                     </Link>
                   ))}
@@ -1070,8 +1074,8 @@ export default async function VendorDetailPage({ params }: Props) {
             is most useful here. Add a wider audience for the link if
             needed; today this is the minimal-friction placement. */}
         {isEnhanced && vendor.verified && (
-          <div className="mt-12 border-t border-gray-200 pt-8 text-center">
-            <p className="text-sm text-gray-600">
+          <div className="mt-12 border-t border-border pt-8 text-center">
+            <p className="text-sm text-muted-foreground">
               Are you a vendor?{" "}
               <Link
                 href="/vendor-guide"
