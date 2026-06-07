@@ -56,7 +56,10 @@ async function getPromoters() {
       error: e,
       source: "app/promoters/page.tsx:getPromoters",
     });
-    return [];
+    // K2 (2026-06-06): throw FetchError so error.tsx renders + HTTP 500
+    // bubbles to the edge. Mirrors REL1' §1 pattern in events/page.tsx.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/promoters/page.tsx:getPromoters", e);
   }
 }
 

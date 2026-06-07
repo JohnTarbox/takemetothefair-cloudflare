@@ -14,6 +14,7 @@ import { attachEventDayDates } from "@/lib/event-days-attach";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
+import { logError } from "@/lib/logger";
 
 import type { Metadata } from "next";
 
@@ -49,8 +50,8 @@ export const metadata: Metadata = {
 };
 
 async function getFeaturedEvents() {
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     // Narrow projection via eventJoinProjection — keeps the join under D1's
     // 100-col cap (events 62 + venue 13 + promoter 7 = 82 cols). The bare
     // `.select()` shape this replaces summed to 62+30+15=107 post-P3a and
@@ -82,14 +83,22 @@ async function getFeaturedEvents() {
     // date badge resolves the next occurrence instead of falling back
     // to startDate. Cheap batch query (one SELECT for all 6 events).
     return await attachEventDayDates(db, flat);
-  } catch {
-    return [];
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching featured events",
+      error: e,
+      source: "app/page.tsx:getFeaturedEvents",
+    });
+    // K2 (2026-06-06): throw FetchError so error.tsx renders + HTTP 500
+    // bubbles to the edge. Mirrors REL1' §1 pattern in events/page.tsx.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/page.tsx:getFeaturedEvents", e);
   }
 }
 
 async function getUpcomingEvents() {
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     // Narrow projection — see getFeaturedEvents above.
     const results = await db
       .select(eventJoinProjection)
@@ -112,14 +121,20 @@ async function getUpcomingEvents() {
       promoter: r.promoter as FullPromoter,
     }));
     return await attachEventDayDates(db, flat);
-  } catch {
-    return [];
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching upcoming events",
+      error: e,
+      source: "app/page.tsx:getUpcomingEvents",
+    });
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/page.tsx:getUpcomingEvents", e);
   }
 }
 
 async function getWeekendEvents() {
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const now = new Date();
     const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     // Narrow projection — see getFeaturedEvents above.
@@ -143,14 +158,20 @@ async function getWeekendEvents() {
       promoter: r.promoter as FullPromoter,
     }));
     return await attachEventDayDates(db, flat);
-  } catch {
-    return [];
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching weekend events",
+      error: e,
+      source: "app/page.tsx:getWeekendEvents",
+    });
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/page.tsx:getWeekendEvents", e);
   }
 }
 
 async function getPlatformCounts() {
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const [eventsRow, venuesRow, vendorsRow] = await Promise.all([
       db
         .select({ n: count() })
@@ -164,14 +185,20 @@ async function getPlatformCounts() {
       activeVenues: venuesRow[0]?.n ?? 0,
       totalVendors: vendorsRow[0]?.n ?? 0,
     };
-  } catch {
-    return { upcomingEvents: 0, activeVenues: 0, totalVendors: 0 };
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching platform counts",
+      error: e,
+      source: "app/page.tsx:getPlatformCounts",
+    });
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/page.tsx:getPlatformCounts", e);
   }
 }
 
 async function getRecentBlogPosts() {
+  const db = getCloudflareDb();
   try {
-    const db = getCloudflareDb();
     const posts = await db
       .select({
         title: blogPosts.title,
@@ -198,8 +225,14 @@ async function getRecentBlogPosts() {
       categories: JSON.parse(p.categories || "[]") as string[],
       featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),
     }));
-  } catch {
-    return [];
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching recent blog posts",
+      error: e,
+      source: "app/page.tsx:getRecentBlogPosts",
+    });
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/page.tsx:getRecentBlogPosts", e);
   }
 }
 

@@ -221,7 +221,10 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
       source: "app/vendors/page.tsx:getVendors",
       context: { searchParams },
     });
-    return [];
+    // K2 (2026-06-06): throw FetchError so error.tsx renders + HTTP 500
+    // bubbles to the edge. Mirrors REL1' §1 pattern in events/page.tsx.
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/vendors/page.tsx:getVendors", e);
   }
 }
 
@@ -244,7 +247,8 @@ async function getVendorTypes() {
       error: e,
       source: "app/vendors/page.tsx:getVendorTypes",
     });
-    return [];
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/vendors/page.tsx:getVendorTypes", e);
   }
 }
 
@@ -286,7 +290,8 @@ async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]
       error: e,
       source: "app/vendors/page.tsx:getFeaturedVendors",
     });
-    return [];
+    const { FetchError } = await import("@/lib/errors/fetch-error");
+    throw new FetchError("app/vendors/page.tsx:getFeaturedVendors", e);
   }
 }
 
