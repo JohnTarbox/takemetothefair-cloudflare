@@ -310,18 +310,61 @@ export default async function BlogPostPage({ params }: Props) {
           </div>
 
           {/* Featured image — skip if the same image already appears in the body */}
-          {post.featuredImageUrl && !post.body.includes(post.featuredImageUrl) && (
-            <div className="aspect-video relative rounded-lg overflow-hidden mb-8">
-              <Image
-                src={post.featuredImageUrl}
-                alt={`Featured image for ${post.title}`}
-                fill
-                sizes="(max-width: 1024px) 100vw, 66vw"
-                className="object-cover"
-                priority
-              />
-            </div>
-          )}
+          {post.featuredImageUrl &&
+            !post.body.includes(post.featuredImageUrl) &&
+            (() => {
+              // IMG1 §1b (2026-06-08) — blurred-fill hero, mirroring
+              // the event-detail pattern from PR #393. Blog featured
+              // images can be posters/diagrams/screenshots with critical
+              // content at edges; object-contain + blurred backdrop
+              // preserves the whole image regardless of source AR.
+              const heroWidths = [400, 640, 800, 1200, 1600, 1942];
+              const heroSrcSet = heroWidths
+                .map((w) =>
+                  cdnImage(post.featuredImageUrl!, {
+                    width: w,
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  })
+                )
+                .map((url, i) => `${url} ${heroWidths[i]}w`)
+                .join(", ");
+              const heroSrc = cdnImage(post.featuredImageUrl, {
+                width: 1600,
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              });
+              const backdropSrc = cdnImage(post.featuredImageUrl, {
+                width: 200,
+                format: "auto",
+                quality: 60,
+                onerror: "redirect",
+              });
+              return (
+                <div className="aspect-video relative rounded-lg overflow-hidden mb-8 bg-muted">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={backdropSrc}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
+                  />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={heroSrc}
+                    srcSet={heroSrcSet}
+                    sizes="(max-width: 1024px) 100vw, 66vw"
+                    alt={`Featured image for ${post.title}`}
+                    fetchPriority="high"
+                    loading="eager"
+                    decoding="async"
+                    className="relative w-full h-full object-contain"
+                  />
+                </div>
+              );
+            })()}
 
           {/* Markdown body */}
           <MarkdownContent content={post.body} />
