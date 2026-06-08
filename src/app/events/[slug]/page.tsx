@@ -70,7 +70,7 @@ import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { formatDateMedium } from "@/lib/datetime";
-import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, HERO_DESKTOP, OG_EVENT } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -684,15 +684,61 @@ export default async function EventDetailPage({ params }: Props) {
           {(() => {
             const categoryColors = getCategoryColors(parseJsonArray(event.categories));
             if (event.imageUrl) {
+              // IMG1 §1b Phase 2 (2026-06-08) — smart-crop the hero.
+              //
+              // Pre-IMG1: a 1942×809 (AR 2.40) source rendered into a 16:9 box
+              // with `object-cover` lost ~26% of its width (~140px off each
+              // side) via dumb client-side center-crop. The Kingfield event
+              // (`kingfield-first-friday-artwalk-2026`) was the spec's
+              // observed-bug example.
+              //
+              // Fix: emit a manual srcSet of `cdn-cgi/image` derivatives
+              // with `fit=cover,gravity=auto` so Cloudflare's content-aware
+              // saliency algorithm picks the crop window per width. Each
+              // srcSet entry is a smart-cropped 16:9 frame at that width —
+              // the browser picks the right one for the viewport (real
+              // responsive variants, not the single-width pre-wrap path
+              // that would have all srcSet entries serve the same 1600w).
+              //
+              // Why a raw `<img>` instead of `<Image>`: the next/image custom
+              // loader signature (`{ src, width, quality }`) can't pass
+              // `gravity`/`fit`/`height` per call. Emitting a manual srcSet
+              // here is the cheapest path that gets responsive + smart-crop;
+              // a more general signal (URL fragment, loader-aware preset
+              // registry) is a follow-up if other heroes need the same.
+              //
+              // LCP behavior preserved via `fetchpriority="high"` +
+              // `loading="eager"`; the eslint-disable for `<img>` is per-
+              // file precedent (vendors/events listings already do this
+              // for similar bespoke-srcset cases).
+              const heroWidths = [400, 640, 800, 1200, 1600];
+              const heroSrcSet = heroWidths
+                .map((w) =>
+                  cdnImage(event.imageUrl!, {
+                    width: w,
+                    height: Math.round((w * 9) / 16),
+                    fit: "cover",
+                    gravity: "auto",
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  })
+                )
+                .map((url, i) => `${url} ${heroWidths[i]}w`)
+                .join(", ");
+              const heroSrc = cdnImage(event.imageUrl, HERO_DESKTOP);
               return (
                 <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
-                  <Image
-                    src={event.imageUrl}
-                    alt={event.name}
-                    fill
-                    priority
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={heroSrc}
+                    srcSet={heroSrcSet}
                     sizes="(max-width: 1024px) 100vw, 66vw"
-                    className="object-cover"
+                    alt={event.name}
+                    fetchPriority="high"
+                    loading="eager"
+                    decoding="async"
+                    className="absolute inset-0 w-full h-full object-cover"
                   />
                 </div>
               );
