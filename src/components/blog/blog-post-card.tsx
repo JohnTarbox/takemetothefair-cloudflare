@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { Calendar, FileText, Tag } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatAuthorName } from "@/lib/utils";
 import { formatDateLong } from "@/lib/datetime";
+import { cdnImage } from "@/lib/cdn-image";
 
 interface BlogPostCardProps {
   post: {
@@ -40,15 +40,67 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
       <Link href={`/blog/${post.slug}`} className="block">
         <div className="aspect-video relative bg-muted">
           {post.featuredImageUrl && !imgError ? (
-            <Image
-              src={post.featuredImageUrl}
-              alt={`Featured image for ${post.title}`}
-              fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-              className="object-cover"
-              priority={priority}
-              onError={() => setImgError(true)}
-            />
+            // IMG backlog closeout (2026-06-08) — applies the
+            // cloudflare-image-optimization skill's card pattern: server-side
+            // fit=cover at the right size + capped width ladder. Replaces
+            // <Image fill> which went through the Next/Image custom loader
+            // emitting width-only resizes up to 3840 (no fit/gravity, no
+            // explicit dims), wasting bytes + tripping the spec's
+            // "cap at ~1600-2048" rule.
+            //
+            // Same pattern as EventCard (PR #394) / VenueCard (PR #395):
+            // raw <img> with manual srcSet, fit=cover at each variant width,
+            // explicit width/height for CLS=0, fetchpriority/loading hooked
+            // to the `priority` prop so the single-LCP-per-page rule holds.
+            //
+            // No `gravity` arg — center-crop matches industry baseline
+            // (Eventbrite default, Lu.ma, Meetup) and avoids the saliency-
+            // drift bug [[feedback_smart_crop_wrong_for_posters]]. Blog
+            // featured images are typically photos with a clear subject,
+            // so center-crop works for the 90% case. Per-image focal
+            // point (PR #395) doesn't extend to blog posts yet (separate
+            // schema column needed); follow-up if a blog hero ever needs
+            // rescue.
+            (() => {
+              const cardWidths = [400, 600, 800, 1200];
+              const cardSrcSet = cardWidths
+                .map((w) =>
+                  cdnImage(post.featuredImageUrl!, {
+                    width: w,
+                    height: Math.round((w * 9) / 16),
+                    fit: "cover",
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  })
+                )
+                .map((url, i) => `${url} ${cardWidths[i]}w`)
+                .join(", ");
+              const cardSrc = cdnImage(post.featuredImageUrl, {
+                width: 800,
+                height: 450,
+                fit: "cover",
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              });
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={cardSrc}
+                  srcSet={cardSrcSet}
+                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                  alt={`Featured image for ${post.title}`}
+                  width={800}
+                  height={450}
+                  loading={priority ? "eager" : "lazy"}
+                  fetchPriority={priority ? "high" : "auto"}
+                  decoding="async"
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={() => setImgError(true)}
+                />
+              );
+            })()
           ) : (
             <div className="w-full h-full flex items-center justify-center text-royal/40">
               <FileText className="w-12 h-12" />
