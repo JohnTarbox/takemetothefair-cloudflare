@@ -57,6 +57,8 @@ import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { ShareButtons } from "@/components/ShareButtons";
+import { PrintButton } from "@/components/print/PrintButton";
+import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 import { getCategoryBadgeClass, getCategoryColors } from "@/lib/category-colors";
 import { formatAudienceBadge } from "@/lib/event-audience";
 import { buildEventMetaDescription, buildEventTitle } from "@/lib/seo-utils";
@@ -913,13 +915,19 @@ export default async function EventDetailPage({ params }: Props) {
                   </div>
                   <div className="flex items-start justify-between gap-4">
                     <h1 className="text-3xl md:text-4xl font-bold text-foreground">{event.name}</h1>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 print:hidden">
                       <FavoriteButton type="EVENT" id={event.id} size="lg" />
                       <ShareButtons
                         url={`https://meetmeatthefair.com/events/${event.slug}`}
                         title={event.name}
                         description={event.description || undefined}
                       />
+                      {/* MMATF-UIUX-PrintSheet-Spec Item 1 — paper handoff
+                          for the fairs audience. Single button triggers
+                          window.print(); modern browsers offer "Save as
+                          PDF" in the same dialog so we don't need a
+                          separate Download PDF button. */}
+                      <PrintButton label="Print" />
                     </div>
                   </div>
                   {(event.viewCount ?? 0) > 10 && (
@@ -1554,9 +1562,13 @@ export default async function EventDetailPage({ params }: Props) {
 
       {/* Related Blog Posts — direct-link posts are labeled; category
           matches are unlabeled fallback filler when there aren't 3 direct
-          links. See Phase: content-entity link index. */}
+          links. See Phase: content-entity link index.
+
+          `print:hidden` — carousels are explicitly excluded per
+          MMATF-UIUX-PrintSheet-Spec ("Strip all site chrome
+          (nav/footer/carousels)"). */}
       {relatedBlogPosts.length > 0 && (
-        <div className="mt-12 border-t border-border pt-8">
+        <div className="mt-12 border-t border-border pt-8 print:hidden">
           <h2 className="text-2xl font-bold text-foreground mb-6">Related Blog Posts</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {relatedBlogPosts.map((post) => (
@@ -1592,6 +1604,13 @@ export default async function EventDetailPage({ params }: Props) {
       {!isPastEvent && vendorInfo && !vendorInfo.existingApplication && (
         <StickyApplyBar label="Apply as Vendor" scrollTarget="vendor-apply" />
       )}
+
+      {/* MMATF-UIUX-PrintSheet-Spec Item 1 — print-only footer: QR
+          + canonical URL + freshness stamp. Hidden on screen. */}
+      <PrintEventSheetFooter
+        canonicalUrl={`https://meetmeatthefair.com/events/${event.slug}`}
+        contextLabel="Live event details & directions"
+      />
     </div>
   );
 }

@@ -305,21 +305,54 @@ body {
   }
 }
 
+/* ============================================================================
+ * Print stylesheet — per MMATF-UIUX-PrintSheet-Spec
+ *
+ * History:
+ *   - Pre-2026-06-08: this block was calendar-only (`size: landscape`,
+ *     calendar cell min-heights, calendar-palette `print-color-adjust`).
+ *   - 2026-06-08: split into a portrait-default `@page` + a named
+ *     `landscape-page` opt-in via the `.print-landscape` class. Event
+ *     detail / favorites / vendor schedule print on portrait by default
+ *     (matches the spec's one-page event-sheet target); calendar views
+ *     opt back in with `.print-landscape` on their root.
+ *
+ * Named-page browser support: Chrome/Edge (full), Safari 14+ (full),
+ * Firefox (limited — falls back to the default `@page`, which means
+ * Firefox users printing the calendar get portrait, accepted because
+ * (a) FF is ~3% market share and (b) the calendar print path is rarely
+ * exercised vs the new event-sheet path that ships in the same PR).
+ * ============================================================================ */
+
+/* Default page: portrait, comfortable margins for the event sheet. */
+@page {
+  size: portrait;
+  margin: 1.5cm;
+}
+
+/* Named page for landscape (calendar grid). Components opt in via
+   `<div className="print-landscape">…</div>` on their root container. */
+@page landscape-page {
+  size: landscape;
+  margin: 0.4cm;
+}
+
 @media print {
-  /* Landscape orientation with tight margins */
-  @page {
-    size: landscape;
-    margin: 0.4cm;
+  /* Calendar opt-in to landscape (named-page mapping). */
+  .print-landscape {
+    page: landscape-page;
   }
 
-  /* Hide non-calendar elements */
+  /* Hide site chrome on every printed page. Components also use
+     Tailwind's `print:hidden` for local "this button shouldn't print"
+     decisions. */
   nav,
   footer,
   header {
     display: none !important;
   }
 
-  /* Full-width calendar, collapse layout height */
+  /* Full-width main; strip shell padding/flex. */
   main {
     padding: 0 !important;
     margin: 0 !important;
@@ -327,31 +360,36 @@ body {
     flex: none !important;
   }
 
+  /* Ensure white background + black text floor (regardless of light/dark). */
   body {
+    background: white !important;
+    color: black !important;
     min-height: 0 !important;
   }
 
-  /* Clean print rendering */
+  /* Clean print rendering — drop shadows kill ink. */
   * {
     box-shadow: none !important;
   }
 
-  /* Keep event names truncated so cells stay compact */
+  /* Calendar-specific resets — these only matter when .print-landscape
+     is in effect, but applying them globally is harmless on portrait pages
+     where the matched classes don't appear. */
   .truncate {
     white-space: nowrap !important;
   }
-
-  /* Remove min-height on calendar cells — let content size them */
   .min-h-\[100px\] {
     min-height: 0 !important;
   }
-
-  /* Remove min-height on week view cells — let content size them */
   .min-h-\[400px\] {
     min-height: 0 !important;
   }
 
-  /* Ensure colored backgrounds print */
+  /* Ensure colored backgrounds print (event-type palette in the calendar).
+     Note: these class selectors are calendar-palette specific and stay
+     even after the keystone gray sweep — calendar event-type colors are
+     intentionally categorical (see [[feedback_smart_crop_wrong_for_posters]]
+     for the category-vs-info distinction). */
   .bg-blue-500,
   .bg-green-500,
   .bg-purple-500,
@@ -360,15 +398,8 @@ body {
   .bg-teal-500,
   .bg-orange-500,
   .bg-cyan-500,
-  .bg-blue-600,
-  .bg-blue-100,
-  .bg-gray-50 {
+  .bg-blue-600 {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
-  }
-
-  /* Ensure borders are visible */
-  .border-gray-200 {
-    border-color: #e5e7eb !important;
   }
 }

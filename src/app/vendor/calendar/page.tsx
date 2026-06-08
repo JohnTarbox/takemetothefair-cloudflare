@@ -7,6 +7,8 @@ import { vendors, eventVendors, events, venues, promoters } from "@/lib/db/schem
 import { eq } from "drizzle-orm";
 import { EventsView } from "@/components/events/events-view";
 import { logError } from "@/lib/logger";
+import { PrintButton } from "@/components/print/PrintButton";
+import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
 export const runtime = "edge";
 
@@ -122,14 +124,23 @@ export default async function VendorCalendarPage() {
         </Link>
       </div>
 
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <Calendar className="w-6 h-6" />
-          My Event Calendar
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          All events you&apos;re applied to, approved for, or confirmed at — shown on a calendar.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
+            <Calendar className="w-6 h-6" />
+            My Event Calendar
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            All events you&apos;re applied to, approved for, or confirmed at — shown on a calendar.
+          </p>
+        </div>
+        {/* MMATF-UIUX-PrintSheet-Spec Item 2 — vendor "print my schedule".
+            Single button triggers window.print(); the calendar's own
+            print: variants + the global @media print rules format the
+            output. Add .print-landscape on the EventsView root would
+            opt this view into landscape orientation if calendar print
+            ends up cramped on portrait. */}
+        <PrintButton label="Print schedule" />
       </div>
 
       <EventsView
@@ -139,6 +150,11 @@ export default async function VendorCalendarPage() {
         myEvents
         vendorCoords={vendorCoords}
         basePath="/vendor/calendar"
+      />
+
+      <PrintEventSheetFooter
+        canonicalUrl="https://meetmeatthefair.com/vendor/calendar"
+        contextLabel="Your live schedule (sign in required)"
       />
     </div>
   );

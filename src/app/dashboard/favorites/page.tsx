@@ -9,6 +9,8 @@ import { userFavorites, events, venues, vendors } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
 import { eq, inArray, desc } from "drizzle-orm";
 import { logError } from "@/lib/logger";
+import { PrintButton } from "@/components/print/PrintButton";
+import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
 export const runtime = "edge";
 
@@ -120,9 +122,15 @@ export default async function FavoritesPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-foreground">My Favorites</h1>
-        <p className="mt-1 text-muted-foreground">{totalFavorites} saved items</p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">My Favorites</h1>
+          <p className="mt-1 text-muted-foreground">{totalFavorites} saved items</p>
+        </div>
+        {/* MMATF-UIUX-PrintSheet-Spec Item 2 — print favorites as a
+            date-sorted season sheet (vendor/individual use). Hidden
+            from print itself via PrintButton's `print:hidden`. */}
+        {totalFavorites > 0 && <PrintButton label="Print favorites" />}
       </div>
 
       {totalFavorites === 0 ? (
@@ -236,6 +244,11 @@ export default async function FavoritesPage() {
           )}
         </div>
       )}
+
+      <PrintEventSheetFooter
+        canonicalUrl="https://meetmeatthefair.com/dashboard/favorites"
+        contextLabel="Your saved items (sign in to view live)"
+      />
     </div>
   );
 }
