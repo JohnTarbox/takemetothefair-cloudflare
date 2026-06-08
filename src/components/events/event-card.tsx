@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { cdnImage } from "@/lib/cdn-image";
 import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -118,22 +119,86 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
           className={`aspect-video relative ${event.imageUrl && !imgError ? "bg-muted" : colors.bg}`}
         >
           {event.imageUrl && !imgError ? (
-            <Image
-              src={event.imageUrl}
-              alt={`Photo of ${event.name} event`}
-              fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-              className="object-cover"
-              priority={priority}
-              onError={() => setImgError(true)}
-            />
+            // Per the `cloudflare-image-optimization` skill (installed
+            // 2026-06-08): card thumbnails use server-side `fit=cover`
+            // (rule #7) on a width ladder capped at 1200 (rule #6 says
+            // cap ~1600-2048; the card pattern in the skill caps tighter
+            // because cards are smaller). Replaces the pre-skill path
+            // through next/image's custom loader, which only emitted
+            // width-only resizes (no `fit`/`gravity`) and let CSS
+            // `object-cover` do client-side center-crop on a 1942-wide
+            // source — wasted bytes on mobile + same crop result.
+            //
+            // No `gravity` arg — center-crop matches the skill's card
+            // example and avoids the saliency-drift bug that bit PR #392
+            // (see [[feedback_smart_crop_wrong_for_posters]]). Poster
+            // thumbnails get cropped at the edges; users click through
+            // to see the full image on the detail page (which uses the
+            // blurred-fill pattern from PR #393).
+            //
+            // Width ladder: 400 / 600 / 800 / 1200. Covers 100vw mobile
+            // (≤768px), 50vw tablet (≤1200px), 33vw desktop (≥1200px)
+            // at both 1x and 2x DPR without exceeding 1200w.
+            //
+            // LCP: only the i===0 card on a page sets `priority` →
+            // `loading="eager"` + `fetchpriority="high"` (rule #3).
+            // Other cards lazy-load. Raw <img> here so the manual
+            // srcSet + per-width crop params can be expressed (the
+            // next/image loader signature can't pass `fit`/`gravity`).
+            (() => {
+              const cardWidths = [400, 600, 800, 1200];
+              const cardSrcSet = cardWidths
+                .map((w) =>
+                  cdnImage(event.imageUrl!, {
+                    width: w,
+                    height: Math.round((w * 9) / 16),
+                    fit: "cover",
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  })
+                )
+                .map((url, i) => `${url} ${cardWidths[i]}w`)
+                .join(", ");
+              const cardSrc = cdnImage(event.imageUrl, {
+                width: 800,
+                height: 450,
+                fit: "cover",
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              });
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={cardSrc}
+                  srcSet={cardSrcSet}
+                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                  alt={`Photo of ${event.name} event`}
+                  width={800}
+                  height={450}
+                  loading={priority ? "eager" : "lazy"}
+                  fetchPriority={priority ? "high" : "auto"}
+                  decoding="async"
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={() => setImgError(true)}
+                />
+              );
+            })()
           ) : (
-            <Image
+            // Category placeholder SVG — vector, no CDN transform needed.
+            // Same width/height + lazy/eager semantics as the photo path
+            // so layout doesn't shift when imgError flips.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
               src={getCategoryImage(categories)}
               alt={`${categories[0] || "Event"} illustration`}
-              fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-              className="object-cover"
+              width={800}
+              height={450}
+              loading={priority ? "eager" : "lazy"}
+              fetchPriority={priority ? "high" : "auto"}
+              decoding="async"
+              className="absolute inset-0 w-full h-full object-cover"
             />
           )}
           {/* Date badge */}
