@@ -129,14 +129,17 @@ default in `src/lib/image-loader.ts`.
 
 ## Findings summary
 
-| Spec criterion                  | Status                                                | Action                        |
-| ------------------------------- | ----------------------------------------------------- | ----------------------------- |
-| A1 — phone-sized bytes          | Pending DevTools run                                  | Manual re-verify after deploy |
-| A2 — AVIF/WebP per UA           | ✅ PASS                                               | None                          |
-| A3 — Lighthouse LCP             | Pending Lighthouse run                                | Manual re-verify after deploy |
-| A4 — CLS ≈ 0                    | Pending; Phase 2C closes the 2 OAuth-avatar exposures | Phase 2C                      |
-| A5 — one preload/page           | ⚠️ FAIL on `/blog` (3 preloads)                       | Phase 2A                      |
-| Resilience — `onerror=redirect` | ⚠️ MISSING                                            | Phase 2B                      |
+Baseline status (as of the 2026-06-07 probe run). Post-deploy outcomes
+captured in "Post-deploy re-verification — 2026-06-08" below.
+
+| Spec criterion                  | Baseline status                       | Closed by              |
+| ------------------------------- | ------------------------------------- | ---------------------- |
+| A1 — phone-sized bytes          | Pending DevTools run                  | (manual, post-deploy)  |
+| A2 — AVIF/WebP per UA           | ✅ PASS                               | Already shipped (IMG1) |
+| A3 — Lighthouse LCP             | Pending Lighthouse run                | (manual, post-deploy)  |
+| A4 — CLS ≈ 0                    | Pending; OAuth-avatar exposures known | Phase 2C (PR #388)     |
+| A5 — one preload/page           | ⚠️ FAIL on `/blog` (3 preloads)       | Phase 2A (PR #389 ✅)  |
+| Resilience — `onerror=redirect` | ⚠️ MISSING                            | Phase 2B (PR #388 ✅)  |
 
 **Bonus findings (out of scope):**
 
@@ -145,23 +148,86 @@ default in `src/lib/image-loader.ts`.
 
 ---
 
-## After-state re-verification (run after Phase 2 deploys)
+## Post-deploy re-verification — 2026-06-08
 
-Re-run A2, A5, and the resilience baseline:
+Two follow-up PRs shipped, both verified end-to-end against prod with the same
+probe set used for the baseline above.
+
+### PR #388 — first attempt (merged 00:10:54Z, deploy completed ~00:18Z)
+
+Closed Phase 2B (`onerror=redirect`) and Phase 2C (OAuth avatar dimensions)
+cleanly. Phase 2A (`priority={i === 0}`) shipped but **regressed** because the
+companion `eagerLoad` mechanic (intended to keep cards 1–N non-lazy without
+preloading) set `loading="eager"`, and Next.js 15.x emits a `<link rel="preload" as="image">` for `loading="eager"` too — not just `priority={true}`.
+
+Post-deploy probe against `/blog`:
+
+| Metric              | Baseline (pre-#388) | After #388 | Spec expectation |
+| ------------------- | ------------------- | ---------- | ---------------- |
+| preload image links | 3                   | **3** ❌   | 1                |
+| `loading="eager"`   | 0                   | 2          | 0                |
+
+The 3 preloads after #388 broke down to 1 `priority` card (R2-backed,
+with the new `onerror=redirect` param visible in the URL — proving the
+loader change DID deploy) + 2 `loading="eager"` cards (the foreign-host
+featured images). Total preload count identical to baseline; the
+preload-emission path had just shifted from `priority` to `eager`.
+
+Root cause filed to memory: `[[feedback_nextimage_loading_eager_emits_preload]]`.
+
+### PR #389 — fix-the-fix (merged 00:23:42Z, deploy completed ~00:30Z)
+
+Reverted the `eagerLoad` prop from `EventCard` / `BlogPostCard` /
+`VenueCard` and from all 4 caller sites. Cards 1–N now use Next/Image's
+default lazy loading; the IntersectionObserver fires ~50–100px before
+the viewport so non-LCP above-the-fold cards still load in time.
+
+### Final probe rollup (post-#389, ~00:30Z)
+
+| Probe                              | Baseline | After #388 | After #389       | Status |
+| ---------------------------------- | -------- | ---------- | ---------------- | ------ |
+| A5 `/blog` preload count           | 3        | 3          | **1**            | ✅     |
+| A5 `/blog` `loading="eager"` count | 0        | 2          | **0**            | ✅     |
+| Resilience baseline (no `onerror`) | HTTP 404 | HTTP 404   | **HTTP 404**     | ✅     |
+| Resilience with `onerror=redirect` | n/a      | HTTP 307   | **HTTP 307**     | ✅     |
+| A2 AVIF regression guard           | AVIF     | AVIF       | **`image/avif`** | ✅     |
+| `/events` preloads / eager         | n/a      | n/a        | **0 / 0**        | ✅     |
+
+`/events` showing **0** preloads (not 1) is because the first event
+card on `/events` today happens to lack an `imageUrl` — falls back to
+the category SVG illustration, which renders through `<Image>` without
+`priority`. The fix correctly enforces "at most one preload"; actual
+count is 0 or 1 depending on whether the first card has an R2 image.
+The SVG fallback is a few KB, no preload needed; LCP is fine.
+
+### Re-verification commands (for the next time)
 
 ```bash
-# A2 — content-type still correct
-curl -sI -A "<chrome-ua>" '<one-cdn-cgi-url-from-event-detail-source>' | grep content-type
-# Expect: image/avif
-
 # A5 — preload count drops on /blog
 curl -s https://meetmeatthefair.com/blog | grep -oE 'rel="preload"[^>]*as="image"' | wc -l
-# Expect: 1 (was: 3)
+# Expect: 1
 
-# Resilience — broken transform now gracefully redirects
-curl -sI 'https://meetmeatthefair.com/cdn-cgi/image/width=640,format=auto/https://cdn.meetmeatthefair.com/events/nonexistent/missing.jpg'
-# Expect: 307 redirect (was: 404)
+# A5 — no loading=eager leaked back in
+curl -s https://meetmeatthefair.com/blog | grep -oE 'loading="eager"' | wc -l
+# Expect: 0
+
+# Resilience — broken transform gracefully redirects
+curl -sI 'https://meetmeatthefair.com/cdn-cgi/image/width=640,format=auto,onerror=redirect/https://cdn.meetmeatthefair.com/events/nonexistent/missing.jpg'
+# Expect: HTTP/2 307, location: <source>
+
+# A2 — content-type still correct
+curl -sI -A "<chrome-ua>" -H "Accept: image/avif,*/*" '<one-cdn-cgi-url-from-event-detail-source>' | grep -i content-type
+# Expect: image/avif
 ```
 
-Also run Lighthouse mobile for A3/A4 on the 3 listing pages + 2 detail pages
-and confirm LCP same-or-better and CLS ≤ 0.1 each.
+A1 / A3 / A4 (DevTools mobile bytes, Lighthouse mobile LCP, CLS) still
+require interactive Chrome runs. Acceptance is unchanged from baseline:
+LCP same-or-better, CLS ≤ 0.1, no "Properly size images" / "Serve next-gen
+formats" / "Defer offscreen images" opportunities flagged.
+
+---
+
+## Outstanding follow-ups (not addressed in #388 or #389)
+
+- **Trim `deviceSizes`** — Next.js default emits 10 srcset entries per image; each is a billable CF transformation. If MMATF exceeds the 5k/mo free tier, trim `deviceSizes` to 3–4 entries as the obvious first knob.
+- **Foreign-host preload waste** — blog posts whose featured image lives on `glasgowlands.org`, `images.squarespace-cdn.com`, etc. bypass the cdn-cgi transform but still emit 10-entry `imageSrcSet` lists with the identical URL at every width. Two fixes possible: (a) migrate those images to R2, or (b) suppress the srcSet emission for foreign hosts.
