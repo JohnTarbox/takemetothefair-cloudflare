@@ -195,7 +195,7 @@ export default function DatabaseManagementPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Download className="w-5 h-5 text-blue-600" />
+              <Download className="w-5 h-5 text-royal" />
               Backup Database
             </CardTitle>
           </CardHeader>

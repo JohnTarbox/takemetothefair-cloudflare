@@ -284,7 +284,7 @@ export default async function StuckUrlsPage() {
                               href={u}
                               target="_blank"
                               rel="noreferrer"
-                              className="hover:text-blue-600 hover:underline"
+                              className="hover:text-royal hover:underline"
                             >
                               {path}
                             </a>

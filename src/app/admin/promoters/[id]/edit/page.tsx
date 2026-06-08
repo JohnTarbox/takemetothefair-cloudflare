@@ -94,7 +94,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Promoter not found</p>
-        <Link href="/admin/promoters" className="text-blue-600 hover:underline mt-2 inline-block">
+        <Link href="/admin/promoters" className="text-royal hover:underline mt-2 inline-block">
           Back to Promoters
         </Link>
       </div>

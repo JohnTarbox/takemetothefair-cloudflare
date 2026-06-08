@@ -526,7 +526,7 @@ export default function VendorSuggestEventPage() {
                   <button
                     type="button"
                     onClick={() => setManualPaste(true)}
-                    className="text-sm text-blue-600 hover:text-blue-700"
+                    className="text-sm text-royal hover:text-navy"
                   >
                     Paste content manually instead
                   </button>
@@ -534,7 +534,7 @@ export default function VendorSuggestEventPage() {
                   <button
                     type="button"
                     onClick={() => setStep("review")}
-                    className="text-sm text-blue-600 hover:text-blue-700"
+                    className="text-sm text-royal hover:text-navy"
                   >
                     Skip — fill in manually
                   </button>
@@ -547,7 +547,7 @@ export default function VendorSuggestEventPage() {
                   <textarea
                     id="paste"
                     rows={8}
-                    className="w-full mt-1 p-3 border border-border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full mt-1 p-3 border border-border rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-ring"
                     placeholder="Copy and paste the text content from the event page here..."
                     value={pastedContent}
                     onChange={(e) => setPastedContent(e.target.value)}
@@ -585,7 +585,7 @@ export default function VendorSuggestEventPage() {
       {step === "fetching" && (
         <Card>
           <CardContent className="py-12 text-center">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+            <Loader2 className="w-8 h-8 animate-spin text-royal mx-auto mb-4" />
             <p className="text-muted-foreground">Fetching event page...</p>
           </CardContent>
         </Card>
@@ -627,7 +627,7 @@ export default function VendorSuggestEventPage() {
               )}
               <Link
                 href={`/events/${duplicateEvent.slug}`}
-                className="text-sm text-blue-600 hover:text-blue-700 inline-flex items-center gap-1 mt-2"
+                className="text-sm text-royal hover:text-navy inline-flex items-center gap-1 mt-2"
               >
                 View existing event <ExternalLink className="w-3 h-3" />
               </Link>
@@ -658,7 +658,7 @@ export default function VendorSuggestEventPage() {
             </p>
 
             <div
-              className="bg-blue-50 rounded-lg p-4 cursor-pointer border-2 border-blue-200 hover:border-blue-400"
+              className="bg-info-soft rounded-lg p-4 cursor-pointer border-2 border-info-soft hover:border-info-soft"
               onClick={() => confirmVenue(matchedVenue.id)}
             >
               <p className="font-medium text-foreground">{matchedVenue.name}</p>
@@ -727,7 +727,7 @@ export default function VendorSuggestEventPage() {
               <textarea
                 id="description"
                 rows={4}
-                className="w-full p-3 border border-border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3 border border-border rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-ring"
                 value={extractedData.description || ""}
                 onChange={(e) =>
                   setExtractedData((prev) => ({ ...prev, description: e.target.value }))
@@ -759,7 +759,7 @@ export default function VendorSuggestEventPage() {
                       }
                       className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                         selected
-                          ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
+                          ? "bg-info-soft text-navy ring-1 ring-blue-300"
                           : "bg-muted text-muted-foreground hover:bg-muted"
                       }`}
                     >
@@ -1044,7 +1044,7 @@ export default function VendorSuggestEventPage() {
                           indoorOutdoor: (e.target.value as "INDOOR" | "OUTDOOR" | "MIXED") || null,
                         }))
                       }
-                      className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:ring-2 focus:ring-ring focus:border-ring"
                     >
                       <option value="">Unknown</option>
                       <option value="INDOOR">Indoor</option>
@@ -1094,7 +1094,7 @@ export default function VendorSuggestEventPage() {
                     onChange={(e) =>
                       setExtractedData((prev) => ({ ...prev, walkInsAllowed: e.target.checked }))
                     }
-                    className="rounded border-border text-blue-600 focus:ring-blue-500"
+                    className="rounded border-border text-royal focus:ring-ring"
                   />
                   <span className="text-sm text-foreground">Walk-in vendors welcome</span>
                 </label>
@@ -1130,7 +1130,7 @@ export default function VendorSuggestEventPage() {
       {step === "submitting" && (
         <Card>
           <CardContent className="py-12 text-center">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+            <Loader2 className="w-8 h-8 animate-spin text-royal mx-auto mb-4" />
             <p className="text-muted-foreground">Submitting event...</p>
           </CardContent>
         </Card>
@@ -1155,7 +1155,7 @@ export default function VendorSuggestEventPage() {
               <div className="mb-6">
                 <Link
                   href={`/events/${createdEvent.slug}`}
-                  className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium"
+                  className="inline-flex items-center gap-2 text-royal hover:text-navy font-medium"
                 >
                   View &ldquo;{createdEvent.name}&rdquo; <ExternalLink className="w-4 h-4" />
                 </Link>

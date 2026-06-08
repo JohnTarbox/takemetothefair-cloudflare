@@ -110,7 +110,7 @@ export default function EmailSourceSuggestionsPage() {
             onClick={() => setStatusFilter(s)}
             className={
               statusFilter === s
-                ? "rounded bg-blue-600 px-3 py-1 text-white"
+                ? "rounded bg-secondary px-3 py-1 text-secondary-foreground"
                 : "rounded bg-muted px-3 py-1 text-foreground hover:bg-muted"
             }
           >
@@ -152,7 +152,7 @@ export default function EmailSourceSuggestionsPage() {
                         href={row.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="break-all text-blue-600 hover:underline"
+                        className="break-all text-royal hover:underline"
                       >
                         {row.url}
                       </a>

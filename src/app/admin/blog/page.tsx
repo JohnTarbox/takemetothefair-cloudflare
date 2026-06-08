@@ -226,7 +226,7 @@ function indexStateChip(state: IndexState): { label: string; cls: string } {
 function faqSourceChip(source: BlogFaqSource): { label: string; cls: string } {
   switch (source) {
     case "column":
-      return { label: "column", cls: "bg-blue-50 text-blue-800 border-blue-200" };
+      return { label: "column", cls: "bg-info-soft text-navy-dark border-info-soft" };
     case "markdown":
       return { label: "markdown", cls: "bg-purple-50 text-purple-800 border-purple-200" };
     case "none":
@@ -339,7 +339,7 @@ export default async function BlogCoveragePage({
                           href={`/blog/${r.slug}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-600 hover:underline"
+                          className="text-royal hover:underline"
                         >
                           {r.title}
                         </Link>

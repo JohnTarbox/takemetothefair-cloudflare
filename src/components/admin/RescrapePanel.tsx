@@ -108,7 +108,7 @@ export function RescrapePanel({
                 href={sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:underline flex items-center gap-1 max-w-xs truncate"
+                className="text-royal hover:underline flex items-center gap-1 max-w-xs truncate"
               >
                 {new URL(sourceUrl).hostname}
                 <ExternalLink className="w-3 h-3 flex-shrink-0" />

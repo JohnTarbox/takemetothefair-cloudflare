@@ -249,7 +249,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Venue not found</p>
-        <Link href="/admin/venues" className="text-blue-600 hover:underline mt-2 inline-block">
+        <Link href="/admin/venues" className="text-royal hover:underline mt-2 inline-block">
           Back to Venues
         </Link>
       </div>
@@ -274,8 +274,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
         </CardHeader>
         <CardContent>
           {/* Search-first: Google Place Search */}
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-sm font-medium text-blue-900 mb-2">
+          <div className="mb-6 p-4 bg-info-soft border border-info-soft rounded-lg">
+            <p className="text-sm font-medium text-navy-dark mb-2">
               Re-link or update from Google Places
             </p>
             <GooglePlaceSearch
@@ -611,7 +611,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                               .map(([k]) => (
                                 <span
                                   key={k}
-                                  className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
+                                  className="px-2 py-0.5 bg-info-soft text-navy rounded text-xs"
                                 >
                                   {k
                                     .replace(/([A-Z])/g, " $1")

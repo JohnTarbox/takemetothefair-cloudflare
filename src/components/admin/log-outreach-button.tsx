@@ -35,7 +35,7 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+        className="text-xs text-royal hover:text-navy-dark hover:underline"
       >
         Log
       </button>
@@ -141,7 +141,7 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
         <button
           type="button"
           onClick={handleSubmit}
-          className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          className="px-2 py-0.5 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90 disabled:opacity-50"
           disabled={submitting}
         >
           {submitting ? "Saving…" : "Save"}

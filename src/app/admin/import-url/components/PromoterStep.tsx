@@ -28,7 +28,7 @@ export function PromoterStep({
       </CardHeader>
       <CardContent className="space-y-4">
         {eventsCount > 1 && (
-          <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
+          <div className="p-3 bg-info-soft rounded-lg text-sm text-navy-dark">
             You are importing <strong>{eventsCount} events</strong>. All events will be assigned to
             the selected promoter.
           </div>

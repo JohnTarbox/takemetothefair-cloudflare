@@ -442,9 +442,7 @@ export default function AdminEventsPage() {
                           aria-label={`Re-scrape ${event.name}`}
                           icon={
                             <RefreshCw
-                              className={
-                                rescrapingId === event.id ? "animate-spin text-blue-500" : ""
-                              }
+                              className={rescrapingId === event.id ? "animate-spin text-royal" : ""}
                             />
                           }
                         />

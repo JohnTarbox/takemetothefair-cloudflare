@@ -41,7 +41,7 @@ const PRESETS: Preset[] = [
     ticket: true,
     application: false,
     source: false,
-    className: "bg-blue-100 text-blue-800 hover:bg-blue-200 border border-blue-300",
+    className: "bg-info-soft text-navy-dark hover:bg-info-soft border border-info-soft",
   },
   {
     type: "social",

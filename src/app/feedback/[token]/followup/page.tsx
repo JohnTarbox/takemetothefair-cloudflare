@@ -118,7 +118,7 @@ export default async function FollowupPage({ params, searchParams }: PageProps) 
           </div>
           <button
             type="submit"
-            className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+            className="rounded bg-secondary px-4 py-2 text-secondary-foreground hover:bg-secondary/90"
           >
             Send feedback
           </button>

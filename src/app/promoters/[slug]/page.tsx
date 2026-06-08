@@ -289,7 +289,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                       href={promoter.website}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
-                      className="text-blue-700 hover:underline break-all"
+                      className="text-navy hover:underline break-all"
                     >
                       {promoter.website.replace(/^https?:\/\//, "")}
                     </Link>
@@ -300,7 +300,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                     <Mail className="w-4 h-4 text-muted-foreground" />
                     <a
                       href={`mailto:${promoter.contactEmail}`}
-                      className="text-blue-700 hover:underline break-all"
+                      className="text-navy hover:underline break-all"
                     >
                       {promoter.contactEmail}
                     </a>
@@ -309,10 +309,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                 {promoter.contactPhone && (
                   <p className="flex items-center gap-2 text-sm">
                     <Phone className="w-4 h-4 text-muted-foreground" />
-                    <a
-                      href={`tel:${promoter.contactPhone}`}
-                      className="text-blue-700 hover:underline"
-                    >
+                    <a href={`tel:${promoter.contactPhone}`} className="text-navy hover:underline">
                       {promoter.contactPhone}
                     </a>
                   </p>

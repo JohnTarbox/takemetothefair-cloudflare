@@ -119,13 +119,13 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
             <WindowSelector currentWindow={window} />
             <Link
               href="/admin/diagnostics"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               Diagnostics <ArrowRight className="w-3.5 h-3.5" />
             </Link>
             <Link
               href="/admin/analytics/ga4"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               GA4 dashboard <ArrowRight className="w-3.5 h-3.5" />
             </Link>
@@ -481,8 +481,8 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
     <KpiCard
       title={`Google clicks (last ${card.windowDays}d)`}
       value={fmt(card.current)}
-      icon={<Search className="w-5 h-5 text-blue-600" />}
-      iconColor="bg-blue-100"
+      icon={<Search className="w-5 h-5 text-royal" />}
+      iconColor="bg-info-soft"
       href="/admin/analytics?tab=google"
       footer={footer}
     />
@@ -796,8 +796,8 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
     <KpiCard
       title="Facebook traffic (last 28d)"
       value={fmt(summary.sessions)}
-      icon={<Facebook className="w-5 h-5 text-blue-600" />}
-      iconColor="bg-blue-100"
+      icon={<Facebook className="w-5 h-5 text-royal" />}
+      iconColor="bg-info-soft"
       href="/admin/analytics/ga4"
       footer={
         <span className="text-xs text-muted-foreground">
@@ -828,8 +828,8 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
     <KpiCard
       title={`Brand vs non-brand (last ${c.windowDays}d, Google)`}
       value={fmtPct(c.brand_share, 0)}
-      icon={<TrendingUp className="w-5 h-5 text-blue-600" />}
-      iconColor="bg-blue-100"
+      icon={<TrendingUp className="w-5 h-5 text-royal" />}
+      iconColor="bg-info-soft"
       href="/admin/analytics?tab=google"
       state={state}
       actionPrompt={actionPrompt}
@@ -1094,7 +1094,7 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
     {
       red: { border: "border-red-300", bg: "bg-red-100", icon: "text-red-600" },
       yellow: { border: "border-amber-300", bg: "bg-amber-100", icon: "text-amber-600" },
-      blue: { border: "border-blue-300", bg: "bg-blue-100", icon: "text-blue-600" },
+      blue: { border: "border-info-soft", bg: "bg-info-soft", icon: "text-royal" },
     };
   const style = c.maxSeverity
     ? sevStyle[c.maxSeverity]
@@ -1128,7 +1128,7 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
                         <span className="text-amber-700">{fmt(c.yellowCount)} yellow</span>
                       )}
                       {c.blueCount > 0 && (
-                        <span className="text-blue-700">{fmt(c.blueCount)} blue</span>
+                        <span className="text-navy">{fmt(c.blueCount)} blue</span>
                       )}
                     </div>
                   </>
@@ -1533,7 +1533,7 @@ function ActivityIcon({ kind }: { kind: ActivityEntry["kind"] }) {
   const map: Record<ActivityEntry["kind"], { Icon: typeof Activity; color: string; bg: string }> = {
     admin: { Icon: BarChart3, color: "text-violet-600", bg: "bg-violet-100" },
     indexnow: { Icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-100" },
-    conversion: { Icon: TrendingUp, color: "text-blue-600", bg: "bg-blue-100" },
+    conversion: { Icon: TrendingUp, color: "text-royal", bg: "bg-info-soft" },
   };
   const { Icon, color, bg } = map[kind];
   return (
@@ -1751,9 +1751,9 @@ async function RecommendationsTab() {
     },
     blue: {
       label: "Nice to have",
-      cardBorder: "border-blue-300",
-      badge: "bg-blue-100 text-blue-800 border-blue-200",
-      chip: "bg-blue-50 text-blue-800 border-blue-200",
+      cardBorder: "border-info-soft",
+      badge: "bg-info-soft text-navy-dark border-info-soft",
+      chip: "bg-info-soft text-navy-dark border-info-soft",
     },
   };
 
@@ -1955,7 +1955,7 @@ async function RecommendationsTab() {
                               href={o.targetUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-blue-600 hover:underline"
+                              className="text-royal hover:underline"
                             >
                               {o.targetUrl}
                             </Link>
@@ -2110,7 +2110,7 @@ async function RecommendationsTab() {
                                 <div className="min-w-0 flex-1">
                                   <p className="text-sm text-foreground">
                                     {link ? (
-                                      <Link href={link} className="text-blue-600 hover:underline">
+                                      <Link href={link} className="text-royal hover:underline">
                                         {targetLabel(item)}
                                       </Link>
                                     ) : (
@@ -2352,7 +2352,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                           href={urlsArr[0]}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="font-mono text-blue-700 hover:underline"
+                          className="font-mono text-navy hover:underline"
                         >
                           {urlsArr[0]}
                         </a>
@@ -2372,7 +2372,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                                   href={url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-blue-700 hover:underline"
+                                  className="text-navy hover:underline"
                                 >
                                   {url}
                                 </a>
@@ -2515,7 +2515,9 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
             role="tab"
             aria-selected={isActive}
             className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              isActive ? "bg-blue-600 text-white" : "bg-muted text-foreground hover:bg-muted"
+              isActive
+                ? "bg-secondary text-secondary-foreground"
+                : "bg-muted text-foreground hover:bg-muted"
             }`}
           >
             {tab.label}
@@ -2917,7 +2919,7 @@ async function BingTab() {
                 href="https://www.bing.com/webmasters/sitescan?siteUrl=https://meetmeatthefair.com/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-700"
+                className="text-royal hover:text-navy"
               >
                 view in BWT
               </a>
@@ -3109,7 +3111,7 @@ function BingErrorPanel({
                   href="https://www.bing.com/webmasters/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-700"
+                  className="text-royal hover:text-navy"
                 >
                   Bing Webmaster Tools
                 </a>{" "}
@@ -3235,7 +3237,7 @@ async function SiteHealthTab() {
                             href={row.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-blue-600 hover:underline"
+                            className="text-royal hover:underline"
                           >
                             {row.url}
                           </a>
@@ -3326,7 +3328,7 @@ async function SiteHealthTab() {
                           href={`/events/${row.sampleEventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline font-mono text-xs"
+                          className="text-royal hover:underline font-mono text-xs"
                         >
                           {row.sampleEventSlug}
                         </Link>

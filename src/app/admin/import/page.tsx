@@ -470,7 +470,7 @@ function ImportResultsCard({
                     <Link
                       href={`/events/${event.slug}`}
                       target="_blank"
-                      className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1"
+                      className="text-royal hover:text-navy-dark text-xs flex items-center gap-1"
                     >
                       View <ExternalLink className="w-3 h-3" />
                     </Link>
@@ -482,20 +482,20 @@ function ImportResultsCard({
           {updatedEvents.length > 0 && (
             <div>
               <h3 className="font-medium text-foreground mb-3 flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 text-blue-600" />
+                <RefreshCw className="w-4 h-4 text-royal" />
                 Updated Events ({updatedEvents.length})
               </h3>
               <ul className="space-y-2 max-h-64 overflow-y-auto">
                 {updatedEvents.map((event) => (
                   <li
                     key={event.id}
-                    className="flex items-center justify-between p-2 bg-blue-50 rounded-md"
+                    className="flex items-center justify-between p-2 bg-info-soft rounded-md"
                   >
                     <span className="text-sm text-foreground">{event.name}</span>
                     <Link
                       href={`/events/${event.slug}`}
                       target="_blank"
-                      className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1"
+                      className="text-royal hover:text-navy-dark text-xs flex items-center gap-1"
                     >
                       View <ExternalLink className="w-3 h-3" />
                     </Link>
@@ -743,7 +743,7 @@ function EventRow({
         event.exists
           ? "bg-muted border-border"
           : selected
-            ? "bg-blue-50 border-blue-300"
+            ? "bg-info-soft border-info-soft"
             : "hover:bg-muted"
       }`}
     >
@@ -752,7 +752,7 @@ function EventRow({
         checked={selected}
         onChange={() => toggleEventSelection(event.sourceId)}
         disabled={event.exists && !updateExisting}
-        className="mt-1 rounded border-border text-blue-600 focus:ring-blue-500"
+        className="mt-1 rounded border-border text-royal focus:ring-ring"
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
@@ -800,7 +800,7 @@ function EventRow({
             href={event.sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mt-1"
+            className="inline-flex items-center gap-1 text-xs text-royal hover:underline mt-1"
             onClick={(e) => e.stopPropagation()}
           >
             <ExternalLink className="w-3 h-3" />

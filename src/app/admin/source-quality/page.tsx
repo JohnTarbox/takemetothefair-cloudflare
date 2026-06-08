@@ -313,7 +313,7 @@ export default async function SourceQualityPage({
                       {r.sourceDomain ? (
                         <Link
                           href={`/admin/events?source=${encodeURIComponent(r.sourceDomain)}`}
-                          className="text-blue-600 hover:underline"
+                          className="text-royal hover:underline"
                         >
                           {r.sourceDomain}
                         </Link>

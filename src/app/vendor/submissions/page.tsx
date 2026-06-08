@@ -130,7 +130,7 @@ export default async function VendorSubmissionsPage() {
                           {isPublic && (
                             <Link
                               href={`/events/${event.slug}`}
-                              className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"
+                              className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy"
                             >
                               View <ExternalLink className="w-3 h-3" />
                             </Link>

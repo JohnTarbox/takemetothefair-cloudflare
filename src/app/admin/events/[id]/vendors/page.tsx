@@ -261,7 +261,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Event not found</p>
-        <Link href="/admin/events" className="text-blue-600 hover:underline mt-2 inline-block">
+        <Link href="/admin/events" className="text-royal hover:underline mt-2 inline-block">
           Back to Events
         </Link>
       </div>
@@ -373,7 +373,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                           type="checkbox"
                           checked={selectedVendorIds.has(vendor.id)}
                           onChange={() => toggleVendorSelection(vendor.id)}
-                          className="w-4 h-4 rounded border-border text-blue-600 focus:ring-blue-500"
+                          className="w-4 h-4 rounded border-border text-royal focus:ring-ring"
                         />
                         <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
                           {vendor.logoUrl ? (
@@ -560,7 +560,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/admin/vendors/${ev.vendor.id}/edit`}
-                          className="font-medium text-foreground hover:text-blue-600"
+                          className="font-medium text-foreground hover:text-royal"
                         >
                           {ev.vendor.businessName}
                         </Link>

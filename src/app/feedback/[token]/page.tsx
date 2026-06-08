@@ -206,7 +206,7 @@ function ConfirmCard({ title, body }: { title: string; body: string }) {
         <h1 className="text-xl font-semibold text-foreground">{title}</h1>
         <p className="mt-3 text-muted-foreground">{body}</p>
         <p className="mt-6 text-sm text-muted-foreground">
-          <Link href="/" className="text-blue-600 hover:underline">
+          <Link href="/" className="text-royal hover:underline">
             ← Back to Meet Me at the Fair
           </Link>
         </p>

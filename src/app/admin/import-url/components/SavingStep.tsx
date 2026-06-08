@@ -10,7 +10,7 @@ export function SavingStep({ eventsCount, progress }: SavingStepProps) {
   return (
     <Card>
       <CardContent className="py-12 text-center">
-        <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+        <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
         <h3 className="text-lg font-medium text-foreground">
           {progress && progress.total > 1
             ? `Saving event ${progress.current} of ${progress.total}...`
@@ -21,7 +21,7 @@ export function SavingStep({ eventsCount, progress }: SavingStepProps) {
           <div className="mt-4 max-w-xs mx-auto">
             <div className="w-full bg-muted rounded-full h-2">
               <div
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                className="bg-royal h-2 rounded-full transition-all duration-300"
                 style={{ width: `${(progress.current / progress.total) * 100}%` }}
               />
             </div>

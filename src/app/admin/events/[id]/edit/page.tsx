@@ -285,7 +285,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Event not found</p>
-        <Link href="/admin/events" className="text-blue-600 hover:underline mt-2 inline-block">
+        <Link href="/admin/events" className="text-royal hover:underline mt-2 inline-block">
           Back to Events
         </Link>
       </div>

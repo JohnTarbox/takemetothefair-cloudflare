@@ -294,7 +294,7 @@ export function Header() {
                   </Link>
                   <Link
                     href="/register"
-                    className="block px-3 py-2 text-royal hover:text-blue-700 hover:bg-brand-blue-light rounded-lg font-medium"
+                    className="block px-3 py-2 text-royal hover:text-navy hover:bg-brand-blue-light rounded-lg font-medium"
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     Get Started

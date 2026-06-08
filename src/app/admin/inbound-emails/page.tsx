@@ -411,7 +411,7 @@ export default function AdminInboundEmailsPage() {
             ))}
             <a
               href="/admin/classifier-accuracy"
-              className="ml-1 text-xs text-blue-600 hover:underline"
+              className="ml-1 text-xs text-royal hover:underline"
             >
               weekly trend →
             </a>
@@ -506,7 +506,7 @@ export default function AdminInboundEmailsPage() {
               onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 text-sm rounded ${
                 statusFilter === s
-                  ? "bg-blue-600 text-white"
+                  ? "bg-secondary text-secondary-foreground"
                   : "bg-card border border-border text-foreground hover:bg-muted"
               }`}
             >
@@ -521,7 +521,7 @@ export default function AdminInboundEmailsPage() {
               onClick={() => setIntentFilter(i)}
               className={`px-3 py-1 text-sm rounded ${
                 intentFilter === i
-                  ? "bg-blue-600 text-white"
+                  ? "bg-secondary text-secondary-foreground"
                   : "bg-card border border-border text-foreground hover:bg-muted"
               }`}
             >
@@ -536,7 +536,7 @@ export default function AdminInboundEmailsPage() {
               onClick={() => setSinceHours(w.hours)}
               className={`px-3 py-1 text-sm rounded ${
                 sinceHours === w.hours
-                  ? "bg-blue-600 text-white"
+                  ? "bg-secondary text-secondary-foreground"
                   : "bg-card border border-border text-foreground hover:bg-muted"
               }`}
             >
@@ -630,7 +630,7 @@ export default function AdminInboundEmailsPage() {
                                 href={`${WORKFLOWS_DASH}/${row.workflowInstanceId}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                                className="inline-flex items-center gap-1 text-xs text-royal hover:underline"
                               >
                                 <ExternalLink className="w-3 h-3" />
                                 CF dash
@@ -739,7 +739,7 @@ export default function AdminInboundEmailsPage() {
                                     href={row.parsedUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-blue-600 hover:underline break-all"
+                                    className="text-royal hover:underline break-all"
                                   >
                                     {row.parsedUrl}
                                   </a>
@@ -755,7 +755,7 @@ export default function AdminInboundEmailsPage() {
                                   <span
                                     className={
                                       row.replyKind === "already-exists"
-                                        ? "font-mono text-blue-700"
+                                        ? "font-mono text-navy"
                                         : "font-mono text-foreground"
                                     }
                                   >
@@ -798,7 +798,7 @@ export default function AdminInboundEmailsPage() {
                                   </span>{" "}
                                   <a
                                     href={`/admin/events/${row.resultingEvent.id}`}
-                                    className="text-blue-600 hover:underline"
+                                    className="text-royal hover:underline"
                                   >
                                     {row.resultingEvent.name}
                                   </a>{" "}

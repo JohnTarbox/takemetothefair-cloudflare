@@ -11,9 +11,9 @@ type StateColors = {
 
 const STATE_COLORS: Record<string, StateColors> = {
   ME: {
-    bg: "bg-blue-50",
+    bg: "bg-info-soft",
     icon: "text-blue-400",
-    badge: "bg-blue-100 text-blue-700",
+    badge: "bg-info-soft text-navy",
   },
   MA: {
     bg: "bg-purple-50",

@@ -238,11 +238,11 @@ export default function AdminVenuesPage() {
       </div>
 
       {batchResult && (
-        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">{batchResult}</div>
+        <div className="mb-4 p-3 bg-info-soft text-navy rounded-md text-sm">{batchResult}</div>
       )}
 
       {googleBackfillResult && (
-        <div className="mb-4 p-3 bg-blue-50 text-blue-700 rounded-md text-sm">
+        <div className="mb-4 p-3 bg-info-soft text-navy rounded-md text-sm">
           {googleBackfillResult}
         </div>
       )}

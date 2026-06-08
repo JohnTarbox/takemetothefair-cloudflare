@@ -222,7 +222,7 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                         <div className="flex items-center gap-2">
                           <Link
                             href={`/venues/${venue.slug}`}
-                            className="text-royal hover:text-blue-800 text-sm font-medium"
+                            className="text-royal hover:text-navy-dark text-sm font-medium"
                           >
                             View
                           </Link>

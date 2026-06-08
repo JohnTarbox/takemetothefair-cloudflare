@@ -18,7 +18,7 @@ export default function FeedbackThanksPage() {
           email if anything else comes up.
         </p>
         <p className="mt-6 text-sm text-muted-foreground">
-          <Link href="/" className="text-blue-600 hover:underline">
+          <Link href="/" className="text-royal hover:underline">
             ← Back to Meet Me at the Fair
           </Link>
         </p>

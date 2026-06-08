@@ -209,7 +209,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                     </span>
                   </div>
                   {distance != null && (
-                    <span className="ml-2 flex-shrink-0 text-xs font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                    <span className="ml-2 flex-shrink-0 text-xs font-medium text-info-soft-foreground bg-info-soft px-1.5 py-0.5 rounded">
                       {formatDistance(distance)}
                     </span>
                   )}

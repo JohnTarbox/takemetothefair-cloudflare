@@ -215,7 +215,7 @@ export function GooglePlaceSearch({
         <button
           type="button"
           onClick={() => setShowUrl(true)}
-          className="text-xs text-royal hover:text-blue-800 flex items-center gap-1"
+          className="text-xs text-royal hover:text-navy-dark flex items-center gap-1"
         >
           <Link2 className="w-3 h-3" />
           Or paste a Google Maps URL

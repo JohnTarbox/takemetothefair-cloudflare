@@ -112,7 +112,7 @@ export default async function AllEventsPage() {
                 <li key={event.slug} className="break-inside-avoid mb-1">
                   <Link
                     href={`/events/${event.slug}`}
-                    className="text-royal hover:text-blue-800 hover:underline text-sm"
+                    className="text-royal hover:text-navy-dark hover:underline text-sm"
                   >
                     {event.name}
                   </Link>

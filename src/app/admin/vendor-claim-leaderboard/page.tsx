@@ -266,7 +266,7 @@ function outcomeBadgeClasses(outcome: string): string {
     case "bounced":
       return "bg-red-50 text-red-800 border-red-300";
     case "replied":
-      return "bg-blue-50 text-blue-800 border-blue-200";
+      return "bg-info-soft text-navy-dark border-info-soft";
     case "sent":
     case "opened":
     case "no_response":
@@ -344,7 +344,7 @@ export default async function VendorClaimLeaderboardPage() {
                           href={`/vendors/${r.slug}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-600 hover:underline font-medium"
+                          className="text-royal hover:underline font-medium"
                         >
                           {r.businessName}
                         </Link>
@@ -359,7 +359,7 @@ export default async function VendorClaimLeaderboardPage() {
                             href={r.website}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-blue-600 hover:underline truncate inline-block max-w-[200px]"
+                            className="text-royal hover:underline truncate inline-block max-w-[200px]"
                           >
                             {r.website.replace(/^https?:\/\//, "")}
                           </a>

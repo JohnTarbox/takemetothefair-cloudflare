@@ -255,7 +255,7 @@ export default function OgImageSweepPage() {
                               href={row.source_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline"
+                              className="text-royal hover:underline"
                             >
                               {row.source_url || <span className="text-muted-foreground">—</span>}
                             </a>
@@ -266,7 +266,7 @@ export default function OgImageSweepPage() {
                                 href={row.image_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-blue-600 hover:underline"
+                                className="text-royal hover:underline"
                               >
                                 {row.image_url}
                               </a>

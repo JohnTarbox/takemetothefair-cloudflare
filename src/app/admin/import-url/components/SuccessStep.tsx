@@ -104,7 +104,7 @@ export function SuccessStep({
                 <Link
                   href={`/events/${event.slug}`}
                   target="_blank"
-                  className="text-blue-600 hover:text-blue-800 flex-shrink-0"
+                  className="text-royal hover:text-navy-dark flex-shrink-0"
                 >
                   <ExternalLink className="w-4 h-4" />
                 </Link>

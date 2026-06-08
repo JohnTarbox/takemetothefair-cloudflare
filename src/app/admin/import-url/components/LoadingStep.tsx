@@ -12,7 +12,7 @@ export function LoadingStep({ variant, onCancel }: LoadingStepProps) {
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
+          <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
           <h3 className="text-lg font-medium text-foreground">Fetching page content...</h3>
           <p className="text-muted-foreground mt-2">This may take a few seconds</p>
           {onCancel && (

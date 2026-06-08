@@ -236,7 +236,7 @@ function SourceLink({ url }: { url: string }) {
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 hover:underline"
+        className="text-royal hover:underline"
       >
         {hostname}
         <ExternalLink className="w-3 h-3 inline ml-1" />

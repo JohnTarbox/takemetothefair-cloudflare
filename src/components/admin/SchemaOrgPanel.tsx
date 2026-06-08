@@ -318,7 +318,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                   href={event.ticketUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-blue-600 hover:underline mt-2"
+                  className="inline-flex items-center gap-1 text-royal hover:underline mt-2"
                 >
                   {event.ticketUrl}
                   <ExternalLink className="w-3 h-3" />
@@ -454,7 +454,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                       href={schemaOrg.ticketUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-500 hover:underline"
+                      className="text-royal hover:underline"
                     >
                       {new URL(schemaOrg.ticketUrl).hostname}
                     </a>
@@ -475,7 +475,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                   href={schemaOrg.ticketUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-blue-600 hover:underline mt-2"
+                  className="inline-flex items-center gap-1 text-royal hover:underline mt-2"
                 >
                   View page
                   <ExternalLink className="w-3 h-3" />

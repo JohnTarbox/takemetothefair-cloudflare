@@ -143,7 +143,7 @@ export function ReviewStep({
                       }}
                       className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
                         selected
-                          ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
+                          ? "bg-info-soft text-navy ring-1 ring-blue-300"
                           : "bg-muted text-muted-foreground hover:bg-muted"
                       }`}
                     >

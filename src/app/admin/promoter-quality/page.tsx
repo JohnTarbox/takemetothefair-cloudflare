@@ -224,7 +224,7 @@ export default async function PromoterQualityPage() {
                           href={`/promoters/${r.promoterSlug}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-600 hover:underline font-medium"
+                          className="text-royal hover:underline font-medium"
                         >
                           {r.promoterName}
                         </Link>
@@ -307,7 +307,7 @@ function ConcernBadge({ pct }: { pct: number }) {
       : pct >= 10
         ? "bg-amber-50 text-amber-800 border-amber-300"
         : pct > 0
-          ? "bg-blue-50 text-blue-800 border-blue-200"
+          ? "bg-info-soft text-navy-dark border-info-soft"
           : "bg-green-50 text-green-800 border-green-300";
   return (
     <span

@@ -80,7 +80,7 @@ export default async function Ga4DashboardPage({ searchParams }: PageProps) {
               href={`https://analytics.google.com/analytics/web/#/p${result.data.propertyId}/reports`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               Open in GA4 <ExternalLink className="w-3.5 h-3.5" />
             </a>
@@ -179,7 +179,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
                     <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
                       <Link
                         href={`/admin/analytics/page?path=${encodeURIComponent(row.path)}`}
-                        className="text-blue-600 hover:text-blue-700 hover:underline"
+                        className="text-royal hover:text-navy hover:underline"
                       >
                         {row.path}
                       </Link>
@@ -286,7 +286,7 @@ function FacebookTrafficCard({ data }: { data: DashboardMetrics }) {
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <span>Facebook traffic (last 28 days)</span>
-          <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+          <span className="inline-flex items-center rounded-full bg-info-soft px-2.5 py-0.5 text-xs font-medium text-navy-dark">
             {fmt(fb.sessions)} session{fb.sessions === 1 ? "" : "s"} · {fmt(fb.activeUsers)} user
             {fb.activeUsers === 1 ? "" : "s"}
           </span>
@@ -373,8 +373,8 @@ function StatCard({ label, value }: { label: string; value: string }) {
             <p className="text-sm text-muted-foreground">{label}</p>
             <p className="text-4xl font-bold text-foreground mt-1 tabular-nums">{value}</p>
           </div>
-          <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-blue-100">
-            <Users className="w-6 h-6 text-blue-600" />
+          <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-info-soft">
+            <Users className="w-6 h-6 text-royal" />
           </div>
         </div>
       </CardContent>
@@ -405,7 +405,7 @@ function ErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; mes
                   href="https://console.cloud.google.com/iam-admin/serviceaccounts"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-700"
+                  className="text-royal hover:text-navy"
                 >
                   Google Cloud Console
                 </a>

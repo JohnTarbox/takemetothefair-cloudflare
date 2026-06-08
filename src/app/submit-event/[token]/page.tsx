@@ -51,10 +51,7 @@ export default async function CorrectionFormPage({ params }: PageProps) {
         </p>
         <p className="mt-4 text-foreground">
           If you still need to update the event, email{" "}
-          <a
-            className="text-blue-600 hover:underline"
-            href="mailto:corrections@meetmeatthefair.com"
-          >
+          <a className="text-royal hover:underline" href="mailto:corrections@meetmeatthefair.com">
             corrections@meetmeatthefair.com
           </a>{" "}
           with the change.
@@ -90,7 +87,7 @@ export default async function CorrectionFormPage({ params }: PageProps) {
         <p className="mt-4 text-foreground">
           The event your correction link referenced has been removed. If you&apos;d like to submit
           it again, email{" "}
-          <a className="text-blue-600 hover:underline" href="mailto:submit@meetmeatthefair.com">
+          <a className="text-royal hover:underline" href="mailto:submit@meetmeatthefair.com">
             submit@meetmeatthefair.com
           </a>{" "}
           with a URL.

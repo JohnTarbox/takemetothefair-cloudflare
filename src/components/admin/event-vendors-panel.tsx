@@ -72,7 +72,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
                     <div className="flex items-center gap-2">
                       <Link
                         href={`/events/${event.slug}`}
-                        className="font-medium text-foreground hover:text-blue-600 truncate"
+                        className="font-medium text-foreground hover:text-royal truncate"
                       >
                         {event.name}
                       </Link>

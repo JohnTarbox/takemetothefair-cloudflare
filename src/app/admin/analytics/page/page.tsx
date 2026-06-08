@@ -137,7 +137,7 @@ export default async function AdminAnalyticsPageDetail({ searchParams }: PagePro
             href={path}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+            className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
           >
             Open live page <ExternalLink className="w-3.5 h-3.5" />
           </a>
@@ -217,7 +217,7 @@ function DetailView({
             <a
               href={csvHref}
               download={csvFilename}
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               <Download className="w-4 h-4" /> CSV
             </a>

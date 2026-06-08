@@ -85,7 +85,7 @@ export function VenueStep({
                 <label
                   key={venue.id}
                   className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedVenueId === venue.id ? "border-blue-500 bg-blue-50" : "hover:bg-muted"
+                    selectedVenueId === venue.id ? "border-royal bg-info-soft" : "hover:bg-muted"
                   }`}
                 >
                   <input

@@ -326,7 +326,7 @@ export default function VendorProfilePage() {
                 value={formData.description}
                 onChange={handleChange}
                 rows={4}
-                className="block w-full rounded-lg border border-border px-3 py-2 text-foreground focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="block w-full rounded-lg border border-border px-3 py-2 text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                 placeholder="Tell us about your business..."
               />
             </div>
@@ -404,14 +404,14 @@ export default function VendorProfilePage() {
                 <button
                   type="button"
                   onClick={() => setShowGoogleLookup(!showGoogleLookup)}
-                  className="text-sm text-blue-600 hover:text-blue-800"
+                  className="text-sm text-royal hover:text-navy-dark"
                 >
                   {showGoogleLookup ? "Hide" : "Find my business on Google"}
                 </button>
               </div>
               {showGoogleLookup && (
-                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-xs text-blue-700 mb-2">
+                <div className="mb-4 p-3 bg-info-soft border border-info-soft rounded-lg">
+                  <p className="text-xs text-navy mb-2">
                     Search for your business to auto-fill address and contact info
                   </p>
                   <GooglePlaceSearch

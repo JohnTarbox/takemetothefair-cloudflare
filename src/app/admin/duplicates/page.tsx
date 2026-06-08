@@ -302,7 +302,7 @@ export default function AdminDuplicatesPage() {
               <select
                 value={threshold}
                 onChange={(e) => setThreshold(parseFloat(e.target.value))}
-                className="border border-border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="border border-border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-ring focus:border-transparent"
               >
                 {THRESHOLDS.map((t) => (
                   <option key={t.value} value={t.value}>
@@ -530,7 +530,7 @@ export default function AdminDuplicatesPage() {
                             }}
                             className={`text-left p-4 border-2 rounded-lg transition-colors cursor-pointer ${
                               isSelected
-                                ? "border-blue-500 bg-blue-50"
+                                ? "border-royal bg-info-soft"
                                 : "border-border hover:border-border"
                             }`}
                           >

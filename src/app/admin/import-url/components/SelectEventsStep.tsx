@@ -60,7 +60,7 @@ export function SelectEventsStep({
               key={event._extractId}
               className={`flex items-start p-4 border rounded-lg cursor-pointer transition-colors ${
                 selectedEventIds.has(event._extractId)
-                  ? "border-blue-500 bg-blue-50"
+                  ? "border-royal bg-info-soft"
                   : "hover:bg-muted"
               }`}
             >

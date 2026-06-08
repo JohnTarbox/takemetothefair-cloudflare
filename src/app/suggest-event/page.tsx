@@ -839,7 +839,7 @@ export default function SuggestEventPage() {
               link this event to it?
             </p>
 
-            <div className="p-4 bg-brand-blue-light border border-blue-200 rounded-lg">
+            <div className="p-4 bg-brand-blue-light border border-info-soft rounded-lg">
               <h4 className="font-medium text-foreground">{matchedVenue.name}</h4>
               <p className="text-sm text-muted-foreground mt-1">
                 <MapPin className="w-3 h-3 inline mr-1" />

@@ -293,7 +293,7 @@ export function SchemaOrgSyncButton() {
                                 <td className="px-3 py-2 text-right">
                                   <Link
                                     href={`/admin/events/${event.eventId}/edit`}
-                                    className="text-blue-600 hover:text-blue-800 inline-flex items-center gap-1"
+                                    className="text-royal hover:text-navy-dark inline-flex items-center gap-1"
                                   >
                                     Edit <ExternalLink className="w-3 h-3" />
                                   </Link>

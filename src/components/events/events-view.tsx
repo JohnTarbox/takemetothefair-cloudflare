@@ -1262,7 +1262,7 @@ export function EventsView({
                         </Badge>
                       )}
                       {event.status === "TENTATIVE" && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-blue-800">
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-navy-dark">
                           Tentative
                         </span>
                       )}
@@ -1286,7 +1286,7 @@ export function EventsView({
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/events/${event.slug}`}
-                          className="text-royal hover:text-blue-800 text-sm font-medium"
+                          className="text-royal hover:text-navy-dark text-sm font-medium"
                         >
                           View
                         </Link>
