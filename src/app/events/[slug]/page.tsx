@@ -70,7 +70,7 @@ import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { formatDateMedium } from "@/lib/datetime";
-import { cdnImage, HERO_DESKTOP, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
 export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
@@ -684,41 +684,54 @@ export default async function EventDetailPage({ params }: Props) {
           {(() => {
             const categoryColors = getCategoryColors(parseJsonArray(event.categories));
             if (event.imageUrl) {
-              // IMG1 §1b Phase 2 (2026-06-08) — smart-crop the hero.
+              // IMG1 §1b (2026-06-08) — blurred-fill hero (no crop).
               //
-              // Pre-IMG1: a 1942×809 (AR 2.40) source rendered into a 16:9 box
-              // with `object-cover` lost ~26% of its width (~140px off each
-              // side) via dumb client-side center-crop. The Kingfield event
-              // (`kingfield-first-friday-artwalk-2026`) was the spec's
-              // observed-bug example.
+              // History of this hero's cropping fix:
+              //   1. Pre-IMG1: the source was rendered via <Image fill
+              //      object-cover>. A 1942×809 panorama in a 16:9 box lost
+              //      ~26% of its width to dumb client-side center-crop.
+              //      Kingfield (`kingfield-first-friday-artwalk-2026`) was
+              //      the spec's named-bug example.
+              //   2. First fix (commit 248b854, deployed 13:59Z 2026-06-08):
+              //      moved cropping server-side via `fit=cover,gravity=auto`
+              //      so Cloudflare's saliency algorithm picked the crop
+              //      window. PROBLEM: for poster/text-heavy heroes (which
+              //      describes Kingfield — title text on the left edge,
+              //      figure illustration on the right), saliency latches
+              //      onto the figure and shifts the crop further right,
+              //      making it WORSE than center-crop (cuts off "KIN" of
+              //      KINGFIELD on the left + "FREE • EVERY" on the bottom).
+              //      Smart-crop optimizes for the wrong thing when the
+              //      whole image is the content.
+              //   3. This fix: don't crop at all. Show the full image with
+              //      `object-contain`, fill the surrounding box space with
+              //      a blurred-scaled copy of the same image as a decorative
+              //      backdrop. Spec §1b calls this out as "Optional polish
+              //      for odd ratios — blurred-fill backdrop preserves the
+              //      whole image with no letterbox bars — good for a
+              //      directory of unpredictable image shapes." Event hero
+              //      images ARE unpredictable shapes (scraped + uploaded
+              //      mix, poster + photo mix), so this default fits the
+              //      whole cohort, not just the Kingfield case.
               //
-              // Fix: emit a manual srcSet of `cdn-cgi/image` derivatives
-              // with `fit=cover,gravity=auto` so Cloudflare's content-aware
-              // saliency algorithm picks the crop window per width. Each
-              // srcSet entry is a smart-cropped 16:9 frame at that width —
-              // the browser picks the right one for the viewport (real
-              // responsive variants, not the single-width pre-wrap path
-              // that would have all srcSet entries serve the same 1600w).
+              // Why a raw `<img>` instead of `<Image>`: the next/image
+              // custom loader signature can't pass `fit`/`gravity`/`height`
+              // per call, and we're emitting two image elements (backdrop
+              // + foreground) where the simpler raw-img + cdnImage pattern
+              // is cheapest. LCP preserved via `fetchpriority="high"` +
+              // `loading="eager"` directly on the foreground <img>.
               //
-              // Why a raw `<img>` instead of `<Image>`: the next/image custom
-              // loader signature (`{ src, width, quality }`) can't pass
-              // `gravity`/`fit`/`height` per call. Emitting a manual srcSet
-              // here is the cheapest path that gets responsive + smart-crop;
-              // a more general signal (URL fragment, loader-aware preset
-              // registry) is a follow-up if other heroes need the same.
-              //
-              // LCP behavior preserved via `fetchpriority="high"` +
-              // `loading="eager"`; the eslint-disable for `<img>` is per-
-              // file precedent (vendors/events listings already do this
-              // for similar bespoke-srcset cases).
-              const heroWidths = [400, 640, 800, 1200, 1600];
+              // Bytes: foreground responsive srcSet uses plain width-only
+              // resizes (no crop params — `object-contain` does no cropping,
+              // we just need the right pixel density per viewport). Backdrop
+              // is a single tiny 200w blurred copy — CSS blur masks the
+              // pixelation, and `scale-110` prevents the blur halo from
+              // showing the box edge.
+              const heroWidths = [400, 640, 800, 1200, 1600, 1942];
               const heroSrcSet = heroWidths
                 .map((w) =>
                   cdnImage(event.imageUrl!, {
                     width: w,
-                    height: Math.round((w * 9) / 16),
-                    fit: "cover",
-                    gravity: "auto",
                     format: "auto",
                     quality: 80,
                     onerror: "redirect",
@@ -726,9 +739,33 @@ export default async function EventDetailPage({ params }: Props) {
                 )
                 .map((url, i) => `${url} ${heroWidths[i]}w`)
                 .join(", ");
-              const heroSrc = cdnImage(event.imageUrl, HERO_DESKTOP);
+              const heroSrc = cdnImage(event.imageUrl, {
+                width: 1600,
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              });
+              const backdropSrc = cdnImage(event.imageUrl, {
+                width: 200,
+                format: "auto",
+                quality: 60,
+                onerror: "redirect",
+              });
               return (
                 <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
+                  {/* Blurred backdrop — decorative, fills the box. Marked
+                      aria-hidden because the foreground <img> already
+                      carries the accessible alt text. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={backdropSrc}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
+                  />
+                  {/* Foreground — full image, no crop. `object-contain`
+                      letterboxes; the blurred backdrop fills the bars so
+                      they don't look empty. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={heroSrc}
@@ -738,7 +775,7 @@ export default async function EventDetailPage({ params }: Props) {
                     fetchPriority="high"
                     loading="eager"
                     decoding="async"
-                    className="absolute inset-0 w-full h-full object-cover"
+                    className="relative w-full h-full object-contain"
                   />
                 </div>
               );
