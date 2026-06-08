@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Store, CheckCircle, Calendar, MapPin } from "lucide-react";
+import { CheckCircle, Calendar, MapPin } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { parseJsonArray } from "@/types";
@@ -11,6 +11,7 @@ import { formatDateRange } from "@/lib/utils";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { VendorTierBadges } from "./VendorTierBadges";
 import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
+import { VendorMonogramLogo } from "./VendorMonogramLogo";
 
 interface VendorEvent {
   id: string;
@@ -106,7 +107,14 @@ export function VendorCard({ vendor }: VendorCardProps) {
                   );
                 })()
               ) : (
-                <Store className="w-8 h-8 text-muted-foreground" />
+                /* UX-A2 Part A — monogram tile instead of generic Store
+                   icon when no logo uploaded. Keeps listing grid visually
+                   coherent with the detail-page change. */
+                <VendorMonogramLogo
+                  businessName={vendor.businessName}
+                  size={64}
+                  className="!rounded-lg"
+                />
               )}
             </div>
           </Link>

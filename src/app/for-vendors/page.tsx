@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Search, UserCircle, ClipboardList, TrendingUp } from "lucide-react";
+import { Search, UserCircle, Calendar, Sparkles, ArrowRight, CheckCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Metadata } from "next";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
@@ -9,14 +9,13 @@ export const runtime = "edge";
 export const revalidate = 86400;
 
 export const metadata: Metadata = {
-  title: "For Vendors | Meet Me at the Fair",
+  title: "For Vendors — Claim Your Free Listing | Meet Me at the Fair",
   description:
-    "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+    "Claim your free vendor listing on Meet Me at the Fair: add photos, list your events, keep your info accurate. No paid tiers, no upsell.",
   alternates: { canonical: "https://meetmeatthefair.com/for-vendors" },
   openGraph: {
-    title: "For Vendors | Meet Me at the Fair",
-    description:
-      "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+    title: "For Vendors — Claim Your Free Listing | Meet Me at the Fair",
+    description: "Claim your free vendor listing on Meet Me at the Fair. No paid tiers.",
     url: "https://meetmeatthefair.com/for-vendors",
     siteName: "Meet Me at the Fair",
     type: "website",
@@ -31,9 +30,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "For Vendors | Meet Me at the Fair",
-    description:
-      "Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair.",
+    title: "For Vendors — Claim Your Free Listing | Meet Me at the Fair",
+    description: "Claim your free vendor listing on Meet Me at the Fair. No paid tiers.",
     images: ["https://meetmeatthefair.com/og-default.png"],
   },
 };
@@ -49,110 +47,134 @@ export default function ForVendorsPage() {
       />
       <WebPageSchema
         name="For Vendors | Meet Me at the Fair"
-        description="Find events, build your profile, and grow your business as a vendor with Meet Me at the Fair."
+        description="Claim your free vendor listing on Meet Me at the Fair."
         url="https://meetmeatthefair.com/for-vendors"
       />
-      <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-foreground mb-4">For Vendors</h1>
-        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-          Find events, showcase your business, and grow your customer base
+
+      {/* UX-A2 Part C (2026-06-08) — single above-fold primary CTA per
+          MMATF-UIUX-VendorClaim-Spec. Reframed around the FREE-claim
+          flow + Maine Cardworks as social proof. Zero pricing/tier
+          content (per the spec's hard guardrail — paid tiers live in
+          a separate backlog item). */}
+      <div className="text-center mb-10">
+        <h1 className="text-4xl font-bold text-foreground mb-3">Claim Your Free Vendor Listing</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-6">
+          Add photos, list the events you&apos;ll be at, keep your contact info accurate — so
+          customers find you when they&apos;re looking.{" "}
+          <strong className="text-foreground">No paid tiers.</strong>
+        </p>
+        <Link
+          href="/vendors"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-amber text-primary-foreground font-semibold rounded-lg hover:bg-amber/90 transition-colors text-lg"
+        >
+          <Search className="w-5 h-5" aria-hidden="true" />
+          Find your business &amp; claim it free
+          <ArrowRight className="w-5 h-5" aria-hidden="true" />
+        </Link>
+        <p className="text-sm text-muted-foreground mt-3">
+          Already not in the directory?{" "}
+          <Link
+            href="/register?role=VENDOR"
+            className="font-medium text-royal hover:text-navy underline"
+          >
+            List your business free
+          </Link>
         </p>
       </div>
 
-      <div className="prose prose-gray max-w-none mb-12">
-        <p className="text-lg text-muted-foreground leading-relaxed">
-          Meet Me at the Fair connects vendors with the fairs, festivals, and community events where
-          their products and services will shine. Browse upcoming events, apply to participate, and
-          get discovered by event-goers who are eager to find what you offer.
-        </p>
-        <p className="text-lg text-muted-foreground leading-relaxed">
-          Build a profile that highlights your business, track the events you&apos;ve applied to,
-          and let promoters find you when they&apos;re looking for the perfect vendor lineup.
-        </p>
+      {/* Social proof — Maine Cardworks is currently the one claimed vendor
+          (out of 2,533) per the spec's data motivation. Pointing visitors
+          at a fully-built example shows what they get when they claim. */}
+      <Card className="mb-10 border-amber-dark/30 bg-amber-light">
+        <CardContent className="p-6 flex items-start gap-4">
+          <Sparkles className="w-6 h-6 text-amber-dark flex-shrink-0 mt-1" aria-hidden="true" />
+          <div className="flex-1">
+            <h2 className="text-lg font-semibold text-foreground mb-1">
+              What a claimed listing looks like
+            </h2>
+            <p className="text-sm text-muted-foreground mb-3">
+              See{" "}
+              <Link
+                href="/vendors/maine-cardworks"
+                className="font-medium text-royal hover:text-navy underline"
+              >
+                Maine Cardworks
+              </Link>{" "}
+              — a claimed vendor with photos, business details, and event history. This is what your
+              page can look like in a few minutes, free.
+            </p>
+            <Link
+              href="/vendors/maine-cardworks"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-royal hover:text-navy"
+            >
+              View example
+              <ArrowRight className="w-4 h-4" aria-hidden="true" />
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Benefit cards reframed around the FREE experience. Previously
+          the cards were "Find Events / Build Profile / Apply / Grow Business"
+          which conflated the directory's broader value with the
+          specific free-claim value. New framing matches the spec's
+          "be discovered, keep info accurate, show your event schedule". */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3 mb-3">
+              <CheckCircle className="w-6 h-6 text-sage-700" aria-hidden="true" />
+              <h2 className="text-lg font-semibold text-foreground">Be discovered</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Show up when fairgoers search for what you sell. Your listing already exists in our
+              directory — claim it to take control of how it looks.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3 mb-3">
+              <UserCircle className="w-6 h-6 text-royal" aria-hidden="true" />
+              <h2 className="text-lg font-semibold text-foreground">Keep info accurate</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Update your description, contact info, website, and social links anytime. No waiting
+              on us to re-scrape outdated data.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3 mb-3">
+              <Calendar className="w-6 h-6 text-terracotta" aria-hidden="true" />
+              <h2 className="text-lg font-semibold text-foreground">Show your schedule</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              List the fairs and events you&apos;ll be at this season. Repeat customers can find you
+              between shows.
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-12 h-12 bg-brand-blue-light rounded-lg flex items-center justify-center">
-                <Search className="w-6 h-6 text-royal" aria-hidden="true" />
-              </div>
-              <h2 className="text-xl font-semibold text-foreground">Find Events</h2>
-            </div>
-            <p className="text-muted-foreground">
-              Discover fairs, festivals, and markets that are the perfect fit for your products and
-              services.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <UserCircle className="w-6 h-6 text-green-600" aria-hidden="true" />
-              </div>
-              <h2 className="text-xl font-semibold text-foreground">Build Your Profile</h2>
-            </div>
-            <p className="text-muted-foreground">
-              Showcase your business with photos, descriptions, and product categories so promoters
-              and attendees can find you.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <ClipboardList className="w-6 h-6 text-purple-600" aria-hidden="true" />
-              </div>
-              <h2 className="text-xl font-semibold text-foreground">Apply to Events</h2>
-            </div>
-            <p className="text-muted-foreground">
-              Submit applications to events you&apos;re interested in and track your approval status
-              from your dashboard.
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-orange-600" aria-hidden="true" />
-              </div>
-              <h2 className="text-xl font-semibold text-foreground">Grow Your Business</h2>
-            </div>
-            <p className="text-muted-foreground">
-              Expand your reach by participating in more events and connecting with new customers
-              across the region.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
+      {/* Secondary CTA block — same call as the hero CTA, restated at
+          the bottom for users who scrolled past without clicking. */}
       <div className="bg-muted rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-foreground mb-4">Ready to Find Your Next Event?</h2>
-        <p className="text-muted-foreground mb-6">
-          Join Meet Me at the Fair and start connecting with the events and customers that will help
-          your business grow.
+        <h2 className="text-2xl font-bold text-foreground mb-3">Ready to claim your listing?</h2>
+        <p className="text-muted-foreground mb-6 max-w-xl mx-auto">
+          Search for your business in our directory and click &quot;Claim this free listing&quot;.
+          Takes about 2 minutes.
         </p>
-        <div className="flex flex-wrap justify-center gap-4">
-          <Link
-            href="/login"
-            className="inline-flex items-center px-6 py-3 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
-          >
-            Get Started
-          </Link>
-          <Link
-            href="/events"
-            className="inline-flex items-center px-6 py-3 bg-card text-foreground font-medium rounded-lg border border-border hover:bg-muted transition-colors"
-          >
-            Browse Events
-          </Link>
-        </div>
+        <Link
+          href="/vendors"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-amber text-primary-foreground font-semibold rounded-lg hover:bg-amber/90 transition-colors"
+        >
+          <Search className="w-5 h-5" aria-hidden="true" />
+          Search the directory
+        </Link>
         <p className="text-sm text-muted-foreground mt-6">
           Want a walkthrough?{" "}
           <Link href="/vendor-guide" className="font-medium text-royal hover:text-navy underline">
