@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDateRange } from "@/lib/utils";
 import { haversineDistance } from "@/lib/geo";
 import { trackFilterApplied } from "@/lib/analytics";
+import { parseJsonArray } from "@/types";
 import type { events, venues, promoters } from "@/lib/db/schema";
 
 type CalendarViewType = "day" | "week" | "month" | "year" | "schedule";
@@ -191,23 +192,58 @@ function formatMonthYear(date: Date): string {
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
-// Generate a consistent color for an event based on its ID
-function getEventColor(eventId: string): string {
-  const colors = [
-    "bg-blue-500",
-    "bg-green-500",
-    "bg-purple-500",
-    "bg-pink-500",
-    "bg-indigo-500",
-    "bg-teal-500",
-    "bg-orange-500",
-    "bg-cyan-500",
-  ];
+// Calendar event-type palette. Categorical colors (NOT design-system
+// tokens) — see [[feedback_smart_crop_wrong_for_posters]] for the
+// category-vs-info distinction. These render the same in light/dark
+// (the calendar grid bg differs, but the event chip stays vivid).
+const CALENDAR_EVENT_COLORS = [
+  "bg-blue-500",
+  "bg-green-500",
+  "bg-purple-500",
+  "bg-pink-500",
+  "bg-indigo-500",
+  "bg-teal-500",
+  "bg-orange-500",
+  "bg-cyan-500",
+] as const;
+
+/**
+ * Map an event-category string to a stable palette index so all
+ * "Festival" events get one color, all "Craft Fair" events get
+ * another, etc. (Google Calendar's "My calendars" pattern — color
+ * communicates type at a glance instead of being noise.)
+ *
+ * Same hash function as the per-event id fallback so the palette
+ * spread looks similar; mod-by-palette-size ensures we always land
+ * on a real slot.
+ */
+function paletteIndexForCategory(category: string): number {
+  let hash = 0;
+  for (let i = 0; i < category.length; i++) {
+    hash = category.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash) % CALENDAR_EVENT_COLORS.length;
+}
+
+/**
+ * Pick a calendar chip color for an event.
+ *
+ * Calendar UX improvement (2026-06-08, per MMATF-UIUX-Calendar-Spec §3
+ * "Color dimension → event category"): prefer category-derived color so
+ * the grid reads as a typed view ("oh that orange block is the same
+ * weekend market type as the one Tuesday"). Falls back to the legacy
+ * per-event-id hash when categories aren't available, keeping color
+ * stability for events not yet categorized.
+ */
+function getEventColor(eventId: string, categories?: string[] | null): string {
+  if (categories && categories.length > 0) {
+    return CALENDAR_EVENT_COLORS[paletteIndexForCategory(categories[0]!)]!;
+  }
   let hash = 0;
   for (let i = 0; i < eventId.length; i++) {
     hash = eventId.charCodeAt(i) + ((hash << 5) - hash);
   }
-  return colors[Math.abs(hash) % colors.length];
+  return CALENDAR_EVENT_COLORS[Math.abs(hash) % CALENDAR_EVENT_COLORS.length]!;
 }
 
 interface CalendarViewProps {
@@ -410,7 +446,9 @@ function CalendarView({
                   className="block w-full text-left p-4 hover:bg-muted transition-colors"
                 >
                   <div className="flex items-start gap-3">
-                    <div className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`} />
+                    <div
+                      className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id, parseJsonArray(event.categories))}`}
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-foreground">{event.name}</div>
                       <div className="text-sm text-muted-foreground mt-1">
@@ -478,7 +516,7 @@ function CalendarView({
                     <button
                       key={event.id}
                       onClick={(e) => openEventPopover(e, event)}
-                      className={`block w-full text-left px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                      className={`block w-full text-left px-1.5 py-1 text-xs text-white rounded truncate ${getEventColor(event.id, parseJsonArray(event.categories))} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
                       title={
                         event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name
                       }
@@ -509,7 +547,7 @@ function CalendarView({
                     <Link
                       key={event.id}
                       href={`/events/${event.slug}`}
-                      className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id)}`}
+                      className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id, parseJsonArray(event.categories))}`}
                       title={event.name}
                     >
                       {event.name}
@@ -552,7 +590,7 @@ function CalendarView({
               <button
                 key={event.id}
                 onClick={(e) => openEventPopover(e, event)}
-                className={`block w-full text-left px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id)} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
+                className={`block w-full text-left px-1.5 py-0.5 text-xs text-white rounded truncate ${getEventColor(event.id, parseJsonArray(event.categories))} hover:opacity-80 transition-opacity ${event.status === "TENTATIVE" ? "border border-dashed border-white/60" : ""}`}
                 title={event.status === "TENTATIVE" ? `${event.name} (Tentative)` : event.name}
               >
                 {event.name}
@@ -581,7 +619,7 @@ function CalendarView({
               <Link
                 key={event.id}
                 href={`/events/${event.slug}`}
-                className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id)}`}
+                className={`block px-0.5 py-0 text-[0.55rem] leading-tight text-white rounded truncate ${getEventColor(event.id, parseJsonArray(event.categories))}`}
                 title={event.name}
               >
                 {event.name}
@@ -799,7 +837,7 @@ function CalendarView({
                       >
                         <div className="flex items-start gap-3">
                           <div
-                            className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`}
+                            className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id, parseJsonArray(event.categories))}`}
                           />
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-foreground">{event.name}</div>
@@ -827,7 +865,13 @@ function CalendarView({
   };
 
   return (
-    <div className="bg-card rounded-lg border border-border overflow-hidden print:border-0 print:rounded-none print:overflow-visible">
+    /* `print-landscape` opts this container into the named landscape
+       @page rule in globals.css (added in PR #400 to default @page to
+       portrait for event-sheet prints). Without this class the
+       calendar would print on portrait pages — too narrow for a
+       month-grid. Chrome/Edge/Safari 14+ honor named pages; Firefox
+       falls back to portrait (~3% market share, acceptable). */
+    <div className="bg-card rounded-lg border border-border overflow-hidden print:border-0 print:rounded-none print:overflow-visible print-landscape">
       {/* Print-only title */}
       <div className="hidden print:block print:px-2 print:py-1 px-4 py-3 border-b border-border">
         <h1 className="text-xl font-bold text-foreground">Events Calendar — {getTitle()}</h1>
@@ -941,7 +985,53 @@ export function EventsView({
   const currentSearchParams = useSearchParams();
   const viewMode = view;
   const [calendarDate, setCalendarDate] = useState(new Date());
-  const [calendarViewType, setCalendarViewType] = useState<CalendarViewType>("month");
+  // Calendar UX improvements (2026-06-08, per MMATF-UIUX-Calendar-Spec):
+  //   - Initial state "month" matches the legacy default + works for SSR.
+  //   - On mount we override from localStorage (last-used view) if
+  //     present, else auto-default to "schedule" on phones per the spec
+  //     ("Schedule (agenda) on phones; remember last-used view"). The
+  //     phone threshold uses matchMedia(max-width: 768px) to stay in
+  //     sync with the existing sm/md Tailwind breakpoint.
+  //   - Subsequent changes persist back to localStorage so the next
+  //     visit lands on whatever the user picked last.
+  const [calendarViewType, setCalendarViewTypeRaw] = useState<CalendarViewType>("month");
+  const CALENDAR_VIEW_STORAGE_KEY = "mmatf.calendar.viewType";
+  // Read once on mount. Empty array deps = run-once, intended; we don't
+  // re-read on URL changes because that would clobber a user's in-page
+  // view switch.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(CALENDAR_VIEW_STORAGE_KEY);
+      if (
+        stored === "day" ||
+        stored === "week" ||
+        stored === "month" ||
+        stored === "year" ||
+        stored === "schedule"
+      ) {
+        setCalendarViewTypeRaw(stored);
+        return;
+      }
+      // No stored preference — default by viewport.
+      if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
+        setCalendarViewTypeRaw("schedule");
+      }
+    } catch {
+      // localStorage access can throw in some sandboxed contexts. Falls
+      // back to the SSR default (month). Non-fatal.
+    }
+     
+  }, []);
+  // Wrapper that persists every change.
+  const setCalendarViewType = useCallback((v: CalendarViewType) => {
+    setCalendarViewTypeRaw(v);
+    try {
+      window.localStorage.setItem(CALENDAR_VIEW_STORAGE_KEY, v);
+    } catch {
+      // Same swallow as above — persistence is best-effort.
+    }
+  }, []);
 
   const switchView = (newView: string) => {
     const params = new URLSearchParams(currentSearchParams.toString());
