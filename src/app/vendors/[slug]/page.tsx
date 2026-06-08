@@ -28,10 +28,10 @@ import {
   vendorSlugHistory,
 } from "@/lib/db/schema";
 import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
-import { eq, and, asc, desc, sql, isNull } from "drizzle-orm";
+import { eq, ne, and, or, asc, desc, sql, isNull } from "drizzle-orm";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
-import { VendorTypeIcon } from "@/components/vendors/VendorTypeIcon";
+import { VendorMonogramLogo } from "@/components/vendors/VendorMonogramLogo";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { parseVendorSocialLinks } from "@/lib/vendor-social";
 import { isVendorIndexable } from "@/lib/vendor-quality";
@@ -337,6 +337,75 @@ async function getVendor(slug: string) {
   }
 }
 
+/**
+ * UX-A2 Part A — "Similar vendors nearby" module.
+ *
+ * Spec: "so the page is never a dead end."
+ *
+ * Resolution priority:
+ *   1. Same vendor_type AND same city — strongest match
+ *   2. Same vendor_type (any city) — fills the slot when town-mates
+ *      don't exist
+ *   3. Same city (any type) — last-resort filler so the module always
+ *      has something to show on a vendor with no peers in either axis
+ *
+ * Excludes self + soft-deleted rows. Caps at 4 results, sorted by
+ * claimed-first then by event-vendor count (popularity proxy).
+ */
+async function getSimilarVendors(vendorId: string, vendorType: string | null, city: string | null) {
+  const db = getCloudflareDb();
+  try {
+    const rows = await db
+      .select({
+        id: vendors.id,
+        slug: vendors.slug,
+        businessName: vendors.businessName,
+        vendorType: vendors.vendorType,
+        city: vendors.city,
+        state: vendors.state,
+        logoUrl: vendors.logoUrl,
+        imageFocalX: vendors.imageFocalX,
+        imageFocalY: vendors.imageFocalY,
+        claimed: vendors.claimed,
+      })
+      .from(vendors)
+      .where(
+        and(
+          ne(vendors.id, vendorId),
+          isNull(vendors.deletedAt),
+          // Match on EITHER type OR city; the priority-sort below
+          // surfaces type-and-city dual-matches first when both apply.
+          or(
+            vendorType ? eq(vendors.vendorType, vendorType) : sql`0=1`,
+            city ? eq(vendors.city, city) : sql`0=1`
+          )
+        )
+      )
+      .limit(12); // Over-fetch so we can prioritize-sort in JS to 4.
+
+    // Score each candidate so dual-matches (type AND city) sort above
+    // single-axis matches, with claimed vendors as a tertiary breaker.
+    const scored = rows.map((v) => {
+      let score = 0;
+      if (vendorType && v.vendorType === vendorType) score += 2;
+      if (city && v.city === city) score += 2;
+      if (v.claimed) score += 1;
+      return { ...v, _score: score };
+    });
+    scored.sort((a, b) => b._score - a._score);
+    return scored.slice(0, 4);
+  } catch (e) {
+    await logError(db, {
+      message: "Error fetching similar vendors",
+      error: e,
+      source: "app/vendors/[slug]/page.tsx:getSimilarVendors",
+    });
+    // Non-throwing: similar-vendors is best-effort. Empty array → the
+    // module just doesn't render. The page is still useful without it.
+    return [];
+  }
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const vendor = await getVendor(slug);
@@ -522,6 +591,13 @@ export default async function VendorDetailPage({ params }: Props) {
     (ev) => ev.event.endDate && new Date(ev.event.endDate) < now
   );
 
+  // UX-A2 Part A — similar vendors (best-effort, never throws).
+  // Sequential after vendor fetch because we need vendorType + city
+  // from the fetched row; parallel would re-fetch. Cost: one extra
+  // tiny query on render (≤12 rows projected). Acceptable for the
+  // payoff of "never a dead-end page".
+  const similarVendors = await getSimilarVendors(vendor.id, vendor.vendorType, vendor.city);
+
   // EH1 Phase 2 — render-time hierarchy switch.
   // Today only the NATIONAL hub branch alters JSX; canonical-up'd LOCAL_OFFICE
   // pages still render normally and just lean on the noindex/canonical from
@@ -594,9 +670,16 @@ export default async function VendorDetailPage({ params }: Props) {
             )}
 
             <div className="flex items-start gap-6">
+              {/* UX-A2 Part A (2026-06-08) — monogram-tile placeholder
+                  when there's no uploaded logo. Pre-fix this rendered a
+                  generic Lucide Store/category icon over bg-muted —
+                  visually identical to a broken image, contributing to
+                  the "page looks abandoned" pattern that drove the
+                  1-of-2533 claim rate. See VendorMonogramLogo for the
+                  hash-stable color palette + initials logic. */}
               {isEnhanced ? (
                 <div
-                  className="w-[200px] h-[200px] rounded-xl bg-muted flex items-center justify-center flex-shrink-0 relative overflow-hidden"
+                  className="w-[200px] h-[200px] rounded-xl flex-shrink-0 relative overflow-hidden"
                   data-testid="vendor-logo-enhanced"
                 >
                   {vendor.logoUrl ? (
@@ -608,23 +691,12 @@ export default async function VendorDetailPage({ params }: Props) {
                       className="object-cover rounded-xl"
                     />
                   ) : (
-                    <VendorTypeIcon
-                      vendorType={vendor.vendorType}
-                      className="text-muted-foreground"
-                      size={96}
-                    />
+                    <VendorMonogramLogo businessName={vendor.businessName} size={200} />
                   )}
                 </div>
               ) : (
-                <div
-                  className="w-24 h-24 rounded-xl bg-muted flex items-center justify-center flex-shrink-0"
-                  data-testid="vendor-logo-free"
-                >
-                  <VendorTypeIcon
-                    vendorType={vendor.vendorType}
-                    className="text-muted-foreground"
-                    size={48}
-                  />
+                <div className="w-24 h-24 rounded-xl flex-shrink-0" data-testid="vendor-logo-free">
+                  <VendorMonogramLogo businessName={vendor.businessName} size={96} />
                 </div>
               )}
               <div>
@@ -902,6 +974,69 @@ export default async function VendorDetailPage({ params }: Props) {
                 )}
               </div>
             )}
+
+            {/* UX-A2 Part A — "Similar vendors nearby" module.
+                Spec: "so the page is never a dead end." Surfaces same-
+                category and/or same-town vendors. Hidden when the
+                lookup returns empty (best-effort, never blocks render). */}
+            {similarVendors.length > 0 && (
+              <div className="mt-8">
+                <h2 className="text-xl font-semibold text-foreground mb-4">
+                  Similar vendors
+                  {vendor.city && (
+                    <span className="text-base font-normal text-muted-foreground">
+                      {" "}
+                      — {vendor.vendorType ? `more ${vendor.vendorType.toLowerCase()}s` : "more"}
+                      {vendor.city && ` in ${vendor.city}, ${vendor.state}`}
+                    </span>
+                  )}
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {similarVendors.map((sv) => (
+                    <Link
+                      key={sv.id}
+                      href={`/vendors/${sv.slug}`}
+                      className="rounded-xl border border-border bg-card hover:shadow-md hover:-translate-y-0.5 transition-all p-4 flex items-center gap-3"
+                    >
+                      <div className="flex-shrink-0">
+                        {sv.logoUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={cdnImage(sv.logoUrl, {
+                              width: 56,
+                              height: 56,
+                              fit: "cover",
+                              format: "auto",
+                              quality: 80,
+                              onerror: "redirect",
+                            })}
+                            alt={`${sv.businessName} logo`}
+                            width={56}
+                            height={56}
+                            loading="lazy"
+                            decoding="async"
+                            className="w-14 h-14 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <VendorMonogramLogo
+                            businessName={sv.businessName}
+                            size={56}
+                            className="!rounded-lg"
+                          />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-foreground truncate">{sv.businessName}</p>
+                        <p className="text-sm text-muted-foreground truncate">
+                          {sv.vendorType}
+                          {sv.city && sv.state && ` · ${sv.city}, ${sv.state}`}
+                        </p>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
           </main>
 
           <aside className="space-y-6">
@@ -1005,8 +1140,19 @@ export default async function VendorDetailPage({ params }: Props) {
               </Card>
             )}
 
-            {/* Business Details Card */}
-            {(vendor.yearEstablished || vendor.paymentMethods) && (
+            {/* Business Details Card.
+             *
+             * UX-A2 Part A (2026-06-08) — collapse-when-empty fix.
+             * Pre-fix the guard checked `vendor.paymentMethods` (the raw
+             * JSON string), which is truthy as `"[]"` even when empty —
+             * so the card rendered with no content on most unclaimed
+             * vendors. Now uses the parsed `paymentMethods` array's
+             * length, matching the inner `paymentMethods.length > 0`
+             * check, so the card only appears when something will go
+             * inside it. Per MMATF-UIUX-VendorClaim-Spec §A:
+             * "Collapse empty modules — don't render an empty
+             * 'Business Details' card". */}
+            {(vendor.yearEstablished || paymentMethods.length > 0) && (
               <Card>
                 <CardHeader>
                   <h3 className="font-semibold text-foreground">Business Details</h3>
