@@ -33,8 +33,46 @@ describe("cdnImage — URL composition", () => {
     expect(out.endsWith(sameZone)).toBe(true);
   });
 
-  it("passes through foreign hosts unchanged (Google OAuth avatar)", () => {
-    expect(cdnImage(foreign, AVATAR_SM)).toBe(foreign);
+  it("applies =wN size hint to Google user-content URLs (no existing suffix)", () => {
+    // Updated 2026-06-08 (foreign-backdrop fix) — was: passes through
+    // unchanged. cdnImage now adds Google's `=wN` size hint on
+    // lh{3..6}.googleusercontent.com URLs so the blurred-fill backdrop
+    // (200w) and other foreign-hosted small renders don't pay full-res.
+    expect(cdnImage(foreign, AVATAR_SM)).toBe(`${foreign}=w80`);
+  });
+
+  it("replaces existing size suffix on Google user-content URLs", () => {
+    const orig = "https://lh3.googleusercontent.com/place-photos/AL8-SNxxxxxxx=s4800-w800";
+    expect(cdnImage(orig, { width: 200, format: "auto" })).toBe(
+      "https://lh3.googleusercontent.com/place-photos/AL8-SNxxxxxxx=w200"
+    );
+  });
+
+  it("handles =s400-c (square crop) Google syntax", () => {
+    const orig = "https://lh3.googleusercontent.com/a/avatar=s400-c";
+    expect(cdnImage(orig, { width: 200, format: "auto" })).toBe(
+      "https://lh3.googleusercontent.com/a/avatar=w200"
+    );
+  });
+
+  it("handles lh4/lh5/lh6 user-content hosts too", () => {
+    for (const host of ["lh3", "lh4", "lh5", "lh6"]) {
+      const orig = `https://${host}.googleusercontent.com/a/avatar`;
+      expect(cdnImage(orig, { width: 100, format: "auto" })).toBe(`${orig}=w100`);
+    }
+  });
+
+  it("non-Google foreign hosts still pass through unchanged", () => {
+    // Facebook, Twitter, arbitrary scraped event images — we don't know
+    // their resize conventions, so we don't touch the URL. The blurred-
+    // fill render checks `backdropSrc !== heroSrc` to skip the backdrop
+    // layer in this case (bg-muted shows through).
+    const fb = "https://scontent.fbcdn.net/v/t39.30808-6/abc.jpg";
+    const tw = "https://pbs.twimg.com/media/xyz.jpg";
+    const random = "https://example.com/somewhere/img.jpg";
+    expect(cdnImage(fb, { width: 200, format: "auto" })).toBe(fb);
+    expect(cdnImage(tw, { width: 200, format: "auto" })).toBe(tw);
+    expect(cdnImage(random, { width: 200, format: "auto" })).toBe(random);
   });
 
   it("returns empty string for null/undefined/empty input", () => {

@@ -755,14 +755,22 @@ export default async function EventDetailPage({ params }: Props) {
                 <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
                   {/* Blurred backdrop — decorative, fills the box. Marked
                       aria-hidden because the foreground <img> already
-                      carries the accessible alt text. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={backdropSrc}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
-                  />
+                      carries the accessible alt text.
+
+                      Skip when cdnImage couldn't produce a meaningfully
+                      smaller backdrop URL (unknown foreign host with no
+                      host-side resize convention). Without this skip, the
+                      backdrop would be a duplicate full-res download just
+                      for the blur effect; bg-muted shows through fine. */}
+                  {backdropSrc !== heroSrc && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={backdropSrc}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
+                    />
+                  )}
                   {/* Foreground — full image, no crop. `object-contain`
                       letterboxes; the blurred backdrop fills the bars so
                       they don't look empty. */}

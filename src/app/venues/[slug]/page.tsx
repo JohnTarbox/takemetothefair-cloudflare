@@ -268,14 +268,18 @@ export default async function VenueDetailPage({ params }: Props) {
                 });
                 return (
                   <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
-                    {/* Blurred backdrop — decorative, fills letterbox strips. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={backdropSrc}
-                      alt=""
-                      aria-hidden="true"
-                      className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
-                    />
+                    {/* Blurred backdrop — decorative, fills letterbox strips.
+                        Skipped when cdnImage can't shrink the URL (unknown
+                        foreign host); bg-muted shows through instead. */}
+                    {backdropSrc !== heroSrc && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={backdropSrc}
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
+                      />
+                    )}
                     {/* Foreground — full image, no crop. */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
