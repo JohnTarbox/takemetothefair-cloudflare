@@ -38,10 +38,11 @@ export function EventList({ events, emptyMessage = "No events found" }: EventLis
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {events.map((event, index) => (
-        // IMG-followup (2026-06-07) — exactly one preload per page
-        // (index === 0); cards 1-2 still load eagerly. Matches the
-        // single-priority rule in EventCard's prop docs.
-        <EventCard key={event.id} event={event} priority={index === 0} eagerLoad={index < 3} />
+        // IMG-followup (2026-06-08) — exactly one preload per page
+        // (index === 0). Cards 1-N use Next/Image default lazy;
+        // eagerLoad prop reverted (Next.js 15.x emits preload for
+        // loading="eager" too, which defeats the single-priority rule).
+        <EventCard key={event.id} event={event} priority={index === 0} />
       ))}
     </div>
   );

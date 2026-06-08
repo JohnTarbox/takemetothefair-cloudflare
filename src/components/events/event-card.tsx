@@ -48,26 +48,20 @@ interface EventCardProps {
    * `<link rel="preload" as="image">` + `fetchpriority="high"`. Per
    * web.dev LCP guidance: at most one per page, otherwise browser
    * deprioritizes competing preloads and all of them arrive later.
+   *
+   * Non-priority cards use Next/Image's default lazy loading; the
+   * earlier IMG-followup attempted an `eagerLoad` opt-in here, but
+   * Next.js 15.x emits a preload link for `loading="eager"` too, so
+   * the opt-in produced the multi-preload problem it was meant to
+   * prevent (verified against prod 2026-06-08). Lazy with
+   * IntersectionObserver is sufficient for above-the-fold non-LCP.
    */
   priority?: boolean;
-  /**
-   * Set to true for above-the-fold cards that are NOT the LCP candidate
-   * (typically indices 1–5 of a listing). Passes `loading="eager"` to
-   * the inner `<Image>`, which skips the lazy-load delay without
-   * emitting a preload link. Has no effect when `priority` is true
-   * (priority overrides loading per Next/Image contract).
-   */
-  eagerLoad?: boolean;
   /** Distance in miles from vendor home base (if available) */
   distance?: number;
 }
 
-export function EventCard({
-  event,
-  priority = false,
-  eagerLoad = false,
-  distance,
-}: EventCardProps) {
+export function EventCard({ event, priority = false, distance }: EventCardProps) {
   const [imgError, setImgError] = useState(false);
   const categories = parseJsonArray(event.categories);
   const vendors = event.vendors || [];
@@ -131,7 +125,6 @@ export function EventCard({
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
               priority={priority}
-              loading={!priority && eagerLoad ? "eager" : undefined}
               onError={() => setImgError(true)}
             />
           ) : (
@@ -141,7 +134,6 @@ export function EventCard({
               fill
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
-              loading={!priority && eagerLoad ? "eager" : undefined}
             />
           )}
           {/* Date badge */}
