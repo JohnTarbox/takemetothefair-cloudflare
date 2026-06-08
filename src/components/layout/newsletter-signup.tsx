@@ -70,7 +70,16 @@ export function NewsletterSignup() {
         </div>
       )}
       {status === "error" && (
-        <p className="text-xs text-red-300">Something went wrong — try again in a moment.</p>
+        // Dark-mode closeout (2026-06-08) — last untokenized error color
+        // in the codebase. Pre-fix `text-red-300` on the footer's
+        // bg-secondary surface was 4.4:1 in light (borderline AA) and
+        // 1.6:1 in dark (basically invisible — lifted-blue + soft-pink).
+        // Migrated to a Badge variant="danger" pill which uses the
+        // --danger-soft + --danger-soft-foreground pair (AAA in both
+        // themes by design).
+        <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-soft text-danger-soft-foreground">
+          Something went wrong — try again in a moment.
+        </div>
       )}
     </form>
   );
