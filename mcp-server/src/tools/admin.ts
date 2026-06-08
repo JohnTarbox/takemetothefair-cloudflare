@@ -501,6 +501,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       ticket_price_min: z.number().optional().describe("Minimum ticket price"),
       ticket_price_max: z.number().optional().describe("Maximum ticket price"),
       image_url: z.string().optional().describe("Event image URL"),
+      // IMG1 §1b Phase 1 (2026-06-08) — per-image focal point. Range
+      // [0, 1] matching Cloudflare's gravity=XxY (0,0 = top-left).
+      // Default (0.5, 0.5) = center. Card thumbnails crop around this
+      // point. Use to rescue posters where center-crop chops the title.
+      // Mirrors the admin-UI FocalPointPicker; same Zod validation.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          "Horizontal focal point for card crops, 0–1 (0=left, 0.5=center, 1=right). Default 0.5."
+        ),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          "Vertical focal point for card crops, 0–1 (0=top, 0.5=center, 1=bottom). Default 0.5."
+        ),
       featured: z.boolean().optional().describe("Whether the event is featured"),
       commercial_vendors_allowed: z
         .boolean()
@@ -647,6 +668,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "ticket_price_min", column: "ticketPriceMinCents", transform: dollarsToCents },
         { param: "ticket_price_max", column: "ticketPriceMaxCents", transform: dollarsToCents },
         { param: "image_url", column: "imageUrl" },
+        // IMG1 §1b Phase 1 — clamp defense-in-depth (Zod also clamps).
+        {
+          param: "image_focal_x",
+          column: "imageFocalX",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
+        {
+          param: "image_focal_y",
+          column: "imageFocalY",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
         { param: "featured", column: "featured" },
         { param: "commercial_vendors_allowed", column: "commercialVendorsAllowed" },
         { param: "vendor_fee_min", column: "vendorFeeMinCents", transform: dollarsToCents },
@@ -1692,6 +1724,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
       logo_url: z.string().optional().describe("URL to vendor logo image"),
+      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+      // Most logos are square so default (0.5, 0.5) center works; this
+      // exists for non-square logo rescues. Same Zod validation as the
+      // admin-UI FocalPointPicker.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
       // EH1 Phase 1 — optional hierarchy + relationship fields at create
       // time. Most callers leave these unset (the row defaults to
       // role='INDEPENDENT', relationship_type='independent'). Useful when
@@ -1826,6 +1874,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
         logoUrl: params.logo_url ?? null,
+        // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
+        // so the column DEFAULT (0.5) applies.
+        ...(params.image_focal_x !== undefined && {
+          imageFocalX: Math.max(0, Math.min(1, params.image_focal_x)),
+        }),
+        ...(params.image_focal_y !== undefined && {
+          imageFocalY: Math.max(0, Math.min(1, params.image_focal_y)),
+        }),
         city: loc.city,
         state: loc.state,
         // EH1 Phase 1 — hierarchy + relationship fields. Drizzle column
@@ -2185,6 +2241,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       image_url: z.string().optional().describe("Venue image URL"),
+      // IMG1 §1b Phase 1 — per-image focal point for card crops.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Horizontal focal point for card crops, 0–1. Default 0.5."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Vertical focal point for card crops, 0–1. Default 0.5."),
       status: z.enum(["ACTIVE", "INACTIVE"]).optional().describe("Venue status"),
       defer_search_ping: z
         .boolean()
@@ -2210,6 +2279,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "contact_email", column: "contactEmail" },
         { param: "contact_phone", column: "contactPhone" },
         { param: "image_url", column: "imageUrl" },
+        // IMG1 §1b Phase 1 — clamp defense-in-depth.
+        {
+          param: "image_focal_x",
+          column: "imageFocalX",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
+        {
+          param: "image_focal_y",
+          column: "imageFocalY",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
         { param: "status", column: "status" },
       ];
 
@@ -2371,6 +2451,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       image_url: z.string().optional().describe("Venue image URL"),
+      // IMG1 §1b Phase 1 — per-image focal point. Applies to image_url.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Horizontal focal point for card crops, 0–1. Default 0.5."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Vertical focal point for card crops, 0–1. Default 0.5."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -2470,6 +2563,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
         imageUrl: params.image_url ?? null,
+        // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
+        // so the column DEFAULT (0.5) applies.
+        ...(params.image_focal_x !== undefined && {
+          imageFocalX: Math.max(0, Math.min(1, params.image_focal_x)),
+        }),
+        ...(params.image_focal_y !== undefined && {
+          imageFocalY: Math.max(0, Math.min(1, params.image_focal_y)),
+        }),
       });
 
       // IndexNow: venues created via this tool default to ACTIVE (public)
@@ -2725,6 +2826,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       address: z.string().optional().describe("Street address"),
       zip: z.string().optional().describe("ZIP code"),
       logo_url: z.string().optional().describe("Logo image URL"),
+      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
       verified: z.boolean().optional().describe("Verified status"),
       commercial: z.boolean().optional().describe("Commercial vendor flag"),
@@ -2846,6 +2960,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "address", column: "address" },
         { param: "zip", column: "zip" },
         { param: "logo_url", column: "logoUrl" },
+        // IMG1 §1b Phase 1 — clamp defense-in-depth.
+        {
+          param: "image_focal_x",
+          column: "imageFocalX",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
+        {
+          param: "image_focal_y",
+          column: "imageFocalY",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
         { param: "social_links", column: "socialLinks" },
         { param: "verified", column: "verified" },
         { param: "commercial", column: "commercial" },
@@ -3228,6 +3353,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Primary contact email address"),
       contact_phone: z.string().optional().describe("Contact phone number"),
       logo_url: z.string().optional().describe("URL to promoter logo image"),
+      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -3306,6 +3444,14 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         description: params.description ?? null,
         website: params.website ?? null,
         logoUrl: params.logo_url ?? null,
+        // IMG1 §1b Phase 1 — focal point (clamped); omit when undefined
+        // so the column DEFAULT (0.5) applies.
+        ...(params.image_focal_x !== undefined && {
+          imageFocalX: Math.max(0, Math.min(1, params.image_focal_x)),
+        }),
+        ...(params.image_focal_y !== undefined && {
+          imageFocalY: Math.max(0, Math.min(1, params.image_focal_y)),
+        }),
         city: params.city ?? null,
         state: params.state ? params.state.toUpperCase() : null,
         contactEmail: params.contact_email ?? null,
@@ -3354,6 +3500,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
       logo_url: z.string().optional().describe("Logo image URL"),
+      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
       verified: z.boolean().optional().describe("Verified status"),
       defer_search_ping: z
@@ -3375,6 +3534,17 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "contact_email", column: "contactEmail" },
         { param: "contact_phone", column: "contactPhone" },
         { param: "logo_url", column: "logoUrl" },
+        // IMG1 §1b Phase 1 — clamp defense-in-depth.
+        {
+          param: "image_focal_x",
+          column: "imageFocalX",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
+        {
+          param: "image_focal_y",
+          column: "imageFocalY",
+          transform: (v: number) => Math.max(0, Math.min(1, v)),
+        },
         { param: "social_links", column: "socialLinks" },
         { param: "verified", column: "verified" },
       ];
