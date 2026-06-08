@@ -344,13 +344,17 @@ export default async function BlogPostPage({ params }: Props) {
               });
               return (
                 <div className="aspect-video relative rounded-lg overflow-hidden mb-8 bg-muted">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={backdropSrc}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
-                  />
+                  {/* Skip backdrop when cdnImage can't shrink the URL
+                      (unknown foreign host); bg-muted shows through. */}
+                  {backdropSrc !== heroSrc && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={backdropSrc}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
+                    />
+                  )}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={heroSrc}

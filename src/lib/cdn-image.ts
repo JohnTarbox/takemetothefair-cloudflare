@@ -121,8 +121,43 @@ export interface CdnImageOpts {
 }
 
 // Hosts whose URLs we can transform via Cloudflare's same-zone
-// `cdn-cgi/image` proxy. Foreign hosts pass through unchanged.
+// `cdn-cgi/image` proxy. Foreign hosts route through host-specific
+// resize (see foreignHostResize below) when one is known, else pass
+// through unchanged.
 const TRANSFORMABLE_PREFIXES = ["https://cdn.meetmeatthefair.com/", "https://meetmeatthefair.com/"];
+
+/**
+ * Google's `lh{3,4,5,6}.googleusercontent.com` user-content URLs (Place
+ * Photos, OAuth avatars, Drive images) accept a trailing size suffix —
+ * `=wN` for width, `=sN` for square, `=hN` for height, with optional
+ * combos like `=s4800-w800-c`. Replacing the existing suffix or appending
+ * a fresh `=wWIDTH` gets us a resized variant for free, host-side.
+ *
+ * This is the only foreign-host case we optimize today. Without it the
+ * blurred-fill backdrop (which only needs ~200px) would download the
+ * full-res source every page render — significant on venue detail pages
+ * where ~80% of `image_url` values point at Google Place Photos returning
+ * 4800x2400 images.
+ *
+ * See https://developers.google.com/people/image-sizing (similar pattern
+ * documented for People API) — the `=wN` syntax is host-wide convention
+ * for googleusercontent.com.
+ */
+function isGoogleUserContent(url: string): boolean {
+  return /\/\/lh[3-6]\.googleusercontent\.com\//.test(url);
+}
+
+function googleUserContentResize(src: string, width: number): string {
+  // Match an existing trailing size param block: =[swh]N(-[swhc][N|=])*
+  // Examples: `=s4800`, `=w800`, `=s4800-w800`, `=w200-c`, `=s400-c`
+  const sizeRegex = /=[swh][0-9]+(-[a-z0-9]+)*$/i;
+  if (sizeRegex.test(src)) {
+    return src.replace(sizeRegex, `=w${width}`);
+  }
+  // No existing suffix — append. Google parses `=wN` at URL end as a
+  // size hint on any user-content path.
+  return src + `=w${width}`;
+}
 
 /**
  * Wrap an image URL with a `cdn-cgi/image/<params>/...` transform.
@@ -140,7 +175,20 @@ export function cdnImage(src: string | null | undefined, opts: CdnImageOpts): st
   if (!src) return "";
   if (src.includes("/cdn-cgi/image/")) return src;
   const isTransformable = TRANSFORMABLE_PREFIXES.some((p) => src.startsWith(p));
-  if (!isTransformable) return src;
+  if (!isTransformable) {
+    // Foreign host. Some have host-side resize conventions we can use
+    // (Google user content via `=wN`). Others pass through unchanged.
+    //
+    // The width-only resize is enough for the dominant foreign-host use
+    // case today: blurred-fill backdrops (~200w). For foreground hero
+    // and card renders the foreign-host URL still serves at source size,
+    // which is acceptable — the size hint is best-effort, not lossless
+    // through the same Cloudflare optimization pipeline.
+    if (isGoogleUserContent(src)) {
+      return googleUserContentResize(src, opts.width);
+    }
+    return src;
+  }
 
   const params: string[] = [`width=${opts.width}`];
   if (opts.height != null) params.push(`height=${opts.height}`);
