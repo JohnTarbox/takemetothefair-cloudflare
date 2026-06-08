@@ -35,6 +35,19 @@ export type CdnImageGravity = "auto" | "face" | "center" | "top" | "bottom" | "l
 
 export type CdnImageFormat = "auto" | "webp" | "avif" | "jpg" | "png";
 
+/**
+ * Behavior when the transform itself fails (source 404, oversized input,
+ * monthly free-tier exhausted, etc.). `redirect` issues a 307 to the
+ * un-transformed source URL — the browser still sees an image (the
+ * original bytes) instead of a broken `<img>`. The only currently
+ * documented value is `redirect`; modeled as a literal so a typo
+ * doesn't silently disable the fallback.
+ *
+ * Default in `src/lib/image-loader.ts` sets this on every Next/Image
+ * call — see the loader for the rationale.
+ */
+export type CdnImageOnError = "redirect";
+
 export interface CdnImageOpts {
   width: number;
   height?: number;
@@ -47,6 +60,8 @@ export interface CdnImageOpts {
   gravity?: CdnImageGravity;
   format?: CdnImageFormat;
   quality?: number;
+  /** Graceful fallback when the transform fails; see {@link CdnImageOnError}. */
+  onerror?: CdnImageOnError;
 }
 
 // Hosts whose URLs we can transform via Cloudflare's same-zone
@@ -77,6 +92,7 @@ export function cdnImage(src: string | null | undefined, opts: CdnImageOpts): st
   if (opts.gravity) params.push(`gravity=${opts.gravity}`);
   if (opts.format) params.push(`format=${opts.format}`);
   if (opts.quality != null) params.push(`quality=${opts.quality}`);
+  if (opts.onerror) params.push(`onerror=${opts.onerror}`);
 
   return `https://meetmeatthefair.com/cdn-cgi/image/${params.join(",")}/${src}`;
 }

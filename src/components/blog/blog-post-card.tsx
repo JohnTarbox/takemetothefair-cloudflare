@@ -21,10 +21,22 @@ interface BlogPostCardProps {
     status: string;
     publishDate: string | Date | null;
   };
+  /**
+   * Set to true for the SINGLE LCP candidate per page only. Emits
+   * `<link rel="preload" as="image">`. Multiple priority cards
+   * compete and the browser deprioritizes them — see EventCard docs.
+   */
   priority?: boolean;
+  /**
+   * Set to true for above-the-fold cards that are NOT the LCP candidate
+   * (typically indices 1–5 of the blog listing). Passes
+   * `loading="eager"` instead of the default lazy. No effect when
+   * priority is true.
+   */
+  eagerLoad?: boolean;
 }
 
-export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
+export function BlogPostCard({ post, priority = false, eagerLoad = false }: BlogPostCardProps) {
   const [imgError, setImgError] = useState(false);
 
   const publishDate = post.publishDate ? formatDateLong(post.publishDate) : null;
@@ -42,6 +54,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
               priority={priority}
+              loading={!priority && eagerLoad ? "eager" : undefined}
               onError={() => setImgError(true)}
             />
           ) : (

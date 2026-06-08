@@ -415,10 +415,18 @@ export default async function DashboardPage() {
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-full bg-stone-100 flex items-center justify-center">
               {session.user.image ? (
+                // IMG-followup (2026-06-07) — width/height reserve
+                // intrinsic layout space (CLS guard). Plain <img> kept
+                // because OAuth hosts bypass cdn-cgi/image transforms;
+                // see header.tsx for the full rationale.
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={session.user.image}
                   alt=""
+                  width={64}
+                  height={64}
+                  loading="lazy"
+                  decoding="async"
                   className="w-16 h-16 rounded-full object-cover"
                 />
               ) : (

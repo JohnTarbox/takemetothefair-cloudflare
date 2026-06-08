@@ -123,9 +123,22 @@ export function Header() {
                 >
                   <div className="w-8 h-8 rounded-full bg-brand-blue-light flex items-center justify-center">
                     {session.user.image ? (
+                      // IMG-followup (2026-06-07) — width/height reserve
+                      // intrinsic layout space so the avatar load can't
+                      // shift surrounding header content (CLS exposure).
+                      // Stays a plain <img> instead of Next/Image because
+                      // OAuth hosts (Google, Facebook) are foreign and
+                      // bypass cdn-cgi/image transforms anyway; routing
+                      // them through next/image would only emit a wasted
+                      // identical-URL srcSet.
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={session.user.image}
                         alt={`${session.user.name || "User"} profile picture`}
+                        width={32}
+                        height={32}
+                        loading="lazy"
+                        decoding="async"
                         className="w-8 h-8 rounded-full"
                       />
                     ) : (
