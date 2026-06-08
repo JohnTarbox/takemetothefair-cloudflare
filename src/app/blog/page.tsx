@@ -181,7 +181,7 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy">Blog</h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           Stories, tips, and news about fairs, festivals, and community events.
         </p>
         {isAdmin && (
@@ -195,13 +195,13 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
         {/* Sidebar — tags filter */}
         {rankedTags.length > 0 && (
           <aside className="lg:col-span-1">
-            <div className="bg-white rounded-lg border border-gray-200 p-4 sticky top-24">
+            <div className="bg-card rounded-lg border border-border p-4 sticky top-24">
               <h2 className="text-sm font-semibold text-navy mb-3">Filter by Tag</h2>
               <div className="flex flex-wrap gap-2">
                 {params.tag && (
                   <Link
                     href="/blog"
-                    className="text-xs px-3 py-1 bg-royal text-white rounded-full hover:bg-royal/90"
+                    className="text-xs px-3 py-1 bg-secondary text-secondary-foreground rounded-full hover:bg-royal/90"
                   >
                     All posts
                   </Link>
@@ -212,8 +212,8 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
                     href={`/blog?tag=${encodeURIComponent(tag)}`}
                     className={`text-xs px-3 py-1 rounded-full transition-colors ${
                       params.tag === tag
-                        ? "bg-royal text-white"
-                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        ? "bg-secondary text-secondary-foreground"
+                        : "bg-muted text-foreground hover:bg-muted"
                     }`}
                   >
                     {tag}
@@ -222,7 +222,7 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
               </div>
               {overflowTags.length > 0 && (
                 <details className="mt-3">
-                  <summary className="text-xs text-gray-700 cursor-pointer hover:text-navy select-none">
+                  <summary className="text-xs text-foreground cursor-pointer hover:text-navy select-none">
                     Browse all {rankedTags.length} tags ({overflowTags.length} more)
                   </summary>
                   <div className="flex flex-wrap gap-2 mt-3">
@@ -232,8 +232,8 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
                         href={`/blog?tag=${encodeURIComponent(tag)}`}
                         className={`text-xs px-3 py-1 rounded-full transition-colors ${
                           params.tag === tag
-                            ? "bg-royal text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                            ? "bg-secondary text-secondary-foreground"
+                            : "bg-muted text-foreground hover:bg-muted"
                         }`}
                       >
                         {tag}
@@ -250,9 +250,9 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
         <div className={rankedTags.length > 0 ? "lg:col-span-3" : "lg:col-span-4"}>
           {parsedPosts.length === 0 ? (
             <div className="text-center py-16">
-              <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-lg font-medium text-gray-600">No blog posts yet</h2>
-              <p className="text-sm text-gray-500 mt-1">
+              <FileText className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <h2 className="text-lg font-medium text-muted-foreground">No blog posts yet</h2>
+              <p className="text-sm text-muted-foreground mt-1">
                 {params.tag
                   ? `No posts found with tag "${params.tag}".`
                   : "Check back soon for stories and updates."}
@@ -277,18 +277,18 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
                   {page > 1 && (
                     <Link
                       href={`/blog?page=${page - 1}${params.tag ? `&tag=${encodeURIComponent(params.tag)}` : ""}`}
-                      className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                      className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted"
                     >
                       Previous
                     </Link>
                   )}
-                  <span className="px-4 py-2 text-sm text-gray-600">
+                  <span className="px-4 py-2 text-sm text-muted-foreground">
                     Page {page} of {totalPages}
                   </span>
                   {page < totalPages && (
                     <Link
                       href={`/blog?page=${page + 1}${params.tag ? `&tag=${encodeURIComponent(params.tag)}` : ""}`}
-                      className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+                      className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted"
                     >
                       Next
                     </Link>

@@ -11,15 +11,15 @@ export function SavingStep({ eventsCount, progress }: SavingStepProps) {
     <Card>
       <CardContent className="py-12 text-center">
         <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
-        <h3 className="text-lg font-medium text-gray-900">
+        <h3 className="text-lg font-medium text-foreground">
           {progress && progress.total > 1
             ? `Saving event ${progress.current} of ${progress.total}...`
             : `Importing ${eventsCount > 1 ? `${eventsCount} events` : "event"}...`}
         </h3>
-        <p className="text-gray-500 mt-2">Please wait</p>
+        <p className="text-muted-foreground mt-2">Please wait</p>
         {progress && progress.total > 1 && (
           <div className="mt-4 max-w-xs mx-auto">
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-muted rounded-full h-2">
               <div
                 className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                 style={{ width: `${(progress.current / progress.total) * 100}%` }}

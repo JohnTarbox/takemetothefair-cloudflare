@@ -57,7 +57,7 @@ const PRESETS: Preset[] = [
     ticket: false,
     application: false,
     source: false,
-    className: "bg-gray-200 text-gray-800 hover:bg-gray-300 border border-gray-400",
+    className: "bg-muted text-foreground hover:bg-border border border-border",
   },
 ];
 

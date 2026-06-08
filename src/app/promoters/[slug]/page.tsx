@@ -217,7 +217,7 @@ export default async function PromoterDetailPage({ params }: Props) {
           <main className="lg:col-span-2 space-y-6">
             <div className="flex items-start gap-4">
               {promoter.logoUrl && (
-                <div className="w-24 h-24 rounded-lg overflow-hidden bg-gray-50 border border-gray-200 relative shrink-0">
+                <div className="w-24 h-24 rounded-lg overflow-hidden bg-muted border border-border relative shrink-0">
                   <Image
                     src={promoter.logoUrl}
                     alt={`${promoter.companyName} logo`}
@@ -228,7 +228,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                 </div>
               )}
               <div>
-                <h1 className="text-3xl md:text-4xl font-bold text-gray-900 flex items-center gap-2 flex-wrap">
+                <h1 className="text-3xl md:text-4xl font-bold text-foreground flex items-center gap-2 flex-wrap">
                   {promoter.companyName}
                   {promoter.verified && (
                     <Badge variant="info" className="text-xs">
@@ -238,7 +238,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                   )}
                 </h1>
                 {locationStr && (
-                  <p className="mt-2 text-lg text-gray-600 flex items-center gap-2">
+                  <p className="mt-2 text-lg text-muted-foreground flex items-center gap-2">
                     <MapPin className="w-5 h-5" />
                     {locationStr}
                   </p>
@@ -248,13 +248,13 @@ export default async function PromoterDetailPage({ params }: Props) {
 
             {promoter.description && (
               <div className="prose prose-gray max-w-none">
-                <p className="text-gray-600 whitespace-pre-wrap">{promoter.description}</p>
+                <p className="text-muted-foreground whitespace-pre-wrap">{promoter.description}</p>
               </div>
             )}
 
             {promoter.upcomingEvents.length > 0 && (
               <section>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <h2 className="text-2xl font-semibold text-foreground mb-4 flex items-center gap-2">
                   <Calendar className="w-6 h-6" />
                   Upcoming events
                 </h2>
@@ -264,14 +264,14 @@ export default async function PromoterDetailPage({ params }: Props) {
 
             {promoter.pastEvents.length > 0 && (
               <section>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-4">Past events</h2>
+                <h2 className="text-2xl font-semibold text-foreground mb-4">Past events</h2>
                 <EventList events={promoter.pastEvents} />
               </section>
             )}
 
             {promoter.upcomingEvents.length === 0 && promoter.pastEvents.length === 0 && (
               <Card>
-                <CardContent className="py-8 text-center text-gray-500">
+                <CardContent className="py-8 text-center text-muted-foreground">
                   No public events recorded for this promoter yet.
                 </CardContent>
               </Card>
@@ -281,10 +281,10 @@ export default async function PromoterDetailPage({ params }: Props) {
           <aside className="space-y-4">
             <Card>
               <CardContent className="py-6 space-y-3">
-                <h2 className="text-lg font-semibold text-gray-900">Contact</h2>
+                <h2 className="text-lg font-semibold text-foreground">Contact</h2>
                 {promoter.website && (
                   <p className="flex items-center gap-2 text-sm">
-                    <Globe className="w-4 h-4 text-gray-500" />
+                    <Globe className="w-4 h-4 text-muted-foreground" />
                     <Link
                       href={promoter.website}
                       target="_blank"
@@ -297,7 +297,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                 )}
                 {promoter.contactEmail && (
                   <p className="flex items-center gap-2 text-sm">
-                    <Mail className="w-4 h-4 text-gray-500" />
+                    <Mail className="w-4 h-4 text-muted-foreground" />
                     <a
                       href={`mailto:${promoter.contactEmail}`}
                       className="text-blue-700 hover:underline break-all"
@@ -308,7 +308,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                 )}
                 {promoter.contactPhone && (
                   <p className="flex items-center gap-2 text-sm">
-                    <Phone className="w-4 h-4 text-gray-500" />
+                    <Phone className="w-4 h-4 text-muted-foreground" />
                     <a
                       href={`tel:${promoter.contactPhone}`}
                       className="text-blue-700 hover:underline"
@@ -318,7 +318,7 @@ export default async function PromoterDetailPage({ params }: Props) {
                   </p>
                 )}
                 {!promoter.website && !promoter.contactEmail && !promoter.contactPhone && (
-                  <p className="text-sm text-gray-500">No contact info on file.</p>
+                  <p className="text-sm text-muted-foreground">No contact info on file.</p>
                 )}
               </CardContent>
             </Card>

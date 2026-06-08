@@ -53,19 +53,19 @@ export default function ForPromotersPage() {
         url="https://meetmeatthefair.com/for-promoters"
       />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">For Promoters</h1>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold text-foreground mb-4">For Promoters</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
           List your events, manage vendors, and reach thousands of attendees
         </p>
       </div>
 
       <div className="prose prose-gray max-w-none mb-12">
-        <p className="text-lg text-gray-600 leading-relaxed">
+        <p className="text-lg text-muted-foreground leading-relaxed">
           Meet Me at the Fair gives event promoters the tools to showcase their fairs, festivals,
           and community events to a growing audience of enthusiastic attendees. Whether you&apos;re
           organizing a county fair or a craft festival, our platform helps you get the word out.
         </p>
-        <p className="text-lg text-gray-600 leading-relaxed">
+        <p className="text-lg text-muted-foreground leading-relaxed">
           Manage vendor applications, share event details, and connect with the people who are
           looking for exactly what you offer — all from one easy-to-use dashboard.
         </p>
@@ -78,9 +78,9 @@ export default function ForPromotersPage() {
               <div className="w-12 h-12 bg-brand-blue-light rounded-lg flex items-center justify-center">
                 <CalendarPlus className="w-6 h-6 text-royal" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">List Events</h2>
+              <h2 className="text-xl font-semibold text-foreground">List Events</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Create detailed event listings with dates, venues, categories, and descriptions to
               attract the right audience.
             </p>
@@ -93,9 +93,9 @@ export default function ForPromotersPage() {
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                 <Users className="w-6 h-6 text-green-600" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Manage Vendors</h2>
+              <h2 className="text-xl font-semibold text-foreground">Manage Vendors</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Review and approve vendor applications, coordinate lineups, and build the perfect mix
               for your event.
             </p>
@@ -108,9 +108,9 @@ export default function ForPromotersPage() {
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
                 <Megaphone className="w-6 h-6 text-purple-600" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Reach Attendees</h2>
+              <h2 className="text-xl font-semibold text-foreground">Reach Attendees</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Get your event in front of thousands of people actively searching for fairs,
               festivals, and local happenings.
             </p>
@@ -123,9 +123,9 @@ export default function ForPromotersPage() {
               <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
                 <BarChart3 className="w-6 h-6 text-orange-600" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Track Performance</h2>
+              <h2 className="text-xl font-semibold text-foreground">Track Performance</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Monitor interest in your events and understand your audience to make every event
               better than the last.
             </p>
@@ -133,22 +133,22 @@ export default function ForPromotersPage() {
         </Card>
       </div>
 
-      <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Ready to Promote Your Event?</h2>
-        <p className="text-gray-600 mb-6">
+      <div className="bg-muted rounded-xl p-8 text-center">
+        <h2 className="text-2xl font-bold text-foreground mb-4">Ready to Promote Your Event?</h2>
+        <p className="text-muted-foreground mb-6">
           Join Meet Me at the Fair and start reaching attendees who are looking for their next great
           experience.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <Link
             href="/login"
-            className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
           >
             Get Started
           </Link>
           <Link
             href="/contact"
-            className="inline-flex items-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-card text-foreground font-medium rounded-lg border border-border hover:bg-muted transition-colors"
           >
             Learn More
           </Link>

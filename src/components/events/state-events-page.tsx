@@ -235,14 +235,16 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
             <MapPin className={`w-5 h-5 ${colors.icon}`} />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Fairs & Festivals in {state.name}</h1>
+            <h1 className="text-3xl font-bold text-foreground">
+              Fairs & Festivals in {state.name}
+            </h1>
           </div>
         </div>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           Browse {total} {includePast ? "" : "upcoming "}fairs, festivals, craft shows, and markets
           across {state.name}.
         </p>
-        <nav className="mt-4 text-sm text-gray-500" aria-label="Breadcrumb">
+        <nav className="mt-4 text-sm text-muted-foreground" aria-label="Breadcrumb">
           <Link href="/" className="hover:text-navy">
             Home
           </Link>
@@ -251,7 +253,7 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
             Events
           </Link>
           <span className="mx-2">/</span>
-          <span className="text-gray-900">{state.name}</span>
+          <span className="text-foreground">{state.name}</span>
         </nav>
       </div>
 
@@ -263,9 +265,9 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
             name="includePast"
             value="true"
             defaultChecked={includePast}
-            className="rounded border-gray-300 text-royal focus:ring-royal"
+            className="rounded border-border text-royal focus:ring-royal"
           />
-          <span className="text-sm text-gray-700">Include past events</span>
+          <span className="text-sm text-foreground">Include past events</span>
         </label>
         <button type="submit" className="text-sm text-royal hover:text-navy font-medium">
           Apply
@@ -289,9 +291,9 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
         />
       ) : (
         <div className="text-center py-12">
-          <MapPin className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-600 text-lg">No upcoming events found in {state.name}.</p>
-          <p className="text-gray-500 mt-2">
+          <MapPin className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <p className="text-muted-foreground text-lg">No upcoming events found in {state.name}.</p>
+          <p className="text-muted-foreground mt-2">
             Check back soon or{" "}
             <Link href="/events" className="text-royal hover:text-navy font-medium">
               browse all events
@@ -301,16 +303,16 @@ export async function StateEventsPage({ stateSlug, searchParams }: StateEventsPa
         </div>
       )}
 
-      <div className="mt-8 bg-gray-50 rounded-lg p-6 text-center border border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+      <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border">
+        <h3 className="text-lg font-semibold text-foreground mb-2">
           Looking for past events in {state.name}?
         </h3>
-        <p className="text-sm text-gray-600 mb-3">
+        <p className="text-sm text-muted-foreground mb-3">
           Browse fairs and festivals from previous seasons across {state.name}.
         </p>
         <Link
           href={`/events/past?state=${state.code}`}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-lg hover:bg-navy transition-colors text-sm font-medium"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/90 transition-colors text-sm font-medium"
         >
           Browse past events in {state.name} &rarr;
         </Link>

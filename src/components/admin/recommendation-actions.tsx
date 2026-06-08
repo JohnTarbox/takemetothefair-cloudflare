@@ -58,7 +58,7 @@ export function RecommendationActions({ itemId }: { itemId: string }) {
           className={`px-2 py-1 rounded border ${
             a === "acted"
               ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              : "border-border bg-card text-foreground hover:bg-muted"
           } disabled:opacity-50`}
         >
           {busy === a ? "…" : LABELS[a]}

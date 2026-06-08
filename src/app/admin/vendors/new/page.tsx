@@ -40,7 +40,7 @@ export default function NewVendorPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users");
-      const data = await res.json() as User[];
+      const data = (await res.json()) as User[];
       setUsers(data);
     } catch (error) {
       console.error("Failed to fetch users:", error);
@@ -61,7 +61,7 @@ export default function NewVendorPage() {
       if (res.ok) {
         router.push("/admin/vendors");
       } else {
-        const data = await res.json() as { error?: string };
+        const data = (await res.json()) as { error?: string };
         alert(data.error || "Failed to create vendor");
       }
     } catch (error) {
@@ -77,7 +77,7 @@ export default function NewVendorPage() {
       <div className="mb-6">
         <Link
           href="/admin/vendors"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Vendors
@@ -96,10 +96,8 @@ export default function NewVendorPage() {
                 <select
                   id="userId"
                   value={formData.userId}
-                  onChange={(e) =>
-                    setFormData({ ...formData, userId: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  onChange={(e) => setFormData({ ...formData, userId: e.target.value })}
+                  className="w-full px-3 py-2 border border-border rounded-md"
                   required
                 >
                   <option value="">Select a user</option>
@@ -116,9 +114,7 @@ export default function NewVendorPage() {
                 <Input
                   id="businessName"
                   value={formData.businessName}
-                  onChange={(e) =>
-                    setFormData({ ...formData, businessName: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
                   required
                 />
               </div>
@@ -128,9 +124,7 @@ export default function NewVendorPage() {
                 <Input
                   id="vendorType"
                   value={formData.vendorType}
-                  onChange={(e) =>
-                    setFormData({ ...formData, vendorType: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, vendorType: e.target.value })}
                   placeholder="e.g., Food, Crafts, Services"
                 />
               </div>
@@ -141,9 +135,7 @@ export default function NewVendorPage() {
                   id="website"
                   type="url"
                   value={formData.website}
-                  onChange={(e) =>
-                    setFormData({ ...formData, website: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                   placeholder="https://example.com"
                 />
               </div>
@@ -154,9 +146,7 @@ export default function NewVendorPage() {
               <Textarea
                 id="description"
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 rows={4}
               />
             </div>
@@ -167,10 +157,8 @@ export default function NewVendorPage() {
                   type="checkbox"
                   id="verified"
                   checked={formData.verified}
-                  onChange={(e) =>
-                    setFormData({ ...formData, verified: e.target.checked })
-                  }
-                  className="rounded border-gray-300"
+                  onChange={(e) => setFormData({ ...formData, verified: e.target.checked })}
+                  className="rounded border-border"
                 />
                 <Label htmlFor="verified">Verified Vendor</Label>
               </div>
@@ -179,10 +167,8 @@ export default function NewVendorPage() {
                   type="checkbox"
                   id="commercial"
                   checked={formData.commercial}
-                  onChange={(e) =>
-                    setFormData({ ...formData, commercial: e.target.checked })
-                  }
-                  className="rounded border-gray-300"
+                  onChange={(e) => setFormData({ ...formData, commercial: e.target.checked })}
+                  className="rounded border-border"
                 />
                 <Label htmlFor="commercial">Commercial Vendor</Label>
               </div>
@@ -191,14 +177,14 @@ export default function NewVendorPage() {
                   type="checkbox"
                   id="canSelfConfirm"
                   checked={formData.canSelfConfirm}
-                  onChange={(e) =>
-                    setFormData({ ...formData, canSelfConfirm: e.target.checked })
-                  }
-                  className="rounded border-gray-300"
+                  onChange={(e) => setFormData({ ...formData, canSelfConfirm: e.target.checked })}
+                  className="rounded border-border"
                 />
                 <div>
                   <Label htmlFor="canSelfConfirm">Can Self-Confirm Events</Label>
-                  <p className="text-xs text-gray-500">Vendor can confirm participation without admin approval</p>
+                  <p className="text-xs text-muted-foreground">
+                    Vendor can confirm participation without admin approval
+                  </p>
                 </div>
               </div>
             </div>

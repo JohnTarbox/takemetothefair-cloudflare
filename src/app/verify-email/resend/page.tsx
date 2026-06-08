@@ -32,23 +32,23 @@ export default function ResendVerificationPage() {
           <div className="flex justify-center mb-3">
             <Mail className="w-12 h-12 text-royal" aria-hidden="true" />
           </div>
-          <h1 className="text-2xl font-bold text-center text-gray-900">
+          <h1 className="text-2xl font-bold text-center text-foreground">
             Resend verification email
           </h1>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            <p className="text-sm text-gray-600 text-center">
+            <p className="text-sm text-muted-foreground text-center">
               Enter the email you signed up with. We&apos;ll send a fresh verification link — valid
               for 24 hours.
             </p>
             <ResendVerificationButton label="Send verification email" />
-            <p className="text-xs text-gray-500 text-center pt-2">
+            <p className="text-xs text-muted-foreground text-center pt-2">
               For security, we send the same generic response whether or not the email matches an
               account. If you don&apos;t receive a link within a few minutes, check your spam
               folder.
             </p>
-            <p className="text-sm text-gray-500 text-center pt-2">
+            <p className="text-sm text-muted-foreground text-center pt-2">
               Already verified?{" "}
               <Link href="/login" className="text-navy hover:underline font-medium">
                 Sign in

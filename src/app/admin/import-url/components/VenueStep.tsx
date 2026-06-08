@@ -79,13 +79,13 @@ export function VenueStep({
         {/* Similar venues */}
         {similarVenues.length > 0 && (
           <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">Matching Existing Venues:</p>
+            <p className="text-sm font-medium text-foreground mb-2">Matching Existing Venues:</p>
             <div className="space-y-2">
               {similarVenues.map((venue) => (
                 <label
                   key={venue.id}
                   className={`flex items-center p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedVenueId === venue.id ? "border-blue-500 bg-blue-50" : "hover:bg-gray-50"
+                    selectedVenueId === venue.id ? "border-blue-500 bg-blue-50" : "hover:bg-muted"
                   }`}
                 >
                   <input
@@ -97,7 +97,7 @@ export function VenueStep({
                   />
                   <div>
                     <span className="font-medium">{venue.name}</span>
-                    <span className="text-sm text-gray-500 ml-2">
+                    <span className="text-sm text-muted-foreground ml-2">
                       {venue.city}, {venue.state}
                     </span>
                   </div>
@@ -114,7 +114,7 @@ export function VenueStep({
             id="venueSelect"
             value={selectedVenueId}
             onChange={(e) => onSelectVenue(e.target.value)}
-            className="mt-1 w-full h-10 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+            className="mt-1 w-full h-10 rounded-md border border-border bg-card px-3 py-2 text-sm"
           >
             <option value="">Select a venue...</option>
             {venues.map((venue) => (
@@ -127,7 +127,7 @@ export function VenueStep({
 
         {/* Create new venue */}
         <div className="border-t pt-4">
-          <p className="text-sm font-medium text-gray-700 mb-3">Or Create New Venue:</p>
+          <p className="text-sm font-medium text-foreground mb-3">Or Create New Venue:</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <Label htmlFor="newVenueName">Venue Name</Label>
@@ -174,14 +174,14 @@ export function VenueStep({
         </div>
 
         {/* Skip venue option */}
-        <label className="flex items-center gap-2 text-sm text-gray-600 pt-2">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground pt-2">
           <input
             type="checkbox"
             checked={!selectedVenueId && !newVenueName}
             onChange={(e) => {
               if (e.target.checked) onSkipVenue();
             }}
-            className="rounded border-gray-300"
+            className="rounded border-border"
           />
           Skip venue (create event without venue)
         </label>

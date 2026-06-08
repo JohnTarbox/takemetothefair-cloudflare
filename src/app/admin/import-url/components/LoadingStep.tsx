@@ -13,10 +13,8 @@ export function LoadingStep({ variant, onCancel }: LoadingStepProps) {
       <Card>
         <CardContent className="py-12 text-center">
           <Loader2 className="w-12 h-12 text-blue-600 mx-auto mb-4 animate-spin" />
-          <h3 className="text-lg font-medium text-gray-900">
-            Fetching page content...
-          </h3>
-          <p className="text-gray-500 mt-2">This may take a few seconds</p>
+          <h3 className="text-lg font-medium text-foreground">Fetching page content...</h3>
+          <p className="text-muted-foreground mt-2">This may take a few seconds</p>
           {onCancel && (
             <Button variant="outline" size="sm" onClick={onCancel} className="mt-4">
               Cancel
@@ -31,10 +29,8 @@ export function LoadingStep({ variant, onCancel }: LoadingStepProps) {
     <Card>
       <CardContent className="py-12 text-center">
         <Sparkles className="w-12 h-12 text-purple-600 mx-auto mb-4 animate-pulse" />
-        <h3 className="text-lg font-medium text-gray-900">
-          Analyzing page content...
-        </h3>
-        <p className="text-gray-500 mt-2">AI is extracting event details</p>
+        <h3 className="text-lg font-medium text-foreground">Analyzing page content...</h3>
+        <p className="text-muted-foreground mt-2">AI is extracting event details</p>
         {onCancel && (
           <Button variant="outline" size="sm" onClick={onCancel} className="mt-4">
             Cancel

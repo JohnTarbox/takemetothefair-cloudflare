@@ -38,7 +38,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
       <div className="h-1 bg-royal" />
       <Link href={`/blog/${post.slug}`} className="block">
-        <div className="aspect-video relative bg-gray-100">
+        <div className="aspect-video relative bg-muted">
           {post.featuredImageUrl && !imgError ? (
             <Image
               src={post.featuredImageUrl}
@@ -64,8 +64,10 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
           <h3 className="text-lg font-semibold text-navy line-clamp-2 group-hover:text-navy">
             {post.title}
           </h3>
-          {post.excerpt && <p className="text-sm text-gray-600 line-clamp-3">{post.excerpt}</p>}
-          <div className="flex items-center gap-3 text-xs text-gray-500 pt-1">
+          {post.excerpt && (
+            <p className="text-sm text-muted-foreground line-clamp-3">{post.excerpt}</p>
+          )}
+          <div className="flex items-center gap-3 text-xs text-muted-foreground pt-1">
             {publishDate && (
               <span className="flex items-center gap-1">
                 <Calendar className="w-3.5 h-3.5" />
@@ -79,14 +81,14 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
               {post.tags.slice(0, 3).map((tag) => (
                 <span
                   key={tag}
-                  className="inline-flex items-center gap-0.5 text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full"
+                  className="inline-flex items-center gap-0.5 text-xs px-2 py-0.5 bg-muted text-muted-foreground rounded-full"
                 >
                   <Tag className="w-2.5 h-2.5" />
                   {tag}
                 </span>
               ))}
               {post.tags.length > 3 && (
-                <span className="text-xs text-gray-600">+{post.tags.length - 3}</span>
+                <span className="text-xs text-muted-foreground">+{post.tags.length - 3}</span>
               )}
             </div>
           )}

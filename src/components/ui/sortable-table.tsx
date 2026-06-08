@@ -29,12 +29,12 @@ export function SortableHeader({
 
   return (
     <th
-      className={`text-left py-3 px-4 text-sm font-medium text-gray-600 cursor-pointer hover:bg-gray-50 select-none ${className}`}
+      className={`text-left py-3 px-4 text-sm font-medium text-muted-foreground cursor-pointer hover:bg-muted select-none ${className}`}
       onClick={() => onSort(column)}
     >
       <div className="flex items-center gap-1">
         {label}
-        <span className="text-gray-600">
+        <span className="text-muted-foreground">
           {direction === "asc" ? (
             <ChevronUp className="w-4 h-4" />
           ) : direction === "desc" ? (

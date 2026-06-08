@@ -248,14 +248,25 @@ export default async function HomePage() {
   return (
     <div>
       <WebSiteSchema />
-      {/* Hero Section */}
-      <section className="bg-navy text-white">
+      {/* Hero Section.
+       *
+       * Dark-mode token sweep (2026-06-08) — `bg-secondary text-secondary-foreground` was
+       * shipping at 2.47:1 in dark mode because --navy lifts to a
+       * light-blue (#7aa6ee) in dark for text-on-dark-bg readability,
+       * but white text on that lifted bg fails AA. Migrating to the
+       * --secondary / --secondary-foreground pair: in light it's
+       * identical (navy + white = 13.6:1 AAA); in dark the band
+       * inverts to light-blue + dark text = 7.6:1 AAA. The hero is
+       * intentionally a lifted-band design moment in dark mode, not
+       * a fixed brand color.
+       */}
+      <section className="bg-secondary text-secondary-foreground">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28 max-h-[600px]">
           <div className="text-center max-w-3xl mx-auto">
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight">
               Discover Local Fairs & Events
             </h1>
-            <p className="mt-6 text-lg md:text-xl text-gray-300">
+            <p className="mt-6 text-lg md:text-xl text-secondary-foreground/80">
               Find the best fairs, festivals, and community events across New England. Connect with
               vendors and never miss an experience.
             </p>
@@ -273,7 +284,7 @@ export default async function HomePage() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="w-full sm:w-auto bg-transparent border-white text-white hover:bg-card/10"
+                  className="w-full sm:w-auto bg-transparent border-secondary-foreground text-secondary-foreground hover:bg-secondary-foreground/10"
                 >
                   List Your Event
                 </Button>
@@ -285,7 +296,7 @@ export default async function HomePage() {
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <Calendar className="w-4 h-4 text-amber-fg" />
                 </div>
-                <span className="text-white font-medium">
+                <span className="font-medium">
                   {counts.upcomingEvents.toLocaleString()} upcoming event
                   {counts.upcomingEvents === 1 ? "" : "s"}
                 </span>
@@ -294,7 +305,7 @@ export default async function HomePage() {
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <MapPin className="w-4 h-4 text-amber-fg" />
                 </div>
-                <span className="text-white font-medium">
+                <span className="font-medium">
                   {counts.activeVenues.toLocaleString()} venue
                   {counts.activeVenues === 1 ? "" : "s"}
                 </span>
@@ -303,7 +314,7 @@ export default async function HomePage() {
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <Users className="w-4 h-4 text-amber-fg" />
                 </div>
-                <span className="text-white font-medium">
+                <span className="font-medium">
                   {counts.totalVendors.toLocaleString()} vendor
                   {counts.totalVendors === 1 ? "" : "s"} listed
                 </span>
@@ -459,13 +470,14 @@ export default async function HomePage() {
         </section>
       )}
 
-      {/* CTA Section */}
-      <section className="py-16 bg-navy">
+      {/* CTA Section — same dark-mode reasoning as the hero above:
+       * --secondary pair stays AA in both themes (13.6:1 light, 7.6:1 dark). */}
+      <section className="py-16 bg-secondary text-secondary-foreground">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-white">
+          <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
             Ready to Share Your Event?
           </h2>
-          <p className="mt-4 text-lg text-gray-300 max-w-2xl mx-auto">
+          <p className="mt-4 text-lg text-secondary-foreground/80 max-w-2xl mx-auto">
             Whether you&apos;re a promoter organizing fairs or a vendor looking to participate,
             we&apos;ve got you covered.
           </p>
@@ -482,7 +494,7 @@ export default async function HomePage() {
               <Button
                 size="lg"
                 variant="outline"
-                className="w-full sm:w-auto bg-transparent border-white text-white hover:bg-card/10"
+                className="w-full sm:w-auto bg-transparent border-secondary-foreground text-secondary-foreground hover:bg-secondary-foreground/10"
               >
                 I&apos;m a Vendor
               </Button>
@@ -500,15 +512,15 @@ export default async function HomePage() {
               <Link href="/faq" className="text-royal hover:text-navy font-medium">
                 FAQ
               </Link>
-              <span className="text-gray-300">|</span>
+              <span className="text-muted-foreground">|</span>
               <Link href="/search-visibility" className="text-royal hover:text-navy font-medium">
                 Search Visibility
               </Link>
-              <span className="text-gray-300">|</span>
+              <span className="text-muted-foreground">|</span>
               <Link href="/contact" className="text-royal hover:text-navy font-medium">
                 Contact Us
               </Link>
-              <span className="text-gray-300">|</span>
+              <span className="text-muted-foreground">|</span>
               <Link href="/blog" className="text-royal hover:text-navy font-medium">
                 Blog
               </Link>

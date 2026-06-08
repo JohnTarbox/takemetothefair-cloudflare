@@ -168,8 +168,8 @@ const faqCategories = [
   {
     title: "General",
     icon: Settings,
-    iconBg: "bg-gray-100",
-    iconColor: "text-gray-600",
+    iconBg: "bg-muted",
+    iconColor: "text-muted-foreground",
     items: [
       {
         question: "How do I report an issue with an event listing?",
@@ -211,8 +211,8 @@ export default function FAQPage() {
 
       {/* Hero Section */}
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">Frequently Asked Questions</h1>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold text-foreground mb-4">Frequently Asked Questions</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
           Find answers to common questions about using Meet Me at the Fair
         </p>
       </div>
@@ -227,10 +227,10 @@ export default function FAQPage() {
               >
                 <category.icon className={`w-5 h-5 ${category.iconColor}`} aria-hidden="true" />
               </div>
-              <h2 className="text-2xl font-semibold text-gray-900">{category.title}</h2>
+              <h2 className="text-2xl font-semibold text-foreground">{category.title}</h2>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 px-6">
+            <div className="bg-card rounded-xl shadow-sm border border-border px-6">
               <Accordion type="single">
                 {category.items.map((item, index) => (
                   <AccordionItem
@@ -248,14 +248,14 @@ export default function FAQPage() {
       </div>
 
       {/* CTA Section */}
-      <div className="bg-gray-50 rounded-xl p-8 text-center mt-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Still Have Questions?</h2>
-        <p className="text-gray-600 mb-6">
+      <div className="bg-muted rounded-xl p-8 text-center mt-12">
+        <h2 className="text-2xl font-bold text-foreground mb-4">Still Have Questions?</h2>
+        <p className="text-muted-foreground mb-6">
           Can&apos;t find what you&apos;re looking for? We&apos;re here to help.
         </p>
         <a
           href="/contact"
-          className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+          className="inline-flex items-center px-6 py-3 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
         >
           Contact Us
         </a>

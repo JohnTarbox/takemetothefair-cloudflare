@@ -96,7 +96,7 @@ export default function EmailSourceSuggestionsPage() {
     <main className="mx-auto max-w-5xl space-y-6 p-8">
       <header>
         <h1 className="text-2xl font-semibold">Email source suggestions</h1>
-        <p className="mt-1 text-sm text-gray-600">
+        <p className="mt-1 text-sm text-muted-foreground">
           Domains a sender suggested via inbound email as a potential events source. Approve to add
           to the active set (Tier 1 of the source_suggestion handler short-circuits future
           mentions); reject to leave the row for audit.
@@ -111,7 +111,7 @@ export default function EmailSourceSuggestionsPage() {
             className={
               statusFilter === s
                 ? "rounded bg-blue-600 px-3 py-1 text-white"
-                : "rounded bg-gray-100 px-3 py-1 text-gray-700 hover:bg-gray-200"
+                : "rounded bg-muted px-3 py-1 text-foreground hover:bg-muted"
             }
           >
             {s.replace("_", " ")}
@@ -126,9 +126,9 @@ export default function EmailSourceSuggestionsPage() {
       )}
 
       {loading ? (
-        <p className="text-gray-500">Loading…</p>
+        <p className="text-muted-foreground">Loading…</p>
       ) : rows.length === 0 ? (
-        <p className="text-gray-500">
+        <p className="text-muted-foreground">
           No suggestions in the {statusFilter.replace("_", " ")} bucket.
         </p>
       ) : (
@@ -139,14 +139,14 @@ export default function EmailSourceSuggestionsPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <h2 className="font-mono text-base">{row.host}</h2>
-                    <span className="text-xs text-gray-500">
+                    <span className="text-xs text-muted-foreground">
                       {formatTimestamp(row.createdAt)}
                     </span>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-sm">
-                    <dt className="text-gray-500">URL</dt>
+                    <dt className="text-muted-foreground">URL</dt>
                     <dd>
                       <a
                         href={row.url}
@@ -159,19 +159,19 @@ export default function EmailSourceSuggestionsPage() {
                     </dd>
                     {row.suggestedByEmail && (
                       <>
-                        <dt className="text-gray-500">Suggested by</dt>
+                        <dt className="text-muted-foreground">Suggested by</dt>
                         <dd className="font-mono text-xs">{row.suggestedByEmail}</dd>
                       </>
                     )}
                     {row.adminNotes && (
                       <>
-                        <dt className="text-gray-500">Notes</dt>
+                        <dt className="text-muted-foreground">Notes</dt>
                         <dd>{row.adminNotes}</dd>
                       </>
                     )}
                     {row.reviewedAt && (
                       <>
-                        <dt className="text-gray-500">Reviewed</dt>
+                        <dt className="text-muted-foreground">Reviewed</dt>
                         <dd>
                           {formatTimestamp(row.reviewedAt)}
                           {row.reviewedByUserId ? ` by ${row.reviewedByUserId.slice(0, 8)}` : ""}

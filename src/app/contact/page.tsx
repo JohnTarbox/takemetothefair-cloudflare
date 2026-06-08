@@ -78,8 +78,8 @@ export default function ContactPage() {
       />
       <FAQSchema items={faqItems} />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">Contact Us</h1>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold text-foreground mb-4">Contact Us</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
           Have questions? We&apos;d love to hear from you.
         </p>
       </div>
@@ -95,7 +95,9 @@ export default function ContactPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-600 mb-4">For general inquiries, support, or feedback:</p>
+            <p className="text-muted-foreground mb-4">
+              For general inquiries, support, or feedback:
+            </p>
             <a
               href="mailto:hello@meetmeatthefair.com"
               className="text-royal hover:text-navy font-medium"
@@ -115,7 +117,7 @@ export default function ContactPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-600 mb-4">Need help with your account or listing?</p>
+            <p className="text-muted-foreground mb-4">Need help with your account or listing?</p>
             <a
               href="mailto:support@meetmeatthefair.com"
               className="text-royal hover:text-navy font-medium"
@@ -132,34 +134,34 @@ export default function ContactPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
-            <h3 className="font-semibold text-gray-900 mb-2">How do I list my event?</h3>
-            <p className="text-gray-600">
+            <h3 className="font-semibold text-foreground mb-2">How do I list my event?</h3>
+            <p className="text-muted-foreground">
               Event promoters can create an account and submit events for approval. Once approved,
               your event will appear in our calendar and search results.
             </p>
           </div>
           <div>
-            <h3 className="font-semibold text-gray-900 mb-2">
+            <h3 className="font-semibold text-foreground mb-2">
               How can I become a vendor at an event?
             </h3>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Create a vendor profile, browse available events, and submit applications to the
               events you&apos;re interested in. Event promoters will review and respond to your
               application.
             </p>
           </div>
           <div>
-            <h3 className="font-semibold text-gray-900 mb-2">Is it free to list events?</h3>
-            <p className="text-gray-600">
+            <h3 className="font-semibold text-foreground mb-2">Is it free to list events?</h3>
+            <p className="text-muted-foreground">
               Basic event listings are free. Contact us for information about featured listings and
               promotional opportunities.
             </p>
           </div>
           <div>
-            <h3 className="font-semibold text-gray-900 mb-2">
+            <h3 className="font-semibold text-foreground mb-2">
               How do I report an issue with an event listing?
             </h3>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               If you notice incorrect information or have concerns about a listing, please email us
               at support@meetmeatthefair.com with details.
             </p>
@@ -167,15 +169,15 @@ export default function ContactPage() {
         </CardContent>
       </Card>
 
-      <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Partnership Opportunities</h2>
-        <p className="text-gray-600 mb-6">
+      <div className="bg-muted rounded-xl p-8 text-center">
+        <h2 className="text-2xl font-bold text-foreground mb-4">Partnership Opportunities</h2>
+        <p className="text-muted-foreground mb-6">
           Interested in partnering with Meet Me at the Fair? We&apos;re always looking for ways to
           better serve our community.
         </p>
         <a
           href="mailto:partnerships@meetmeatthefair.com"
-          className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+          className="inline-flex items-center px-6 py-3 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
         >
           Get in Touch
         </a>

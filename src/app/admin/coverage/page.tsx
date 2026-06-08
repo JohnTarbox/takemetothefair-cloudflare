@@ -330,11 +330,11 @@ function CoverageRowItem({
     <>
       <Link
         href={`${detailPath}/${row.slug}`}
-        className="text-gray-900 hover:text-navy font-medium truncate"
+        className="text-foreground hover:text-navy font-medium truncate"
       >
         {row.name}
       </Link>
-      <span className="text-gray-600 text-sm">{row.state ?? "-"}</span>
+      <span className="text-muted-foreground text-sm">{row.state ?? "-"}</span>
       <span>
         {hasPosts ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-light text-amber-bg-fg">
@@ -348,12 +348,12 @@ function CoverageRowItem({
         {row.views === null ? (
           <span className="text-stone-400">—</span>
         ) : (
-          <span className="text-gray-700">{row.views.toLocaleString()}</span>
+          <span className="text-foreground">{row.views.toLocaleString()}</span>
         )}
       </span>
       <span className="text-sm tabular-nums">
         {row.favorites > 0 ? (
-          <span className="text-gray-700">{row.favorites}</span>
+          <span className="text-foreground">{row.favorites}</span>
         ) : (
           <span className="text-stone-400">0</span>
         )}
@@ -405,8 +405,8 @@ function CoverageRowItem({
 }
 
 const TOGGLE_BASE = "px-3 py-1.5 text-sm font-medium rounded-md transition-colors border";
-const TOGGLE_ACTIVE = "bg-navy text-white border-navy";
-const TOGGLE_INACTIVE = "bg-white text-gray-700 border-stone-200 hover:bg-stone-50";
+const TOGGLE_ACTIVE = "bg-secondary text-secondary-foreground border-navy";
+const TOGGLE_INACTIVE = "bg-card text-foreground border-stone-200 hover:bg-stone-50";
 
 function ScopeToggle({
   scope,
@@ -580,11 +580,11 @@ export default async function AdminCoveragePage({
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
           <FileText className="w-6 h-6 text-amber-dark" />
           Blog Coverage
         </h1>
-        <p className="mt-1 text-gray-600 max-w-3xl">{description}</p>
+        <p className="mt-1 text-muted-foreground max-w-3xl">{description}</p>
       </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-4">
@@ -629,7 +629,7 @@ export default async function AdminCoveragePage({
       <div className="space-y-6">
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <Calendar className="w-5 h-5" />
               {scope === "upcoming" ? "Upcoming Events" : "Events"}
               <span className="text-sm font-normal text-stone-500">({eventRows.length})</span>
@@ -647,7 +647,7 @@ export default async function AdminCoveragePage({
 
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <Store className="w-5 h-5" />
               Vendors
               <span className="text-sm font-normal text-stone-500">({vendorRows.length})</span>
@@ -665,7 +665,7 @@ export default async function AdminCoveragePage({
 
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
               <MapPin className="w-5 h-5" />
               Venues
               <span className="text-sm font-normal text-stone-500">({venueRows.length})</span>

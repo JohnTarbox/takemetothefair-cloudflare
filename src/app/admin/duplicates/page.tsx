@@ -268,8 +268,8 @@ export default function AdminDuplicatesPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Find &amp; Merge Duplicates</h1>
-          <p className="text-sm text-gray-600 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">Find &amp; Merge Duplicates</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Review and merge duplicate records to keep your data clean
           </p>
         </div>
@@ -280,15 +280,15 @@ export default function AdminDuplicatesPage() {
         <CardContent className="py-4">
           <div className="flex flex-wrap items-center gap-4">
             {/* Entity Type Tabs */}
-            <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg">
+            <div className="flex flex-wrap gap-1 bg-muted p-1 rounded-lg">
               {ENTITY_TYPES.map((type) => (
                 <button
                   key={type.value}
                   onClick={() => setEntityType(type.value)}
                   className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
                     entityType === type.value
-                      ? "bg-white text-gray-900 shadow-sm"
-                      : "text-gray-600 hover:text-gray-900"
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   {type.label}
@@ -298,11 +298,11 @@ export default function AdminDuplicatesPage() {
 
             {/* Threshold Select */}
             <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600">Similarity:</label>
+              <label className="text-sm text-muted-foreground">Similarity:</label>
               <select
                 value={threshold}
                 onChange={(e) => setThreshold(parseFloat(e.target.value))}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="border border-border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 {THRESHOLDS.map((t) => (
                   <option key={t.value} value={t.value}>
@@ -314,12 +314,12 @@ export default function AdminDuplicatesPage() {
 
             {/* Same Dates Filter (events only) */}
             {entityType === "events" && (
-              <label className="flex items-center gap-2 text-sm text-gray-600">
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={sameDatesOnly}
                   onChange={(e) => setSameDatesOnly(e.target.checked)}
-                  className="rounded border-gray-300"
+                  className="rounded border-border"
                 />
                 Same dates only
               </label>
@@ -346,7 +346,7 @@ export default function AdminDuplicatesPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               {loading
                 ? "Searching..."
                 : (() => {
@@ -382,7 +382,7 @@ export default function AdminDuplicatesPage() {
               return (
                 <div className="animate-pulse space-y-4">
                   {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-24 bg-gray-100 rounded-lg"></div>
+                    <div key={i} className="h-24 bg-muted rounded-lg"></div>
                   ))}
                 </div>
               );
@@ -390,7 +390,7 @@ export default function AdminDuplicatesPage() {
 
             if (filteredDuplicates.length === 0) {
               return (
-                <div className="text-center py-12 text-gray-500">
+                <div className="text-center py-12 text-muted-foreground">
                   <GitMerge className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p>
                     {sameDatesOnly && entityType === "events" && duplicates.length > 0
@@ -415,16 +415,16 @@ export default function AdminDuplicatesPage() {
                   return (
                     <div
                       key={`${entity1.id}-${entity2.id}`}
-                      className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+                      className="border border-border rounded-lg p-4 hover:border-border transition-colors"
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4 flex-1">
                           {/* Entity 1 */}
                           <div className="flex-1">
-                            <p className="font-medium text-gray-900">
+                            <p className="font-medium text-foreground">
                               {getDisplayName(entity1, entityType)}
                             </p>
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-muted-foreground">
                               {getCountLabel(entity1, entityType)}
                             </p>
                           </div>
@@ -442,15 +442,15 @@ export default function AdminDuplicatesPage() {
                             >
                               {formatSimilarity(pair.similarity)}
                             </Badge>
-                            <ArrowRight className="w-4 h-4 text-gray-600 my-1" />
+                            <ArrowRight className="w-4 h-4 text-muted-foreground my-1" />
                           </div>
 
                           {/* Entity 2 */}
                           <div className="flex-1">
-                            <p className="font-medium text-gray-900">
+                            <p className="font-medium text-foreground">
                               {getDisplayName(entity2, entityType)}
                             </p>
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-muted-foreground">
                               {getCountLabel(entity2, entityType)}
                             </p>
                           </div>
@@ -474,13 +474,16 @@ export default function AdminDuplicatesPage() {
       {selectedPair && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={handleCloseReview}></div>
-          <div className="relative bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
+          <div className="relative bg-card rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 border-b">
-              <h2 className="text-lg font-semibold text-gray-900">
+              <h2 className="text-lg font-semibold text-foreground">
                 Review Duplicate {entityType.slice(0, -1)}
               </h2>
-              <button onClick={handleCloseReview} className="text-gray-600 hover:text-gray-600">
+              <button
+                onClick={handleCloseReview}
+                className="text-muted-foreground hover:text-muted-foreground"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -492,14 +495,16 @@ export default function AdminDuplicatesPage() {
                   <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Check className="w-8 h-8 text-green-600" />
                   </div>
-                  <h3 className="text-lg font-medium text-gray-900">Merge Successful!</h3>
-                  <p className="text-gray-600 mt-2">The records have been merged successfully.</p>
+                  <h3 className="text-lg font-medium text-foreground">Merge Successful!</h3>
+                  <p className="text-muted-foreground mt-2">
+                    The records have been merged successfully.
+                  </p>
                 </div>
               ) : (
                 <>
                   {/* Side by Side Comparison */}
                   <div className="mb-6">
-                    <h3 className="text-sm font-medium text-gray-700 mb-3">
+                    <h3 className="text-sm font-medium text-foreground mb-3">
                       Select the primary record to keep:
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -526,15 +531,15 @@ export default function AdminDuplicatesPage() {
                             className={`text-left p-4 border-2 rounded-lg transition-colors cursor-pointer ${
                               isSelected
                                 ? "border-blue-500 bg-blue-50"
-                                : "border-gray-200 hover:border-gray-300"
+                                : "border-border hover:border-border"
                             }`}
                           >
                             <div className="flex items-start justify-between">
                               <div>
-                                <p className="font-medium text-gray-900">
+                                <p className="font-medium text-foreground">
                                   {getDisplayName(e, entityType)}
                                 </p>
-                                <p className="text-sm text-gray-500 mt-1">
+                                <p className="text-sm text-muted-foreground mt-1">
                                   Slug: {e.slug as string}
                                 </p>
                               </div>
@@ -544,38 +549,40 @@ export default function AdminDuplicatesPage() {
                             <div className="mt-3 space-y-1 text-sm">
                               {entityType === "venues" && (
                                 <>
-                                  <p className="text-gray-600">{e.address as string}</p>
-                                  <p className="text-gray-600">
+                                  <p className="text-muted-foreground">{e.address as string}</p>
+                                  <p className="text-muted-foreground">
                                     {e.city as string}, {e.state as string} {e.zip as string}
                                   </p>
                                   {(e.latitude || e.longitude) && (
-                                    <p className="text-gray-600 text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       {e.latitude as number}, {e.longitude as number}
                                     </p>
                                   )}
-                                  <p className="text-gray-600">{count?.events || 0} events</p>
+                                  <p className="text-muted-foreground">
+                                    {count?.events || 0} events
+                                  </p>
                                   {e.contactPhone && (
-                                    <p className="text-gray-600">
+                                    <p className="text-muted-foreground">
                                       Phone: {e.contactPhone as string}
                                     </p>
                                   )}
                                   {e.contactEmail && (
-                                    <p className="text-gray-600">
+                                    <p className="text-muted-foreground">
                                       Email: {e.contactEmail as string}
                                     </p>
                                   )}
                                   {e.website && (
-                                    <p className="text-gray-600 truncate">
+                                    <p className="text-muted-foreground truncate">
                                       Web: {e.website as string}
                                     </p>
                                   )}
                                   {e.capacity && (
-                                    <p className="text-gray-600">
+                                    <p className="text-muted-foreground">
                                       Capacity: {e.capacity as number}
                                     </p>
                                   )}
                                   {e.description && (
-                                    <p className="text-gray-600 text-xs line-clamp-2 mt-1">
+                                    <p className="text-muted-foreground text-xs line-clamp-2 mt-1">
                                       {e.description as string}
                                     </p>
                                   )}
@@ -587,23 +594,23 @@ export default function AdminDuplicatesPage() {
                                     />
                                   )}
                                   {/* Google Places fields */}
-                                  <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
-                                    <p className="text-xs font-medium text-gray-500">
+                                  <div className="mt-2 pt-2 border-t border-border space-y-1">
+                                    <p className="text-xs font-medium text-muted-foreground">
                                       Google Places
                                     </p>
-                                    <p className="text-gray-600 text-xs truncate">
+                                    <p className="text-muted-foreground text-xs truncate">
                                       Place ID: {(e.googlePlaceId as string) || "—"}
                                     </p>
-                                    <p className="text-xs text-gray-600">
+                                    <p className="text-xs text-muted-foreground">
                                       Maps: {(e.googleMapsUrl as string) ? "yes" : "—"}
                                     </p>
-                                    <p className="text-gray-600 text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       Rating:{" "}
                                       {e.googleRating != null
                                         ? `${e.googleRating as number}/5 (${e.googleRatingCount as number} reviews)`
                                         : "—"}
                                     </p>
-                                    <p className="text-gray-600 text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       Types:{" "}
                                       {e.googleTypes
                                         ? (() => {
@@ -620,10 +627,10 @@ export default function AdminDuplicatesPage() {
                                           })()
                                         : "—"}
                                     </p>
-                                    <p className="text-gray-600 text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       Hours: {e.openingHours ? "yes" : "—"}
                                     </p>
-                                    <p className="text-gray-600 text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       Accessibility:{" "}
                                       {e.accessibility
                                         ? (() => {
@@ -643,7 +650,7 @@ export default function AdminDuplicatesPage() {
                                           })()
                                         : "—"}
                                     </p>
-                                    <p className="text-gray-600 text-xs">
+                                    <p className="text-muted-foreground text-xs">
                                       Parking:{" "}
                                       {e.parking
                                         ? (() => {
@@ -668,28 +675,32 @@ export default function AdminDuplicatesPage() {
                               )}
                               {entityType === "events" && (
                                 <>
-                                  <p className="text-gray-600">
+                                  <p className="text-muted-foreground">
                                     {formatDate(e.startDate)} - {formatDate(e.endDate)}
                                   </p>
-                                  <p className="text-gray-600">
+                                  <p className="text-muted-foreground">
                                     Venue: {(e.venue as Record<string, string>)?.name || "N/A"}
                                   </p>
-                                  <p className="text-gray-600">
+                                  <p className="text-muted-foreground">
                                     {count?.eventVendors || 0} vendors
                                   </p>
-                                  <p className="text-gray-600">{e.viewCount as number} views</p>
+                                  <p className="text-muted-foreground">
+                                    {e.viewCount as number} views
+                                  </p>
                                 </>
                               )}
                               {entityType === "vendors" && (
                                 <>
-                                  <p className="text-gray-600">
+                                  <p className="text-muted-foreground">
                                     Type: {(e.vendorType as string) || "N/A"}
                                   </p>
-                                  <p className="text-gray-600">{count?.eventVendors || 0} events</p>
+                                  <p className="text-muted-foreground">
+                                    {count?.eventVendors || 0} events
+                                  </p>
                                 </>
                               )}
                               {entityType === "promoters" && (
-                                <p className="text-gray-600">{count?.events || 0} events</p>
+                                <p className="text-muted-foreground">{count?.events || 0} events</p>
                               )}
                             </div>
                           </div>
@@ -728,14 +739,14 @@ export default function AdminDuplicatesPage() {
                       )}
 
                       {/* Transfer Summary */}
-                      <div className="bg-gray-50 rounded-lg p-4">
-                        <h4 className="font-medium text-gray-900 mb-3">
+                      <div className="bg-muted rounded-lg p-4">
+                        <h4 className="font-medium text-foreground mb-3">
                           Relationships to Transfer
                         </h4>
                         <div className="grid grid-cols-2 gap-4 text-sm">
                           {preview.relationshipsToTransfer.events !== undefined && (
                             <div className="flex justify-between">
-                              <span className="text-gray-600">Events:</span>
+                              <span className="text-muted-foreground">Events:</span>
                               <span className="font-medium">
                                 {preview.relationshipsToTransfer.events}
                               </span>
@@ -743,7 +754,7 @@ export default function AdminDuplicatesPage() {
                           )}
                           {preview.relationshipsToTransfer.eventVendors !== undefined && (
                             <div className="flex justify-between">
-                              <span className="text-gray-600">Event-Vendor Links:</span>
+                              <span className="text-muted-foreground">Event-Vendor Links:</span>
                               <span className="font-medium">
                                 {preview.relationshipsToTransfer.eventVendors}
                               </span>
@@ -751,7 +762,7 @@ export default function AdminDuplicatesPage() {
                           )}
                           {preview.relationshipsToTransfer.favorites !== undefined && (
                             <div className="flex justify-between">
-                              <span className="text-gray-600">Favorites:</span>
+                              <span className="text-muted-foreground">Favorites:</span>
                               <span className="font-medium">
                                 {preview.relationshipsToTransfer.favorites}
                               </span>

@@ -213,7 +213,7 @@ export function RecommendationScanButton() {
         type="button"
         onClick={scan}
         disabled={busy}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-foreground bg-card border border-border rounded-md hover:bg-muted disabled:opacity-50"
       >
         <RefreshCw className={`w-4 h-4 ${busy ? "animate-spin" : ""}`} />
         {busy ? (progress ?? "Scanning…") : "Re-scan rules"}

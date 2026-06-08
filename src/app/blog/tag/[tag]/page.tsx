@@ -140,7 +140,7 @@ export default async function BlogTagPage({ params }: Props) {
         <h1 className="text-3xl sm:text-4xl font-bold text-navy">
           Posts tagged &ldquo;{displayName}&rdquo;
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           {posts.length} article{posts.length === 1 ? "" : "s"}
         </p>
       </div>

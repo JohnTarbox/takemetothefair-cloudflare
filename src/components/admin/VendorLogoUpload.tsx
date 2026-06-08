@@ -45,9 +45,9 @@ export function VendorLogoUpload({ vendorId, currentLogoUrl }: Props) {
   }
 
   return (
-    <section className="border border-gray-200 rounded-lg p-6 bg-white">
+    <section className="border border-border rounded-lg p-6 bg-card">
       <h2 className="text-lg font-semibold mb-2">Logo</h2>
-      <p className="text-sm text-gray-600 mb-4">
+      <p className="text-sm text-muted-foreground mb-4">
         Upload directly to R2 (cdn.meetmeatthefair.com). Max 2 MB. JPG, PNG, WebP, or SVG.
       </p>
 
@@ -57,12 +57,12 @@ export function VendorLogoUpload({ vendorId, currentLogoUrl }: Props) {
           <img
             src={logoUrl}
             alt="Vendor logo"
-            className="w-32 h-32 object-contain border border-gray-200 rounded-md bg-gray-50"
+            className="w-32 h-32 object-contain border border-border rounded-md bg-muted"
           />
-          <p className="text-xs text-gray-500 mt-1 break-all">{logoUrl}</p>
+          <p className="text-xs text-muted-foreground mt-1 break-all">{logoUrl}</p>
         </div>
       ) : (
-        <div className="w-32 h-32 border border-dashed border-gray-300 rounded-md flex items-center justify-center text-gray-600 text-xs mb-4">
+        <div className="w-32 h-32 border border-dashed border-border rounded-md flex items-center justify-center text-muted-foreground text-xs mb-4">
           No logo
         </div>
       )}
@@ -76,7 +76,7 @@ export function VendorLogoUpload({ vendorId, currentLogoUrl }: Props) {
       */}
       <label
         className={
-          "inline-flex items-center justify-center font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 px-4 py-2 text-sm cursor-pointer transition-colors " +
+          "inline-flex items-center justify-center font-medium rounded-lg border border-border bg-card text-foreground hover:bg-muted px-4 py-2 text-sm cursor-pointer transition-colors " +
           (uploading ? "opacity-50 pointer-events-none" : "")
         }
       >

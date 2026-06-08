@@ -219,7 +219,7 @@ function indexStateChip(state: IndexState): { label: string; cls: string } {
         cls: "bg-amber-50 text-amber-800 border-amber-300",
       };
     case "unknown":
-      return { label: "unknown", cls: "bg-gray-50 text-gray-600 border-gray-200" };
+      return { label: "unknown", cls: "bg-muted text-muted-foreground border-border" };
   }
 }
 
@@ -230,7 +230,7 @@ function faqSourceChip(source: BlogFaqSource): { label: string; cls: string } {
     case "markdown":
       return { label: "markdown", cls: "bg-purple-50 text-purple-800 border-purple-200" };
     case "none":
-      return { label: "none", cls: "bg-gray-50 text-gray-500 border-gray-200" };
+      return { label: "none", cls: "bg-muted text-muted-foreground border-border" };
   }
 }
 
@@ -252,7 +252,7 @@ function SortHeader({ label, k, active, align = "left" }: SortHeaderProps) {
     <th className={`px-4 py-2 font-medium ${align === "right" ? "text-right" : "text-left"}`}>
       <Link
         href={`/admin/blog?sort=${k}`}
-        className={`hover:text-gray-900 ${isActive ? "text-gray-900 font-semibold" : "text-gray-600"}`}
+        className={`hover:text-foreground ${isActive ? "text-foreground font-semibold" : "text-muted-foreground"}`}
       >
         {label}
         {isActive ? " ▾" : ""}
@@ -286,8 +286,8 @@ export default async function BlogCoveragePage({
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">Blog coverage</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Blog coverage</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Per-post link footprint, FAQ source, and Google indexation status. Sortable; default sort
           is total link count descending. Indexation data comes from{" "}
           <code>gsc_inspection_state</code> populated by the URL Inspection sweep.
@@ -309,7 +309,7 @@ export default async function BlogCoveragePage({
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-muted border-b border-border">
                 <tr>
                   <SortHeader label="title" k="title" active={sort} />
                   <SortHeader label="publish" k="publishDate" active={sort} />
@@ -324,7 +324,7 @@ export default async function BlogCoveragePage({
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-6 text-center text-gray-500">
+                    <td colSpan={8} className="px-4 py-6 text-center text-muted-foreground">
                       No blog posts.
                     </td>
                   </tr>
@@ -333,7 +333,7 @@ export default async function BlogCoveragePage({
                   const faqMeta = faqSourceChip(r.faqSource);
                   const indexMeta = indexStateChip(r.indexState);
                   return (
-                    <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
+                    <tr key={r.id} className="border-b border-border hover:bg-muted">
                       <td className="px-4 py-2">
                         <Link
                           href={`/blog/${r.slug}`}
@@ -343,30 +343,30 @@ export default async function BlogCoveragePage({
                         >
                           {r.title}
                         </Link>
-                        <div className="text-xs text-gray-500 font-mono">{r.slug}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{r.slug}</div>
                         {r.status === "DRAFT" && (
-                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-gray-100 text-gray-600 border-gray-200">
+                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-muted text-muted-foreground border-border">
                             DRAFT
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-gray-700 tabular-nums">
+                      <td className="px-4 py-2 text-foreground tabular-nums">
                         {formatDate(r.publishDate)}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">
+                      <td className="px-4 py-2 text-right tabular-nums font-medium text-foreground">
                         {r.totalLinks === 0 ? (
                           <span className="text-amber-700">{r.totalLinks}</span>
                         ) : (
                           r.totalLinks
                         )}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.eventLinks}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.vendorLinks}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.venueLinks}
                       </td>
                       <td className="px-4 py-2">
@@ -393,7 +393,7 @@ export default async function BlogCoveragePage({
         </CardContent>
       </Card>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         Indexation status reflects the most recent URL Inspection sweep run. Rows in{" "}
         <span className="text-red-700">discovered, not indexed</span> or{" "}
         <span className="text-amber-700">crawled, not indexed</span> are candidates for{" "}
@@ -413,11 +413,11 @@ function Stat({
   accent?: "amber" | "red";
 }) {
   const cls =
-    accent === "red" ? "text-red-700" : accent === "amber" ? "text-amber-700" : "text-gray-900";
+    accent === "red" ? "text-red-700" : accent === "amber" ? "text-amber-700" : "text-foreground";
   return (
     <Card>
       <CardContent className="p-4">
-        <p className="text-xs text-gray-500">{label}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
         <p className={`text-2xl font-semibold tabular-nums mt-1 ${cls}`}>{value}</p>
       </CardContent>
     </Card>

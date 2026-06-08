@@ -372,27 +372,29 @@ export default function AdminInboundEmailsPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Inbound Emails</h1>
-        <p className="mt-1 text-gray-600">
+        <h1 className="text-2xl font-bold text-foreground">Inbound Emails</h1>
+        <p className="mt-1 text-muted-foreground">
           Messages received by the email() entrypoint and orchestrated by InboundEmailWorkflow.
           Click a row to see the error message; use the retry button to re-create the workflow for
           stuck or failed rows.
         </p>
         {stats && stats.accuracy.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-            <span className="text-gray-500">Classifier accuracy (last {stats.windowDays}d):</span>
+            <span className="text-muted-foreground">
+              Classifier accuracy (last {stats.windowDays}d):
+            </span>
             {stats.accuracy.map((a) => (
               <span
                 key={a.classifierVersion ?? "unversioned"}
-                className="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1"
+                className="inline-flex items-center gap-1 rounded bg-muted px-2 py-1"
               >
-                <span className="font-mono text-xs text-gray-500">
+                <span className="font-mono text-xs text-muted-foreground">
                   {a.classifierVersion ?? "—"}
                 </span>
                 <span
                   className={
                     a.accuracyPct === null
-                      ? "text-gray-500"
+                      ? "text-muted-foreground"
                       : a.accuracyPct >= 80
                         ? "font-medium text-green-700"
                         : a.accuracyPct >= 60
@@ -402,7 +404,7 @@ export default function AdminInboundEmailsPage() {
                 >
                   {a.accuracyPct === null ? "—" : `${a.accuracyPct}%`}
                 </span>
-                <span className="text-gray-600">
+                <span className="text-muted-foreground">
                   ({a.uncorrected}/{a.total})
                 </span>
               </span>
@@ -427,44 +429,46 @@ export default function AdminInboundEmailsPage() {
         <CardHeader className="cursor-pointer" onClick={() => setSendersOpen((v) => !v)}>
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">
+              <h2 className="text-lg font-semibold text-foreground">
                 Sender summary ({senders.length})
               </h2>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Top submitters by volume, with outcome breakdown and trust annotation.
               </p>
             </div>
-            <span className="text-sm text-gray-500">{sendersOpen ? "▾" : "▸"}</span>
+            <span className="text-sm text-muted-foreground">{sendersOpen ? "▾" : "▸"}</span>
           </div>
         </CardHeader>
         {sendersOpen && (
           <CardContent className="p-0">
             {senders.length === 0 ? (
-              <p className="px-3 py-4 text-sm text-gray-500">No submit-intent senders yet.</p>
+              <p className="px-3 py-4 text-sm text-muted-foreground">
+                No submit-intent senders yet.
+              </p>
             ) : (
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b">
+                <thead className="bg-muted border-b">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Sender</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Inbound</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Events</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Approved</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Rejected</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-700">Approval %</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Top state</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Trust</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-700">Last seen</th>
+                    <th className="px-3 py-2 text-left font-medium text-foreground">Sender</th>
+                    <th className="px-3 py-2 text-right font-medium text-foreground">Inbound</th>
+                    <th className="px-3 py-2 text-right font-medium text-foreground">Events</th>
+                    <th className="px-3 py-2 text-right font-medium text-foreground">Approved</th>
+                    <th className="px-3 py-2 text-right font-medium text-foreground">Rejected</th>
+                    <th className="px-3 py-2 text-right font-medium text-foreground">Approval %</th>
+                    <th className="px-3 py-2 text-left font-medium text-foreground">Top state</th>
+                    <th className="px-3 py-2 text-left font-medium text-foreground">Trust</th>
+                    <th className="px-3 py-2 text-left font-medium text-foreground">Last seen</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {senders.map((s) => (
-                    <tr key={s.fromAddress} className="hover:bg-gray-50">
+                    <tr key={s.fromAddress} className="hover:bg-muted">
                       <td className="px-3 py-2 break-all">{s.fromAddress}</td>
                       <td className="px-3 py-2 text-right">{s.total}</td>
                       <td className="px-3 py-2 text-right">{s.eventsCreated}</td>
                       <td className="px-3 py-2 text-right">{s.approved}</td>
                       <td className="px-3 py-2 text-right">{s.rejected}</td>
-                      <td className="px-3 py-2 text-right text-gray-600">
+                      <td className="px-3 py-2 text-right text-muted-foreground">
                         {s.approvalRate === null ? "—" : `${Math.round(s.approvalRate * 100)}%`}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
@@ -474,7 +478,7 @@ export default function AdminInboundEmailsPage() {
                             {s.outOfArea && " ⚠"}
                           </span>
                         ) : (
-                          <span className="text-gray-600">—</span>
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
@@ -482,7 +486,7 @@ export default function AdminInboundEmailsPage() {
                           {s.trustStatus}
                         </Badge>
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                      <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                         {formatDateMedium(s.lastSeen)}
                       </td>
                     </tr>
@@ -503,7 +507,7 @@ export default function AdminInboundEmailsPage() {
               className={`px-3 py-1 text-sm rounded ${
                 statusFilter === s
                   ? "bg-blue-600 text-white"
-                  : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                  : "bg-card border border-border text-foreground hover:bg-muted"
               }`}
             >
               {s || "all statuses"}
@@ -518,7 +522,7 @@ export default function AdminInboundEmailsPage() {
               className={`px-3 py-1 text-sm rounded ${
                 intentFilter === i
                   ? "bg-blue-600 text-white"
-                  : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                  : "bg-card border border-border text-foreground hover:bg-muted"
               }`}
             >
               {i || "all intents"}
@@ -533,7 +537,7 @@ export default function AdminInboundEmailsPage() {
               className={`px-3 py-1 text-sm rounded ${
                 sinceHours === w.hours
                   ? "bg-blue-600 text-white"
-                  : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"
+                  : "bg-card border border-border text-foreground hover:bg-muted"
               }`}
             >
               {w.label}
@@ -566,30 +570,30 @@ export default function AdminInboundEmailsPage() {
       {loading ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-gray-500">Loading…</p>
+            <p className="text-muted-foreground">Loading…</p>
           </CardContent>
         </Card>
       ) : rows.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-gray-500">No inbound emails match the current filters.</p>
+            <p className="text-muted-foreground">No inbound emails match the current filters.</p>
           </CardContent>
         </Card>
       ) : (
         <Card>
-          <CardHeader className="text-sm text-gray-600 border-b">
+          <CardHeader className="text-sm text-muted-foreground border-b">
             Showing {rows.length} most-recent message{rows.length === 1 ? "" : "s"}.
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b">
+              <thead className="bg-muted border-b">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Received</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">From</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Intent</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Subject</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-700">Status</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-700">Actions</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground">Received</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground">From</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground">Intent</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground">Subject</th>
+                  <th className="px-3 py-2 text-left font-medium text-foreground">Status</th>
+                  <th className="px-3 py-2 text-right font-medium text-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -602,10 +606,10 @@ export default function AdminInboundEmailsPage() {
                   return (
                     <Fragment key={row.id}>
                       <tr
-                        className="hover:bg-gray-50 cursor-pointer"
+                        className="hover:bg-muted cursor-pointer"
                         onClick={() => setExpandedId(expanded ? null : row.id)}
                       >
-                        <td className="px-3 py-2 whitespace-nowrap text-gray-600">
+                        <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                           {formatTimestamp(row.receivedAt)}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">{row.fromAddress}</td>
@@ -723,7 +727,7 @@ export default function AdminInboundEmailsPage() {
                       </tr>
                       {expanded && (
                         <tr>
-                          <td colSpan={6} className="px-3 py-3 bg-gray-50 text-xs text-gray-700">
+                          <td colSpan={6} className="px-3 py-3 bg-muted text-xs text-foreground">
                             <div className="space-y-1">
                               <div>
                                 <span className="font-medium">To:</span> {row.toAddress}
@@ -752,7 +756,7 @@ export default function AdminInboundEmailsPage() {
                                     className={
                                       row.replyKind === "already-exists"
                                         ? "font-mono text-blue-700"
-                                        : "font-mono text-gray-700"
+                                        : "font-mono text-foreground"
                                     }
                                   >
                                     {row.replyKind}
@@ -768,7 +772,7 @@ export default function AdminInboundEmailsPage() {
                                         className={
                                           row.extractionMethod === "json-ld"
                                             ? "font-mono text-emerald-700"
-                                            : "font-mono text-gray-700"
+                                            : "font-mono text-foreground"
                                         }
                                       >
                                         {row.extractionMethod}
@@ -778,7 +782,7 @@ export default function AdminInboundEmailsPage() {
                                   {row.fetchMethod && (
                                     <span>
                                       <span className="font-medium">Fetched via:</span>{" "}
-                                      <span className="font-mono text-gray-700">
+                                      <span className="font-mono text-foreground">
                                         {row.fetchMethod}
                                       </span>
                                     </span>
@@ -802,7 +806,7 @@ export default function AdminInboundEmailsPage() {
                                     href={`/events/${row.resultingEvent.slug}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-gray-500 hover:underline"
+                                    className="text-muted-foreground hover:underline"
                                   >
                                     (public)
                                   </a>
@@ -815,17 +819,17 @@ export default function AdminInboundEmailsPage() {
                                 </div>
                               )}
                               {row.messageId && (
-                                <div className="font-mono text-gray-500 break-all">
+                                <div className="font-mono text-muted-foreground break-all">
                                   Message-ID: {row.messageId}
                                 </div>
                               )}
                               {row.workflowInstanceId && (
-                                <div className="font-mono text-gray-500">
+                                <div className="font-mono text-muted-foreground">
                                   workflow_instance_id: {row.workflowInstanceId}
                                 </div>
                               )}
                               {row.parentEmailId && (
-                                <div className="font-mono text-gray-500">
+                                <div className="font-mono text-muted-foreground">
                                   parent_email_id: {row.parentEmailId}
                                 </div>
                               )}
@@ -834,7 +838,7 @@ export default function AdminInboundEmailsPage() {
                                   affordances. Only shown when the row has
                                   classifier data (post-C.1 rows). */}
                               {row.classifiedIntent && (
-                                <div className="mt-3 pt-3 border-t border-gray-200 space-y-1">
+                                <div className="mt-3 pt-3 border-t border-border space-y-1">
                                   <div className="flex flex-wrap items-center gap-2 text-xs">
                                     <span className="font-medium">Classifier:</span>
                                     <Badge variant="default">{row.classifiedIntent}</Badge>
@@ -853,12 +857,12 @@ export default function AdminInboundEmailsPage() {
                                       </span>
                                     )}
                                     {row.routingSource && (
-                                      <span className="font-mono text-gray-500">
+                                      <span className="font-mono text-muted-foreground">
                                         {row.routingSource}
                                       </span>
                                     )}
                                     {row.classifierVersion && (
-                                      <span className="font-mono text-gray-600">
+                                      <span className="font-mono text-muted-foreground">
                                         {row.classifierVersion}
                                       </span>
                                     )}
@@ -867,7 +871,7 @@ export default function AdminInboundEmailsPage() {
                                     )}
                                   </div>
                                   {row.classifiedRationale && (
-                                    <div className="text-gray-600 italic">
+                                    <div className="text-muted-foreground italic">
                                       &ldquo;{row.classifiedRationale}&rdquo;
                                     </div>
                                   )}
@@ -875,7 +879,7 @@ export default function AdminInboundEmailsPage() {
                                     <label className="flex items-center gap-1 text-xs">
                                       <span>Reclassify:</span>
                                       <select
-                                        className="rounded border border-gray-300 px-2 py-0.5 text-xs"
+                                        className="rounded border border-border px-2 py-0.5 text-xs"
                                         defaultValue=""
                                         disabled={reclassifying === row.id}
                                         onClick={(e) => e.stopPropagation()}

@@ -91,7 +91,7 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
         )}
       </div>
 
-      <p className="mt-2 text-sm text-gray-600">
+      <p className="mt-2 text-sm text-muted-foreground">
         ID: <code className="text-xs">{row.id}</code>
       </p>
 
@@ -103,15 +103,15 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
           <Field label="When">{row.createdAt.toISOString()}</Field>
           <Field label="Source">{row.source}</Field>
           <Field label="Reporter">
-            {row.reporterEmail ?? <span className="text-gray-500 italic">anonymous</span>}
+            {row.reporterEmail ?? <span className="text-muted-foreground italic">anonymous</span>}
           </Field>
           <Field label="Page">{row.path ?? "—"}</Field>
           <Field label="User-Agent">
-            <span className="text-xs text-gray-600">{row.userAgent ?? "—"}</span>
+            <span className="text-xs text-muted-foreground">{row.userAgent ?? "—"}</span>
           </Field>
           <div>
-            <div className="text-xs font-semibold text-gray-700 mb-1">Body</div>
-            <pre className="text-sm bg-gray-50 p-3 rounded-md whitespace-pre-wrap font-sans">
+            <div className="text-xs font-semibold text-foreground mb-1">Body</div>
+            <pre className="text-sm bg-muted p-3 rounded-md whitespace-pre-wrap font-sans">
               {row.body}
             </pre>
           </div>
@@ -145,29 +145,29 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
         </CardHeader>
         <CardContent className="p-0">
           {relatedErrors.length === 0 ? (
-            <p className="text-sm text-gray-500 px-4 py-3">
+            <p className="text-sm text-muted-foreground px-4 py-3">
               No errors in the window. The report likely describes a content / data issue rather
               than a runtime outage.
             </p>
           ) : (
             <table className="w-full text-xs">
-              <thead className="bg-gray-50">
+              <thead className="bg-muted">
                 <tr>
-                  <th className="text-left px-3 py-2 font-medium text-gray-700">When</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-700">Source</th>
-                  <th className="text-left px-3 py-2 font-medium text-gray-700">Message</th>
+                  <th className="text-left px-3 py-2 font-medium text-foreground">When</th>
+                  <th className="text-left px-3 py-2 font-medium text-foreground">Source</th>
+                  <th className="text-left px-3 py-2 font-medium text-foreground">Message</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {relatedErrors.map((e) => (
                   <tr key={e.id}>
-                    <td className="px-3 py-2 whitespace-nowrap text-gray-600">
+                    <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                       {e.timestamp.toISOString().slice(11, 19)}
                     </td>
-                    <td className="px-3 py-2 text-gray-700">
+                    <td className="px-3 py-2 text-foreground">
                       <code className="text-xs">{e.source ?? "—"}</code>
                     </td>
-                    <td className="px-3 py-2 text-gray-700 max-w-md truncate">{e.message}</td>
+                    <td className="px-3 py-2 text-foreground max-w-md truncate">{e.message}</td>
                   </tr>
                 ))}
               </tbody>
@@ -189,8 +189,8 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
               <Field label="Resolved by">{resolverName ?? "—"}</Field>
               {row.notes && (
                 <div>
-                  <div className="text-xs font-semibold text-gray-700 mb-1">Notes</div>
-                  <pre className="text-sm bg-gray-50 p-3 rounded-md whitespace-pre-wrap font-sans">
+                  <div className="text-xs font-semibold text-foreground mb-1">Notes</div>
+                  <pre className="text-sm bg-muted p-3 rounded-md whitespace-pre-wrap font-sans">
                     {row.notes}
                   </pre>
                 </div>
@@ -203,7 +203,7 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
               className="space-y-3"
             >
               <div>
-                <label htmlFor="notes" className="block text-xs font-semibold text-gray-700 mb-1">
+                <label htmlFor="notes" className="block text-xs font-semibold text-foreground mb-1">
                   Notes (optional — what you did / why this is closed)
                 </label>
                 <textarea
@@ -211,12 +211,12 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
                   name="notes"
                   rows={4}
                   maxLength={2000}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal text-sm"
+                  className="w-full px-3 py-2 border border-border rounded-md focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal text-sm"
                 />
               </div>
               <button
                 type="submit"
-                className="px-4 py-2 rounded-md bg-royal text-white font-semibold text-sm hover:bg-royal/90"
+                className="px-4 py-2 rounded-md bg-secondary text-secondary-foreground font-semibold text-sm hover:bg-royal/90"
               >
                 Mark resolved
               </button>
@@ -231,8 +231,8 @@ export default async function AdminProblemReportDetailPage({ params }: Props) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-2">
-      <span className="text-xs font-semibold text-gray-700 min-w-[100px]">{label}:</span>
-      <span className="text-sm text-gray-900">{children}</span>
+      <span className="text-xs font-semibold text-foreground min-w-[100px]">{label}:</span>
+      <span className="text-sm text-foreground">{children}</span>
     </div>
   );
 }

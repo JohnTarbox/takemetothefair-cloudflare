@@ -115,7 +115,7 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
       className={cn(
         // Pill silhouette + card affordance. twMerge collapses the
         // base `rounded-lg` from IconButton in favor of rounded-full.
-        "rounded-full bg-white shadow-md border border-gray-200 transition-all",
+        "rounded-full bg-card shadow-md border border-border transition-all",
         !isLoading && "hover:shadow-lg hover:scale-110",
         isPending && "opacity-50 cursor-wait",
         className
@@ -126,10 +126,10 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
             heartSizeClasses[size],
             "transition-colors",
             isLoading
-              ? "text-gray-300"
+              ? "text-muted-foreground"
               : isFavorited
                 ? "fill-red-500 text-red-500"
-                : "text-gray-500 hover:text-red-400"
+                : "text-muted-foreground hover:text-red-400"
           )}
         />
       }

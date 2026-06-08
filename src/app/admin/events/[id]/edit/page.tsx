@@ -275,8 +275,8 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-96 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-96 bg-muted rounded"></div>
       </div>
     );
   }
@@ -284,7 +284,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   if (!event) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-600">Event not found</p>
+        <p className="text-muted-foreground">Event not found</p>
         <Link href="/admin/events" className="text-blue-600 hover:underline mt-2 inline-block">
           Back to Events
         </Link>
@@ -297,7 +297,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       <div className="mb-6">
         <Link
           href="/admin/events"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Events
@@ -337,7 +337,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     type="checkbox"
                     checked={isStatewide}
                     onChange={(e) => setIsStatewide(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   <Label htmlFor="isStatewide" className="font-normal">
                     Statewide event (no specific venue)
@@ -388,7 +388,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   name="promoterId"
                   disabled
                   defaultValue={event.promoterId}
-                  className="w-full h-10 rounded-md border border-input bg-gray-100 px-3 py-2 text-sm"
+                  className="w-full h-10 rounded-md border border-input bg-muted px-3 py-2 text-sm"
                 >
                   {promoters.map((promoter) => (
                     <option key={promoter.id} value={promoter.id}>
@@ -396,7 +396,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">Promoter cannot be changed</p>
+                <p className="text-xs text-muted-foreground mt-1">Promoter cannot be changed</p>
               </div>
 
               <div className="space-y-3">
@@ -410,7 +410,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                         setDatesTBD(e.target.checked);
                         if (e.target.checked) setDiscontinuousDates(false);
                       }}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     <Label htmlFor="datesTBD" className="font-normal">
                       Dates TBD
@@ -423,7 +423,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                         type="checkbox"
                         checked={discontinuousDates}
                         onChange={(e) => setDiscontinuousDates(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300"
+                        className="h-4 w-4 rounded border-border"
                       />
                       <Label htmlFor="discontinuousDates" className="font-normal">
                         Non-contiguous dates
@@ -539,7 +539,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   <option value="REJECTED">Rejected</option>
                   <option value="CANCELLED">Cancelled (legacy)</option>
                 </select>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Workflow visibility. To mark cancelled / postponed / rescheduled / occurred /
                   no-show, change <strong>Lifecycle</strong> below (use the lifecycle MCP tool or
                   the <code className="text-xs">/api/admin/events/{event.id}/lifecycle</code>{" "}
@@ -554,7 +554,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     {event.lifecycleStatus ?? "SCHEDULED"}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Real-world state (separate from editorial). Transitions go through the dedicated
                   lifecycle endpoint with audit logging + date swapping for RESCHEDULED/POSTPONED.
                   Read-only here in PR 1.
@@ -590,7 +590,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     name="featured"
                     type="checkbox"
                     defaultChecked={event.featured}
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   <Label htmlFor="featured" className="font-normal">
                     Featured Event
@@ -602,7 +602,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                     name="commercialVendorsAllowed"
                     type="checkbox"
                     defaultChecked={event.commercialVendorsAllowed}
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   <Label htmlFor="commercialVendorsAllowed" className="font-normal">
                     Commercial Vendors Allowed
@@ -618,7 +618,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                       type="checkbox"
                       checked={syncEnabled}
                       onChange={(e) => setSyncEnabled(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     <Label htmlFor="syncEnabled" className="font-normal">
                       Allow re-sync from source
@@ -633,7 +633,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
               {/* Vendor Information */}
               <div className="border-t pt-4 mt-4">
-                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Information</h3>
+                <h3 className="font-medium text-sm text-foreground mb-3">Vendor Information</h3>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -715,7 +715,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                       name="walkInsAllowed"
                       type="checkbox"
                       defaultChecked={event.walkInsAllowed ?? false}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     <Label htmlFor="walkInsAllowed" className="font-normal">
                       Walk-in Vendors Accepted
@@ -726,7 +726,7 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
 
               {/* Application Information */}
               <div className="border-t pt-4 mt-4">
-                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Application</h3>
+                <h3 className="font-medium text-sm text-foreground mb-3">Vendor Application</h3>
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="applicationDeadline">Application Deadline</Label>

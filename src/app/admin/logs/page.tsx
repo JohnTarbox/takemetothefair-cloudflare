@@ -92,19 +92,19 @@ export default function AdminLogsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Error Logs</h1>
+        <h1 className="text-2xl font-bold text-foreground">Error Logs</h1>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => clearOldLogs(7)}
-            className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-red-600"
+            className="px-4 py-2 text-sm bg-card border border-border rounded-lg hover:bg-muted transition-colors text-red-600"
           >
             Clear 7+ days
           </button>
           <button
             type="button"
             onClick={fetchLogs}
-            className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            className="px-4 py-2 text-sm bg-card border border-border rounded-lg hover:bg-muted transition-colors"
           >
             Refresh
           </button>
@@ -115,11 +115,11 @@ export default function AdminLogsPage() {
         <CardContent className="pt-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Level</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Level</label>
               <select
                 value={level}
                 onChange={(e) => setLevel(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                className="w-full text-sm border border-border rounded-lg px-3 py-2"
               >
                 <option value="">All levels</option>
                 <option value="error">Error</option>
@@ -128,31 +128,33 @@ export default function AdminLogsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Source</label>
               <input
                 type="text"
                 value={source}
                 onChange={(e) => setSource(e.target.value)}
                 placeholder="e.g. api/admin/events"
-                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                className="w-full text-sm border border-border rounded-lg px-3 py-2"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Search message</label>
+              <label className="block text-sm font-medium text-foreground mb-1">
+                Search message
+              </label>
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search..."
-                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                className="w-full text-sm border border-border rounded-lg px-3 py-2"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Limit</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Limit</label>
               <select
                 value={limit}
                 onChange={(e) => setLimit(Number(e.target.value))}
-                className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2"
+                className="w-full text-sm border border-border rounded-lg px-3 py-2"
               >
                 <option value={25}>25</option>
                 <option value={50}>50</option>
@@ -166,30 +168,32 @@ export default function AdminLogsPage() {
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             {loading ? "Loading..." : `${logs.length} log entries`}
           </p>
         </CardHeader>
         <CardContent>
           {!loading && logs.length === 0 ? (
-            <p className="text-center text-gray-500 py-8">No log entries found.</p>
+            <p className="text-center text-muted-foreground py-8">No log entries found.</p>
           ) : (
             <div className="space-y-2">
               {logs.map((log) => (
-                <div key={log.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                <div key={log.id} className="border border-border rounded-lg overflow-hidden">
                   <button
                     type="button"
                     onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
+                    className="w-full text-left px-4 py-3 hover:bg-muted transition-colors"
                   >
                     <div className="flex items-start gap-3">
                       <Badge variant={levelColors[log.level] || "default"}>{log.level}</Badge>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{log.message}</p>
-                        <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                        <p className="text-sm font-medium text-foreground truncate">
+                          {log.message}
+                        </p>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                           <span>{log.time}</span>
                           {log.source && (
-                            <span className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">
+                            <span className="font-mono bg-muted px-1.5 py-0.5 rounded">
                               {log.source}
                             </span>
                           )}
@@ -208,22 +212,22 @@ export default function AdminLogsPage() {
                           {log.statusCode && <span>HTTP {log.statusCode}</span>}
                         </div>
                       </div>
-                      <span className="text-gray-600 text-sm">
+                      <span className="text-muted-foreground text-sm">
                         {expandedId === log.id ? "▲" : "▼"}
                       </span>
                     </div>
                   </button>
 
                   {expandedId === log.id && (
-                    <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 space-y-3">
+                    <div className="px-4 py-3 border-t border-border bg-muted space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm flex-1">
                           <div>
-                            <span className="font-medium text-gray-600">ID: </span>
+                            <span className="font-medium text-muted-foreground">ID: </span>
                             <span className="font-mono text-xs">{log.id}</span>
                           </div>
                           <div>
-                            <span className="font-medium text-gray-600">Timestamp: </span>
+                            <span className="font-medium text-muted-foreground">Timestamp: </span>
                             <span>{log.time}</span>
                           </div>
                         </div>
@@ -239,13 +243,13 @@ export default function AdminLogsPage() {
                       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                         {log.url && (
                           <div className="col-span-2">
-                            <span className="font-medium text-gray-600">URL: </span>
+                            <span className="font-medium text-muted-foreground">URL: </span>
                             <span className="font-mono text-xs break-all">{log.url}</span>
                           </div>
                         )}
                         {log.userAgent && (
                           <div className="col-span-2">
-                            <span className="font-medium text-gray-600">User Agent: </span>
+                            <span className="font-medium text-muted-foreground">User Agent: </span>
                             <span className="text-xs break-all">{log.userAgent}</span>
                           </div>
                         )}
@@ -253,8 +257,8 @@ export default function AdminLogsPage() {
 
                       {log.context && log.context !== "{}" && (
                         <div>
-                          <p className="text-sm font-medium text-gray-600 mb-1">Context</p>
-                          <pre className="text-xs bg-white border border-gray-200 rounded p-2 overflow-x-auto">
+                          <p className="text-sm font-medium text-muted-foreground mb-1">Context</p>
+                          <pre className="text-xs bg-card border border-border rounded p-2 overflow-x-auto">
                             {JSON.stringify(JSON.parse(log.context), null, 2)}
                           </pre>
                         </div>
@@ -262,8 +266,10 @@ export default function AdminLogsPage() {
 
                       {log.stackTrace && (
                         <div>
-                          <p className="text-sm font-medium text-gray-600 mb-1">Stack Trace</p>
-                          <pre className="text-xs bg-white border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                          <p className="text-sm font-medium text-muted-foreground mb-1">
+                            Stack Trace
+                          </p>
+                          <pre className="text-xs bg-card border border-border rounded p-2 overflow-x-auto whitespace-pre-wrap">
                             {log.stackTrace}
                           </pre>
                         </div>

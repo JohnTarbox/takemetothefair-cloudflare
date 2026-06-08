@@ -71,7 +71,9 @@ export function Pagination({
             aria-label={`Page ${p}`}
             aria-current={isCurrent ? "page" : undefined}
             className={`px-3 py-2 rounded-lg min-w-[40px] text-center transition-colors ${
-              isCurrent ? "bg-navy text-white" : "bg-stone-100 text-stone-900 hover:bg-stone-300"
+              isCurrent
+                ? "bg-secondary text-secondary-foreground"
+                : "bg-stone-100 text-stone-900 hover:bg-stone-300"
             }`}
           >
             {p}

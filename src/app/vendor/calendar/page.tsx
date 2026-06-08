@@ -115,7 +115,7 @@ export default async function VendorCalendarPage() {
       <div className="mb-6">
         <Link
           href="/vendor/applications"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Applications
@@ -123,11 +123,11 @@ export default async function VendorCalendarPage() {
       </div>
 
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
           <Calendar className="w-6 h-6" />
           My Event Calendar
         </h1>
-        <p className="text-gray-600 mt-1">
+        <p className="text-muted-foreground mt-1">
           All events you&apos;re applied to, approved for, or confirmed at — shown on a calendar.
         </p>
       </div>

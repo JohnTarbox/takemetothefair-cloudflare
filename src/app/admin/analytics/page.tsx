@@ -113,7 +113,7 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
   return (
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
+        <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
         {tab === "overview" && (
           <div className="flex items-center gap-3">
             <WindowSelector currentWindow={window} />
@@ -291,7 +291,7 @@ async function OverviewTab({ window }: { window: WindowKey }) {
 
       <KpiStatusLegend />
 
-      <p className="text-xs text-gray-500 mt-4">
+      <p className="text-xs text-muted-foreground mt-4">
         Window: {window} · Generated {formatTimestampForServer(snapshot.generatedAt)} · Page-level
         cache up to 10 min on each underlying source
       </p>
@@ -304,8 +304,8 @@ function KpiStatusLegend() {
   // Surfaces meanings of ◯ / ⚠ / ⛔ / 🕒 so the dashboard isn't a puzzle
   // for first-time viewers.
   return (
-    <div className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
-      <span className="font-medium text-gray-700">KPI status:</span>
+    <div className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground">KPI status:</span>
       <span aria-label="On target">◯ on target</span>
       <span aria-label="Below target">⚠ below target</span>
       <span aria-label="Action required">⛔ action required</span>
@@ -316,7 +316,7 @@ function KpiStatusLegend() {
 
 function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
   return (
-    <div className="inline-flex items-center bg-gray-100 rounded-lg p-1 text-xs">
+    <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
       {WINDOW_KEYS.map((w) => {
         const active = w === currentWindow;
         return (
@@ -324,7 +324,9 @@ function WindowSelector({ currentWindow }: { currentWindow: WindowKey }) {
             key={w}
             href={`/admin/analytics?window=${w}`}
             className={`px-2.5 py-1 rounded-md font-medium ${
-              active ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:text-gray-900"
+              active
+                ? "bg-card text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
             }`}
           >
             {w}
@@ -351,7 +353,7 @@ function TrendBadge({
 }) {
   const pct = deltaPct(current, previous);
   const colorClass =
-    trend === "up" ? "text-green-700" : trend === "down" ? "text-red-700" : "text-gray-500";
+    trend === "up" ? "text-green-700" : trend === "down" ? "text-red-700" : "text-muted-foreground";
   const Icon = trend === "up" ? ArrowUp : trend === "down" ? ArrowDown : ArrowRight;
   const label = pct === null ? "vs prior" : `${pct >= 0 ? "+" : ""}${pct.toFixed(0)}% vs prior`;
   return (
@@ -406,8 +408,10 @@ function KpiCard({
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">{title}</p>
-            <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">{value}</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+              {title}
+            </p>
+            <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{value}</p>
             {(state === "RED" || state === "STALE") && actionPrompt && (
               <p
                 className={`text-xs mt-1 font-medium ${state === "STALE" ? "text-orange-600" : "text-red-600"}`}
@@ -452,10 +456,10 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
       <KpiCard
         title="Google clicks"
         value="—"
-        icon={<Search className="w-5 h-5 text-gray-500" />}
-        iconColor="bg-gray-100"
+        icon={<Search className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
         href="/admin/analytics?tab=google"
-        footer={<span className="text-xs text-gray-500">{card.reason}</span>}
+        footer={<span className="text-xs text-muted-foreground">{card.reason}</span>}
       />
     );
   }
@@ -467,7 +471,9 @@ function SearchVisibilityCard({ snapshot }: { snapshot: OverviewSnapshot }) {
     <div className="flex flex-col gap-0.5">
       <TrendBadge trend={card.trend} current={card.current} previous={card.previous} />
       {card.bingTotal !== null && (
-        <span className="text-xs text-gray-500">+ {fmt(card.bingTotal)} from Bing (rolling)</span>
+        <span className="text-xs text-muted-foreground">
+          + {fmt(card.bingTotal)} from Bing (rolling)
+        </span>
       )}
     </div>
   );
@@ -512,7 +518,7 @@ function CatalogGrowthCard({ snapshot }: { snapshot: OverviewSnapshot }) {
             current={card.newInWindow}
             previous={card.newInPriorWindow}
           />
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-muted-foreground">
             {fmt(card.totals.events)} events · {fmt(card.totals.venues)} venues ·{" "}
             {fmt(card.totals.vendors)} vendors
           </span>
@@ -537,7 +543,7 @@ function RevenueCard({ snapshot }: { snapshot: OverviewSnapshot }) {
             current={card.newInWindow}
             previous={card.newInPriorWindow}
           />
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-muted-foreground">
             {fmt(card.payingVendors)} paying · {fmt(card.newInWindow)} new in {card.windowDays}d
           </span>
         </div>
@@ -557,28 +563,34 @@ function SiteHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Site health
               </p>
-              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">{fmt(c.total)}</p>
+              <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">{fmt(c.total)}</p>
               <div className="mt-2 text-xs flex gap-2">
-                <span className={c.errors > 0 ? "text-red-700 font-semibold" : "text-gray-500"}>
+                <span
+                  className={c.errors > 0 ? "text-red-700 font-semibold" : "text-muted-foreground"}
+                >
                   {fmt(c.errors)} err
                 </span>
-                <span className={c.warnings > 0 ? "text-amber-700" : "text-gray-500"}>
+                <span className={c.warnings > 0 ? "text-amber-700" : "text-muted-foreground"}>
                   {fmt(c.warnings)} warn
                 </span>
-                <span className="text-gray-500">{fmt(c.notices)} notice</span>
+                <span className="text-muted-foreground">{fmt(c.notices)} notice</span>
               </div>
             </div>
             <div
               className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                hasErrors ? "bg-red-100" : c.warnings > 0 ? "bg-amber-100" : "bg-gray-100"
+                hasErrors ? "bg-red-100" : c.warnings > 0 ? "bg-amber-100" : "bg-muted"
               }`}
             >
               <AlertTriangle
                 className={`w-5 h-5 ${
-                  hasErrors ? "text-red-600" : c.warnings > 0 ? "text-amber-600" : "text-gray-500"
+                  hasErrors
+                    ? "text-red-600"
+                    : c.warnings > 0
+                      ? "text-amber-600"
+                      : "text-muted-foreground"
                 }`}
               />
             </div>
@@ -633,17 +645,21 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       <KpiCard
         title="Site CTR"
         value="—"
-        icon={<Search className="w-5 h-5 text-gray-500" />}
-        iconColor="bg-gray-100"
+        icon={<Search className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
         href="/admin/analytics?tab=google"
-        footer={<span className="text-xs text-gray-500">{c.reason}</span>}
+        footer={<span className="text-xs text-muted-foreground">{c.reason}</span>}
       />
     );
   }
   const trend = c.trend;
   const TrendIcon = trend === "up" ? ArrowUp : trend === "down" ? ArrowDown : ArrowRight;
   const trendColor =
-    trend === "up" ? "text-emerald-600" : trend === "down" ? "text-red-600" : "text-gray-500";
+    trend === "up"
+      ? "text-emerald-600"
+      : trend === "down"
+        ? "text-red-600"
+        : "text-muted-foreground";
   return (
     <KpiCard
       title="Site CTR (Google, last window)"
@@ -658,7 +674,7 @@ function SiteCtrCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           <span className={`inline-flex items-center gap-1 text-xs font-medium ${trendColor}`}>
             <TrendIcon className="w-3 h-3" /> prev {fmtPct(c.previousCtr, 2)}
           </span>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-muted-foreground">
             {fmt(c.clicks)} clicks / {fmt(c.impressions)} impr
           </span>
         </div>
@@ -679,7 +695,7 @@ function ConversionRateCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       state={state}
       actionPrompt={actionPrompt}
       footer={
-        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           <span>
             {fmt(c.conversions)} ticket clicks / {c.sessions != null ? fmt(c.sessions) : "—"}{" "}
             organic sessions
@@ -702,7 +718,7 @@ function AccountEngagementCardView({ snapshot }: { snapshot: OverviewSnapshot })
       icon={<Activity className="w-5 h-5 text-emerald-600" />}
       iconColor="bg-emerald-100"
       footer={
-        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           <span>
             {fmt(c.signals)} signals / {fmt(c.sessions)} events
           </span>
@@ -733,10 +749,10 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
       <KpiCard
         title="AEO referrals (last 7d)"
         value="—"
-        icon={<Sparkles className="w-5 h-5 text-gray-500" />}
-        iconColor="bg-gray-100"
+        icon={<Sparkles className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
         href="/admin/analytics/ga4"
-        footer={<span className="text-xs text-gray-500">GA4 unavailable</span>}
+        footer={<span className="text-xs text-muted-foreground">GA4 unavailable</span>}
       />
     );
   }
@@ -749,7 +765,7 @@ function AeoReferralsCardView({ aeo }: { aeo: AeoReferralsResult | null }) {
       href="/admin/analytics/ga4"
       state={aeoStateFromTotal(aeo.total)}
       footer={
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-muted-foreground">
           {AEO_BUCKET_LABELS.chatgpt} · {AEO_BUCKET_LABELS.perplexity} · {AEO_BUCKET_LABELS.copilot}{" "}
           · {AEO_BUCKET_LABELS.claude} · {AEO_BUCKET_LABELS.gemini}
         </span>
@@ -769,10 +785,10 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
       <KpiCard
         title="Facebook traffic (last 28d)"
         value="—"
-        icon={<Facebook className="w-5 h-5 text-gray-500" />}
-        iconColor="bg-gray-100"
+        icon={<Facebook className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
         href="/admin/analytics/ga4"
-        footer={<span className="text-xs text-gray-500">GA4 unavailable</span>}
+        footer={<span className="text-xs text-muted-foreground">GA4 unavailable</span>}
       />
     );
   }
@@ -784,7 +800,7 @@ function FacebookReferralsCardView({ summary }: { summary: FacebookTrafficSummar
       iconColor="bg-blue-100"
       href="/admin/analytics/ga4"
       footer={
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-muted-foreground">
           {summary.sessions === 1 ? "1 session" : `${fmt(summary.sessions)} sessions`} ·{" "}
           {summary.activeUsers === 1 ? "1 user" : `${fmt(summary.activeUsers)} users`}
         </span>
@@ -801,10 +817,10 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       <KpiCard
         title="Brand share"
         value="—"
-        icon={<Search className="w-5 h-5 text-gray-500" />}
-        iconColor="bg-gray-100"
+        icon={<Search className="w-5 h-5 text-muted-foreground" />}
+        iconColor="bg-muted"
         href="/admin/analytics?tab=google"
-        footer={<span className="text-xs text-gray-500">{c.reason}</span>}
+        footer={<span className="text-xs text-muted-foreground">{c.reason}</span>}
       />
     );
   }
@@ -818,7 +834,7 @@ function BrandVsNonBrandCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       state={state}
       actionPrompt={actionPrompt}
       footer={
-        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           <span>
             brand {fmt(c.brand_clicks)} clicks · non-brand {fmt(c.non_brand_clicks)} clicks
           </span>
@@ -843,7 +859,7 @@ function SitemapQualityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       state={state}
       actionPrompt={actionPrompt}
       footer={
-        <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+        <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
           <span>
             vendors {fmt(c.vendors.pass)}/{fmt(c.vendors.total)}
           </span>
@@ -877,20 +893,22 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       <CardContent>
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">Median</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
+              Median
+            </p>
+            <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
               {fmtSeconds(c.median_seconds)}
             </p>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">P90</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">P90</p>
+            <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
               {fmtSeconds(c.p90_seconds)}
             </p>
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">Avg</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Avg</p>
+            <p className="text-3xl font-bold text-foreground mt-1 tabular-nums">
               {fmtSeconds(c.avg_seconds)}
             </p>
           </div>
@@ -902,7 +920,7 @@ function TimeToIndexCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             {actionPrompt}
           </p>
         )}
-        <p className="text-xs text-gray-500 mt-4">
+        <p className="text-xs text-muted-foreground mt-4">
           {state === "INDETERMINATE"
             ? "Data collection in progress — first results expected ~7 days post-deploy."
             : `${fmt(c.resolved)} resolved · ${fmt(c.unresolved)} unresolved`}
@@ -930,7 +948,7 @@ function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <CardTitle>
           Action queue
           {entries.length > 0 && (
-            <span className="ml-2 text-sm font-normal text-gray-500">
+            <span className="ml-2 text-sm font-normal text-muted-foreground">
               ({entries.filter((e) => e.priority === "P0").length} P0,{" "}
               {entries.filter((e) => e.priority === "P1").length} P1)
             </span>
@@ -965,17 +983,17 @@ function ActionQueueRow({ entry }: { entry: ActionQueueEntry }) {
           <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${badgeClass}`}>
             {entry.priority}
           </span>
-          <Link href={entry.href} className="font-medium text-gray-900 hover:underline truncate">
+          <Link href={entry.href} className="font-medium text-foreground hover:underline truncate">
             {entry.title}
           </Link>
         </div>
         {detectedDate && (
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             First detected {formatTimestampForServer(detectedDate)}
           </p>
         )}
       </div>
-      <span className="text-xs text-gray-500 shrink-0 mt-0.5">{entry.effort}</span>
+      <span className="text-xs text-muted-foreground shrink-0 mt-0.5">{entry.effort}</span>
     </li>
   );
 }
@@ -996,13 +1014,13 @@ function RecentActivityCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       </CardHeader>
       <CardContent>
         {c.actions.length === 0 ? (
-          <p className="text-sm text-gray-500">No admin actions in the last 7 days.</p>
+          <p className="text-sm text-muted-foreground">No admin actions in the last 7 days.</p>
         ) : (
           <ul className="space-y-2 text-sm">
             {c.actions.slice(0, 8).map((a, i) => (
               <li key={i} className="flex justify-between gap-4">
-                <span className="font-mono text-xs text-gray-700 truncate">{a.action}</span>
-                <span className="text-xs text-gray-500 shrink-0">
+                <span className="font-mono text-xs text-foreground truncate">{a.action}</span>
+                <span className="text-xs text-muted-foreground shrink-0">
                   {a.targetType}/{a.targetId.slice(0, 8)} ·{" "}
                   {formatTimestampForServer(new Date(a.createdAt))}
                 </span>
@@ -1032,12 +1050,12 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3 mb-4">
             <div>
-              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Blog coverage gaps
               </p>
-              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+              <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {fmt(c.totalUncovered)}
-                <span className="text-sm font-normal text-gray-500 ml-2">
+                <span className="text-sm font-normal text-muted-foreground ml-2">
                   / {fmt(c.totalEntities)} uncovered
                 </span>
               </p>
@@ -1050,13 +1068,13 @@ function BlogCoverageCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             {groups.map((g) => {
               const pct = g.total > 0 ? Math.round((g.uncovered / g.total) * 100) : 0;
               const tone =
-                pct >= 90 ? "text-red-700" : pct >= 50 ? "text-amber-700" : "text-gray-900";
+                pct >= 90 ? "text-red-700" : pct >= 50 ? "text-amber-700" : "text-foreground";
               return (
-                <div key={g.label} className="rounded-md border border-gray-100 bg-gray-50 p-3">
-                  <p className="text-xs text-gray-600">{g.label}</p>
+                <div key={g.label} className="rounded-md border border-border bg-muted p-3">
+                  <p className="text-xs text-muted-foreground">{g.label}</p>
                   <p className={`text-lg font-bold mt-1 tabular-nums ${tone}`}>
                     {fmt(g.uncovered)}{" "}
-                    <span className="text-xs font-normal text-gray-500">
+                    <span className="text-xs font-normal text-muted-foreground">
                       / {fmt(g.total)} ({pct}%)
                     </span>
                   </p>
@@ -1080,25 +1098,25 @@ function RecommendationsSummaryCardView({ snapshot }: { snapshot: OverviewSnapsh
     };
   const style = c.maxSeverity
     ? sevStyle[c.maxSeverity]
-    : { border: "", bg: "bg-gray-100", icon: "text-gray-500" };
+    : { border: "", bg: "bg-muted", icon: "text-muted-foreground" };
   return (
     <Link href="/admin/analytics?tab=recommendations" className="block hover:opacity-90">
       <Card className={`h-full ${style.border}`}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 Recommendations (actionable)
               </p>
-              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+              <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {fmt(c.actionableCount)}
               </p>
               <div className="mt-2 text-xs">
                 {c.totalItems === 0 ? (
-                  <span className="text-gray-500">All clear</span>
+                  <span className="text-muted-foreground">All clear</span>
                 ) : (
                   <>
-                    <span className="text-gray-500">
+                    <span className="text-muted-foreground">
                       red + T1/T2 yellow · {fmt(c.totalItems)} total across {fmt(c.totalRules)} rule
                       {c.totalRules === 1 ? "" : "s"}
                     </span>
@@ -1137,23 +1155,25 @@ function IndexNowCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
         <CardContent className="p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
                 IndexNow today
               </p>
-              <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+              <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
                 {fmt(c.todaySubmissions)}
               </p>
               <div className="mt-2 text-xs">
-                <span className={hasFailures ? "text-red-700 font-semibold" : "text-gray-500"}>
+                <span
+                  className={hasFailures ? "text-red-700 font-semibold" : "text-muted-foreground"}
+                >
                   {successPct}% success
                 </span>
                 {c.quota && (
-                  <span className="text-gray-500 ml-2">
+                  <span className="text-muted-foreground ml-2">
                     · {fmt(c.quota.dailyRemaining)} BWT quota
                   </span>
                 )}
                 {c.quotaError && (
-                  <span className="text-gray-600 ml-2 italic">· quota unavailable</span>
+                  <span className="text-muted-foreground ml-2 italic">· quota unavailable</span>
                 )}
               </div>
             </div>
@@ -1181,13 +1201,13 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs uppercase tracking-wide text-gray-500 font-medium">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium">
               Errors (last 24h)
             </p>
-            <p className="text-3xl font-bold text-gray-900 mt-2 tabular-nums">
+            <p className="text-3xl font-bold text-foreground mt-2 tabular-nums">
               {fmt(c.last24hCount)}
             </p>
-            <div className="mt-2 text-xs text-gray-500 truncate">
+            <div className="mt-2 text-xs text-muted-foreground truncate">
               {c.topSources.length === 0
                 ? "No errors logged."
                 : c.topSources.map((s) => `${s.source} (${fmt(s.count)})`).join(" · ")}
@@ -1195,10 +1215,12 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
           </div>
           <div
             className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              high ? "bg-red-100" : "bg-gray-100"
+              high ? "bg-red-100" : "bg-muted"
             }`}
           >
-            <AlertTriangle className={`w-5 h-5 ${high ? "text-red-600" : "text-gray-500"}`} />
+            <AlertTriangle
+              className={`w-5 h-5 ${high ? "text-red-600" : "text-muted-foreground"}`}
+            />
           </div>
         </div>
       </CardContent>
@@ -1224,12 +1246,12 @@ function SparklineCard({
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">{title}</CardTitle>
-        <p className="text-xs text-gray-500">{subtitle}</p>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
       </CardHeader>
       <CardContent>
         <div className="flex items-end justify-between mb-2">
-          <p className="text-2xl font-bold text-gray-900 tabular-nums">{fmt(total)}</p>
-          <p className="text-xs text-gray-500">{points.length}-day total</p>
+          <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(total)}</p>
+          <p className="text-xs text-muted-foreground">{points.length}-day total</p>
         </div>
         <Sparkline points={points} colorClass={colorClass} fillClass={fillClass} />
       </CardContent>
@@ -1259,7 +1281,7 @@ function Sparkline({
   });
 
   if (coords.length === 0) {
-    return <div className="text-xs text-gray-600 italic">No data yet.</div>;
+    return <div className="text-xs text-muted-foreground italic">No data yet.</div>;
   }
 
   const linePath = coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
@@ -1294,12 +1316,12 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Search clicks milestones</CardTitle>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             Milestones as reported by Google Search Console emails
           </p>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-gray-600 italic">No milestones yet.</p>
+          <p className="text-sm text-muted-foreground italic">No milestones yet.</p>
         </CardContent>
       </Card>
     );
@@ -1323,35 +1345,41 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
     <Card className="mb-6">
       <CardHeader>
         <CardTitle>Search clicks milestones</CardTitle>
-        <p className="text-xs text-gray-500 mt-0.5">
+        <p className="text-xs text-muted-foreground mt-0.5">
           Milestones as reported by Google Search Console emails (28-day window)
         </p>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div>
-            <p className="text-xs text-gray-600">Latest</p>
-            <p className="text-2xl font-bold text-gray-900 tabular-nums">{fmt(latest.threshold)}</p>
-            <p className="text-xs text-gray-500">{formatDateOnly(latest.emailDate) || "—"}</p>
+            <p className="text-xs text-muted-foreground">Latest</p>
+            <p className="text-2xl font-bold text-foreground tabular-nums">
+              {fmt(latest.threshold)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {formatDateOnly(latest.emailDate) || "—"}
+            </p>
           </div>
           <div>
-            <p className="text-xs text-gray-600">Earliest</p>
-            <p className="text-2xl font-bold text-gray-900 tabular-nums">
+            <p className="text-xs text-muted-foreground">Earliest</p>
+            <p className="text-2xl font-bold text-foreground tabular-nums">
               {fmt(earliest.threshold)}
             </p>
-            <p className="text-xs text-gray-500">{formatDateOnly(earliest.emailDate) || "—"}</p>
+            <p className="text-xs text-muted-foreground">
+              {formatDateOnly(earliest.emailDate) || "—"}
+            </p>
           </div>
           <div>
-            <p className="text-xs text-gray-600">Milestones</p>
-            <p className="text-2xl font-bold text-gray-900 tabular-nums">{fmt(sorted.length)}</p>
-            <p className="text-xs text-gray-500">Across span</p>
+            <p className="text-xs text-muted-foreground">Milestones</p>
+            <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(sorted.length)}</p>
+            <p className="text-xs text-muted-foreground">Across span</p>
           </div>
           <div>
-            <p className="text-xs text-gray-600">May ramp</p>
-            <p className="text-2xl font-bold text-gray-900 tabular-nums">
+            <p className="text-xs text-muted-foreground">May ramp</p>
+            <p className="text-2xl font-bold text-foreground tabular-nums">
               {mayRamp > 0 ? `+${fmt(mayRamp)}` : fmt(mayRamp)}
             </p>
-            <p className="text-xs text-gray-500">vs. April end</p>
+            <p className="text-xs text-muted-foreground">vs. April end</p>
           </div>
         </div>
         <MilestoneChart points={sorted} />
@@ -1458,20 +1486,22 @@ function ActivityFeedCard({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="w-4 h-4 text-gray-500" /> {title}
+          <Activity className="w-4 h-4 text-muted-foreground" /> {title}
         </CardTitle>
-        {subtitle && <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>}
+        {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
       </CardHeader>
       <CardContent className="p-0">
         {activity.length === 0 ? (
-          <p className="px-6 py-6 text-sm text-gray-500">No recent activity in this window.</p>
+          <p className="px-6 py-6 text-sm text-muted-foreground">
+            No recent activity in this window.
+          </p>
         ) : (
           <ul className="divide-y divide-gray-100">
             {activity.map((entry, i) => (
               <li key={i} className="px-6 py-3 flex items-start gap-3">
                 <ActivityIcon kind={entry.kind} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-900 break-words">
+                  <p className="text-sm text-foreground break-words">
                     {entry.href ? (
                       <a
                         href={entry.href}
@@ -1485,7 +1515,7 @@ function ActivityFeedCard({
                       entry.description
                     )}
                   </p>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-muted-foreground mt-0.5">
                     {formatTimestampForServer(new Date(entry.ts))}
                     {entry.actor && <span className="ml-2">· actor {entry.actor}</span>}
                   </p>
@@ -1539,7 +1569,7 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
         : `scanned ${Math.round(hoursAgo / 24)}d ago`;
   const cls = isStale
     ? "bg-red-50 text-red-800 border-red-300"
-    : "bg-gray-50 text-gray-600 border-gray-200";
+    : "bg-muted text-muted-foreground border-border";
   return (
     <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border ${cls}`}>
       {label}
@@ -1841,7 +1871,7 @@ async function RecommendationsTab() {
   return (
     <>
       <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           {items.length === 0
             ? "No active recommendations. Run a scan to surface new ones."
             : `${items.length} active item${items.length === 1 ? "" : "s"} across ${totalRules} rule${
@@ -1849,7 +1879,7 @@ async function RecommendationsTab() {
               }. Click any rule to expand affected targets.`}
         </p>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-muted-foreground">
             {scanState.lastSuccessfulScanAt
               ? `Last successful scan: ${formatTimestampForServer(scanState.lastSuccessfulScanAt)}`
               : "Never scanned"}
@@ -1894,7 +1924,7 @@ async function RecommendationsTab() {
         <Card className="mb-6">
           <CardHeader>
             <CardTitle>Top opportunities (next 10 to work)</CardTitle>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Highest-impact individual queries across all SEO rules. Sorted by impressions —
               biggest potential traffic recovery first.
             </p>
@@ -1918,8 +1948,8 @@ async function RecommendationsTab() {
                               : "SEO"}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm text-gray-900 truncate">{o.query}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">
+                        <div className="text-sm text-foreground truncate">{o.query}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">
                           {o.targetUrl && (
                             <Link
                               href={o.targetUrl}
@@ -1935,7 +1965,7 @@ async function RecommendationsTab() {
                             {o.impressions} imp, {o.clicks} clicks, pos {o.position}
                           </span>
                           {" · "}
-                          <span className="text-gray-700">{o.suggestedAction}</span>
+                          <span className="text-foreground">{o.suggestedAction}</span>
                         </div>
                       </div>
                     </div>
@@ -1966,9 +1996,9 @@ async function RecommendationsTab() {
                       >
                         {g.tier}
                       </span>
-                      <span className="text-sm text-gray-900 truncate">{g.title}</span>
+                      <span className="text-sm text-foreground truncate">{g.title}</span>
                     </div>
-                    <span className="text-xs text-gray-500 tabular-nums shrink-0">
+                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">
                       {g.items.length} affected
                     </span>
                   </li>
@@ -1985,13 +2015,13 @@ async function RecommendationsTab() {
         const tMeta = TIER_META[tier];
         return (
           <div key={tier} className="mb-8">
-            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wide mb-1 flex items-center gap-2">
-              <span className="inline-block px-2 py-0.5 rounded text-xs font-medium border bg-gray-100 text-gray-800 border-gray-300">
+            <h2 className="text-sm font-semibold text-foreground uppercase tracking-wide mb-1 flex items-center gap-2">
+              <span className="inline-block px-2 py-0.5 rounded text-xs font-medium border bg-muted text-foreground border-border">
                 {tMeta.label}
               </span>
-              <span className="text-gray-500 font-normal">{groups.length}</span>
+              <span className="text-muted-foreground font-normal">{groups.length}</span>
             </h2>
-            <p className="text-xs text-gray-500 mb-3">{tMeta.description}</p>
+            <p className="text-xs text-muted-foreground mb-3">{tMeta.description}</p>
             <div className="space-y-3">
               {groups.map((group) => {
                 const meta = severityMeta[group.severity];
@@ -2004,10 +2034,10 @@ async function RecommendationsTab() {
                         <div className="flex items-start justify-between gap-4 flex-wrap">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-gray-600 group-open:rotate-90 transition-transform inline-block">
+                              <span className="text-muted-foreground group-open:rotate-90 transition-transform inline-block">
                                 ▶
                               </span>
-                              <p className="text-sm font-semibold text-gray-900">{group.title}</p>
+                              <p className="text-sm font-semibold text-foreground">{group.title}</p>
                               <span
                                 className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${meta.chip}`}
                               >
@@ -2033,7 +2063,7 @@ async function RecommendationsTab() {
                                     ? "text-amber-700 bg-amber-50 border-amber-200"
                                     : delta < 0
                                       ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-                                      : "text-gray-600 bg-gray-50 border-gray-200";
+                                      : "text-muted-foreground bg-muted border-border";
                                 return (
                                   <span
                                     className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${trendClass}`}
@@ -2045,10 +2075,10 @@ async function RecommendationsTab() {
                                 );
                               })()}
                             </div>
-                            <p className="text-sm text-gray-700 mt-1.5 ml-6">
+                            <p className="text-sm text-foreground mt-1.5 ml-6">
                               {rationaleFor(group)}
                             </p>
-                            <p className="text-xs text-gray-600 mt-1 ml-6 flex items-center gap-2 flex-wrap">
+                            <p className="text-xs text-muted-foreground mt-1 ml-6 flex items-center gap-2 flex-wrap">
                               <span>rule {group.ruleKey}</span>
                               <ScanFreshnessBadge lastScannedAt={group.lastScannedAt} />
                             </p>
@@ -2061,7 +2091,7 @@ async function RecommendationsTab() {
                           </div>
                         </div>
                       </summary>
-                      <div className="border-t border-gray-100 divide-y divide-gray-100">
+                      <div className="border-t border-border divide-y divide-gray-100">
                         {[...group.items]
                           .sort((a, b) =>
                             targetLabel(a).localeCompare(targetLabel(b), undefined, {
@@ -2075,10 +2105,10 @@ async function RecommendationsTab() {
                             return (
                               <div
                                 key={item.itemId}
-                                className="px-5 py-3 flex items-start justify-between gap-4 flex-wrap hover:bg-gray-50"
+                                className="px-5 py-3 flex items-start justify-between gap-4 flex-wrap hover:bg-muted"
                               >
                                 <div className="min-w-0 flex-1">
-                                  <p className="text-sm text-gray-900">
+                                  <p className="text-sm text-foreground">
                                     {link ? (
                                       <Link href={link} className="text-blue-600 hover:underline">
                                         {targetLabel(item)}
@@ -2087,7 +2117,9 @@ async function RecommendationsTab() {
                                       <span className="font-mono">{targetLabel(item)}</span>
                                     )}
                                   </p>
-                                  {meta2 && <p className="text-xs text-gray-500 mt-0.5">{meta2}</p>}
+                                  {meta2 && (
+                                    <p className="text-xs text-muted-foreground mt-0.5">{meta2}</p>
+                                  )}
                                 </div>
                                 <RecommendationActions itemId={item.itemId} />
                               </div>
@@ -2130,7 +2162,7 @@ async function RecommendationsTab() {
                 .map((r) => (
                   <li key={r.ruleId} className="flex items-center justify-between gap-3 py-0.5">
                     <span className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className="font-mono text-gray-700 truncate">{r.ruleKey}</span>
+                      <span className="font-mono text-foreground truncate">{r.ruleKey}</span>
                       {r.hasError && (
                         <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border bg-red-50 text-red-800 border-red-300 shrink-0">
                           last scan errored
@@ -2147,7 +2179,7 @@ async function RecommendationsTab() {
         </Card>
       )}
 
-      <p className="text-xs text-gray-500 mt-6">
+      <p className="text-xs text-muted-foreground mt-6">
         Active items refresh on scan or when an item&apos;s match expires the 7-day window.
         Per-target Snooze hides an item temporarily; Mark done resolves it permanently. All actions
         are logged to <code>admin_actions</code>.
@@ -2195,10 +2227,10 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
     const map: Record<string, string> = {
       success: "bg-green-100 text-green-800",
       failure: "bg-red-100 text-red-800",
-      no_key: "bg-gray-200 text-gray-700",
+      no_key: "bg-muted text-foreground",
       no_eligible_urls: "bg-yellow-100 text-yellow-800",
     };
-    const cls = map[status] ?? "bg-gray-100 text-gray-700";
+    const cls = map[status] ?? "bg-muted text-foreground";
     return (
       <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${cls}`}>
         {status}
@@ -2236,7 +2268,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
               <select
                 name="indexnow_source"
                 defaultValue={trimmedSource ?? ""}
-                className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                className="rounded-md border border-border px-2 py-1 text-sm"
               >
                 <option value="">All sources</option>
                 {distinctSources.map((row) => (
@@ -2247,12 +2279,12 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
               </select>
               <button
                 type="submit"
-                className="rounded-md border border-gray-300 px-2 py-1 text-sm hover:bg-gray-50"
+                className="rounded-md border border-border px-2 py-1 text-sm hover:bg-muted"
               >
                 Apply
               </button>
             </form>
-            <div className="inline-flex items-center bg-gray-100 rounded-lg p-1 text-xs">
+            <div className="inline-flex items-center bg-muted rounded-lg p-1 text-xs">
               {INDEXNOW_LIMITS.map((n) => (
                 <Link
                   key={n}
@@ -2260,8 +2292,8 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                   className={
                     "px-2 py-0.5 rounded " +
                     (n === limit
-                      ? "bg-white shadow text-gray-900"
-                      : "text-gray-600 hover:text-gray-900")
+                      ? "bg-card shadow text-foreground"
+                      : "text-muted-foreground hover:text-foreground")
                   }
                 >
                   {n}
@@ -2273,7 +2305,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
       </CardHeader>
       <CardContent className="p-0">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-gray-600">
+          <thead className="bg-muted text-muted-foreground">
             <tr>
               <th className="text-left px-6 py-2 font-medium">Time</th>
               <th className="text-left px-6 py-2 font-medium">Source</th>
@@ -2286,7 +2318,7 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
           <tbody className="divide-y divide-gray-100">
             {recent.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-6 text-gray-500">
+                <td colSpan={6} className="px-6 py-6 text-muted-foreground">
                   No IndexNow submissions recorded yet. Trigger one by editing a published blog post
                   or transitioning an event to APPROVED.
                 </td>
@@ -2301,16 +2333,16 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                 }
                 return (
                   <tr key={row.id} className="align-top">
-                    <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
+                    <td className="px-6 py-2 whitespace-nowrap text-foreground tabular-nums">
                       {formatTimestampForServer(row.timestamp)}
                     </td>
-                    <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.source}</td>
+                    <td className="px-6 py-2 font-mono text-xs text-foreground">{row.source}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.urlCount)}</td>
                     <td className="px-6 py-2">{statusBadge(row.status)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-700">
+                    <td className="px-6 py-2 text-right tabular-nums text-foreground">
                       {row.httpStatus ?? "—"}
                     </td>
-                    <td className="px-6 py-2 text-xs text-gray-700 break-all max-w-md">
+                    <td className="px-6 py-2 text-xs text-foreground break-all max-w-md">
                       {row.errorMessage ? (
                         <span className="text-red-700">{row.errorMessage}</span>
                       ) : urlsArr.length === 0 ? (
@@ -2328,12 +2360,12 @@ async function IndexNowTab({ limit: rawLimit, source }: { limit?: string; source
                         <details className="cursor-pointer">
                           <summary className="select-none">
                             <span className="font-mono">{urlsArr[0]}</span>
-                            <span className="text-gray-500">
+                            <span className="text-muted-foreground">
                               {" "}
                               +{urlsArr.length - 1} more (click to expand)
                             </span>
                           </summary>
-                          <ul className="mt-2 space-y-1 pl-4 border-l-2 border-gray-200">
+                          <ul className="mt-2 space-y-1 pl-4 border-l-2 border-border">
                             {urlsArr.map((url, i) => (
                               <li key={i} className="font-mono break-all">
                                 <a
@@ -2392,7 +2424,7 @@ async function FirstPartyEventsTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Event</th>
                 <th className="text-right px-6 py-2 font-medium">Count</th>
@@ -2401,14 +2433,14 @@ async function FirstPartyEventsTab() {
             <tbody className="divide-y divide-gray-100">
               {summary.length === 0 ? (
                 <tr>
-                  <td colSpan={2} className="px-6 py-6 text-gray-500">
+                  <td colSpan={2} className="px-6 py-6 text-muted-foreground">
                     No first-party events recorded yet.
                   </td>
                 </tr>
               ) : (
                 summary.map((row) => (
                   <tr key={row.eventName}>
-                    <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
+                    <td className="px-6 py-2 font-mono text-xs text-foreground">{row.eventName}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
                   </tr>
                 ))
@@ -2424,7 +2456,7 @@ async function FirstPartyEventsTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Time</th>
                 <th className="text-left px-6 py-2 font-medium">Category</th>
@@ -2436,22 +2468,22 @@ async function FirstPartyEventsTab() {
             <tbody className="divide-y divide-gray-100">
               {recent.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-6 text-gray-500">
+                  <td colSpan={5} className="px-6 py-6 text-muted-foreground">
                     No events in the last {days} days.
                   </td>
                 </tr>
               ) : (
                 recent.map((row) => (
                   <tr key={row.id} className="align-top">
-                    <td className="px-6 py-2 whitespace-nowrap text-gray-700 tabular-nums">
+                    <td className="px-6 py-2 whitespace-nowrap text-foreground tabular-nums">
                       {formatTimestampForServer(row.timestamp)}
                     </td>
-                    <td className="px-6 py-2 text-gray-700">{row.eventCategory}</td>
-                    <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
-                    <td className="px-6 py-2 font-mono text-xs text-gray-600">
+                    <td className="px-6 py-2 text-foreground">{row.eventCategory}</td>
+                    <td className="px-6 py-2 font-mono text-xs text-foreground">{row.eventName}</td>
+                    <td className="px-6 py-2 font-mono text-xs text-muted-foreground">
                       {row.userId ? row.userId.slice(0, 8) : "—"}
                     </td>
-                    <td className="px-6 py-2 font-mono text-xs text-gray-700 break-all max-w-md">
+                    <td className="px-6 py-2 font-mono text-xs text-foreground break-all max-w-md">
                       {row.properties && row.properties !== "{}" ? row.properties : "—"}
                     </td>
                   </tr>
@@ -2470,7 +2502,7 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
     <div
       role="tablist"
       aria-label="Analytics sections"
-      className="mb-6 flex flex-wrap gap-2 border-b border-gray-200 pb-2"
+      className="mb-6 flex flex-wrap gap-2 border-b border-border pb-2"
     >
       {TABS.map((tab) => {
         const isActive = currentTab === tab.key;
@@ -2483,7 +2515,7 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
             role="tab"
             aria-selected={isActive}
             className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              isActive ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-900 hover:bg-gray-200"
+              isActive ? "bg-blue-600 text-white" : "bg-muted text-foreground hover:bg-muted"
             }`}
           >
             {tab.label}
@@ -2621,40 +2653,40 @@ async function GoogleTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Total clicks</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Total clicks</p>
+            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(queries?.totals.clicks ?? 0)}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {queries ? `${queries.dateRange.startDate} → ${queries.dateRange.endDate}` : "—"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Unique queries</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Unique queries</p>
+            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(queries?.totals.queries ?? 0)}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {fmt(queries?.totals.impressions ?? 0)} impressions
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Sitemap status</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Sitemap status</p>
+            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(indexedCount)} /{" "}
-              <span className="text-base font-normal text-gray-500">
+              <span className="text-base font-normal text-muted-foreground">
                 {fmt(sitemaps?.totals.submitted ?? 0)}
               </span>
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               indexed / submitted · {fmt(sitemapErrorCount)} errors · {fmt(sitemapWarningCount)}{" "}
               warnings
             </p>
-            <p className="text-xs text-gray-600 mt-2">
+            <p className="text-xs text-muted-foreground mt-2">
               Indexed = URLs with PASS verdict in our URL Inspection sweep ({fmt(inspectedCount)}{" "}
               inspected). GSC Sitemaps API stopped reporting per-URL indexed counts in 2022.
             </p>
@@ -2670,7 +2702,7 @@ async function GoogleTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Query</th>
                 <th className="text-right px-6 py-2 font-medium">Clicks</th>
@@ -2682,22 +2714,22 @@ async function GoogleTab() {
             <tbody className="divide-y divide-gray-100">
               {!queries || queries.queries.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-6 text-gray-500">
+                  <td colSpan={5} className="px-6 py-6 text-muted-foreground">
                     No GSC query data for the current window.
                   </td>
                 </tr>
               ) : (
                 queries.queries.map((row, i) => (
                   <tr key={`${row.query}-${i}`}>
-                    <td className="px-6 py-2 text-gray-900 truncate max-w-md">{row.query}</td>
+                    <td className="px-6 py-2 text-foreground truncate max-w-md">{row.query}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                       {fmt(row.impressions)}
                     </td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                       {(row.ctr * 100).toFixed(1)}%
                     </td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                       {row.position.toFixed(1)}
                     </td>
                   </tr>
@@ -2714,7 +2746,7 @@ async function GoogleTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Path</th>
                 <th className="text-right px-6 py-2 font-medium">Submitted</th>
@@ -2727,7 +2759,7 @@ async function GoogleTab() {
             <tbody className="divide-y divide-gray-100">
               {!sitemaps || sitemaps.sitemaps.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-6 text-gray-500">
+                  <td colSpan={6} className="px-6 py-6 text-muted-foreground">
                     No sitemaps submitted to GSC.
                   </td>
                 </tr>
@@ -2746,7 +2778,7 @@ async function GoogleTab() {
                       <td className="px-6 py-2 text-right tabular-nums text-red-700">
                         {fmt(row.errors)}
                       </td>
-                      <td className="px-6 py-2 text-gray-700">
+                      <td className="px-6 py-2 text-foreground">
                         {row.lastSubmitted ? formatDateOnly(row.lastSubmitted) || "—" : "—"}
                       </td>
                     </tr>
@@ -2767,19 +2799,19 @@ function GscErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; 
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-gray-500" />
+          <BarChart3 className="w-5 h-5 text-muted-foreground" />
           {isConfig ? "Search Console not configured" : "Could not load Search Console data"}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-700 mb-4">{message}</p>
+        <p className="text-sm text-foreground mb-4">{message}</p>
         {isConfig && (
-          <div className="text-sm text-gray-700 space-y-2">
+          <div className="text-sm text-foreground space-y-2">
             <p className="font-medium">One-time setup:</p>
             <ol className="list-decimal pl-5 space-y-2">
               <li>
                 Confirm{" "}
-                <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
                   SC_SITE_URL
                 </span>{" "}
                 is set on the Pages deployment to either <code>sc-domain:meetmeatthefair.com</code>{" "}
@@ -2875,11 +2907,11 @@ async function BingTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Bingbot crawl issues</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Bingbot crawl issues</p>
+            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(errorCount)} errors · {fmt(warningCount)} warnings
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               From Bingbot&apos;s crawl. The manual Site Scan tool isn&apos;t exposed via API —{" "}
               <a
                 href="https://www.bing.com/webmasters/sitescan?siteUrl=https://meetmeatthefair.com/"
@@ -2895,33 +2927,33 @@ async function BingTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Search clicks (recent)</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Search clicks (recent)</p>
+            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {fmt(queries.reduce((acc, q) => acc + q.clicks, 0))}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {queries.length} unique {queries.length === 1 ? "query" : "queries"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Bing direct submit quota</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Bing direct submit quota</p>
+            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
               {quota ? fmt(quota.dailyRemaining) : "—"}
               {quota && (
-                <span className="text-base font-normal text-gray-500">
+                <span className="text-base font-normal text-muted-foreground">
                   {" "}
                   / {fmt(quota.dailyQuota)} daily
                 </span>
               )}
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {quota
                 ? `${fmt(quota.monthlyRemaining)} of ${fmt(quota.monthlyQuota)} monthly`
                 : "Unavailable"}
             </p>
-            <p className="text-xs text-gray-600 mt-2">
+            <p className="text-xs text-muted-foreground mt-2">
               Bing Webmaster Tools URL submission API. Separate from indexnow.org pings — see the
               IndexNow tab for our submission log.
             </p>
@@ -2935,7 +2967,7 @@ async function BingTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Query</th>
                 <th className="text-right px-6 py-2 font-medium">Clicks</th>
@@ -2946,7 +2978,7 @@ async function BingTab() {
             <tbody className="divide-y divide-gray-100">
               {queries.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-6 text-gray-500">
+                  <td colSpan={4} className="px-6 py-6 text-muted-foreground">
                     No Bing query data yet. Bing typically takes 7&ndash;14 days after site
                     verification to start reporting search-performance data.
                   </td>
@@ -2954,12 +2986,12 @@ async function BingTab() {
               ) : (
                 queries.slice(0, 25).map((row, i) => (
                   <tr key={`${row.query}-${i}`}>
-                    <td className="px-6 py-2 text-gray-900 truncate max-w-md">{row.query}</td>
+                    <td className="px-6 py-2 text-foreground truncate max-w-md">{row.query}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                       {fmt(row.impressions)}
                     </td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                       {row.avgImpressionPosition.toFixed(1)}
                     </td>
                   </tr>
@@ -2977,7 +3009,7 @@ async function BingTab() {
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-muted text-muted-foreground">
                 <tr>
                   <th className="text-left px-6 py-2 font-medium">Page</th>
                   <th className="text-right px-6 py-2 font-medium">Clicks</th>
@@ -2987,7 +3019,7 @@ async function BingTab() {
               <tbody className="divide-y divide-gray-100">
                 {pages.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-6 py-6 text-gray-500">
+                    <td colSpan={3} className="px-6 py-6 text-muted-foreground">
                       No data yet. Populates after Bing accumulates impression data (typically
                       7&ndash;14 days post-verification).
                     </td>
@@ -2997,7 +3029,7 @@ async function BingTab() {
                     <tr key={`${row.page}-${i}`}>
                       <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">{row.page}</td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                         {fmt(row.impressions)}
                       </td>
                     </tr>
@@ -3014,7 +3046,7 @@ async function BingTab() {
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-muted text-muted-foreground">
                 <tr>
                   <th className="text-left px-6 py-2 font-medium">Date</th>
                   <th className="text-right px-6 py-2 font-medium">Crawled</th>
@@ -3024,7 +3056,7 @@ async function BingTab() {
               <tbody className="divide-y divide-gray-100">
                 {crawl.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-6 py-6 text-gray-500">
+                    <td colSpan={3} className="px-6 py-6 text-muted-foreground">
                       No crawl data yet. Bingbot needs to visit the site at least once; can take a
                       few days after sitemap submission.
                     </td>
@@ -3032,9 +3064,9 @@ async function BingTab() {
                 ) : (
                   crawl.slice(0, 14).map((row) => (
                     <tr key={row.date}>
-                      <td className="px-6 py-2 tabular-nums text-gray-700">{row.date}</td>
+                      <td className="px-6 py-2 tabular-nums text-foreground">{row.date}</td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(row.crawledPages)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                         {fmt(row.crawlErrors)}
                       </td>
                     </tr>
@@ -3061,14 +3093,14 @@ function BingErrorPanel({
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-gray-500" />
+          <BarChart3 className="w-5 h-5 text-muted-foreground" />
           {isConfig ? "Bing Webmaster Tools not configured" : "Could not load Bing data"}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-700 mb-4">{message}</p>
+        <p className="text-sm text-foreground mb-4">{message}</p>
         {isConfig && (
-          <div className="text-sm text-gray-700 space-y-2">
+          <div className="text-sm text-foreground space-y-2">
             <p className="font-medium">One-time setup:</p>
             <ol className="list-decimal pl-5 space-y-2">
               <li>
@@ -3089,7 +3121,7 @@ function BingErrorPanel({
               </li>
               <li>
                 Set the secret on the Worker:
-                <pre className="mt-2 bg-gray-100 p-2 rounded font-mono text-xs">
+                <pre className="mt-2 bg-muted p-2 rounded font-mono text-xs">
                   wrangler secret put BING_WEBMASTER_API_KEY
                 </pre>
               </li>
@@ -3133,13 +3165,13 @@ async function SiteHealthTab() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Open errors</p>
+            <p className="text-sm text-muted-foreground">Open errors</p>
             <p className="text-3xl font-bold text-red-700 mt-1 tabular-nums">{fmt(errorCount)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Open warnings</p>
+            <p className="text-sm text-muted-foreground">Open warnings</p>
             <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">
               {fmt(warningCount)}
             </p>
@@ -3147,8 +3179,8 @@ async function SiteHealthTab() {
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-gray-600">Snoozed</p>
-            <p className="text-3xl font-bold text-gray-500 mt-1 tabular-nums">
+            <p className="text-sm text-muted-foreground">Snoozed</p>
+            <p className="text-3xl font-bold text-muted-foreground mt-1 tabular-nums">
               {fmt(activeSnoozeCount)}
             </p>
           </CardContent>
@@ -3161,7 +3193,7 @@ async function SiteHealthTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Source</th>
                 <th className="text-left px-6 py-2 font-medium">Issue</th>
@@ -3174,7 +3206,7 @@ async function SiteHealthTab() {
             <tbody className="divide-y divide-gray-100">
               {issues.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-6 text-gray-500">
+                  <td colSpan={6} className="px-6 py-6 text-muted-foreground">
                     No open issues. Run the daily sweep to refresh.
                   </td>
                 </tr>
@@ -3186,13 +3218,15 @@ async function SiteHealthTab() {
                       ? "text-red-700"
                       : row.severity === "WARNING"
                         ? "text-amber-700"
-                        : "text-gray-600";
+                        : "text-muted-foreground";
                   return (
                     <tr key={row.fingerprint} className={snoozed ? "opacity-50" : ""}>
                       <td className="px-6 py-2 font-mono text-xs">{row.source}</td>
-                      <td className="px-6 py-2 text-gray-900">
+                      <td className="px-6 py-2 text-foreground">
                         {row.issueType}
-                        {row.message && <span className="text-gray-500"> · {row.message}</span>}
+                        {row.message && (
+                          <span className="text-muted-foreground"> · {row.message}</span>
+                        )}
                       </td>
                       <td className={`px-6 py-2 font-medium ${sevColor}`}>{row.severity}</td>
                       <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
@@ -3209,10 +3243,10 @@ async function SiteHealthTab() {
                           "—"
                         )}
                       </td>
-                      <td className="px-6 py-2 tabular-nums text-gray-700">
+                      <td className="px-6 py-2 tabular-nums text-foreground">
                         {formatDateOnly(row.lastDetectedAt)}
                       </td>
-                      <td className="px-6 py-2 text-gray-700">
+                      <td className="px-6 py-2 text-foreground">
                         {snoozed && row.snoozedUntil
                           ? `until ${formatDateOnly(row.snoozedUntil)}`
                           : "—"}
@@ -3226,24 +3260,24 @@ async function SiteHealthTab() {
         </CardContent>
       </Card>
 
-      <div className="mt-6 flex items-start justify-between flex-wrap gap-3 rounded-md border border-gray-200 bg-gray-50 p-4">
+      <div className="mt-6 flex items-start justify-between flex-wrap gap-3 rounded-md border border-border bg-muted p-4">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-gray-900">URL Inspection sweep</p>
-          <p className="text-xs text-gray-600 mt-1">
+          <p className="text-sm font-medium text-foreground">URL Inspection sweep</p>
+          <p className="text-xs text-muted-foreground mt-1">
             Inspects up to 8 URLs per click against GSC&apos;s URL Inspection API and persists
             verdicts to <code>gsc_inspection_state</code>. Drives the Google tab&apos;s &quot;real
             indexed&quot; count and detects new health issues. Each inspection takes 3-5 seconds;
             larger batches hit Cloudflare&apos;s 30s request timeout. Run repeatedly until inspected
             count stops growing (~250+ clicks for the full ~2,000-URL sitemap).
           </p>
-          <p className="text-xs text-gray-500 mt-1 tabular-nums">
+          <p className="text-xs text-muted-foreground mt-1 tabular-nums">
             Currently inspected: {fmt(inspectionCount)} URLs
           </p>
         </div>
         <SiteHealthSweepButton />
       </div>
 
-      <p className="text-xs text-gray-500 mt-4">
+      <p className="text-xs text-muted-foreground mt-4">
         Snooze actions are exposed via the API endpoints under <code>/api/admin/site-health/*</code>{" "}
         and the <code>get_site_health_issues</code> / <code>snooze_site_health_issue</code> MCP
         tools.
@@ -3252,7 +3286,7 @@ async function SiteHealthTab() {
       <Card className="mt-8">
         <CardHeader>
           <CardTitle>Unclassified outbound destinations</CardTitle>
-          <p className="text-sm text-gray-600 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Domains that received outbound ticket clicks in the last 7 days but aren&apos;t in{" "}
             <code>url_domain_classifications</code> yet. Classify each one so the ingestion gate
             (see <code>src/lib/url-classification.ts</code>) knows whether it&apos;s a legitimate
@@ -3261,7 +3295,7 @@ async function SiteHealthTab() {
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Domain</th>
                 <th className="text-right px-6 py-2 font-medium">7d clicks</th>
@@ -3272,7 +3306,7 @@ async function SiteHealthTab() {
             <tbody className="divide-y divide-gray-100">
               {unclassifiedDestinations.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-6 text-gray-500">
+                  <td colSpan={4} className="px-6 py-6 text-muted-foreground">
                     No unclassified destinations with 5+ clicks in the last 7 days. The gate is
                     holding.
                   </td>
@@ -3280,13 +3314,13 @@ async function SiteHealthTab() {
               ) : (
                 unclassifiedDestinations.map((row) => (
                   <tr key={row.domain} className="align-top">
-                    <td className="px-6 py-3 font-mono text-xs text-gray-900 break-all">
+                    <td className="px-6 py-3 font-mono text-xs text-foreground break-all">
                       {row.domain}
                     </td>
                     <td className="px-6 py-3 text-right tabular-nums font-medium">
                       {fmt(row.clicks)}
                     </td>
-                    <td className="px-6 py-3 text-gray-700 break-all max-w-xs">
+                    <td className="px-6 py-3 text-foreground break-all max-w-xs">
                       {row.sampleEventSlug ? (
                         <Link
                           href={`/events/${row.sampleEventSlug}`}

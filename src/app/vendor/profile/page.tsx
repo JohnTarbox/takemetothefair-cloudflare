@@ -240,8 +240,8 @@ export default function VendorProfilePage() {
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -250,7 +250,7 @@ export default function VendorProfilePage() {
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <p className="text-gray-500">No vendor profile found. Please contact support.</p>
+          <p className="text-muted-foreground">No vendor profile found. Please contact support.</p>
         </CardContent>
       </Card>
     );
@@ -271,9 +271,9 @@ export default function VendorProfilePage() {
       />
       <div className="flex items-center justify-between mb-8 gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Vendor Profile</h1>
-          <p className="mt-1 text-gray-600">Manage your business information</p>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-foreground">Vendor Profile</h1>
+          <p className="mt-1 text-muted-foreground">Manage your business information</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             New here?{" "}
             <Link href="/vendor-guide" className="font-medium text-royal hover:text-navy underline">
               Read the Vendor Guide
@@ -295,7 +295,7 @@ export default function VendorProfilePage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold text-gray-900">Business Information</h2>
+          <h2 className="text-lg font-semibold text-foreground">Business Information</h2>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -320,13 +320,13 @@ export default function VendorProfilePage() {
             />
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Description</label>
               <textarea
                 name="description"
                 value={formData.description}
                 onChange={handleChange}
                 rows={4}
-                className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="block w-full rounded-lg border border-border px-3 py-2 text-foreground focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 placeholder="Tell us about your business..."
               />
             </div>
@@ -367,7 +367,7 @@ export default function VendorProfilePage() {
 
             {/* Contact Information Section */}
             <div className="border-t pt-6 mt-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Contact Information</h3>
+              <h3 className="text-lg font-medium text-foreground mb-4">Contact Information</h3>
               <div className="space-y-4">
                 <Input
                   label="Contact Name"
@@ -400,7 +400,7 @@ export default function VendorProfilePage() {
             {/* Physical Address Section */}
             <div className="border-t pt-6 mt-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-medium text-gray-900">Physical Address</h3>
+                <h3 className="text-lg font-medium text-foreground">Physical Address</h3>
                 <button
                   type="button"
                   onClick={() => setShowGoogleLookup(!showGoogleLookup)}
@@ -449,7 +449,7 @@ export default function VendorProfilePage() {
                   />
                 </div>
                 {formData.latitude && formData.longitude && (
-                  <p className="text-xs text-gray-500 mt-2">
+                  <p className="text-xs text-muted-foreground mt-2">
                     Coordinates: {formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)}{" "}
                     (auto-detected from address)
                   </p>
@@ -459,7 +459,7 @@ export default function VendorProfilePage() {
 
             {/* Business Details Section */}
             <div className="border-t pt-6 mt-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Business Details</h3>
+              <h3 className="text-lg font-medium text-foreground mb-4">Business Details</h3>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Input
@@ -480,7 +480,7 @@ export default function VendorProfilePage() {
                       onChange={handleChange}
                       placeholder="Cash, Credit, Venmo"
                     />
-                    <p className="text-xs text-gray-500 mt-1">Separate with commas</p>
+                    <p className="text-xs text-muted-foreground mt-1">Separate with commas</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

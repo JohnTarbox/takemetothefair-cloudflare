@@ -48,8 +48,8 @@ export default async function AdminDiagnosticsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Diagnostics</h1>
-        <p className="text-xs text-gray-500">
+        <h1 className="text-2xl font-bold text-foreground">Diagnostics</h1>
+        <p className="text-xs text-muted-foreground">
           Generated {formatTimestampForServer(snapshot.generatedAt)}
         </p>
       </div>
@@ -67,10 +67,10 @@ export default async function AdminDiagnosticsPage() {
             <CardTitle>IndexNow ({snapshot.indexnow.windowDays}d)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-gray-900 tabular-nums">
+            <p className="text-3xl font-bold text-foreground tabular-nums">
               {fmtPct(snapshot.indexnow.successRate)}
             </p>
-            <p className="text-xs text-gray-500 mt-2">
+            <p className="text-xs text-muted-foreground mt-2">
               {fmt(snapshot.indexnow.success)} success / {fmt(snapshot.indexnow.failure)} failure /{" "}
               {fmt(snapshot.indexnow.total)} total
             </p>
@@ -89,14 +89,14 @@ export default async function AdminDiagnosticsPage() {
             <CardTitle>Time-to-index reconciliation</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-gray-900 tabular-nums">
+            <p className="text-3xl font-bold text-foreground tabular-nums">
               {fmtPct(snapshot.timeToIndex.resolvedRate)}
             </p>
-            <p className="text-xs text-gray-500 mt-2">
+            <p className="text-xs text-muted-foreground mt-2">
               {fmt(snapshot.timeToIndex.resolved)} resolved / {fmt(snapshot.timeToIndex.unresolved)}{" "}
               unresolved
             </p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Oldest unresolved: {fmtAge(snapshot.timeToIndex.oldestUnresolvedAgeSeconds)}
             </p>
           </CardContent>
@@ -108,17 +108,19 @@ export default async function AdminDiagnosticsPage() {
           </CardHeader>
           <CardContent>
             {snapshot.enrichmentBySource.length === 0 ? (
-              <p className="text-sm text-gray-500">No enrichment activity in the last 7 days.</p>
+              <p className="text-sm text-muted-foreground">
+                No enrichment activity in the last 7 days.
+              </p>
             ) : (
               <ul className="space-y-1.5 text-sm">
                 {snapshot.enrichmentBySource.map((s) => (
                   <li key={s.source} className="flex justify-between gap-4">
-                    <span className="font-mono text-xs text-gray-700">{s.source}</span>
+                    <span className="font-mono text-xs text-foreground">{s.source}</span>
                     <span
                       className={
                         s.successRate < 0.8
                           ? "text-amber-700 font-medium tabular-nums text-xs"
-                          : "text-gray-600 tabular-nums text-xs"
+                          : "text-muted-foreground tabular-nums text-xs"
                       }
                     >
                       {fmtPct(s.successRate, 0)} of {fmt(s.total)}
@@ -140,25 +142,25 @@ export default async function AdminDiagnosticsPage() {
         </CardHeader>
         <CardContent>
           {snapshot.errorGroups.length === 0 ? (
-            <p className="text-sm text-gray-500">No errors logged in the last 7 days.</p>
+            <p className="text-sm text-muted-foreground">No errors logged in the last 7 days.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left border-b border-gray-200">
-                    <th className="pb-2 pr-4 text-xs font-semibold text-gray-700">Count</th>
-                    <th className="pb-2 pr-4 text-xs font-semibold text-gray-700">Source</th>
-                    <th className="pb-2 pr-4 text-xs font-semibold text-gray-700">Message</th>
-                    <th className="pb-2 text-xs font-semibold text-gray-700">Last seen</th>
+                  <tr className="text-left border-b border-border">
+                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Count</th>
+                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Source</th>
+                    <th className="pb-2 pr-4 text-xs font-semibold text-foreground">Message</th>
+                    <th className="pb-2 text-xs font-semibold text-foreground">Last seen</th>
                   </tr>
                 </thead>
                 <tbody>
                   {snapshot.errorGroups.map((g, i) => (
-                    <tr key={i} className="border-b border-gray-100 last:border-0">
+                    <tr key={i} className="border-b border-border last:border-0">
                       <td className="py-2 pr-4 tabular-nums font-medium">{fmt(g.count)}</td>
-                      <td className="py-2 pr-4 font-mono text-xs text-gray-700">{g.source}</td>
-                      <td className="py-2 pr-4 text-xs text-gray-700">{g.message}</td>
-                      <td className="py-2 text-xs text-gray-500">
+                      <td className="py-2 pr-4 font-mono text-xs text-foreground">{g.source}</td>
+                      <td className="py-2 pr-4 text-xs text-foreground">{g.message}</td>
+                      <td className="py-2 text-xs text-muted-foreground">
                         {formatTimestampForServer(new Date(g.lastSeenMs))}
                       </td>
                     </tr>

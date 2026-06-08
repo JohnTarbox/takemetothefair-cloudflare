@@ -190,8 +190,8 @@ export default function AdminVenuesPage() {
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -199,7 +199,7 @@ export default function AdminVenuesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Manage Venues</h1>
+        <h1 className="text-2xl font-bold text-foreground">Manage Venues</h1>
         <div className="flex items-center gap-2">
           {missingGoogleCount > 0 && (
             <Button
@@ -251,7 +251,7 @@ export default function AdminVenuesPage() {
         <Card className="mb-6">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-900">
+              <p className="text-sm font-medium text-foreground">
                 Google Backfill Preview — {backfillPreview.length} matches found
               </p>
               <Button
@@ -270,7 +270,7 @@ export default function AdminVenuesPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-200">
+                  <tr className="border-b border-border">
                     <th className="py-2 px-3 text-left">
                       <input
                         type="checkbox"
@@ -278,18 +278,24 @@ export default function AdminVenuesPage() {
                         onChange={toggleAllSelection}
                       />
                     </th>
-                    <th className="py-2 px-3 text-left font-medium text-gray-600">Venue</th>
-                    <th className="py-2 px-3 text-left font-medium text-gray-600">City/State</th>
-                    <th className="py-2 px-3 text-left font-medium text-gray-600">Google Match</th>
-                    <th className="py-2 px-3 text-left font-medium text-gray-600">
+                    <th className="py-2 px-3 text-left font-medium text-muted-foreground">Venue</th>
+                    <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                      City/State
+                    </th>
+                    <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                      Google Match
+                    </th>
+                    <th className="py-2 px-3 text-left font-medium text-muted-foreground">
                       Google Address
                     </th>
-                    <th className="py-2 px-3 text-left font-medium text-gray-600">Rating</th>
+                    <th className="py-2 px-3 text-left font-medium text-muted-foreground">
+                      Rating
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {backfillPreview.map((p) => (
-                    <tr key={p.venueId} className="border-b border-gray-100">
+                    <tr key={p.venueId} className="border-b border-border">
                       <td className="py-2 px-3">
                         <input
                           type="checkbox"
@@ -297,13 +303,13 @@ export default function AdminVenuesPage() {
                           onChange={() => toggleVenueSelection(p.venueId)}
                         />
                       </td>
-                      <td className="py-2 px-3 font-medium text-gray-900">{p.venueName}</td>
-                      <td className="py-2 px-3 text-gray-600">
+                      <td className="py-2 px-3 font-medium text-foreground">{p.venueName}</td>
+                      <td className="py-2 px-3 text-muted-foreground">
                         {p.venueCity}, {p.venueState}
                       </td>
-                      <td className="py-2 px-3 text-gray-600">{p.googleName || "-"}</td>
-                      <td className="py-2 px-3 text-gray-600">{p.googleAddress || "-"}</td>
-                      <td className="py-2 px-3 text-gray-600">{p.googleRating ?? "-"}</td>
+                      <td className="py-2 px-3 text-muted-foreground">{p.googleName || "-"}</td>
+                      <td className="py-2 px-3 text-muted-foreground">{p.googleAddress || "-"}</td>
+                      <td className="py-2 px-3 text-muted-foreground">{p.googleRating ?? "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -332,7 +338,7 @@ export default function AdminVenuesPage() {
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             {filterMissingGoogle
               ? `${filteredVenues.length} of ${venues.length} venues missing Google Place ID`
               : `${venues.length} venues total`}
@@ -342,7 +348,7 @@ export default function AdminVenuesPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-border">
                   <SortableHeader
                     column="name"
                     label="Venue"
@@ -373,22 +379,22 @@ export default function AdminVenuesPage() {
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
+                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {sortedVenues.map((venue) => (
-                  <tr key={venue.id} className="border-b border-gray-100">
-                    <td className="py-3 px-4 font-medium text-gray-900">{venue.name}</td>
-                    <td className="py-3 px-4 text-gray-600">
+                  <tr key={venue.id} className="border-b border-border">
+                    <td className="py-3 px-4 font-medium text-foreground">{venue.name}</td>
+                    <td className="py-3 px-4 text-muted-foreground">
                       {venue.city}, {venue.state}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
+                    <td className="py-3 px-4 text-muted-foreground">
                       {venue.capacity?.toLocaleString() || "-"}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">{venue._count.events}</td>
+                    <td className="py-3 px-4 text-muted-foreground">{venue._count.events}</td>
                     <td className="py-3 px-4">
                       <Badge variant={venue.status === "ACTIVE" ? "success" : "default"}>
                         {venue.status}

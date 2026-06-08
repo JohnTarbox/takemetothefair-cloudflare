@@ -55,8 +55,8 @@ export default async function VendorSubmissionsPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">My Submissions</h1>
-          <p className="text-gray-600 mt-1">Events you&apos;ve suggested to the platform</p>
+          <h1 className="text-2xl font-bold text-foreground">My Submissions</h1>
+          <p className="text-muted-foreground mt-1">Events you&apos;ve suggested to the platform</p>
         </div>
         <Link href="/vendor/suggest-event">
           <Button>
@@ -69,8 +69,8 @@ export default async function VendorSubmissionsPage() {
       {submissions.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-600 mb-4">You haven&apos;t submitted any events yet.</p>
+            <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-muted-foreground mb-4">You haven&apos;t submitted any events yet.</p>
             <Link href="/vendor/suggest-event">
               <Button>Suggest Your First Event</Button>
             </Link>
@@ -79,7 +79,7 @@ export default async function VendorSubmissionsPage() {
       ) : (
         <Card>
           <CardHeader>
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               {submissions.length} submission{submissions.length !== 1 ? "s" : ""}
             </p>
           </CardHeader>
@@ -87,13 +87,17 @@ export default async function VendorSubmissionsPage() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Event</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Dates</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">
+                  <tr className="border-b border-border">
+                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
+                      Event
+                    </th>
+                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
+                      Dates
+                    </th>
+                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
                       Status
                     </th>
-                    <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
+                    <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                       Actions
                     </th>
                   </tr>
@@ -107,16 +111,16 @@ export default async function VendorSubmissionsPage() {
                     const isPublic = event.status === "TENTATIVE" || event.status === "APPROVED";
 
                     return (
-                      <tr key={event.id} className="border-b border-gray-100">
+                      <tr key={event.id} className="border-b border-border">
                         <td className="py-3 px-4">
-                          <p className="font-medium text-gray-900">{event.name}</p>
+                          <p className="font-medium text-foreground">{event.name}</p>
                           {event.venue && (
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-muted-foreground">
                               {event.venue.name}, {event.venue.city}
                             </p>
                           )}
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-600">
+                        <td className="py-3 px-4 text-sm text-muted-foreground">
                           {formatDateRange(event.startDate, event.endDate)}
                         </td>
                         <td className="py-3 px-4">

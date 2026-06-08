@@ -53,19 +53,19 @@ export default function ForVendorsPage() {
         url="https://meetmeatthefair.com/for-vendors"
       />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">For Vendors</h1>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold text-foreground mb-4">For Vendors</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
           Find events, showcase your business, and grow your customer base
         </p>
       </div>
 
       <div className="prose prose-gray max-w-none mb-12">
-        <p className="text-lg text-gray-600 leading-relaxed">
+        <p className="text-lg text-muted-foreground leading-relaxed">
           Meet Me at the Fair connects vendors with the fairs, festivals, and community events where
           their products and services will shine. Browse upcoming events, apply to participate, and
           get discovered by event-goers who are eager to find what you offer.
         </p>
-        <p className="text-lg text-gray-600 leading-relaxed">
+        <p className="text-lg text-muted-foreground leading-relaxed">
           Build a profile that highlights your business, track the events you&apos;ve applied to,
           and let promoters find you when they&apos;re looking for the perfect vendor lineup.
         </p>
@@ -78,9 +78,9 @@ export default function ForVendorsPage() {
               <div className="w-12 h-12 bg-brand-blue-light rounded-lg flex items-center justify-center">
                 <Search className="w-6 h-6 text-royal" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Find Events</h2>
+              <h2 className="text-xl font-semibold text-foreground">Find Events</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Discover fairs, festivals, and markets that are the perfect fit for your products and
               services.
             </p>
@@ -93,9 +93,9 @@ export default function ForVendorsPage() {
               <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
                 <UserCircle className="w-6 h-6 text-green-600" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Build Your Profile</h2>
+              <h2 className="text-xl font-semibold text-foreground">Build Your Profile</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Showcase your business with photos, descriptions, and product categories so promoters
               and attendees can find you.
             </p>
@@ -108,9 +108,9 @@ export default function ForVendorsPage() {
               <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
                 <ClipboardList className="w-6 h-6 text-purple-600" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Apply to Events</h2>
+              <h2 className="text-xl font-semibold text-foreground">Apply to Events</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Submit applications to events you&apos;re interested in and track your approval status
               from your dashboard.
             </p>
@@ -123,9 +123,9 @@ export default function ForVendorsPage() {
               <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
                 <TrendingUp className="w-6 h-6 text-orange-600" aria-hidden="true" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900">Grow Your Business</h2>
+              <h2 className="text-xl font-semibold text-foreground">Grow Your Business</h2>
             </div>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               Expand your reach by participating in more events and connecting with new customers
               across the region.
             </p>
@@ -133,27 +133,27 @@ export default function ForVendorsPage() {
         </Card>
       </div>
 
-      <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Ready to Find Your Next Event?</h2>
-        <p className="text-gray-600 mb-6">
+      <div className="bg-muted rounded-xl p-8 text-center">
+        <h2 className="text-2xl font-bold text-foreground mb-4">Ready to Find Your Next Event?</h2>
+        <p className="text-muted-foreground mb-6">
           Join Meet Me at the Fair and start connecting with the events and customers that will help
           your business grow.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <Link
             href="/login"
-            className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
           >
             Get Started
           </Link>
           <Link
             href="/events"
-            className="inline-flex items-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-card text-foreground font-medium rounded-lg border border-border hover:bg-muted transition-colors"
           >
             Browse Events
           </Link>
         </div>
-        <p className="text-sm text-gray-500 mt-6">
+        <p className="text-sm text-muted-foreground mt-6">
           Want a walkthrough?{" "}
           <Link href="/vendor-guide" className="font-medium text-royal hover:text-navy underline">
             Read the Vendor Guide

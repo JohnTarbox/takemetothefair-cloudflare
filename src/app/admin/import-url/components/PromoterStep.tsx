@@ -29,8 +29,8 @@ export function PromoterStep({
       <CardContent className="space-y-4">
         {eventsCount > 1 && (
           <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
-            You are importing <strong>{eventsCount} events</strong>. All events
-            will be assigned to the selected promoter.
+            You are importing <strong>{eventsCount} events</strong>. All events will be assigned to
+            the selected promoter.
           </div>
         )}
 
@@ -40,7 +40,7 @@ export function PromoterStep({
             id="promoterId"
             value={selectedPromoterId}
             onChange={(e) => onSelectPromoter(e.target.value)}
-            className="mt-1 w-full h-10 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+            className="mt-1 w-full h-10 rounded-md border border-border bg-card px-3 py-2 text-sm"
           >
             <option value="">Select a promoter...</option>
             {promoters.map((promoter) => (
@@ -49,7 +49,7 @@ export function PromoterStep({
               </option>
             ))}
           </select>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             {eventsCount > 1
               ? "All events will be assigned to this promoter."
               : "The event will be assigned to this promoter."}
@@ -63,9 +63,7 @@ export function PromoterStep({
             Back
           </Button>
           <Button onClick={onContinue}>
-            {eventsCount > 1
-              ? `Preview ${eventsCount} Events`
-              : "Preview Event"}
+            {eventsCount > 1 ? `Preview ${eventsCount} Events` : "Preview Event"}
             <ChevronRight className="w-4 h-4 ml-1" />
           </Button>
         </div>

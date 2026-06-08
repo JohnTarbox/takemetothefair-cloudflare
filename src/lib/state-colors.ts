@@ -53,9 +53,9 @@ const STATE_NAME_TO_ABBR: Record<string, string> = {
 };
 
 const DEFAULT_COLORS: StateColors = {
-  bg: "bg-gray-100",
-  icon: "text-gray-600",
-  badge: "bg-gray-100 text-gray-700",
+  bg: "bg-muted",
+  icon: "text-muted-foreground",
+  badge: "bg-muted text-foreground",
 };
 
 export function getStateColors(state: string | null | undefined): StateColors {

@@ -70,7 +70,7 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all">
       <Link href={`/venues/${venue.slug}`} className="block">
         <div
-          className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-gray-100" : stateColors.bg}`}
+          className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-muted" : stateColors.bg}`}
         >
           {venue.imageUrl && !imgError ? (
             <Image
@@ -104,14 +104,14 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           />
         </div>
         <div className="p-4">
-          <h3 className="font-semibold text-lg text-gray-900">
+          <h3 className="font-semibold text-lg text-foreground">
             {/* Cohort 8 (C9/U9) — fall back when venue.name looks like
                 a street address (created via URL import that copied the
                 address into the name field). Data-cleanup rule in
                 src/lib/recommendations/rules/venues-named-by-address.ts. */}
             {displayVenueName(venue)}
           </h3>
-          <div className="mt-2 space-y-1 text-sm text-gray-600">
+          <div className="mt-2 space-y-1 text-sm text-muted-foreground">
             {addressParts && (
               <div className="flex items-start">
                 <MapPin className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" />

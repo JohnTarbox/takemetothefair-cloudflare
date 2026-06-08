@@ -455,7 +455,7 @@ export default function VendorSuggestEventPage() {
       <div className="mb-6">
         <Link
           href="/vendor/applications"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Applications
@@ -463,8 +463,8 @@ export default function VendorSuggestEventPage() {
       </div>
 
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Suggest an Event</h1>
-        <p className="text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Suggest an Event</h1>
+        <p className="text-muted-foreground mt-1">
           Know about an upcoming fair, festival, or market? Submit it here and it will appear on the
           site with a &ldquo;Tentative&rdquo; badge until verified by our team.
         </p>
@@ -492,7 +492,7 @@ export default function VendorSuggestEventPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               Paste a link to the event page and we&apos;ll automatically extract the details. Or
               skip this step to fill in the details manually.
             </p>
@@ -530,7 +530,7 @@ export default function VendorSuggestEventPage() {
                   >
                     Paste content manually instead
                   </button>
-                  <span className="text-gray-300">|</span>
+                  <span className="text-muted-foreground">|</span>
                   <button
                     type="button"
                     onClick={() => setStep("review")}
@@ -547,7 +547,7 @@ export default function VendorSuggestEventPage() {
                   <textarea
                     id="paste"
                     rows={8}
-                    className="w-full mt-1 p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full mt-1 p-3 border border-border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Copy and paste the text content from the event page here..."
                     value={pastedContent}
                     onChange={(e) => setPastedContent(e.target.value)}
@@ -586,7 +586,7 @@ export default function VendorSuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
-            <p className="text-gray-600">Fetching event page...</p>
+            <p className="text-muted-foreground">Fetching event page...</p>
           </CardContent>
         </Card>
       )}
@@ -596,7 +596,7 @@ export default function VendorSuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Sparkles className="w-8 h-8 text-purple-600 mx-auto mb-4 animate-pulse" />
-            <p className="text-gray-600">Extracting event details with AI...</p>
+            <p className="text-muted-foreground">Extracting event details with AI...</p>
           </CardContent>
         </Card>
       )}
@@ -611,16 +611,16 @@ export default function VendorSuggestEventPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               {duplicateMatchType === "exact_url"
                 ? "An event with this URL already exists:"
                 : "A similar event may already exist:"}
             </p>
 
-            <div className="bg-gray-50 rounded-lg p-4">
-              <p className="font-medium text-gray-900">{duplicateEvent.name}</p>
+            <div className="bg-muted rounded-lg p-4">
+              <p className="font-medium text-foreground">{duplicateEvent.name}</p>
               {duplicateEvent.startDate && (
-                <p className="text-sm text-gray-600 mt-1">
+                <p className="text-sm text-muted-foreground mt-1">
                   {formatDateForDisplay(duplicateEvent.startDate)}
                   {duplicateEvent.endDate && ` — ${formatDateForDisplay(duplicateEvent.endDate)}`}
                 </p>
@@ -653,7 +653,7 @@ export default function VendorSuggestEventPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               We found a venue that matches. Would you like to link this event to it?
             </p>
 
@@ -661,23 +661,23 @@ export default function VendorSuggestEventPage() {
               className="bg-blue-50 rounded-lg p-4 cursor-pointer border-2 border-blue-200 hover:border-blue-400"
               onClick={() => confirmVenue(matchedVenue.id)}
             >
-              <p className="font-medium text-gray-900">{matchedVenue.name}</p>
-              <p className="text-sm text-gray-600">
+              <p className="font-medium text-foreground">{matchedVenue.name}</p>
+              <p className="text-sm text-muted-foreground">
                 {matchedVenue.city}, {matchedVenue.state}
               </p>
             </div>
 
             {alternativeVenues.length > 0 && (
               <div className="space-y-2">
-                <p className="text-xs text-gray-500">Other possible matches:</p>
+                <p className="text-xs text-muted-foreground">Other possible matches:</p>
                 {alternativeVenues.map((v) => (
                   <div
                     key={v.id}
-                    className="bg-gray-50 rounded-lg p-3 cursor-pointer hover:bg-gray-100"
+                    className="bg-muted rounded-lg p-3 cursor-pointer hover:bg-muted"
                     onClick={() => confirmVenue(v.id)}
                   >
-                    <p className="text-sm font-medium text-gray-900">{v.name}</p>
-                    <p className="text-xs text-gray-600">
+                    <p className="text-sm font-medium text-foreground">{v.name}</p>
+                    <p className="text-xs text-muted-foreground">
                       {v.city}, {v.state}
                     </p>
                   </div>
@@ -688,7 +688,7 @@ export default function VendorSuggestEventPage() {
             <button
               type="button"
               onClick={skipVenueMatch}
-              className="text-sm text-gray-600 hover:text-gray-800"
+              className="text-sm text-muted-foreground hover:text-foreground"
             >
               Skip — don&apos;t link to a venue
             </button>
@@ -727,7 +727,7 @@ export default function VendorSuggestEventPage() {
               <textarea
                 id="description"
                 rows={4}
-                className="w-full p-3 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3 border border-border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 value={extractedData.description || ""}
                 onChange={(e) =>
                   setExtractedData((prev) => ({ ...prev, description: e.target.value }))
@@ -760,7 +760,7 @@ export default function VendorSuggestEventPage() {
                       className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                         selected
                           ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          : "bg-muted text-muted-foreground hover:bg-muted"
                       }`}
                     >
                       {cat}
@@ -841,7 +841,7 @@ export default function VendorSuggestEventPage() {
             />
 
             <div className="border-t pt-4">
-              <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1 mb-3">
+              <h3 className="text-sm font-medium text-foreground flex items-center gap-1 mb-3">
                 <MapPin className="w-4 h-4" />
                 Venue Information
               </h3>
@@ -859,7 +859,7 @@ export default function VendorSuggestEventPage() {
                       setConfirmedVenueId(null);
                       setMatchedVenue(null);
                     }}
-                    className="text-xs text-gray-500 hover:text-gray-700"
+                    className="text-xs text-muted-foreground hover:text-foreground"
                   >
                     Remove
                   </button>
@@ -915,7 +915,7 @@ export default function VendorSuggestEventPage() {
             </div>
 
             <div className="border-t pt-4">
-              <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1 mb-3">
+              <h3 className="text-sm font-medium text-foreground flex items-center gap-1 mb-3">
                 <DollarSign className="w-4 h-4" />
                 Ticket Information
               </h3>
@@ -969,11 +969,11 @@ export default function VendorSuggestEventPage() {
             </div>
 
             <div className="border-t pt-4">
-              <h3 className="text-sm font-medium text-gray-700 flex items-center gap-1 mb-3">
+              <h3 className="text-sm font-medium text-foreground flex items-center gap-1 mb-3">
                 <Store className="w-4 h-4" />
                 Vendor Information
               </h3>
-              <p className="text-xs text-gray-500 mb-3">
+              <p className="text-xs text-muted-foreground mb-3">
                 If you know details about vendor/booth fees or application process, fill them in
                 here.
               </p>
@@ -1044,7 +1044,7 @@ export default function VendorSuggestEventPage() {
                           indoorOutdoor: (e.target.value as "INDOOR" | "OUTDOOR" | "MIXED") || null,
                         }))
                       }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
                       <option value="">Unknown</option>
                       <option value="INDOOR">Indoor</option>
@@ -1094,9 +1094,9 @@ export default function VendorSuggestEventPage() {
                     onChange={(e) =>
                       setExtractedData((prev) => ({ ...prev, walkInsAllowed: e.target.checked }))
                     }
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-border text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-sm text-gray-700">Walk-in vendors welcome</span>
+                  <span className="text-sm text-foreground">Walk-in vendors welcome</span>
                 </label>
               </div>
             </div>
@@ -1131,7 +1131,7 @@ export default function VendorSuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
-            <p className="text-gray-600">Submitting event...</p>
+            <p className="text-muted-foreground">Submitting event...</p>
           </CardContent>
         </Card>
       )}
@@ -1143,11 +1143,11 @@ export default function VendorSuggestEventPage() {
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Check className="w-8 h-8 text-green-600" />
             </div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">Event Submitted!</h2>
-            <p className="text-gray-600 mb-1">
+            <h2 className="text-xl font-semibold text-foreground mb-2">Event Submitted!</h2>
+            <p className="text-muted-foreground mb-1">
               Your event has been published with a <strong>&ldquo;Tentative&rdquo;</strong> badge.
             </p>
-            <p className="text-sm text-gray-500 mb-6">
+            <p className="text-sm text-muted-foreground mb-6">
               Our team will verify the details and remove the tentative status once confirmed.
             </p>
 

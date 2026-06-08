@@ -22,7 +22,10 @@ export function BlogStatusButton({ slug, currentStatus }: BlogStatusButtonProps)
     e.preventDefault();
     e.stopPropagation();
 
-    if (isPublished && !confirm("Unpublish this post? It will no longer be visible to the public.")) {
+    if (
+      isPublished &&
+      !confirm("Unpublish this post? It will no longer be visible to the public.")
+    ) {
       return;
     }
 
@@ -54,7 +57,7 @@ export function BlogStatusButton({ slug, currentStatus }: BlogStatusButtonProps)
       disabled={loading}
       className={`w-full ${
         isPublished
-          ? "bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300"
+          ? "bg-muted text-foreground hover:bg-muted border border-border"
           : "bg-green-600 text-white hover:bg-green-700"
       }`}
     >

@@ -51,7 +51,7 @@ function Heading3({ children, ...rest }: ComponentProps<"h3">) {
 
 export function MarkdownContent({ content }: MarkdownContentProps) {
   return (
-    <div className="prose prose-lg max-w-none prose-headings:text-navy prose-headings:scroll-mt-20 prose-a:text-royal prose-a:underline hover:prose-a:text-royal/80 prose-img:rounded-lg prose-blockquote:border-royal/30 prose-blockquote:text-gray-700">
+    <div className="prose prose-lg max-w-none prose-headings:text-navy prose-headings:scroll-mt-20 prose-a:text-royal prose-a:underline hover:prose-a:text-royal/80 prose-img:rounded-lg prose-blockquote:border-royal/30 prose-blockquote:text-foreground">
       <ReactMarkdown
         remarkPlugins={[
           remarkGfm,

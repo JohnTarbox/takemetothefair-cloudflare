@@ -42,7 +42,7 @@ export default function ImportUrlPage() {
       <div className="mb-6">
         <Link
           href="/admin"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Admin
@@ -51,8 +51,8 @@ export default function ImportUrlPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Import from URL</h1>
-          <p className="text-gray-600 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">Import from URL</h1>
+          <p className="text-muted-foreground mt-1">
             Import event details from any webpage using AI extraction
           </p>
         </div>

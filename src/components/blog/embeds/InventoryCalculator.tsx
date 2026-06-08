@@ -86,7 +86,7 @@ export function InventoryCalculator() {
 
   return (
     <div className="not-prose my-8 w-full">
-      <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
+      <div className="bg-card rounded-2xl shadow-sm border border-stone-100 overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-amber to-amber-dark px-6 py-5">
           <h2 className="text-2xl font-bold text-navy">Craft Fair Inventory Calculator</h2>
@@ -185,11 +185,11 @@ export function InventoryCalculator() {
           <div className="bg-amber-light/60 border border-amber/40 rounded-xl p-5">
             <h3 className="text-lg font-bold text-navy mb-3">Your Inventory Plan</h3>
             <div className="grid grid-cols-2 gap-4 mb-4">
-              <div className="bg-white rounded-lg p-4 text-center shadow-sm">
+              <div className="bg-card rounded-lg p-4 text-center shadow-sm">
                 <div className="text-3xl font-bold text-amber-dark">{fmt(unitsToBring)}</div>
                 <div className="text-xs text-stone-600 mt-1">items to bring</div>
               </div>
-              <div className="bg-white rounded-lg p-4 text-center shadow-sm">
+              <div className="bg-card rounded-lg p-4 text-center shadow-sm">
                 <div className="text-3xl font-bold text-amber-dark">
                   {fmtDollar(dollarsToBring)}
                 </div>
@@ -204,7 +204,7 @@ export function InventoryCalculator() {
               {tierBreakdown.map((t, i) => (
                 <div
                   key={i}
-                  className="flex items-center justify-between bg-white rounded-lg px-4 py-2 shadow-sm"
+                  className="flex items-center justify-between bg-card rounded-lg px-4 py-2 shadow-sm"
                 >
                   <span className="text-sm text-stone-900">{t.label}</span>
                   <span className="text-sm font-semibold text-stone-900">

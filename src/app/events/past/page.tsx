@@ -178,7 +178,7 @@ export default async function PastEventsPage({
       />
 
       <div className="mb-8">
-        <nav className="text-sm text-gray-500 mb-4">
+        <nav className="text-sm text-muted-foreground mb-4">
           <Link href="/" className="hover:text-navy">
             Home
           </Link>
@@ -187,12 +187,12 @@ export default async function PastEventsPage({
             Events
           </Link>
           <span className="mx-2">/</span>
-          <span className="text-gray-900">Past Events</span>
+          <span className="text-foreground">Past Events</span>
         </nav>
-        <h1 className="text-3xl font-bold text-gray-900">
+        <h1 className="text-3xl font-bold text-foreground">
           Past Events{stateLabel ? ` in ${stateLabel}` : ""}
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           Browse fairs, festivals, and community events from previous seasons.{" "}
           <Link href="/events" className="text-royal hover:text-navy font-medium">
             View upcoming events &rarr;

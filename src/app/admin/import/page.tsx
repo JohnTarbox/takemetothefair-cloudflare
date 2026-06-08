@@ -456,7 +456,7 @@ function ImportResultsCard({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {importedEvents.length > 0 && (
             <div>
-              <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+              <h3 className="font-medium text-foreground mb-3 flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-600" />
                 Imported Events ({importedEvents.length})
               </h3>
@@ -466,7 +466,7 @@ function ImportResultsCard({
                     key={event.id}
                     className="flex items-center justify-between p-2 bg-green-50 rounded-md"
                   >
-                    <span className="text-sm text-gray-900">{event.name}</span>
+                    <span className="text-sm text-foreground">{event.name}</span>
                     <Link
                       href={`/events/${event.slug}`}
                       target="_blank"
@@ -481,7 +481,7 @@ function ImportResultsCard({
           )}
           {updatedEvents.length > 0 && (
             <div>
-              <h3 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+              <h3 className="font-medium text-foreground mb-3 flex items-center gap-2">
                 <RefreshCw className="w-4 h-4 text-blue-600" />
                 Updated Events ({updatedEvents.length})
               </h3>
@@ -491,7 +491,7 @@ function ImportResultsCard({
                     key={event.id}
                     className="flex items-center justify-between p-2 bg-blue-50 rounded-md"
                   >
-                    <span className="text-sm text-gray-900">{event.name}</span>
+                    <span className="text-sm text-foreground">{event.name}</span>
                     <Link
                       href={`/events/${event.slug}`}
                       target="_blank"
@@ -603,7 +603,7 @@ function SourceSelectionCard({
                 placeholder="https://www.fairsandfestivals.net/..."
                 className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm mt-1"
               />
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Enter any FairsAndFestivals.net page URL (e.g., state page, city page, or search
                 results)
               </p>
@@ -614,9 +614,9 @@ function SourceSelectionCard({
               type="checkbox"
               checked={fetchDetailsOnPreview}
               onChange={(e) => setFetchDetailsOnPreview(e.target.checked)}
-              className="rounded border-gray-300"
+              className="rounded border-border"
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-foreground">
               Fetch event details during preview (slower, but shows dates and venues)
             </span>
           </label>
@@ -671,7 +671,7 @@ function ImportSettingsCard({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Events will use this venue if set, or create venues from scraped location data.
             </p>
           </div>
@@ -690,7 +690,9 @@ function ImportSettingsCard({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">Events will be assigned to this promoter.</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Events will be assigned to this promoter.
+            </p>
           </div>
         </div>
         <div className="mt-4 space-y-2">
@@ -699,9 +701,9 @@ function ImportSettingsCard({
               type="checkbox"
               checked={fetchDetails}
               onChange={(e) => setFetchDetails(e.target.checked)}
-              className="rounded border-gray-300"
+              className="rounded border-border"
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-foreground">
               Fetch detailed information from event pages (slower but more complete)
             </span>
           </label>
@@ -710,9 +712,9 @@ function ImportSettingsCard({
               type="checkbox"
               checked={updateExisting}
               onChange={(e) => setUpdateExisting(e.target.checked)}
-              className="rounded border-gray-300"
+              className="rounded border-border"
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-foreground">
               Update existing events (allows re-importing already imported events)
             </span>
           </label>
@@ -739,10 +741,10 @@ function EventRow({
     <label
       className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
         event.exists
-          ? "bg-gray-50 border-gray-200"
+          ? "bg-muted border-border"
           : selected
             ? "bg-blue-50 border-blue-300"
-            : "hover:bg-gray-50"
+            : "hover:bg-muted"
       }`}
     >
       <input
@@ -750,18 +752,18 @@ function EventRow({
         checked={selected}
         onChange={() => toggleEventSelection(event.sourceId)}
         disabled={event.exists && !updateExisting}
-        className="mt-1 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        className="mt-1 rounded border-border text-blue-600 focus:ring-blue-500"
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="font-medium text-gray-900">{event.name}</span>
+          <span className="font-medium text-foreground">{event.name}</span>
           {event.exists ? (
             <Badge variant="default">Already Imported</Badge>
           ) : (
             <Badge variant="success">New</Badge>
           )}
         </div>
-        <div className="flex items-center gap-4 mt-1 text-sm text-gray-600">
+        <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
           <span className="flex items-center gap-1">
             <Calendar className="w-4 h-4" />
             {formatDate(event.startDate)} - {formatDate(event.endDate)}
@@ -789,7 +791,7 @@ function EventRow({
               </Badge>
             )}
             {event.vendorTypes && event.vendorTypes.length > 0 && (
-              <span className="text-gray-500">Vendors: {event.vendorTypes.join(", ")}</span>
+              <span className="text-muted-foreground">Vendors: {event.vendorTypes.join(", ")}</span>
             )}
           </div>
         )}
@@ -860,7 +862,7 @@ function EventsListCard({
         <div className="flex items-center justify-between">
           <div>
             <CardTitle>Preview Events</CardTitle>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-muted-foreground mt-1">
               {commercialFilter === "all" ? (
                 <>
                   {stats.total} events found: {stats.newCount} new, {stats.existingCount} already
@@ -875,12 +877,12 @@ function EventsListCard({
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1.5 text-sm text-gray-700">
+            <label className="flex items-center gap-1.5 text-sm text-foreground">
               <input
                 type="checkbox"
                 checked={excludeFarmersMarkets}
                 onChange={(e) => setExcludeFarmersMarkets(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-border"
               />
               Exclude Farmers Markets
             </label>
@@ -927,7 +929,7 @@ function EventsListCard({
         </div>
 
         <div className="mt-6 flex items-center justify-between border-t pt-4">
-          <span className="text-sm text-gray-600">
+          <span className="text-sm text-muted-foreground">
             {selectedEvents.size} event{selectedEvents.size !== 1 ? "s" : ""} selected
           </span>
           <Button
@@ -951,13 +953,13 @@ function EmptyState({ loading }: { loading: boolean }) {
   return (
     <Card>
       <CardContent className="py-12 text-center">
-        <Download className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-gray-900">Import Events from External Sources</h3>
-        <p className="text-gray-500 mt-2 max-w-md mx-auto">
+        <Download className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-foreground">Import Events from External Sources</h3>
+        <p className="text-muted-foreground mt-2 max-w-md mx-auto">
           Select a source and click &quot;Preview Events&quot; to see available events. You can then
           select which events to import into your calendar.
         </p>
-        <p className="text-sm text-gray-600 mt-4">
+        <p className="text-sm text-muted-foreground mt-4">
           Currently supported: mainefairs.net, mainemade.com, mainepublic.org, mafa.org,
           vtnhfairs.org (VT &amp; NH), fairsandfestivals.net (all states)
         </p>
@@ -976,7 +978,7 @@ export default function ImportEventsPage() {
       <div className="mb-6">
         <Link
           href="/admin"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Admin
@@ -985,8 +987,8 @@ export default function ImportEventsPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Import Events</h1>
-          <p className="text-gray-600 mt-1">Import and sync events from external sources</p>
+          <h1 className="text-2xl font-bold text-foreground">Import Events</h1>
+          <p className="text-muted-foreground mt-1">Import and sync events from external sources</p>
         </div>
         <Button variant="outline" onClick={state.handleSync} disabled={state.syncing}>
           <RefreshCw className={`w-4 h-4 mr-2 ${state.syncing ? "animate-spin" : ""}`} />
@@ -1012,7 +1014,7 @@ export default function ImportEventsPage() {
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="text-lg">Fix Truncated Descriptions</CardTitle>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             Find events with descriptions ending in &quot;...&quot; and re-scrape full text from
             source pages.
           </p>
@@ -1040,7 +1042,7 @@ export default function ImportEventsPage() {
 
           {state.rescrapeResults && (
             <div className="text-sm space-y-2">
-              <div className="flex gap-4 text-gray-700">
+              <div className="flex gap-4 text-foreground">
                 <span>
                   Found: <strong>{state.rescrapeResults.found}</strong>
                 </span>
@@ -1074,7 +1076,7 @@ export default function ImportEventsPage() {
                       <span className="truncate mr-2">{p.name}</span>
                       <span
                         className={
-                          p.status === "will re-scrape" ? "text-green-600" : "text-gray-600"
+                          p.status === "will re-scrape" ? "text-green-600" : "text-muted-foreground"
                         }
                       >
                         {p.status}

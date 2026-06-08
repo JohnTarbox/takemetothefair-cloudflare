@@ -54,7 +54,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
       <div className="p-6">
         <div className="flex gap-4">
           <Link href={`/vendors/${vendor.slug}`} className="flex-shrink-0">
-            <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center relative overflow-hidden hover:opacity-80 transition-opacity">
+            <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center relative overflow-hidden hover:opacity-80 transition-opacity">
               {vendor.logoUrl && !logoError ? (
                 <Image
                   src={vendor.logoUrl}
@@ -65,14 +65,14 @@ export function VendorCard({ vendor }: VendorCardProps) {
                   onError={() => setLogoError(true)}
                 />
               ) : (
-                <Store className="w-8 h-8 text-gray-600" />
+                <Store className="w-8 h-8 text-muted-foreground" />
               )}
             </div>
           </Link>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <Link href={`/vendors/${vendor.slug}`} className="hover:text-navy">
-                <h3 className="font-semibold text-gray-900 truncate">{vendor.businessName}</h3>
+                <h3 className="font-semibold text-foreground truncate">{vendor.businessName}</h3>
               </Link>
               {vendor.verified && <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />}
               <VendorTierBadges
@@ -85,7 +85,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
               {vendor.commercial && <Badge variant="default">Commercial</Badge>}
               <FavoriteButton type="VENDOR" id={vendor.id} className="ml-auto" size="sm" />
             </div>
-            <div className="flex items-center gap-2 text-sm text-gray-500 mt-1">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
               {vendor.vendorType && <span>{vendor.vendorType}</span>}
               {vendor.vendorType && (vendor.city || vendor.state) && <span>•</span>}
               {(vendor.city || vendor.state) && (
@@ -96,7 +96,9 @@ export function VendorCard({ vendor }: VendorCardProps) {
               )}
             </div>
             {vendor.description && (
-              <p className="text-sm text-gray-600 mt-2 line-clamp-2">{vendor.description}</p>
+              <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
+                {vendor.description}
+              </p>
             )}
             {products.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
@@ -113,8 +115,8 @@ export function VendorCard({ vendor }: VendorCardProps) {
 
         {/* Events Grid */}
         {vendor.events.length > 0 && (
-          <div className="mt-6 pt-6 border-t border-gray-100">
-            <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center gap-2">
+          <div className="mt-6 pt-6 border-t border-border">
+            <h4 className="text-sm font-medium text-foreground mb-3 flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               Upcoming Events ({vendor.events.length})
             </h4>
@@ -123,7 +125,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
                 <Link
                   key={event.id}
                   href={`/events/${event.slug}`}
-                  className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="block p-3 bg-muted rounded-lg hover:bg-muted transition-colors"
                 >
                   {event.imageUrl && (
                     <div className="aspect-video rounded-md overflow-hidden mb-2 relative">
@@ -136,12 +138,12 @@ export function VendorCard({ vendor }: VendorCardProps) {
                       />
                     </div>
                   )}
-                  <p className="font-medium text-gray-900 text-sm truncate">{event.name}</p>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="font-medium text-foreground text-sm truncate">{event.name}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
                     {formatDateRange(event.startDate, event.endDate)}
                   </p>
                   {event.venue && (
-                    <p className="text-xs text-gray-500 flex items-center gap-1 mt-1">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                       <MapPin className="w-3 h-3" />
                       {event.venue.city}, {event.venue.state}
                     </p>
@@ -153,7 +155,7 @@ export function VendorCard({ vendor }: VendorCardProps) {
         )}
 
         {vendor.events.length === 0 && (
-          <p className="mt-4 text-xs text-gray-500">No upcoming events scheduled</p>
+          <p className="mt-4 text-xs text-muted-foreground">No upcoming events scheduled</p>
         )}
       </div>
     </Card>

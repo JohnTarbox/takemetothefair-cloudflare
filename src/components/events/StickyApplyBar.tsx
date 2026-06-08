@@ -50,7 +50,7 @@ export function StickyApplyBar({ label, href, scrollTarget }: Props) {
 
   return (
     <div
-      className="lg:hidden fixed bottom-0 inset-x-0 z-40 p-3 bg-white/95 backdrop-blur border-t border-stone-100"
+      className="lg:hidden fixed bottom-0 inset-x-0 z-40 p-3 bg-card/95 backdrop-blur border-t border-stone-100"
       role="region"
       aria-label="Event actions"
     >

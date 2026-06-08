@@ -214,8 +214,8 @@ export default function AdminEventsPage() {
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -223,7 +223,7 @@ export default function AdminEventsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Manage Events</h1>
+        <h1 className="text-2xl font-bold text-foreground">Manage Events</h1>
         <Link href="/admin/events/new">
           <Button>
             <Plus className="w-4 h-4 mr-2" />
@@ -236,7 +236,7 @@ export default function AdminEventsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground bg-card"
         >
           <option value="all">All Statuses</option>
           <option value="APPROVED">Approved</option>
@@ -249,7 +249,7 @@ export default function AdminEventsPage() {
         <select
           value={venueFilter}
           onChange={(e) => setVenueFilter(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground bg-card"
         >
           <option value="all">All Venues</option>
           <option value="no-venue">No Venue</option>
@@ -258,7 +258,7 @@ export default function AdminEventsPage() {
         <select
           value={flagFilter}
           onChange={(e) => setFlagFilter(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground bg-card"
           title="Filter by pre-ingest gate flags"
         >
           <option value="all">All (gate flags)</option>
@@ -268,7 +268,7 @@ export default function AdminEventsPage() {
         <select
           value={reviewFlagFilter}
           onChange={(e) => setReviewFlagFilter(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 bg-white"
+          className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground bg-card"
           title="Filter by post-ingest operator review flag (set by helpers like the recurrence backfill)"
         >
           <option value="all">All (review flag)</option>
@@ -295,7 +295,7 @@ export default function AdminEventsPage() {
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             {filteredEvents.length === events.length
               ? `${pluralize(events.length, "event")} total`
               : `${filteredEvents.length} of ${pluralize(events.length, "event")}`}
@@ -305,7 +305,7 @@ export default function AdminEventsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-border">
                   <SortableHeader
                     column="name"
                     label="Event"
@@ -342,17 +342,17 @@ export default function AdminEventsPage() {
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
+                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {sortedEvents.map((event) => (
-                  <tr key={event.id} className="border-b border-gray-100">
+                  <tr key={event.id} className="border-b border-border">
                     <td className="py-3 px-4">
                       <div>
-                        <p className="font-medium text-gray-900">{event.name}</p>
+                        <p className="font-medium text-foreground">{event.name}</p>
                         {event.featured && (
                           <Badge variant="warning" className="mt-1">
                             Featured
@@ -381,7 +381,7 @@ export default function AdminEventsPage() {
                             >
                               {event.possibleDuplicate.name}
                             </Link>{" "}
-                            <span className="text-gray-500">
+                            <span className="text-muted-foreground">
                               ({event.possibleDuplicate.status})
                             </span>
                           </div>
@@ -390,7 +390,7 @@ export default function AdminEventsPage() {
                     </td>
                     <td className="py-3 px-4">
                       {event.venue?.name ? (
-                        <span className="text-gray-600">{event.venue.name}</span>
+                        <span className="text-muted-foreground">{event.venue.name}</span>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-amber-600">
                           <MapPin className="w-3.5 h-3.5" />
@@ -398,10 +398,12 @@ export default function AdminEventsPage() {
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
+                    <td className="py-3 px-4 text-muted-foreground">
                       {event.promoter?.companyName || "-"}
                     </td>
-                    <td className="py-3 px-4 text-gray-600">{formatDate(event.startDate)}</td>
+                    <td className="py-3 px-4 text-muted-foreground">
+                      {formatDate(event.startDate)}
+                    </td>
                     <td className="py-3 px-4">
                       <Badge variant={statusColors[event.status]}>{event.status}</Badge>
                     </td>
@@ -411,7 +413,7 @@ export default function AdminEventsPage() {
                           {event.blogPostCount}
                         </span>
                       ) : (
-                        <span className="text-xs text-gray-600">0</span>
+                        <span className="text-xs text-muted-foreground">0</span>
                       )}
                     </td>
                     <td className="py-3 px-4">

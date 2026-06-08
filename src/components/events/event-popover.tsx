@@ -116,12 +116,12 @@ export function EventPopover({ event, anchor, onClose, getEventColor }: EventPop
         {/* Bottom sheet */}
         <div
           ref={popoverRef}
-          className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl max-h-[70vh] overflow-y-auto animate-slide-up"
+          className="absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl max-h-[70vh] overflow-y-auto animate-slide-up"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Drag handle */}
           <div className="flex justify-center pt-3 pb-1">
-            <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            <div className="w-10 h-1 bg-border rounded-full" />
           </div>
           <PopoverContent
             event={event}
@@ -140,7 +140,7 @@ export function EventPopover({ event, anchor, onClose, getEventColor }: EventPop
     <div className="fixed inset-0 z-50 print:hidden" onClick={onClose}>
       <div
         ref={popoverRef}
-        className="absolute bg-white rounded-xl shadow-2xl border border-gray-200 w-80 overflow-hidden"
+        className="absolute bg-card rounded-xl shadow-2xl border border-border w-80 overflow-hidden"
         style={
           position
             ? { top: position.top, left: position.left }
@@ -181,14 +181,14 @@ function PopoverContent({
       {/* Close button */}
       <button
         onClick={onClose}
-        className="absolute top-2 right-2 z-10 p-1 bg-white/80 backdrop-blur-sm rounded-full text-gray-500 hover:text-gray-800 hover:bg-white transition-colors"
+        className="absolute top-2 right-2 z-10 p-1 bg-card/80 backdrop-blur-sm rounded-full text-muted-foreground hover:text-foreground hover:bg-card transition-colors"
         aria-label="Close"
       >
         <X className="w-4 h-4" />
       </button>
 
       {/* Image */}
-      <div className="relative h-36 w-full bg-gray-100">
+      <div className="relative h-36 w-full bg-muted">
         <Image src={imageUrl} alt={event.name} fill sizes="320px" className="object-cover" />
         {/* Color bar */}
         <div className={`absolute bottom-0 left-0 right-0 h-1 ${getEventColor(event.id)}`} />
@@ -196,16 +196,16 @@ function PopoverContent({
 
       {/* Content */}
       <div className="p-4">
-        <h3 className="font-semibold text-gray-900 text-base leading-tight mb-2">{event.name}</h3>
+        <h3 className="font-semibold text-foreground text-base leading-tight mb-2">{event.name}</h3>
 
-        <div className="space-y-1.5 text-sm text-gray-600 mb-3">
+        <div className="space-y-1.5 text-sm text-muted-foreground mb-3">
           <div className="flex items-center gap-2">
-            <CalendarIcon className="w-4 h-4 flex-shrink-0 text-gray-600" />
+            <CalendarIcon className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
             <span>{formatDateRange(event.startDate, event.endDate)}</span>
           </div>
           {location && (
             <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4 flex-shrink-0 text-gray-600" />
+              <MapPin className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
               <span>{location}</span>
             </div>
           )}
@@ -226,7 +226,7 @@ function PopoverContent({
         )}
 
         {/* Actions */}
-        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+        <div className="flex items-center justify-between pt-2 border-t border-border">
           <AddToCalendar
             title={event.name}
             description={event.description || undefined}
@@ -239,7 +239,7 @@ function PopoverContent({
           />
           <Link
             href={`/events/${event.slug}`}
-            className="inline-flex items-center gap-1.5 px-4 py-2 bg-royal text-white text-sm font-medium rounded-lg hover:bg-navy transition-colors"
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-secondary text-secondary-foreground text-sm font-medium rounded-lg hover:bg-secondary/90 transition-colors"
           >
             View Details
             <ChevronRight className="w-4 h-4" />
@@ -320,11 +320,11 @@ export function DayEventsPopover({
   const content = (
     <div onKeyDown={handleKeyDown}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
-        <h3 className="font-semibold text-gray-900 text-sm">{dateLabel}</h3>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <h3 className="font-semibold text-foreground text-sm">{dateLabel}</h3>
         <button
           onClick={onClose}
-          className="p-1 text-gray-600 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
+          className="p-1 text-muted-foreground hover:text-muted-foreground rounded-full hover:bg-muted transition-colors"
           aria-label="Close"
         >
           <X className="w-4 h-4" />
@@ -341,17 +341,17 @@ export function DayEventsPopover({
               const rect = e.currentTarget.getBoundingClientRect();
               onEventClick(event, { x: rect.right, y: rect.top });
             }}
-            className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center gap-2.5 transition-colors focus:bg-gray-50 focus:outline-none"
+            className="w-full text-left px-4 py-2 hover:bg-muted flex items-center gap-2.5 transition-colors focus:bg-muted focus:outline-none"
           >
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getEventColor(event.id)}`} />
-            <span className="text-sm text-gray-800 truncate flex-1">{event.name}</span>
-            <ChevronRight className="w-3.5 h-3.5 text-gray-600 flex-shrink-0" />
+            <span className="text-sm text-foreground truncate flex-1">{event.name}</span>
+            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
           </button>
         ))}
       </div>
 
       {/* View day link */}
-      <div className="border-t border-gray-100 px-4 py-2">
+      <div className="border-t border-border px-4 py-2">
         <button
           onClick={() => {
             onViewDay(date);
@@ -371,11 +371,11 @@ export function DayEventsPopover({
         <div className="absolute inset-0 bg-black/40" />
         <div
           ref={popoverRef}
-          className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl shadow-2xl max-h-[70vh] overflow-y-auto animate-slide-up"
+          className="absolute bottom-0 left-0 right-0 bg-card rounded-t-2xl shadow-2xl max-h-[70vh] overflow-y-auto animate-slide-up"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex justify-center pt-3 pb-1">
-            <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            <div className="w-10 h-1 bg-border rounded-full" />
           </div>
           {content}
         </div>
@@ -387,7 +387,7 @@ export function DayEventsPopover({
     <div className="fixed inset-0 z-50 print:hidden" onClick={onClose}>
       <div
         ref={popoverRef}
-        className="absolute bg-white rounded-xl shadow-2xl border border-gray-200 w-72 overflow-hidden"
+        className="absolute bg-card rounded-xl shadow-2xl border border-border w-72 overflow-hidden"
         style={
           position
             ? { top: position.top, left: position.left }

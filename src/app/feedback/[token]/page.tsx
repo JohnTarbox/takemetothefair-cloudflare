@@ -202,10 +202,10 @@ export default async function FeedbackPage({ params, searchParams }: PageProps) 
 function ConfirmCard({ title, body }: { title: string; body: string }) {
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
-      <div className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold text-gray-900">{title}</h1>
-        <p className="mt-3 text-gray-600">{body}</p>
-        <p className="mt-6 text-sm text-gray-500">
+      <div className="rounded-lg border border-border bg-card p-8 shadow-sm">
+        <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+        <p className="mt-3 text-muted-foreground">{body}</p>
+        <p className="mt-6 text-sm text-muted-foreground">
           <Link href="/" className="text-blue-600 hover:underline">
             ← Back to Meet Me at the Fair
           </Link>

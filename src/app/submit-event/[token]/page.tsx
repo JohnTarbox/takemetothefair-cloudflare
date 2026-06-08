@@ -44,12 +44,12 @@ export default async function CorrectionFormPage({ params }: PageProps) {
     return (
       <main className="mx-auto max-w-2xl px-4 py-12">
         <h1 className="text-2xl font-semibold">This correction link is no longer active</h1>
-        <p className="mt-4 text-gray-700">
+        <p className="mt-4 text-foreground">
           {lookup.status === "used"
             ? "Your correction was submitted earlier — thanks!"
             : "This link has expired. Correction links are valid for 30 days from the email you received."}
         </p>
-        <p className="mt-4 text-gray-700">
+        <p className="mt-4 text-foreground">
           If you still need to update the event, email{" "}
           <a
             className="text-blue-600 hover:underline"
@@ -87,7 +87,7 @@ export default async function CorrectionFormPage({ params }: PageProps) {
     return (
       <main className="mx-auto max-w-2xl px-4 py-12">
         <h1 className="text-2xl font-semibold">This event is no longer in our system</h1>
-        <p className="mt-4 text-gray-700">
+        <p className="mt-4 text-foreground">
           The event your correction link referenced has been removed. If you&apos;d like to submit
           it again, email{" "}
           <a className="text-blue-600 hover:underline" href="mailto:submit@meetmeatthefair.com">
@@ -103,7 +103,7 @@ export default async function CorrectionFormPage({ params }: PageProps) {
   return (
     <main className="mx-auto max-w-2xl px-4 py-12">
       <h1 className="text-2xl font-semibold">Help us get your event right</h1>
-      <p className="mt-2 text-gray-700">
+      <p className="mt-2 text-foreground">
         We pulled these details from your submission, but a couple of them weren&apos;t fully clear.
         Please correct anything that&apos;s wrong below — your changes will be saved and our team
         will review them.

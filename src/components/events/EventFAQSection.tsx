@@ -26,7 +26,7 @@ export function EventFAQSection({ items }: EventFAQSectionProps) {
       <CardHeader>
         <h2
           id="event-faq-heading"
-          className="text-xl font-semibold text-gray-900 flex items-center gap-2"
+          className="text-xl font-semibold text-foreground flex items-center gap-2"
         >
           <HelpCircle className="w-5 h-5" />
           Frequently Asked Questions
@@ -36,16 +36,16 @@ export function EventFAQSection({ items }: EventFAQSectionProps) {
         <section aria-labelledby="event-faq-heading" className="divide-y divide-gray-100 -mx-2">
           {items.map((item, i) => (
             <details key={i} className="group py-3 px-2 [&_summary::-webkit-details-marker]:hidden">
-              <summary className="flex cursor-pointer items-start justify-between gap-3 text-sm font-medium text-gray-900 hover:text-royal">
+              <summary className="flex cursor-pointer items-start justify-between gap-3 text-sm font-medium text-foreground hover:text-royal">
                 <span>{item.question}</span>
                 <span
                   aria-hidden="true"
-                  className="mt-0.5 text-gray-600 transition-transform group-open:rotate-45 select-none"
+                  className="mt-0.5 text-muted-foreground transition-transform group-open:rotate-45 select-none"
                 >
                   +
                 </span>
               </summary>
-              <p className="mt-2 text-sm text-gray-700 whitespace-pre-line">{item.answer}</p>
+              <p className="mt-2 text-sm text-foreground whitespace-pre-line">{item.answer}</p>
             </details>
           ))}
         </section>

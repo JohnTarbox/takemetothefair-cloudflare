@@ -114,8 +114,8 @@ export function GlobalSearch() {
 
   return (
     <div ref={containerRef} className="relative">
-      <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg px-3 py-1.5 shadow-sm focus-within:ring-2 focus-within:ring-royal focus-within:border-transparent">
-        <Search className="w-4 h-4 text-gray-600 flex-shrink-0" />
+      <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-3 py-1.5 shadow-sm focus-within:ring-2 focus-within:ring-royal focus-within:border-transparent">
+        <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
         <input
           ref={inputRef}
           type="text"
@@ -149,11 +149,13 @@ export function GlobalSearch() {
 
       {/* Dropdown */}
       {query.length >= 2 && (
-        <div className="absolute top-full mt-2 right-0 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50 max-h-96 overflow-y-auto">
-          {loading && <div className="p-4 text-sm text-gray-500 text-center">Searching...</div>}
+        <div className="absolute top-full mt-2 right-0 w-80 bg-card rounded-lg shadow-lg border border-border z-50 max-h-96 overflow-y-auto">
+          {loading && (
+            <div className="p-4 text-sm text-muted-foreground text-center">Searching...</div>
+          )}
 
           {!loading && !hasResults && results && (
-            <div className="p-4 text-sm text-gray-500 text-center">
+            <div className="p-4 text-sm text-muted-foreground text-center">
               {/* Track zero-result searches to identify content gaps */}
               <ZeroResultsTracker query={query} />
               No results found
@@ -164,17 +166,17 @@ export function GlobalSearch() {
             <div className="py-2">
               {results!.events.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                     Events
                   </div>
                   {results!.events.map((event) => (
                     <button
                       key={event.slug}
                       onClick={() => navigate(`/events/${event.slug}`)}
-                      className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                      className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-3 transition-colors"
                     >
                       <Calendar className="w-4 h-4 text-amber-fg flex-shrink-0" />
-                      <span className="text-sm text-gray-900 truncate">{event.name}</span>
+                      <span className="text-sm text-foreground truncate">{event.name}</span>
                     </button>
                   ))}
                 </div>
@@ -182,22 +184,22 @@ export function GlobalSearch() {
 
               {results!.venues.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider border-t border-gray-100 mt-1">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t border-border mt-1">
                     Venues
                   </div>
                   {results!.venues.map((venue) => (
                     <button
                       key={venue.slug}
                       onClick={() => navigate(`/venues/${venue.slug}`)}
-                      className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                      className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-3 transition-colors"
                     >
                       <MapPin className="w-4 h-4 text-royal flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="text-sm text-gray-900 truncate">
+                        <div className="text-sm text-foreground truncate">
                           {displayVenueName(venue)}
                         </div>
                         {(venue.city || venue.state) && (
-                          <div className="text-xs text-gray-500">
+                          <div className="text-xs text-muted-foreground">
                             {[venue.city, venue.state].filter(Boolean).join(", ")}
                           </div>
                         )}
@@ -209,20 +211,22 @@ export function GlobalSearch() {
 
               {results!.vendors.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider border-t border-gray-100 mt-1">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t border-border mt-1">
                     Vendors
                   </div>
                   {results!.vendors.map((vendor) => (
                     <button
                       key={vendor.slug}
                       onClick={() => navigate(`/vendors/${vendor.slug}`)}
-                      className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                      className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-3 transition-colors"
                     >
                       <Store className="w-4 h-4 text-green-600 flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="text-sm text-gray-900 truncate">{vendor.businessName}</div>
+                        <div className="text-sm text-foreground truncate">
+                          {vendor.businessName}
+                        </div>
                         {vendor.vendorType && (
-                          <div className="text-xs text-gray-500">{vendor.vendorType}</div>
+                          <div className="text-xs text-muted-foreground">{vendor.vendorType}</div>
                         )}
                       </div>
                     </button>
@@ -232,17 +236,17 @@ export function GlobalSearch() {
 
               {results!.blogPosts.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-600 uppercase tracking-wider border-t border-gray-100 mt-1">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t border-border mt-1">
                     Blog
                   </div>
                   {results!.blogPosts.map((post) => (
                     <button
                       key={post.slug}
                       onClick={() => navigate(`/blog/${post.slug}`)}
-                      className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+                      className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-3 transition-colors"
                     >
                       <FileText className="w-4 h-4 text-purple-600 flex-shrink-0" />
-                      <span className="text-sm text-gray-900 truncate">{post.title}</span>
+                      <span className="text-sm text-foreground truncate">{post.title}</span>
                     </button>
                   ))}
                 </div>
@@ -253,7 +257,7 @@ export function GlobalSearch() {
                   trackEvent("search", { category: "engagement", label: query.trim() });
                   navigate(`/search?q=${encodeURIComponent(query.trim())}`);
                 }}
-                className="w-full text-center px-3 py-2.5 text-sm text-royal hover:bg-gray-50 border-t border-gray-100 font-medium transition-colors"
+                className="w-full text-center px-3 py-2.5 text-sm text-royal hover:bg-muted border-t border-border font-medium transition-colors"
               >
                 View all results →
               </button>

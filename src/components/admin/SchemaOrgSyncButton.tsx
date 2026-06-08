@@ -183,20 +183,20 @@ export function SchemaOrgSyncButton() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          <Database className="w-5 h-5 text-gray-600" />
-          <h2 className="text-lg font-semibold text-gray-900">Schema.org Data</h2>
+          <Database className="w-5 h-5 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground">Schema.org Data</h2>
         </div>
       </CardHeader>
       <CardContent>
         {loading ? (
           <div className="animate-pulse space-y-2">
-            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-            <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+            <div className="h-4 bg-muted rounded w-1/2"></div>
+            <div className="h-4 bg-muted rounded w-1/3"></div>
           </div>
         ) : (
           <div className="space-y-4">
             {/* Stats */}
-            <div className="text-sm text-gray-600 space-y-1">
+            <div className="text-sm text-muted-foreground space-y-1">
               <p>
                 <span className="font-medium">{stats?.eventsWithTicketUrl || 0}</span> events have
                 ticket URLs
@@ -218,14 +218,16 @@ export function SchemaOrgSyncButton() {
                 spinner. */}
             {syncing && (
               <div className="space-y-2">
-                <div className="flex items-center gap-2 text-sm text-gray-600">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <RefreshCw className="w-4 h-4 animate-spin" />
                   <span>
                     Workflow {workflowStatus ?? "starting"} — processing {eventCount} event
                     {eventCount === 1 ? "" : "s"}…
                   </span>
                 </div>
-                {workflowId && <p className="text-xs text-gray-600">workflow id: {workflowId}</p>}
+                {workflowId && (
+                  <p className="text-xs text-muted-foreground">workflow id: {workflowId}</p>
+                )}
               </div>
             )}
 
@@ -272,20 +274,20 @@ export function SchemaOrgSyncButton() {
                     {showSuccessTable && (
                       <div className="max-h-48 overflow-y-auto">
                         <table className="w-full text-sm">
-                          <thead className="bg-gray-50 sticky top-0">
+                          <thead className="bg-muted sticky top-0">
                             <tr>
-                              <th className="text-left px-3 py-2 font-medium text-gray-700">
+                              <th className="text-left px-3 py-2 font-medium text-foreground">
                                 Event
                               </th>
-                              <th className="text-right px-3 py-2 font-medium text-gray-700 w-20">
+                              <th className="text-right px-3 py-2 font-medium text-foreground w-20">
                                 Actions
                               </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {successfulEvents.map((event) => (
-                              <tr key={event.eventId} className="hover:bg-gray-50">
-                                <td className="px-3 py-2 text-gray-900">
+                              <tr key={event.eventId} className="hover:bg-muted">
+                                <td className="px-3 py-2 text-foreground">
                                   {event.eventName ?? event.eventId}
                                 </td>
                                 <td className="px-3 py-2 text-right">
@@ -324,7 +326,7 @@ export function SchemaOrgSyncButton() {
                       <>
                         <div className="max-h-48 overflow-y-auto">
                           <table className="w-full text-sm">
-                            <thead className="bg-gray-50 sticky top-0">
+                            <thead className="bg-muted sticky top-0">
                               <tr>
                                 <th className="px-3 py-2 w-8">
                                   <input
@@ -342,20 +344,20 @@ export function SchemaOrgSyncButton() {
                                         setSelectedFailed(new Set());
                                       }
                                     }}
-                                    className="rounded border-gray-300"
+                                    className="rounded border-border"
                                   />
                                 </th>
-                                <th className="text-left px-3 py-2 font-medium text-gray-700">
+                                <th className="text-left px-3 py-2 font-medium text-foreground">
                                   Event
                                 </th>
-                                <th className="text-left px-3 py-2 font-medium text-gray-700">
+                                <th className="text-left px-3 py-2 font-medium text-foreground">
                                   Error
                                 </th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                               {failedEvents.map((event) => (
-                                <tr key={event.eventId} className="hover:bg-gray-50">
+                                <tr key={event.eventId} className="hover:bg-muted">
                                   <td className="px-3 py-2">
                                     <input
                                       type="checkbox"
@@ -369,10 +371,10 @@ export function SchemaOrgSyncButton() {
                                         }
                                         setSelectedFailed(newSet);
                                       }}
-                                      className="rounded border-gray-300"
+                                      className="rounded border-border"
                                     />
                                   </td>
-                                  <td className="px-3 py-2 text-gray-900">
+                                  <td className="px-3 py-2 text-foreground">
                                     {event.eventName ?? event.eventId}
                                   </td>
                                   <td className="px-3 py-2 text-red-600 text-xs">
@@ -445,7 +447,7 @@ export function SchemaOrgSyncButton() {
               </Button>
             </div>
 
-            <p className="text-xs text-gray-600">
+            <p className="text-xs text-muted-foreground">
               Fetches schema.org Event markup from ticket URLs to keep event data in sync. Runs as a
               Cloudflare Workflow — durable per-event retry, no 30s response cap.
             </p>

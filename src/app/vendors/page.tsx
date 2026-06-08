@@ -343,11 +343,11 @@ export default async function VendorsPage({
         pageUrl="https://meetmeatthefair.com/vendors"
       />
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Vendor Directory</h1>
-        <p className="mt-2 text-gray-600">
+        <h1 className="text-3xl font-bold text-foreground">Vendor Directory</h1>
+        <p className="mt-2 text-muted-foreground">
           Meet the artisans, food vendors, and businesses at our events
           {totalCount > 0 && (
-            <span className="ml-1 text-gray-500">
+            <span className="ml-1 text-muted-foreground">
               ({totalCount.toLocaleString()} {totalCount === 1 ? "vendor" : "vendors"})
             </span>
           )}
@@ -375,13 +375,13 @@ export default async function VendorsPage({
                     <input type="hidden" name="favorites" value={params.favorites} />
                   )}
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <input
                       type="text"
                       name="q"
                       defaultValue={params.q || ""}
                       placeholder="Search vendors..."
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
+                      className="w-full pl-10 pr-4 py-2 border border-border rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
                     />
                   </div>
                 </form>
@@ -389,14 +389,14 @@ export default async function VendorsPage({
 
               {/* Type Filter */}
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Filter by Type</h3>
+                <h3 className="font-medium text-foreground mb-3">Filter by Type</h3>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   <Link
                     href={`/vendors${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       !params.type
                         ? "bg-amber-light text-amber-bg-fg font-medium"
-                        : "text-gray-600 hover:bg-gray-50"
+                        : "text-muted-foreground hover:bg-muted"
                     }`}
                   >
                     All Types
@@ -408,7 +408,7 @@ export default async function VendorsPage({
                       className={`block px-3 py-2 rounded-lg text-sm ${
                         params.type === type
                           ? "bg-amber-light text-amber-bg-fg font-medium"
-                          : "text-gray-600 hover:bg-gray-50"
+                          : "text-muted-foreground hover:bg-muted"
                       }`}
                     >
                       {type}
@@ -419,7 +419,7 @@ export default async function VendorsPage({
 
               {/* Has Events Filter */}
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Events</h3>
+                <h3 className="font-medium text-foreground mb-3">Events</h3>
                 {showingWithEvents ? (
                   <Link
                     href={`/vendors${buildQueryString({ type: params.type, q: params.q, favorites: params.favorites })}`}
@@ -431,7 +431,7 @@ export default async function VendorsPage({
                 ) : (
                   <Link
                     href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted"
                   >
                     <Calendar className="w-4 h-4" />
                     With Upcoming Events
@@ -442,7 +442,7 @@ export default async function VendorsPage({
               {/* Favorites Filter */}
               {isLoggedIn && (
                 <div>
-                  <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
+                  <h3 className="font-medium text-foreground mb-3">Favorites</h3>
                   {showingFavorites ? (
                     <Link
                       href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: params.hasEvents })}`}
@@ -454,7 +454,7 @@ export default async function VendorsPage({
                   ) : (
                     <Link
                       href={`/vendors${buildQueryString({ type: params.type, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted"
                     >
                       <Heart className="w-4 h-4" />
                       My Favorites
@@ -467,7 +467,7 @@ export default async function VendorsPage({
               {hasFilters && (
                 <Link
                   href="/vendors"
-                  className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-foreground bg-muted hover:bg-muted rounded-lg transition-colors"
                 >
                   <X className="w-4 h-4" />
                   Clear Filters

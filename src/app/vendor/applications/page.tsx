@@ -165,8 +165,10 @@ export default async function VendorApplicationsPage({ searchParams }: PageProps
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Event Applications</h1>
-        <p className="mt-1 text-gray-600">Track your applications to participate in events</p>
+        <h1 className="text-2xl font-bold text-foreground">Event Applications</h1>
+        <p className="mt-1 text-muted-foreground">
+          Track your applications to participate in events
+        </p>
       </div>
 
       {applications.length > 0 && (
@@ -187,7 +189,9 @@ export default async function VendorApplicationsPage({ searchParams }: PageProps
                 role="tab"
                 aria-selected={isActive}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                  isActive ? "bg-navy text-white" : "bg-stone-100 text-stone-900 hover:bg-stone-300"
+                  isActive
+                    ? "bg-secondary text-secondary-foreground"
+                    : "bg-stone-100 text-stone-900 hover:bg-stone-300"
                 }`}
               >
                 {tab.label}

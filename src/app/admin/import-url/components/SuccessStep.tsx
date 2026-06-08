@@ -10,7 +10,12 @@ interface SuccessStepProps {
   onReset: () => void;
 }
 
-export function SuccessStep({ createdEvents, batchErrors, onRetryFailed, onReset }: SuccessStepProps) {
+export function SuccessStep({
+  createdEvents,
+  batchErrors,
+  onRetryFailed,
+  onReset,
+}: SuccessStepProps) {
   const hasErrors = batchErrors.length > 0;
   const hasCreated = createdEvents.length > 0;
 
@@ -20,11 +25,7 @@ export function SuccessStep({ createdEvents, batchErrors, onRetryFailed, onReset
         <div className="text-center">
           <div
             className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
-              hasErrors && !hasCreated
-                ? "bg-red-100"
-                : hasErrors
-                ? "bg-yellow-100"
-                : "bg-green-100"
+              hasErrors && !hasCreated ? "bg-red-100" : hasErrors ? "bg-yellow-100" : "bg-green-100"
             }`}
           >
             {hasErrors && !hasCreated ? (
@@ -35,25 +36,25 @@ export function SuccessStep({ createdEvents, batchErrors, onRetryFailed, onReset
               <Check className="w-8 h-8 text-green-600" />
             )}
           </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">
+          <h3 className="text-xl font-bold text-foreground mb-2">
             {hasErrors && !hasCreated
               ? "Import Failed"
               : hasErrors
-              ? `${createdEvents.length} of ${createdEvents.length + batchErrors.length} Events Imported`
-              : createdEvents.length > 1
-              ? `${createdEvents.length} Events Imported Successfully!`
-              : "Event Imported Successfully!"}
+                ? `${createdEvents.length} of ${createdEvents.length + batchErrors.length} Events Imported`
+                : createdEvents.length > 1
+                  ? `${createdEvents.length} Events Imported Successfully!`
+                  : "Event Imported Successfully!"}
           </h3>
-          <p className="text-gray-600 mb-6">
+          <p className="text-muted-foreground mb-6">
             {hasErrors && !hasCreated
               ? "All events failed to import. You can retry below."
               : hasErrors
-              ? `${batchErrors.length} event${batchErrors.length > 1 ? "s" : ""} failed to import.`
-              : createdEvents.length > 1
-              ? "All events have been created and are now live."
-              : createdEvents[0]?.name
-              ? `${createdEvents[0].name} has been created and is now live.`
-              : "The event has been created and is now live."}
+                ? `${batchErrors.length} event${batchErrors.length > 1 ? "s" : ""} failed to import.`
+                : createdEvents.length > 1
+                  ? "All events have been created and are now live."
+                  : createdEvents[0]?.name
+                    ? `${createdEvents[0].name} has been created and is now live.`
+                    : "The event has been created and is now live."}
           </p>
         </div>
 
@@ -95,9 +96,9 @@ export function SuccessStep({ createdEvents, batchErrors, onRetryFailed, onReset
             {createdEvents.map((event) => (
               <div
                 key={event.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                className="flex items-center justify-between p-3 bg-muted rounded-lg"
               >
-                <span className="font-medium text-gray-900 truncate flex-1 mr-3">
+                <span className="font-medium text-foreground truncate flex-1 mr-3">
                   {event.name}
                 </span>
                 <Link

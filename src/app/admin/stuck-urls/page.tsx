@@ -206,8 +206,8 @@ export default async function StuckUrlsPage() {
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">Stuck URLs (GSC index state)</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Stuck URLs (GSC index state)</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Clusters of URLs the URL-Inspection sweep marked non-indexed, grouped by entity type and
           (for events) state. The point: turn a list of 39 separate &quot;Discovered – currently not
           indexed&quot; rows into a worked list of 3–4 action targets (one pillar post + bulk{" "}
@@ -228,7 +228,7 @@ export default async function StuckUrlsPage() {
         </CardHeader>
         <CardContent className="p-0">
           {clusters.length === 0 ? (
-            <p className="p-6 text-sm text-gray-500">
+            <p className="p-6 text-sm text-muted-foreground">
               Nothing stuck. Run the URL Inspection sweep from /admin/analytics → Site Health to
               refresh.
             </p>
@@ -238,11 +238,11 @@ export default async function StuckUrlsPage() {
                 <li key={`${c.bucket}|${c.subkey}`} className="p-4">
                   <div className="flex items-baseline justify-between gap-4 flex-wrap">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-semibold text-gray-900">
+                      <span className="text-sm font-semibold text-foreground">
                         {bucketLabel(c.bucket)}
                       </span>
                       {c.subkey !== "—" && (
-                        <span className="text-xs text-gray-600 font-mono">{c.subkey}</span>
+                        <span className="text-xs text-muted-foreground font-mono">{c.subkey}</span>
                       )}
                     </div>
                     <div className="flex items-baseline gap-3 text-xs">
@@ -261,10 +261,10 @@ export default async function StuckUrlsPage() {
                       {c.unknown > 0 && (
                         <Badge
                           label={`${c.unknown} unknown`}
-                          cls="bg-gray-50 text-gray-600 border-gray-200"
+                          cls="bg-muted text-muted-foreground border-border"
                         />
                       )}
-                      <span className="text-sm font-medium text-gray-900 tabular-nums">
+                      <span className="text-sm font-medium text-foreground tabular-nums">
                         {c.totalUrls} URLs
                       </span>
                     </div>
@@ -279,7 +279,7 @@ export default async function StuckUrlsPage() {
                           // leave as-is
                         }
                         return (
-                          <li key={u} className="font-mono text-gray-600 truncate">
+                          <li key={u} className="font-mono text-muted-foreground truncate">
                             <a
                               href={u}
                               target="_blank"
@@ -292,7 +292,7 @@ export default async function StuckUrlsPage() {
                         );
                       })}
                       {c.totalUrls > c.sampleUrls.length && (
-                        <li className="text-gray-500">
+                        <li className="text-muted-foreground">
                           + {c.totalUrls - c.sampleUrls.length} more
                         </li>
                       )}
@@ -305,7 +305,7 @@ export default async function StuckUrlsPage() {
         </CardContent>
       </Card>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         Use MCP <code>request_indexing</code> for high-value individual URLs. Clusters of{" "}
         <span className="text-red-700">discovered, not indexed</span> usually indicate a missing
         pillar post; clusters of <span className="text-amber-700">crawled, not indexed</span>{" "}
@@ -328,11 +328,11 @@ function Stat({
   accent?: "green" | "red";
 }) {
   const cls =
-    accent === "green" ? "text-green-700" : accent === "red" ? "text-red-700" : "text-gray-900";
+    accent === "green" ? "text-green-700" : accent === "red" ? "text-red-700" : "text-foreground";
   return (
     <Card>
       <CardContent className="p-4">
-        <p className="text-xs text-gray-500">{label}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
         <p className={`text-2xl font-semibold tabular-nums mt-1 ${cls}`}>
           {value}
           {suffix && <span className="text-xs ml-1">{suffix}</span>}

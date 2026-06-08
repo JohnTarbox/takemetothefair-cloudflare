@@ -40,7 +40,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
-        <h2 className="text-lg font-semibold text-gray-900">Manage Event Vendors</h2>
+        <h2 className="text-lg font-semibold text-foreground">Manage Event Vendors</h2>
         <Link href="/admin/events">
           <Button variant="outline" size="sm">
             View All Events
@@ -50,7 +50,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
       <CardContent>
         {/* Search */}
         <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search events..."
             value={searchQuery}
@@ -60,9 +60,9 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
         </div>
 
         {events.length === 0 ? (
-          <p className="text-gray-500 py-4">No upcoming events</p>
+          <p className="text-muted-foreground py-4">No upcoming events</p>
         ) : filteredEvents.length === 0 ? (
-          <p className="text-gray-500 py-4">No events match your search</p>
+          <p className="text-muted-foreground py-4">No events match your search</p>
         ) : (
           <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto">
             {filteredEvents.map((event) => (
@@ -72,15 +72,15 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
                     <div className="flex items-center gap-2">
                       <Link
                         href={`/events/${event.slug}`}
-                        className="font-medium text-gray-900 hover:text-blue-600 truncate"
+                        className="font-medium text-foreground hover:text-blue-600 truncate"
                       >
                         {event.name}
                       </Link>
                       <Link href={`/events/${event.slug}`} target="_blank">
-                        <ExternalLink className="w-3 h-3 text-gray-600" />
+                        <ExternalLink className="w-3 h-3 text-muted-foreground" />
                       </Link>
                     </div>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-muted-foreground">
                       {formatDateRange(event.startDate, event.endDate)}
                       {event.venue && ` • ${event.venue.city}, ${event.venue.state}`}
                     </p>
@@ -104,7 +104,7 @@ export function EventVendorsPanel({ events }: EventVendorsPanelProps) {
         )}
 
         {events.length > 0 && (
-          <p className="text-xs text-gray-600 mt-3 pt-3 border-t">
+          <p className="text-xs text-muted-foreground mt-3 pt-3 border-t">
             Showing {filteredEvents.length} of {pluralize(events.length, "upcoming event")}
           </p>
         )}

@@ -38,7 +38,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
     try {
       const res = await fetch(`/api/admin/promoters/${id}`);
       if (!res.ok) throw new Error("Promoter not found");
-      const data = await res.json() as Promoter;
+      const data = (await res.json()) as Promoter;
       setPromoter(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load promoter");
@@ -69,7 +69,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to update promoter");
       }
 
@@ -84,8 +84,8 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-96 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-96 bg-muted rounded"></div>
       </div>
     );
   }
@@ -93,7 +93,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
   if (!promoter) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-600">Promoter not found</p>
+        <p className="text-muted-foreground">Promoter not found</p>
         <Link href="/admin/promoters" className="text-blue-600 hover:underline mt-2 inline-block">
           Back to Promoters
         </Link>
@@ -106,7 +106,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
       <div className="mb-6">
         <Link
           href="/admin/promoters"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Promoters
@@ -119,21 +119,15 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
               <div>
                 <Label>User Account</Label>
-                <Input
-                  value={promoter.user?.email || "-"}
-                  disabled
-                  className="bg-gray-100"
-                />
-                <p className="text-xs text-gray-500 mt-1">User cannot be changed</p>
+                <Input value={promoter.user?.email || "-"} disabled className="bg-muted" />
+                <p className="text-xs text-muted-foreground mt-1">User cannot be changed</p>
               </div>
 
               <div>
@@ -182,7 +176,7 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
                   name="verified"
                   type="checkbox"
                   defaultChecked={promoter.verified}
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-border"
                 />
                 <Label htmlFor="verified" className="font-normal">
                   Verified Promoter

@@ -35,16 +35,13 @@ export function Accordion({
 }: AccordionProps) {
   const [value, setValue] = React.useState<string[]>(defaultValue);
 
-  const onValueChange = React.useCallback(
-    (itemValue: string[]) => {
-      setValue(itemValue);
-    },
-    []
-  );
+  const onValueChange = React.useCallback((itemValue: string[]) => {
+    setValue(itemValue);
+  }, []);
 
   return (
     <AccordionContext.Provider value={{ value, onValueChange, type }}>
-      <div className={cn("divide-y divide-gray-200", className)}>{children}</div>
+      <div className={cn("divide-y divide-border", className)}>{children}</div>
     </AccordionContext.Provider>
   );
 }
@@ -80,9 +77,7 @@ export function AccordionItem({ value, children, className }: AccordionItemProps
       accordion.onValueChange(isOpen ? [] : [value]);
     } else {
       accordion.onValueChange(
-        isOpen
-          ? accordion.value.filter((v) => v !== value)
-          : [...accordion.value, value]
+        isOpen ? accordion.value.filter((v) => v !== value) : [...accordion.value, value]
       );
     }
   }, [accordion, isOpen, value]);
@@ -109,14 +104,14 @@ export function AccordionTrigger({ children, className }: AccordionTriggerProps)
       aria-expanded={isOpen}
       aria-controls={`accordion-content-${value}`}
       className={cn(
-        "flex w-full items-center justify-between text-left font-medium text-gray-900 hover:text-gray-700 transition-colors",
+        "flex w-full items-center justify-between text-left font-medium text-foreground hover:text-foreground transition-colors",
         className
       )}
     >
       {children}
       <ChevronDown
         className={cn(
-          "h-5 w-5 text-gray-500 transition-transform duration-200",
+          "h-5 w-5 text-muted-foreground transition-transform duration-200",
           isOpen && "rotate-180"
         )}
         aria-hidden="true"
@@ -144,7 +139,7 @@ export function AccordionContent({ children, className }: AccordionContentProps)
         className
       )}
     >
-      {isOpen && <div className="text-gray-600">{children}</div>}
+      {isOpen && <div className="text-muted-foreground">{children}</div>}
     </div>
   );
 }

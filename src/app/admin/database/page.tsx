@@ -69,7 +69,7 @@ export default function DatabaseManagementPage() {
     try {
       const res = await fetch("/api/admin/database/backup");
       if (!res.ok) {
-        const data = await res.json() as { error?: string };
+        const data = (await res.json()) as { error?: string };
         throw new Error(data.error || "Backup failed");
       }
 
@@ -122,7 +122,7 @@ export default function DatabaseManagementPage() {
         body: formData,
       });
 
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         error?: string;
         message?: string;
         details?: { tablesCreated: number; rowsInserted: number; totalErrors: number };
@@ -155,7 +155,7 @@ export default function DatabaseManagementPage() {
       <div className="mb-6">
         <Link
           href="/admin"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Admin
@@ -164,11 +164,11 @@ export default function DatabaseManagementPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Database className="w-6 h-6" />
             Database Management
           </h1>
-          <p className="text-gray-600 mt-1">Backup and restore your database</p>
+          <p className="text-muted-foreground mt-1">Backup and restore your database</p>
         </div>
         <Button variant="outline" onClick={fetchStats} disabled={loading}>
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
@@ -200,7 +200,7 @@ export default function DatabaseManagementPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Download a complete backup of your database as a SQL file. This includes all tables,
               data, and indexes.
             </p>
@@ -229,7 +229,7 @@ export default function DatabaseManagementPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-600 mb-4">
+            <p className="text-sm text-muted-foreground mb-4">
               Restore your database from a backup file. This will replace all existing data.
             </p>
             <Button
@@ -255,7 +255,7 @@ export default function DatabaseManagementPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="bg-white p-4 rounded-lg border border-orange-200">
+              <div className="bg-card p-4 rounded-lg border border-orange-200">
                 <p className="text-sm text-orange-800 font-medium mb-2">Warning:</p>
                 <ul className="text-sm text-orange-700 list-disc list-inside space-y-1">
                   <li>This will overwrite ALL existing data</li>
@@ -265,25 +265,25 @@ export default function DatabaseManagementPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   Select Backup File (.sql)
                 </label>
                 <input
                   type="file"
                   accept=".sql"
                   onChange={(e) => setRestoreFile(e.target.files?.[0] || null)}
-                  className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200"
+                  className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200"
                 />
                 {restoreFile && (
-                  <p className="text-sm text-gray-600 mt-1">
+                  <p className="text-sm text-muted-foreground mt-1">
                     Selected: {restoreFile.name} ({(restoreFile.size / 1024).toFixed(1)} KB)
                   </p>
                 )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Type <code className="bg-gray-100 px-1 rounded">yes-restore-database</code> to
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Type <code className="bg-muted px-1 rounded">yes-restore-database</code> to
                   confirm
                 </label>
                 <input
@@ -291,7 +291,7 @@ export default function DatabaseManagementPage() {
                   value={confirmRestore}
                   onChange={(e) => setConfirmRestore(e.target.value)}
                   placeholder="yes-restore-database"
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  className="block w-full px-3 py-2 border border-border rounded-md text-sm"
                 />
               </div>
 
@@ -333,53 +333,55 @@ export default function DatabaseManagementPage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <HardDrive className="w-5 h-5 text-gray-600" />
+            <HardDrive className="w-5 h-5 text-muted-foreground" />
             Database Statistics
           </CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
             <div className="animate-pulse space-y-3">
-              <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-              <div className="h-32 bg-gray-200 rounded"></div>
+              <div className="h-4 bg-muted rounded w-1/4"></div>
+              <div className="h-32 bg-muted rounded"></div>
             </div>
           ) : stats ? (
             <>
               <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="bg-gray-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-gray-900">{stats.summary.tableCount}</p>
-                  <p className="text-sm text-gray-600">Tables</p>
+                <div className="bg-muted p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-foreground">{stats.summary.tableCount}</p>
+                  <p className="text-sm text-muted-foreground">Tables</p>
                 </div>
-                <div className="bg-gray-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-gray-900">
+                <div className="bg-muted p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-foreground">
                     {stats.summary.totalRows.toLocaleString()}
                   </p>
-                  <p className="text-sm text-gray-600">Total Rows</p>
+                  <p className="text-sm text-muted-foreground">Total Rows</p>
                 </div>
-                <div className="bg-gray-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-gray-900">{stats.summary.indexCount}</p>
-                  <p className="text-sm text-gray-600">Indexes</p>
+                <div className="bg-muted p-4 rounded-lg text-center">
+                  <p className="text-2xl font-bold text-foreground">{stats.summary.indexCount}</p>
+                  <p className="text-sm text-muted-foreground">Indexes</p>
                 </div>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-border">
+                  <thead className="bg-muted">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         <Table className="w-4 h-4 inline mr-1" />
                         Table Name
                       </th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
                         Rows
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="bg-card divide-y divide-border">
                     {stats.tables.map((table) => (
-                      <tr key={table.name} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-mono text-gray-900">{table.name}</td>
-                        <td className="px-4 py-3 text-sm text-gray-600 text-right">
+                      <tr key={table.name} className="hover:bg-muted">
+                        <td className="px-4 py-3 text-sm font-mono text-foreground">
+                          {table.name}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-muted-foreground text-right">
                           {table.rowCount >= 0 ? table.rowCount.toLocaleString() : "Error"}
                         </td>
                       </tr>
@@ -389,7 +391,7 @@ export default function DatabaseManagementPage() {
               </div>
             </>
           ) : (
-            <p className="text-gray-500">Failed to load statistics</p>
+            <p className="text-muted-foreground">Failed to load statistics</p>
           )}
         </CardContent>
       </Card>

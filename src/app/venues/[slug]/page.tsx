@@ -231,7 +231,7 @@ export default async function VenueDetailPage({ params }: Props) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
             {venue.imageUrl && (
-              <div className="aspect-video rounded-xl overflow-hidden bg-gray-100 relative">
+              <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
                 <Image
                   src={venue.imageUrl}
                   alt={venueDisplayName}
@@ -247,8 +247,8 @@ export default async function VenueDetailPage({ params }: Props) {
               {/* Cohort 8 follow-up: same fallback as the venue-card H3 — keeps
                   the detail page consistent with the listing page when the
                   underlying name is a raw street address. */}
-              <h1 className="text-3xl md:text-4xl font-bold text-gray-900">{venueDisplayName}</h1>
-              <p className="mt-2 text-lg text-gray-600 flex items-center gap-2">
+              <h1 className="text-3xl md:text-4xl font-bold text-foreground">{venueDisplayName}</h1>
+              <p className="mt-2 text-lg text-muted-foreground flex items-center gap-2">
                 <MapPin className="w-5 h-5" />
                 {venue.city}, {venue.state}
               </p>
@@ -256,7 +256,7 @@ export default async function VenueDetailPage({ params }: Props) {
 
             {venue.description && (
               <div className="prose prose-gray max-w-none">
-                <p className="text-gray-600 whitespace-pre-wrap">{venue.description}</p>
+                <p className="text-muted-foreground whitespace-pre-wrap">{venue.description}</p>
               </div>
             )}
 
@@ -264,7 +264,7 @@ export default async function VenueDetailPage({ params }: Props) {
               return (
                 amenities.length > 0 && (
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-900 mb-3">Amenities</h2>
+                    <h2 className="text-xl font-semibold text-foreground mb-3">Amenities</h2>
                     <div className="flex flex-wrap gap-2">
                       {amenities.map((amenity) => (
                         <Badge key={amenity} variant="info">
@@ -293,7 +293,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 if (features.length === 0) return null;
                 return (
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
                       <Accessibility className="w-5 h-5" />
                       Accessibility
                     </h2>
@@ -330,7 +330,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 if (options.length === 0) return null;
                 return (
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
                       <ParkingSquare className="w-5 h-5" />
                       Parking
                     </h2>
@@ -351,7 +351,7 @@ export default async function VenueDetailPage({ params }: Props) {
             {venue.events.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-gray-900">Upcoming Events</h2>
+                  <h2 className="text-xl font-semibold text-foreground">Upcoming Events</h2>
                   <Link
                     href={`/events?venue=${venue.slug}`}
                     className="text-royal hover:text-navy text-sm font-medium"
@@ -367,14 +367,14 @@ export default async function VenueDetailPage({ params }: Props) {
           <aside className="space-y-6">
             <Card>
               <CardHeader>
-                <h3 className="font-semibold text-gray-900">Location</h3>
+                <h3 className="font-semibold text-foreground">Location</h3>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-start gap-3">
                   <MapPin className="w-5 h-5 text-royal mt-0.5" />
                   <div>
-                    <p className="text-gray-900">{venue.address}</p>
-                    <p className="text-gray-600">
+                    <p className="text-foreground">{venue.address}</p>
+                    <p className="text-muted-foreground">
                       {venue.city}, {venue.state} {venue.zip}
                     </p>
                     <a
@@ -394,7 +394,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 {venue.capacity && (
                   <div className="flex items-center gap-3">
                     <Users className="w-5 h-5 text-royal" />
-                    <p className="text-gray-900">Capacity: {venue.capacity.toLocaleString()}</p>
+                    <p className="text-foreground">Capacity: {venue.capacity.toLocaleString()}</p>
                   </div>
                 )}
                 {isAdmin && (
@@ -410,13 +410,13 @@ export default async function VenueDetailPage({ params }: Props) {
 
             <Card>
               <CardHeader>
-                <h3 className="font-semibold text-gray-900">Contact</h3>
+                <h3 className="font-semibold text-foreground">Contact</h3>
               </CardHeader>
               <CardContent className="space-y-3">
                 {venue.contactPhone && (
                   <a
                     href={`tel:${venue.contactPhone}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
+                    className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Phone className="w-5 h-5 text-royal" />
                     {venue.contactPhone}
@@ -425,7 +425,7 @@ export default async function VenueDetailPage({ params }: Props) {
                 {venue.contactEmail && (
                   <a
                     href={`mailto:${venue.contactEmail}`}
-                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
+                    className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Mail className="w-5 h-5 text-royal" />
                     {venue.contactEmail}
@@ -436,7 +436,7 @@ export default async function VenueDetailPage({ params }: Props) {
                     href={venue.website}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-3 text-gray-700 hover:text-navy"
+                    className="flex items-center gap-3 text-foreground hover:text-navy"
                   >
                     <Globe className="w-5 h-5 text-royal" />
                     Visit Website
@@ -450,8 +450,8 @@ export default async function VenueDetailPage({ params }: Props) {
                 <div className="flex items-center gap-3">
                   <Calendar className="w-8 h-8 text-royal" />
                   <div>
-                    <p className="text-2xl font-bold text-gray-900">{venue.events.length}</p>
-                    <p className="text-sm text-gray-600">Upcoming Events</p>
+                    <p className="text-2xl font-bold text-foreground">{venue.events.length}</p>
+                    <p className="text-sm text-muted-foreground">Upcoming Events</p>
                   </div>
                 </div>
               </CardContent>
@@ -460,7 +460,7 @@ export default async function VenueDetailPage({ params }: Props) {
             {linkedBlogPosts.length > 0 && (
               <Card>
                 <CardHeader>
-                  <h3 className="font-semibold text-gray-900">Written about this venue</h3>
+                  <h3 className="font-semibold text-foreground">Written about this venue</h3>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {linkedBlogPosts.map((post) => (
@@ -472,9 +472,11 @@ export default async function VenueDetailPage({ params }: Props) {
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 mb-1 rounded-full text-[11px] font-medium bg-amber-light text-amber-bg-fg">
                         Written about this venue
                       </span>
-                      <p className="font-medium text-gray-900 line-clamp-2">{post.title}</p>
+                      <p className="font-medium text-foreground line-clamp-2">{post.title}</p>
                       {post.excerpt && (
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                          {post.excerpt}
+                        </p>
                       )}
                     </Link>
                   ))}

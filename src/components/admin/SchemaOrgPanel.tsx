@@ -248,12 +248,12 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
     return (
       <Card className="mt-6">
         <CardHeader className="flex flex-row items-center justify-between gap-4">
-          <h2 className="text-lg font-semibold text-gray-900">Schema.org Data</h2>
+          <h2 className="text-lg font-semibold text-foreground">Schema.org Data</h2>
         </CardHeader>
         <CardContent>
           <div className="animate-pulse space-y-4">
-            <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-            <div className="h-20 bg-gray-200 rounded"></div>
+            <div className="h-4 bg-muted rounded w-1/4"></div>
+            <div className="h-20 bg-muted rounded"></div>
           </div>
         </CardContent>
       </Card>
@@ -270,7 +270,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-2 text-lg font-semibold text-gray-900 hover:text-gray-700"
+          className="flex items-center gap-2 text-lg font-semibold text-foreground hover:text-foreground"
         >
           {expanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
           Schema.org Data
@@ -303,7 +303,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
           )}
 
           {!hasTicketUrl && (
-            <div className="p-4 bg-gray-50 rounded-md text-gray-600 text-sm">
+            <div className="p-4 bg-muted rounded-md text-muted-foreground text-sm">
               <p>
                 No ticket URL configured for this event. Add a ticket URL to fetch schema.org data.
               </p>
@@ -311,7 +311,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
           )}
 
           {hasTicketUrl && !schemaOrg && (
-            <div className="p-4 bg-gray-50 rounded-md text-gray-600 text-sm">
+            <div className="p-4 bg-muted rounded-md text-muted-foreground text-sm">
               <p>Click &quot;Refresh&quot; to fetch schema.org data from the ticket URL.</p>
               {event?.ticketUrl && (
                 <a
@@ -329,7 +329,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
 
           {schemaOrg && schemaOrg.status === "available" && (
             <>
-              <p className="text-sm text-gray-500 mb-4">
+              <p className="text-sm text-muted-foreground mb-4">
                 Compare current event data with schema.org markup from the ticket URL. Select fields
                 to update and click &quot;Apply Selected&quot;.
               </p>
@@ -363,12 +363,12 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                               type="checkbox"
                               checked={selectedFields.has(field.key)}
                               onChange={() => toggleField(field.key)}
-                              className="h-4 w-4 rounded border-gray-300"
+                              className="h-4 w-4 rounded border-border"
                             />
                           )}
                         </td>
-                        <td className="py-2 pr-4 font-medium text-gray-700">{field.label}</td>
-                        <td className="py-2 pr-4 text-gray-600 max-w-xs truncate">
+                        <td className="py-2 pr-4 font-medium text-foreground">{field.label}</td>
+                        <td className="py-2 pr-4 text-muted-foreground max-w-xs truncate">
                           {field.key === "description"
                             ? field.eventValue
                               ? String(field.eventValue).substring(0, 100) + "..."
@@ -376,7 +376,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                             : formatValue(field.eventValue)}
                         </td>
                         <td
-                          className={`py-2 max-w-xs truncate ${field.isDifferent ? "text-yellow-700 font-medium" : "text-gray-600"}`}
+                          className={`py-2 max-w-xs truncate ${field.isDifferent ? "text-yellow-700 font-medium" : "text-muted-foreground"}`}
                         >
                           {field.key === "description"
                             ? field.schemaValue
@@ -399,7 +399,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                   <button
                     type="button"
                     onClick={() => setSelectedFields(new Set())}
-                    className="text-sm text-gray-500 hover:text-gray-700"
+                    className="text-sm text-muted-foreground hover:text-foreground"
                   >
                     Clear selection
                   </button>
@@ -409,16 +409,16 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               {/* Additional venue/organizer info */}
               {(schemaOrg.schemaVenueName || schemaOrg.schemaOrganizerName) && (
                 <div className="mt-6 pt-4 border-t">
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  <h3 className="text-sm font-medium text-foreground mb-2">
                     Additional Schema.org Info
                   </h3>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     {schemaOrg.schemaVenueName && (
                       <div>
-                        <span className="text-gray-500">Venue:</span>{" "}
-                        <span className="text-gray-900">{schemaOrg.schemaVenueName}</span>
+                        <span className="text-muted-foreground">Venue:</span>{" "}
+                        <span className="text-foreground">{schemaOrg.schemaVenueName}</span>
                         {schemaOrg.schemaVenueCity && (
-                          <span className="text-gray-500">
+                          <span className="text-muted-foreground">
                             {" "}
                             - {schemaOrg.schemaVenueCity}, {schemaOrg.schemaVenueState}
                           </span>
@@ -427,14 +427,14 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
                     )}
                     {schemaOrg.schemaOrganizerName && (
                       <div>
-                        <span className="text-gray-500">Organizer:</span>{" "}
-                        <span className="text-gray-900">{schemaOrg.schemaOrganizerName}</span>
+                        <span className="text-muted-foreground">Organizer:</span>{" "}
+                        <span className="text-foreground">{schemaOrg.schemaOrganizerName}</span>
                       </div>
                     )}
                     {schemaOrg.schemaEventStatus && (
                       <div>
-                        <span className="text-gray-500">Status:</span>{" "}
-                        <span className="text-gray-900">{schemaOrg.schemaEventStatus}</span>
+                        <span className="text-muted-foreground">Status:</span>{" "}
+                        <span className="text-foreground">{schemaOrg.schemaEventStatus}</span>
                       </div>
                     )}
                   </div>
@@ -442,7 +442,7 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
               )}
 
               {/* Last fetched info */}
-              <div className="mt-4 pt-4 border-t text-xs text-gray-600">
+              <div className="mt-4 pt-4 border-t text-xs text-muted-foreground">
                 Last fetched:{" "}
                 {schemaOrg.lastFetchedAt ? formatTimestamp(schemaOrg.lastFetchedAt) : "Never"}
                 {schemaOrg.fetchCount && ` (${schemaOrg.fetchCount} total fetches)`}
@@ -465,9 +465,9 @@ export function SchemaOrgPanel({ eventId, onFieldsApplied }: SchemaOrgPanelProps
           )}
 
           {schemaOrg && schemaOrg.status === "not_found" && (
-            <div className="p-4 bg-gray-50 rounded-md text-gray-600 text-sm">
+            <div className="p-4 bg-muted rounded-md text-muted-foreground text-sm">
               <p>No schema.org Event markup was found on the ticket URL.</p>
-              <p className="mt-2 text-gray-500">
+              <p className="mt-2 text-muted-foreground">
                 The page may not include structured data, or it may use a different format.
               </p>
               {schemaOrg.ticketUrl && (

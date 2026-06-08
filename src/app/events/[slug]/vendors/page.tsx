@@ -76,11 +76,11 @@ export default function EventVendorsPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-          <div className="h-12 bg-gray-200 rounded"></div>
+          <div className="h-8 bg-muted rounded w-1/4"></div>
+          <div className="h-12 bg-muted rounded"></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
-              <div key={i} className="h-48 bg-gray-200 rounded"></div>
+              <div key={i} className="h-48 bg-muted rounded"></div>
             ))}
           </div>
         </div>
@@ -105,15 +105,15 @@ export default function EventVendorsPage() {
       <div className="mb-8">
         <Link
           href={`/events/${slug}`}
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-navy mb-4"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-navy mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Event
         </Link>
-        <h1 className="text-3xl font-bold text-gray-900">
+        <h1 className="text-3xl font-bold text-foreground">
           Vendors at {eventInfo?.name || "Event"}
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           {vendors.length} vendor{vendors.length !== 1 ? "s" : ""} participating
         </p>
       </div>
@@ -121,19 +121,19 @@ export default function EventVendorsPage() {
       {/* Filters */}
       <div className="mb-6 flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <input
             type="text"
             placeholder="Search vendors..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
+            className="w-full pl-10 pr-4 py-2 border border-border rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
           />
         </div>
         <select
           value={selectedType}
           onChange={(e) => setSelectedType(e.target.value)}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
+          className="px-4 py-2 border border-border rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
         >
           <option value="all">All Types</option>
           {vendorTypes.map((type) => (
@@ -142,13 +142,13 @@ export default function EventVendorsPage() {
             </option>
           ))}
         </select>
-        <div className="flex gap-1 border border-gray-300 rounded-lg p-1">
+        <div className="flex gap-1 border border-border rounded-lg p-1">
           <button
             onClick={() => setViewMode("grid")}
             className={`p-2 rounded ${
               viewMode === "grid"
                 ? "bg-amber-light text-amber-bg-fg"
-                : "text-gray-600 hover:bg-gray-100"
+                : "text-muted-foreground hover:bg-muted"
             }`}
             aria-label="Grid view"
           >
@@ -159,7 +159,7 @@ export default function EventVendorsPage() {
             className={`p-2 rounded ${
               viewMode === "list"
                 ? "bg-amber-light text-amber-bg-fg"
-                : "text-gray-600 hover:bg-gray-100"
+                : "text-muted-foreground hover:bg-muted"
             }`}
             aria-label="List view"
           >
@@ -172,9 +172,11 @@ export default function EventVendorsPage() {
       {filteredVendors.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Store className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No vendors found</h3>
-            <p className="mt-1 text-gray-500">Try adjusting your search or filter criteria</p>
+            <Store className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-foreground">No vendors found</h3>
+            <p className="mt-1 text-muted-foreground">
+              Try adjusting your search or filter criteria
+            </p>
           </CardContent>
         </Card>
       ) : viewMode === "grid" ? (
@@ -184,7 +186,7 @@ export default function EventVendorsPage() {
               <Card className="h-full hover:shadow-lg transition-shadow">
                 <CardContent className="p-6">
                   <div className="flex items-start gap-4">
-                    <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
                       {vendor.logoUrl ? (
                         <img
                           src={vendor.logoUrl}
@@ -192,12 +194,12 @@ export default function EventVendorsPage() {
                           className="w-16 h-16 rounded-lg object-cover"
                         />
                       ) : (
-                        <Store className="w-8 h-8 text-gray-600" />
+                        <Store className="w-8 h-8 text-muted-foreground" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900 truncate">
+                        <h3 className="font-semibold text-foreground truncate">
                           {vendor.businessName}
                         </h3>
                         {vendor.verified && (
@@ -212,20 +214,22 @@ export default function EventVendorsPage() {
                     </div>
                   </div>
                   {vendor.description && (
-                    <p className="mt-3 text-sm text-gray-600 line-clamp-2">{vendor.description}</p>
+                    <p className="mt-3 text-sm text-muted-foreground line-clamp-2">
+                      {vendor.description}
+                    </p>
                   )}
                   {vendor.products && vendor.products.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-1">
                       {vendor.products.slice(0, 3).map((product) => (
                         <span
                           key={product}
-                          className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded"
+                          className="px-2 py-0.5 bg-muted text-muted-foreground text-xs rounded"
                         >
                           {product}
                         </span>
                       ))}
                       {vendor.products.length > 3 && (
-                        <span className="px-2 py-0.5 text-gray-500 text-xs">
+                        <span className="px-2 py-0.5 text-muted-foreground text-xs">
                           +{vendor.products.length - 3} more
                         </span>
                       )}
@@ -242,7 +246,7 @@ export default function EventVendorsPage() {
             <Link key={vendor.id} href={`/vendors/${vendor.slug}`}>
               <Card className="hover:shadow-md transition-shadow">
                 <CardContent className="p-4 flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                  <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
                     {vendor.logoUrl ? (
                       <img
                         src={vendor.logoUrl}
@@ -250,17 +254,17 @@ export default function EventVendorsPage() {
                         className="w-16 h-16 rounded-lg object-cover"
                       />
                     ) : (
-                      <Store className="w-8 h-8 text-gray-600" />
+                      <Store className="w-8 h-8 text-muted-foreground" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">{vendor.businessName}</h3>
+                      <h3 className="font-semibold text-foreground">{vendor.businessName}</h3>
                       {vendor.verified && <CheckCircle className="w-4 h-4 text-royal" />}
                       {vendor.vendorType && <Badge variant="default">{vendor.vendorType}</Badge>}
                     </div>
                     {vendor.description && (
-                      <p className="mt-1 text-sm text-gray-600 line-clamp-1">
+                      <p className="mt-1 text-sm text-muted-foreground line-clamp-1">
                         {vendor.description}
                       </p>
                     )}
@@ -269,13 +273,13 @@ export default function EventVendorsPage() {
                         {vendor.products.slice(0, 5).map((product) => (
                           <span
                             key={product}
-                            className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded"
+                            className="px-2 py-0.5 bg-muted text-muted-foreground text-xs rounded"
                           >
                             {product}
                           </span>
                         ))}
                         {vendor.products.length > 5 && (
-                          <span className="px-2 py-0.5 text-gray-500 text-xs">
+                          <span className="px-2 py-0.5 text-muted-foreground text-xs">
                             +{vendor.products.length - 5} more
                           </span>
                         )}
