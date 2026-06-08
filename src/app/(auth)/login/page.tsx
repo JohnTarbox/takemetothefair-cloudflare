@@ -56,8 +56,8 @@ function LoginForm() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
-        <h1 className="text-2xl font-bold text-center text-gray-900">Welcome Back</h1>
-        <p className="text-center text-gray-600 mt-2">Sign in to your account</p>
+        <h1 className="text-2xl font-bold text-center text-foreground">Welcome Back</h1>
+        <p className="text-center text-muted-foreground mt-2">Sign in to your account</p>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -99,10 +99,10 @@ function LoginForm() {
         <div className="mt-6">
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200" />
+              <div className="w-full border-t border-border" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-gray-500">Or continue with</span>
+              <span className="px-2 bg-card text-muted-foreground">Or continue with</span>
             </div>
           </div>
 
@@ -146,7 +146,7 @@ function LoginForm() {
           </div>
         </div>
 
-        <p className="mt-6 text-center text-sm text-gray-600">
+        <p className="mt-6 text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{" "}
           <Link href="/register" className="text-royal hover:text-navy font-medium">
             Sign up
@@ -161,7 +161,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
       <Suspense
-        fallback={<div className="w-full max-w-md h-96 bg-gray-100 rounded-xl animate-pulse" />}
+        fallback={<div className="w-full max-w-md h-96 bg-muted rounded-xl animate-pulse" />}
       >
         <LoginForm />
       </Suspense>

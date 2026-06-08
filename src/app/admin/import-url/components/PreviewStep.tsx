@@ -78,7 +78,7 @@ export function PreviewStep({
             {eventsToImport.map((event, index) => (
               <div key={event._extractId} className="border rounded-lg p-4 flex gap-4">
                 {event.imageUrl && (
-                  <div className="w-24 h-16 rounded overflow-hidden flex-shrink-0 bg-gray-100">
+                  <div className="w-24 h-16 rounded overflow-hidden flex-shrink-0 bg-muted">
                     <img
                       src={event.imageUrl}
                       alt={event.name || "Event"}
@@ -90,10 +90,10 @@ export function PreviewStep({
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-medium text-gray-900 truncate">
+                  <h3 className="font-medium text-foreground truncate">
                     {index + 1}. {event.name}
                   </h3>
-                  <div className="flex items-center text-sm text-gray-600 mt-1">
+                  <div className="flex items-center text-sm text-muted-foreground mt-1">
                     <Calendar className="w-3 h-3 mr-1" />
                     {formatDateForDisplay(event.startDate)}
                     {event.endDate && event.endDate !== event.startDate && (
@@ -101,14 +101,14 @@ export function PreviewStep({
                     )}
                   </div>
                   {(event.startTime || event.endTime) && (
-                    <div className="flex items-center text-sm text-gray-600 mt-1">
+                    <div className="flex items-center text-sm text-muted-foreground mt-1">
                       <Clock className="w-3 h-3 mr-1" />
                       {formatTimeForDisplay(event.startTime)}
                       {event.endTime && <> - {formatTimeForDisplay(event.endTime)}</>}
                     </div>
                   )}
                   {event.venueName && (
-                    <div className="flex items-center text-sm text-gray-600 mt-1">
+                    <div className="flex items-center text-sm text-muted-foreground mt-1">
                       <MapPin className="w-3 h-3 mr-1" />
                       {event.venueName}
                       {event.venueCity && `, ${event.venueCity}`}
@@ -126,7 +126,7 @@ export function PreviewStep({
           <div className="border rounded-lg overflow-hidden mb-6">
             {/* Image */}
             {extractedData.imageUrl && (
-              <div className="aspect-video relative bg-gray-100">
+              <div className="aspect-video relative bg-muted">
                 <img
                   src={extractedData.imageUrl}
                   alt={extractedData.name || "Event"}
@@ -139,10 +139,10 @@ export function PreviewStep({
             )}
 
             <div className="p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-2">{extractedData.name}</h2>
+              <h2 className="text-xl font-bold text-foreground mb-2">{extractedData.name}</h2>
 
               {/* Dates */}
-              <div className="flex items-center text-gray-600 mb-2">
+              <div className="flex items-center text-muted-foreground mb-2">
                 <Calendar className="w-4 h-4 mr-2" />
                 <span>
                   {formatDateForDisplay(extractedData.startDate)}
@@ -157,7 +157,7 @@ export function PreviewStep({
 
               {/* Times */}
               {(extractedData.startTime || extractedData.endTime) && (
-                <div className="flex items-center text-gray-600 mb-2">
+                <div className="flex items-center text-muted-foreground mb-2">
                   <Clock className="w-4 h-4 mr-2" />
                   <span>
                     {formatTimeForDisplay(extractedData.startTime)}
@@ -171,7 +171,7 @@ export function PreviewStep({
 
               {/* Venue */}
               {(venueOption.type === "existing" || venueOption.type === "new") && (
-                <div className="flex items-center text-gray-600 mb-2">
+                <div className="flex items-center text-muted-foreground mb-2">
                   <MapPin className="w-4 h-4 mr-2" />
                   {venueOption.type === "existing"
                     ? venues.find((v) => v.id === venueOption.id)?.name
@@ -181,7 +181,7 @@ export function PreviewStep({
 
               {/* Price */}
               {(extractedData.ticketPriceMin !== null || extractedData.ticketPriceMax !== null) && (
-                <div className="flex items-center text-gray-600 mb-2">
+                <div className="flex items-center text-muted-foreground mb-2">
                   <DollarSign className="w-4 h-4 mr-2" />
                   {extractedData.ticketPriceMin !== null &&
                   extractedData.ticketPriceMax !== null &&
@@ -193,7 +193,7 @@ export function PreviewStep({
 
               {/* Description */}
               {extractedData.description && (
-                <p className="text-gray-700 mt-4 text-sm">{extractedData.description}</p>
+                <p className="text-foreground mt-4 text-sm">{extractedData.description}</p>
               )}
 
               {/* Source */}
@@ -230,13 +230,13 @@ function SourceLink({ url }: { url: string }) {
     hostname = url;
   }
   return (
-    <p className="text-xs text-gray-500">
+    <p className="text-xs text-muted-foreground">
       Source:{" "}
       <a
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-600 hover:underline"
+        className="text-royal hover:underline"
       >
         {hostname}
         <ExternalLink className="w-3 h-3 inline ml-1" />

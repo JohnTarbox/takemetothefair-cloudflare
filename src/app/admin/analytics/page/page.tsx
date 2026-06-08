@@ -115,7 +115,7 @@ export default async function AdminAnalyticsPageDetail({ searchParams }: PagePro
       <div className="mb-6">
         <Link
           href="/admin/analytics"
-          className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" /> Back to analytics overview
         </Link>
@@ -123,13 +123,13 @@ export default async function AdminAnalyticsPageDetail({ searchParams }: PagePro
 
       <div className="flex items-center justify-between mb-8 gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900">Page analytics</h1>
-          <p className="font-mono text-sm text-gray-600 mt-1 break-all">{path}</p>
+          <h1 className="text-2xl font-bold text-foreground">Page analytics</h1>
+          <p className="font-mono text-sm text-muted-foreground mt-1 break-all">{path}</p>
         </div>
         <div className="flex items-center gap-4 shrink-0">
           <Link
             href={`/admin/analytics/page?path=${encodeURIComponent(path)}&refresh=1`}
-            className="inline-flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900"
+            className="inline-flex items-center gap-1.5 text-sm text-foreground hover:text-foreground"
           >
             <RefreshCw className="w-4 h-4" /> Refresh
           </Link>
@@ -137,7 +137,7 @@ export default async function AdminAnalyticsPageDetail({ searchParams }: PagePro
             href={path}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+            className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
           >
             Open live page <ExternalLink className="w-3.5 h-3.5" />
           </a>
@@ -174,8 +174,8 @@ function DetailView({
   return (
     <>
       {data.title && (
-        <p className="text-gray-700 mb-6">
-          <span className="text-gray-500">Title:</span> {data.title}
+        <p className="text-foreground mb-6">
+          <span className="text-muted-foreground">Title:</span> {data.title}
         </p>
       )}
 
@@ -217,7 +217,7 @@ function DetailView({
             <a
               href={csvHref}
               download={csvFilename}
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               <Download className="w-4 h-4" /> CSV
             </a>
@@ -233,7 +233,7 @@ function DetailView({
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-muted text-muted-foreground">
                 <tr>
                   <th className="text-left px-6 py-2 font-medium">Source</th>
                   <th className="text-left px-6 py-2 font-medium">Medium</th>
@@ -244,17 +244,17 @@ function DetailView({
               <tbody className="divide-y divide-gray-100">
                 {data.trafficSources.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-6 text-gray-500">
+                    <td colSpan={4} className="px-6 py-6 text-muted-foreground">
                       No data yet.
                     </td>
                   </tr>
                 ) : (
                   data.trafficSources.map((row, i) => (
                     <tr key={`${row.source}-${row.medium}-${i}`}>
-                      <td className="px-6 py-2 text-gray-900">{row.source || "(direct)"}</td>
-                      <td className="px-6 py-2 text-gray-700">{row.medium || "(none)"}</td>
+                      <td className="px-6 py-2 text-foreground">{row.source || "(direct)"}</td>
+                      <td className="px-6 py-2 text-foreground">{row.medium || "(none)"}</td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(row.sessions)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                         {fmt(row.activeUsers)}
                       </td>
                     </tr>
@@ -291,7 +291,7 @@ function DetailView({
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-muted text-muted-foreground">
                 <tr>
                   <th className="text-left px-6 py-2 font-medium">Event</th>
                   <th className="text-right px-6 py-2 font-medium">Count</th>
@@ -300,14 +300,16 @@ function DetailView({
               <tbody className="divide-y divide-gray-100">
                 {data.events.length === 0 ? (
                   <tr>
-                    <td colSpan={2} className="px-6 py-6 text-gray-500">
+                    <td colSpan={2} className="px-6 py-6 text-muted-foreground">
                       No events tracked on this page.
                     </td>
                   </tr>
                 ) : (
                   data.events.map((row, i) => (
                     <tr key={`${row.eventName}-${i}`}>
-                      <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
+                      <td className="px-6 py-2 font-mono text-xs text-foreground">
+                        {row.eventName}
+                      </td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
                     </tr>
                   ))
@@ -327,7 +329,7 @@ function DetailView({
         </Card>
       </div>
 
-      <p className="text-xs text-gray-500 mt-6">
+      <p className="text-xs text-muted-foreground mt-6">
         Property {data.propertyId} · Generated {formatTimestampForServer(data.generatedAt)} · Cached
         up to 10 min (Search Console up to 15 min)
       </p>
@@ -339,23 +341,23 @@ function SearchQueriesPanel({ result }: { result: ScResult }) {
   if (!result.ok) {
     if (result.kind === "config") {
       return (
-        <div className="p-6 text-sm text-gray-600 space-y-2">
+        <div className="p-6 text-sm text-muted-foreground space-y-2">
           <p>Search Console is not configured.</p>
-          <p className="text-xs text-gray-500">{result.message}</p>
+          <p className="text-xs text-muted-foreground">{result.message}</p>
         </div>
       );
     }
     return (
-      <div className="p-6 text-sm text-gray-700">
+      <div className="p-6 text-sm text-foreground">
         <p className="font-medium mb-1">Could not load Search Console data</p>
-        <p className="text-xs text-gray-500 break-words">{result.message}</p>
+        <p className="text-xs text-muted-foreground break-words">{result.message}</p>
       </div>
     );
   }
 
   if (result.data.length === 0) {
     return (
-      <div className="p-6 text-sm text-gray-500">
+      <div className="p-6 text-sm text-muted-foreground">
         No search queries returned for this page in the last 30 days.
       </div>
     );
@@ -363,7 +365,7 @@ function SearchQueriesPanel({ result }: { result: ScResult }) {
 
   return (
     <table className="w-full text-sm">
-      <thead className="bg-gray-50 text-gray-600">
+      <thead className="bg-muted text-muted-foreground">
         <tr>
           <th className="text-left px-6 py-2 font-medium">Query</th>
           <th className="text-right px-6 py-2 font-medium">Clicks</th>
@@ -375,13 +377,15 @@ function SearchQueriesPanel({ result }: { result: ScResult }) {
       <tbody className="divide-y divide-gray-100">
         {result.data.map((row, i) => (
           <tr key={`${row.query}-${i}`}>
-            <td className="px-6 py-2 text-gray-900 truncate max-w-xs">{row.query}</td>
+            <td className="px-6 py-2 text-foreground truncate max-w-xs">{row.query}</td>
             <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
-            <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+            <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
               {fmt(row.impressions)}
             </td>
-            <td className="px-6 py-2 text-right tabular-nums text-gray-600">{fmtPct(row.ctr)}</td>
-            <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+            <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+              {fmtPct(row.ctr)}
+            </td>
+            <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
               {fmtPosition(row.position)}
             </td>
           </tr>
@@ -409,8 +413,8 @@ function StatCard({
   return (
     <Card>
       <CardContent className="p-4">
-        <p className="text-xs text-gray-600">{label}</p>
-        <p className="text-2xl font-bold text-gray-900 mt-1 tabular-nums">{value}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">{value}</p>
         <Delta current={current} previous={previous} isPercentage={isPercentage} fmt={fmtDelta} />
       </CardContent>
     </Card>
@@ -434,7 +438,7 @@ function Delta({
 
   if (previous === 0 && current === 0) {
     label = "no prior data";
-    color = "text-gray-600";
+    color = "text-muted-foreground";
     Icon = Minus;
   } else if (previous === 0) {
     label = "new";
@@ -444,7 +448,7 @@ function Delta({
     const diff = (current - previous) * 100;
     const sign = diff > 0 ? "+" : "";
     label = `${sign}${diff.toFixed(1)} pts vs prev`;
-    color = diff > 0 ? "text-emerald-600" : diff < 0 ? "text-rose-600" : "text-gray-500";
+    color = diff > 0 ? "text-emerald-600" : diff < 0 ? "text-rose-600" : "text-muted-foreground";
     Icon = diff > 0 ? TrendingUp : diff < 0 ? TrendingDown : Minus;
   } else {
     const diff = current - previous;
@@ -452,7 +456,7 @@ function Delta({
     const sign = pct > 0 ? "+" : "";
     const deltaFmt = formatValue ?? ((n: number) => n.toString());
     label = `${sign}${pct.toFixed(0)}% (${sign}${deltaFmt(diff)}) vs prev`;
-    color = diff > 0 ? "text-emerald-600" : diff < 0 ? "text-rose-600" : "text-gray-500";
+    color = diff > 0 ? "text-emerald-600" : diff < 0 ? "text-rose-600" : "text-muted-foreground";
     Icon = diff > 0 ? TrendingUp : diff < 0 ? TrendingDown : Minus;
   }
 
@@ -531,7 +535,7 @@ function DailyChart({ data }: { data: PageViewsDay[] }) {
           0
         </text>
       </svg>
-      <div className="flex justify-between text-xs text-gray-500 px-10 mt-1">
+      <div className="flex justify-between text-xs text-muted-foreground px-10 mt-1">
         <span>{fmtDate(firstDate)}</span>
         <span>{fmtDate(lastDate)}</span>
       </div>
@@ -544,7 +548,7 @@ function DeviceBars({ rows }: { rows: Array<{ label: string; value: number }> })
   const colors = ["bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-violet-500"];
   return (
     <div className="space-y-3">
-      <div className="flex w-full h-3 rounded overflow-hidden bg-gray-100">
+      <div className="flex w-full h-3 rounded overflow-hidden bg-muted">
         {rows.map((r, i) => (
           <div
             key={r.label}
@@ -559,9 +563,9 @@ function DeviceBars({ rows }: { rows: Array<{ label: string; value: number }> })
           <div key={r.label} className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-sm ${colors[i % colors.length]}`} />
-              <span className="text-gray-700 capitalize">{r.label}</span>
+              <span className="text-foreground capitalize">{r.label}</span>
             </div>
-            <div className="text-gray-600 tabular-nums">
+            <div className="text-muted-foreground tabular-nums">
               {fmt(r.value)} · {((r.value / total) * 100).toFixed(1)}%
             </div>
           </div>
@@ -573,7 +577,7 @@ function DeviceBars({ rows }: { rows: Array<{ label: string; value: number }> })
 
 function EmptyState() {
   return (
-    <div className="py-10 text-center text-sm text-gray-500">
+    <div className="py-10 text-center text-sm text-muted-foreground">
       No data for this page in the last 28 days.
     </div>
   );
@@ -594,7 +598,7 @@ function ErrorPanel({
         <CardTitle>{kind === "config" ? "GA4 analytics not configured" : title}</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-700">{message}</p>
+        <p className="text-sm text-foreground">{message}</p>
       </CardContent>
     </Card>
   );

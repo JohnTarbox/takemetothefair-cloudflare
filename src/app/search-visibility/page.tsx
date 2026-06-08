@@ -62,15 +62,15 @@ export default function SearchVisibilityPage() {
         url="https://meetmeatthefair.com/search-visibility"
       />
       <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">Get Found in Google Search</h1>
-        <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+        <h1 className="text-4xl font-bold text-foreground mb-4">Get Found in Google Search</h1>
+        <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
           When you complete your profile, your events and business can appear directly in Google
           search results
         </p>
       </div>
 
       <div className="prose prose-gray max-w-none mb-12">
-        <p className="text-lg text-gray-600 leading-relaxed">
+        <p className="text-lg text-muted-foreground leading-relaxed">
           Meet Me at the Fair automatically adds structured data to your listings. This helps Google
           understand your content and display it as rich results - those helpful cards you see when
           searching for events, businesses, or places.
@@ -79,34 +79,34 @@ export default function SearchVisibilityPage() {
 
       {/* What Are Rich Results */}
       <section className="mb-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">What Are Rich Results?</h2>
-        <div className="bg-gray-50 rounded-xl p-6 mb-6">
-          <p className="text-gray-700 mb-4">
+        <h2 className="text-2xl font-bold text-foreground mb-6">What Are Rich Results?</h2>
+        <div className="bg-muted rounded-xl p-6 mb-6">
+          <p className="text-foreground mb-4">
             When someone searches for &quot;fairs near me&quot; or &quot;craft vendors Maine,&quot;
             Google may show enhanced results that include:
           </p>
           <ul className="space-y-3">
             <li className="flex items-start gap-3">
               <Calendar className="w-5 h-5 text-royal mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span className="text-gray-700">
+              <span className="text-foreground">
                 <strong>Event cards</strong> with dates, location, and ticket prices
               </span>
             </li>
             <li className="flex items-start gap-3">
               <MapPin className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span className="text-gray-700">
+              <span className="text-foreground">
                 <strong>Map listings</strong> showing venue locations
               </span>
             </li>
             <li className="flex items-start gap-3">
               <Star className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span className="text-gray-700">
+              <span className="text-foreground">
                 <strong>Business profiles</strong> with contact info and products
               </span>
             </li>
           </ul>
         </div>
-        <p className="text-gray-600">
+        <p className="text-muted-foreground">
           These rich results stand out from regular search listings and get more clicks. The more
           complete your information, the better your chances of appearing this way.
         </p>
@@ -114,7 +114,7 @@ export default function SearchVisibilityPage() {
 
       {/* How Your Data Helps */}
       <section className="mb-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">How Your Data Appears in Search</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-6">How Your Data Appears in Search</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
@@ -128,21 +128,21 @@ export default function SearchVisibilityPage() {
             <CardContent className="space-y-3 text-sm">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Event name and dates in search results</span>
+                <span className="text-foreground">Event name and dates in search results</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">
+                <span className="text-foreground">
                   Venue address enables &quot;events near me&quot;
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Ticket prices shown directly in Google</span>
+                <span className="text-foreground">Ticket prices shown directly in Google</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Event image as thumbnail</span>
+                <span className="text-foreground">Event image as thumbnail</span>
               </div>
             </CardContent>
           </Card>
@@ -159,19 +159,19 @@ export default function SearchVisibilityPage() {
             <CardContent className="space-y-3 text-sm">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Location appears on Google Maps</span>
+                <span className="text-foreground">Location appears on Google Maps</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Address and directions available</span>
+                <span className="text-foreground">Address and directions available</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Amenities listed (parking, restrooms)</span>
+                <span className="text-foreground">Amenities listed (parking, restrooms)</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Contact info for attendees</span>
+                <span className="text-foreground">Contact info for attendees</span>
               </div>
             </CardContent>
           </Card>
@@ -188,19 +188,19 @@ export default function SearchVisibilityPage() {
             <CardContent className="space-y-3 text-sm">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Business name and description</span>
+                <span className="text-foreground">Business name and description</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Products can appear in product searches</span>
+                <span className="text-foreground">Products can appear in product searches</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Social links and website connected</span>
+                <span className="text-foreground">Social links and website connected</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Contact info for customers</span>
+                <span className="text-foreground">Contact info for customers</span>
               </div>
             </CardContent>
           </Card>
@@ -217,19 +217,19 @@ export default function SearchVisibilityPage() {
             <CardContent className="space-y-3 text-sm">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Breadcrumb navigation in results</span>
+                <span className="text-foreground">Breadcrumb navigation in results</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">FAQ answers shown directly</span>
+                <span className="text-foreground">FAQ answers shown directly</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Sitelinks search box enabled</span>
+                <span className="text-foreground">Sitelinks search box enabled</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" aria-hidden="true" />
-                <span className="text-gray-700">Lists appear as carousels</span>
+                <span className="text-foreground">Lists appear as carousels</span>
               </div>
             </CardContent>
           </Card>
@@ -238,7 +238,9 @@ export default function SearchVisibilityPage() {
 
       {/* Tips for Better Visibility */}
       <section className="mb-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Tips for Better Search Visibility</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-6">
+          Tips for Better Search Visibility
+        </h2>
         <div className="space-y-4">
           <Card>
             <CardContent className="p-6">
@@ -247,8 +249,8 @@ export default function SearchVisibilityPage() {
                   <ImageIcon className="w-5 h-5 text-royal" aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-1">Always Add Images</h3>
-                  <p className="text-gray-600 text-sm">
+                  <h3 className="font-semibold text-foreground mb-1">Always Add Images</h3>
+                  <p className="text-muted-foreground text-sm">
                     Events and vendors with images get significantly more clicks. Use high-quality
                     images at least 720 pixels wide with a 16:9 aspect ratio for best results.
                   </p>
@@ -264,8 +266,8 @@ export default function SearchVisibilityPage() {
                   <MapPin className="w-5 h-5 text-green-600" aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-1">Complete Your Address</h3>
-                  <p className="text-gray-600 text-sm">
+                  <h3 className="font-semibold text-foreground mb-1">Complete Your Address</h3>
+                  <p className="text-muted-foreground text-sm">
                     Include street address, city, state, and ZIP code. Complete addresses enable
                     &quot;events near me&quot; searches and map integration. Adding GPS coordinates
                     improves accuracy.
@@ -282,8 +284,8 @@ export default function SearchVisibilityPage() {
                   <DollarSign className="w-5 h-5 text-purple-600" aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-1">Set Ticket Prices</h3>
-                  <p className="text-gray-600 text-sm">
+                  <h3 className="font-semibold text-foreground mb-1">Set Ticket Prices</h3>
+                  <p className="text-muted-foreground text-sm">
                     Even if your event is free, set the price to $0. Google displays
                     &quot;Free&quot; in search results, which attracts more attendees. If you have a
                     range, set both minimum and maximum prices.
@@ -300,8 +302,10 @@ export default function SearchVisibilityPage() {
                   <Star className="w-5 h-5 text-orange-600" aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-1">List Your Products (Vendors)</h3>
-                  <p className="text-gray-600 text-sm">
+                  <h3 className="font-semibold text-foreground mb-1">
+                    List Your Products (Vendors)
+                  </h3>
+                  <p className="text-muted-foreground text-sm">
                     Add specific products you sell (e.g., &quot;Apple Pie,&quot; &quot;Handmade
                     Jewelry,&quot; &quot;Pottery&quot;). These can appear when people search for
                     those products in your area.
@@ -318,8 +322,8 @@ export default function SearchVisibilityPage() {
                   <ExternalLink className="w-5 h-5 text-red-600" aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-1">Add Social Links & Website</h3>
-                  <p className="text-gray-600 text-sm">
+                  <h3 className="font-semibold text-foreground mb-1">Add Social Links & Website</h3>
+                  <p className="text-muted-foreground text-sm">
                     Connect your Facebook, Instagram, and website. Google uses these to verify your
                     business and may display them in search results.
                   </p>
@@ -332,14 +336,14 @@ export default function SearchVisibilityPage() {
 
       {/* Test Your Listing */}
       <section className="mb-12">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Test Your Listing</h2>
+        <h2 className="text-2xl font-bold text-foreground mb-6">Test Your Listing</h2>
         <Card>
           <CardContent className="p-6">
-            <p className="text-gray-700 mb-4">
+            <p className="text-foreground mb-4">
               Want to see how Google reads your listing? Use Google&apos;s free Rich Results Test
               tool:
             </p>
-            <ol className="list-decimal list-inside space-y-2 text-gray-600 mb-4">
+            <ol className="list-decimal list-inside space-y-2 text-muted-foreground mb-4">
               <li>Copy the URL of your event, venue, or vendor page</li>
               <li>
                 Paste it into the{" "}
@@ -354,7 +358,7 @@ export default function SearchVisibilityPage() {
               </li>
               <li>See exactly what information Google can extract</li>
             </ol>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               If anything is missing, update your profile to include that information.
             </p>
           </CardContent>
@@ -362,22 +366,24 @@ export default function SearchVisibilityPage() {
       </section>
 
       {/* CTA */}
-      <div className="bg-gray-50 rounded-xl p-8 text-center">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Ready to Improve Your Visibility?</h2>
-        <p className="text-gray-600 mb-6">
+      <div className="bg-muted rounded-xl p-8 text-center">
+        <h2 className="text-2xl font-bold text-foreground mb-4">
+          Ready to Improve Your Visibility?
+        </h2>
+        <p className="text-muted-foreground mb-6">
           Update your profile with complete information to maximize your chances of appearing in
           Google search results.
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <Link
             href="/vendor/profile"
-            className="inline-flex items-center px-6 py-3 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
           >
             Update Vendor Profile
           </Link>
           <Link
             href="/promoter/events"
-            className="inline-flex items-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center px-6 py-3 bg-card text-foreground font-medium rounded-lg border border-border hover:bg-muted transition-colors"
           >
             Manage Events
           </Link>

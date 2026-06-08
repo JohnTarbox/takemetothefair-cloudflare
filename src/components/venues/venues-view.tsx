@@ -65,7 +65,7 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
   if (venues.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">{emptyMessage}</p>
+        <p className="text-muted-foreground">{emptyMessage}</p>
       </div>
     );
   }
@@ -74,14 +74,14 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
     <div>
       {/* View Toggle and Download */}
       <div className="flex justify-between items-center mb-4">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           {venues.length} venue{venues.length !== 1 ? "s" : ""} found
         </p>
         <div className="flex items-center gap-3">
           {viewMode === "table" && (
             <button
               onClick={downloadCSV}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted border border-border bg-card transition-colors"
               aria-label="Download venues as CSV"
             >
               <Download className="w-4 h-4" aria-hidden="true" />
@@ -89,14 +89,16 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
             </button>
           )}
           <div
-            className="inline-flex rounded-lg border border-gray-200 p-1 bg-white"
+            className="inline-flex rounded-lg border border-border p-1 bg-card"
             role="group"
             aria-label="View mode"
           >
             <button
               onClick={() => setViewMode("cards")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "cards" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+                viewMode === "cards"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
               }`}
               aria-pressed={viewMode === "cards"}
               aria-label="Card view"
@@ -107,7 +109,9 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
             <button
               onClick={() => setViewMode("table")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "table" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+                viewMode === "table"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
               }`}
               aria-pressed={viewMode === "table"}
               aria-label="Table view"
@@ -130,10 +134,10 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
 
       {/* Table View */}
       {viewMode === "table" && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-card rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-muted border-b border-border">
                 <tr>
                   <SortableHeader
                     column="name"
@@ -168,39 +172,45 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                     onSort={handleSort}
                     className="w-24"
                   />
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600 w-32">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground w-32">
                     Amenities
                   </th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600 w-24">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground w-24">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-border">
                 {sortedVenues.map((venue) => {
                   const amenities = parseJsonArray(venue.amenities);
                   return (
-                    <tr key={venue.id} className="hover:bg-gray-50">
+                    <tr key={venue.id} className="hover:bg-muted">
                       <td className="py-3 px-4">
                         <Link
                           href={`/venues/${venue.slug}`}
-                          className="font-medium text-gray-900 hover:text-navy"
+                          className="font-medium text-foreground hover:text-navy"
                         >
                           {venue.name}
                         </Link>
                       </td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{venue.city || "-"}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{venue.state || "-"}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">
+                      <td className="py-3 px-4 text-sm text-muted-foreground">
+                        {venue.city || "-"}
+                      </td>
+                      <td className="py-3 px-4 text-sm text-muted-foreground">
+                        {venue.state || "-"}
+                      </td>
+                      <td className="py-3 px-4 text-sm text-muted-foreground">
                         <div className="flex items-center gap-1">
-                          <Users className="w-4 h-4 text-gray-600" />
+                          <Users className="w-4 h-4 text-muted-foreground" />
                           {venue.capacity?.toLocaleString() || "-"}
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{venue._count.events}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">
+                      <td className="py-3 px-4 text-sm text-muted-foreground">
+                        {venue._count.events}
+                      </td>
+                      <td className="py-3 px-4 text-sm text-muted-foreground">
                         {amenities.length > 0 ? (
-                          <span className="text-gray-500">
+                          <span className="text-muted-foreground">
                             {amenities.slice(0, 2).join(", ")}
                             {amenities.length > 2 && ` +${amenities.length - 2}`}
                           </span>
@@ -212,7 +222,7 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                         <div className="flex items-center gap-2">
                           <Link
                             href={`/venues/${venue.slug}`}
-                            className="text-royal hover:text-blue-800 text-sm font-medium"
+                            className="text-royal hover:text-navy-dark text-sm font-medium"
                           >
                             View
                           </Link>
@@ -221,7 +231,7 @@ export function VenuesView({ venues, emptyMessage = "No venues found" }: VenuesV
                               href={venue.website}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-gray-600 hover:text-gray-600"
+                              className="text-muted-foreground hover:text-muted-foreground"
                               title="Venue Website"
                             >
                               <ExternalLink className="w-4 h-4" />

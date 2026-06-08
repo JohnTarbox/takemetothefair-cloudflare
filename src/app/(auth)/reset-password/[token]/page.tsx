@@ -58,8 +58,10 @@ export default function ResetPasswordPage({ params }: Props) {
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <h1 className="text-2xl font-bold text-center text-gray-900">Choose a new password</h1>
-          <p className="text-center text-gray-600 mt-2">Enter a new password for your account.</p>
+          <h1 className="text-2xl font-bold text-center text-foreground">Choose a new password</h1>
+          <p className="text-center text-muted-foreground mt-2">
+            Enter a new password for your account.
+          </p>
         </CardHeader>
         <CardContent>
           {success ? (

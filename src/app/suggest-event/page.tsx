@@ -592,7 +592,7 @@ export default function SuggestEventPage() {
       <div className="mb-6">
         <Link
           href="/"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Home
@@ -600,8 +600,8 @@ export default function SuggestEventPage() {
       </div>
 
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Suggest an Event</h1>
-        <p className="text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Suggest an Event</h1>
+        <p className="text-muted-foreground mt-1">
           Know about an upcoming fair, festival, or market? Help the community by suggesting it!
         </p>
       </div>
@@ -610,32 +610,32 @@ export default function SuggestEventPage() {
       {step !== "success" && (
         <div className="flex items-center gap-2 mb-6 text-sm">
           <span
-            className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-gray-600"}`}
+            className={`flex items-center gap-1.5 ${step === "url-input" ? "text-royal font-medium" : "text-muted-foreground"}`}
           >
             <span
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "url-input" ? "bg-royal text-white" : ["review", "submitting"].includes(step) ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "url-input" ? "bg-secondary text-secondary-foreground" : ["review", "submitting"].includes(step) ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}
             >
               1
             </span>
             Source
           </span>
-          <div className="flex-1 h-px bg-gray-200" />
+          <div className="flex-1 h-px bg-muted" />
           <span
-            className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-gray-600"}`}
+            className={`flex items-center gap-1.5 ${step === "review" ? "text-royal font-medium" : "text-muted-foreground"}`}
           >
             <span
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "review" ? "bg-royal text-white" : step === "submitting" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === "review" ? "bg-secondary text-secondary-foreground" : step === "submitting" ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground"}`}
             >
               2
             </span>
             Review
           </span>
-          <div className="flex-1 h-px bg-gray-200" />
+          <div className="flex-1 h-px bg-muted" />
           <span
-            className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-gray-600"}`}
+            className={`flex items-center gap-1.5 ${step === "submitting" ? "text-royal font-medium" : "text-muted-foreground"}`}
           >
             <span
-              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-gray-100 text-gray-500`}
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold bg-muted text-muted-foreground`}
             >
               3
             </span>
@@ -662,13 +662,13 @@ export default function SuggestEventPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-muted-foreground">
               Paste a link to the event page and we&apos;ll automatically extract the details.
               You&apos;ll be able to review and edit everything before submitting.
             </p>
 
-            <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 space-y-1">
-              <p className="font-medium text-gray-700">What happens next:</p>
+            <div className="bg-muted rounded-lg p-3 text-xs text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground">What happens next:</p>
               <p>1. We&apos;ll extract the event name, dates, location, and description</p>
               <p>2. You review and correct any details</p>
               <p>3. Our team reviews your suggestion within 24–48 hours</p>
@@ -706,7 +706,7 @@ export default function SuggestEventPage() {
                   <Label htmlFor="pastedContent">Paste Page Content</Label>
                   <textarea
                     id="pastedContent"
-                    className="mt-1 w-full h-48 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    className="mt-1 w-full h-48 rounded-lg border border-border px-3 py-2 text-sm"
                     placeholder="Paste the event page content here..."
                     value={pastedContent}
                     onChange={(e) => setPastedContent(e.target.value)}
@@ -748,8 +748,8 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">Fetching page content...</h3>
-            <p className="text-gray-500 mt-2">This may take a few seconds</p>
+            <h3 className="text-lg font-medium text-foreground">Fetching page content...</h3>
+            <p className="text-muted-foreground mt-2">This may take a few seconds</p>
           </CardContent>
         </Card>
       )}
@@ -759,8 +759,8 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Sparkles className="w-12 h-12 text-purple-600 mx-auto mb-4 animate-pulse" />
-            <h3 className="text-lg font-medium text-gray-900">Analyzing page content...</h3>
-            <p className="text-gray-500 mt-2">AI is extracting event details</p>
+            <h3 className="text-lg font-medium text-foreground">Analyzing page content...</h3>
+            <p className="text-muted-foreground mt-2">AI is extracting event details</p>
           </CardContent>
         </Card>
       )}
@@ -775,21 +775,21 @@ export default function SuggestEventPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-gray-700">
+            <p className="text-foreground">
               {duplicateMatchType === "exact_url"
                 ? "An event from this URL already exists in our database."
                 : "A similar event already exists in our database."}
             </p>
 
             <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-              <h4 className="font-medium text-gray-900">{duplicateEvent.name}</h4>
+              <h4 className="font-medium text-foreground">{duplicateEvent.name}</h4>
               {duplicateEvent.startDate && (
-                <p className="text-sm text-gray-600 mt-1">
+                <p className="text-sm text-muted-foreground mt-1">
                   <Calendar className="w-3 h-3 inline mr-1" />
                   {formatDateForDisplay(duplicateEvent.startDate.toString())}
                 </p>
               )}
-              <p className="text-sm text-gray-500 mt-1">Status: {duplicateEvent.status}</p>
+              <p className="text-sm text-muted-foreground mt-1">Status: {duplicateEvent.status}</p>
               <Link
                 href={`/events/${duplicateEvent.slug}`}
                 className="text-sm text-royal hover:underline mt-2 inline-flex items-center"
@@ -819,7 +819,7 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">Checking for duplicates...</h3>
+            <h3 className="text-lg font-medium text-foreground">Checking for duplicates...</h3>
           </CardContent>
         </Card>
       )}
@@ -834,20 +834,20 @@ export default function SuggestEventPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-gray-700">
+            <p className="text-foreground">
               We found a venue that matches &quot;{extractedData.venueName}&quot;. Would you like to
               link this event to it?
             </p>
 
-            <div className="p-4 bg-brand-blue-light border border-blue-200 rounded-lg">
-              <h4 className="font-medium text-gray-900">{matchedVenue.name}</h4>
-              <p className="text-sm text-gray-600 mt-1">
+            <div className="p-4 bg-brand-blue-light border border-info-soft rounded-lg">
+              <h4 className="font-medium text-foreground">{matchedVenue.name}</h4>
+              <p className="text-sm text-muted-foreground mt-1">
                 <MapPin className="w-3 h-3 inline mr-1" />
                 {[matchedVenue.address, matchedVenue.city, matchedVenue.state]
                   .filter(Boolean)
                   .join(", ") || "Location details not available"}
               </p>
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Match confidence: {matchedVenue.confidence}%
               </p>
               <Link
@@ -862,16 +862,16 @@ export default function SuggestEventPage() {
 
             {alternativeVenues.length > 0 && (
               <div className="mt-4">
-                <p className="text-sm text-gray-600 mb-2">Other possible matches:</p>
+                <p className="text-sm text-muted-foreground mb-2">Other possible matches:</p>
                 <div className="space-y-2">
                   {alternativeVenues.map((venue) => (
                     <button
                       key={venue.id}
                       onClick={() => confirmVenue(venue.id)}
-                      className="w-full text-left p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition-colors"
+                      className="w-full text-left p-3 bg-muted hover:bg-muted border border-border rounded-lg transition-colors"
                     >
-                      <span className="font-medium text-gray-900">{venue.name}</span>
-                      <span className="text-sm text-gray-500 ml-2">
+                      <span className="font-medium text-foreground">{venue.name}</span>
+                      <span className="text-sm text-muted-foreground ml-2">
                         {venue.city}, {venue.state} ({venue.confidence}%)
                       </span>
                     </button>
@@ -898,7 +898,7 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">Checking for matching venues...</h3>
+            <h3 className="text-lg font-medium text-foreground">Checking for matching venues...</h3>
           </CardContent>
         </Card>
       )}
@@ -913,7 +913,7 @@ export default function SuggestEventPage() {
                 <CardTitle className="text-sm">Source Content</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="max-h-[600px] overflow-y-auto text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 p-3 rounded-lg">
+                <div className="max-h-[600px] overflow-y-auto text-sm text-muted-foreground whitespace-pre-wrap bg-muted p-3 rounded-lg">
                   {fetchedContent || "No content available"}
                 </div>
               </CardContent>
@@ -953,7 +953,7 @@ export default function SuggestEventPage() {
                   </Label>
                   <textarea
                     id="description"
-                    className="mt-1 w-full h-24 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    className="mt-1 w-full h-24 rounded-lg border border-border px-3 py-2 text-sm"
                     value={extractedData.description || ""}
                     onChange={(e) =>
                       setExtractedData({
@@ -1159,7 +1159,7 @@ export default function SuggestEventPage() {
                     <div>
                       <Label htmlFor="ticketPriceMin">Min Price</Label>
                       <div className="relative mt-1">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                         <Input
                           id="ticketPriceMin"
                           type="number"
@@ -1179,7 +1179,7 @@ export default function SuggestEventPage() {
                     <div>
                       <Label htmlFor="ticketPriceMax">Max Price</Label>
                       <div className="relative mt-1">
-                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                         <Input
                           id="ticketPriceMax"
                           type="number"
@@ -1264,7 +1264,7 @@ export default function SuggestEventPage() {
                     placeholder="your@email.com"
                     className="mt-1"
                   />
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     We&apos;ll notify you when your suggestion is reviewed (optional)
                   </p>
                 </div>
@@ -1291,8 +1291,8 @@ export default function SuggestEventPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Loader2 className="w-12 h-12 text-royal mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-medium text-gray-900">Submitting your suggestion...</h3>
-            <p className="text-gray-500 mt-2">Please wait</p>
+            <h3 className="text-lg font-medium text-foreground">Submitting your suggestion...</h3>
+            <p className="text-muted-foreground mt-2">Please wait</p>
           </CardContent>
         </Card>
       )}
@@ -1305,19 +1305,19 @@ export default function SuggestEventPage() {
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Check className="w-8 h-8 text-green-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 mb-2">Thank You!</h3>
-              <p className="text-gray-600 mb-2">
+              <h3 className="text-xl font-bold text-foreground mb-2">Thank You!</h3>
+              <p className="text-muted-foreground mb-2">
                 Your event suggestion has been submitted for review.
                 {suggesterEmail && " We'll notify you once it's approved."}
               </p>
-              <p className="text-sm text-gray-500 mb-6">
+              <p className="text-sm text-muted-foreground mb-6">
                 Our team typically reviews suggestions within 24–48 hours.
               </p>
 
               {createdEvent && (
-                <div className="max-w-md mx-auto mb-6 p-4 bg-gray-50 rounded-lg">
-                  <p className="font-medium text-gray-900">{createdEvent.name}</p>
-                  <p className="text-sm text-gray-500 mt-1">
+                <div className="max-w-md mx-auto mb-6 p-4 bg-muted rounded-lg">
+                  <p className="font-medium text-foreground">{createdEvent.name}</p>
+                  <p className="text-sm text-muted-foreground mt-1">
                     Pending review — you&apos;ll see it on the site once approved.
                   </p>
                 </div>

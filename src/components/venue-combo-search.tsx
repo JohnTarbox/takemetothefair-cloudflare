@@ -211,15 +211,15 @@ export function VenueComboSearch({
 
   return (
     <div className="space-y-2" ref={containerRef}>
-      <label className="block text-sm font-medium text-gray-700">Venue (optional)</label>
+      <label className="block text-sm font-medium text-foreground">Venue (optional)</label>
 
       {/* Selected venue display */}
       {selectedVenue && !isOpen ? (
-        <div className="flex items-center justify-between rounded-lg border border-gray-300 px-3 py-2 bg-gray-50">
+        <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2 bg-muted">
           <div className="flex items-center gap-2 text-sm">
-            <MapPin className="w-4 h-4 text-gray-600" />
+            <MapPin className="w-4 h-4 text-muted-foreground" />
             <span className="font-medium">{selectedVenue.name}</span>
-            <span className="text-gray-500">
+            <span className="text-muted-foreground">
               — {selectedVenue.city}, {selectedVenue.state}
             </span>
           </div>
@@ -227,14 +227,14 @@ export function VenueComboSearch({
             type="button"
             onClick={clearSelection}
             disabled={disabled}
-            className="text-gray-600 hover:text-gray-600"
+            className="text-muted-foreground hover:text-muted-foreground"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       ) : (
         <div className="relative">
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
             {loadingPlace ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
@@ -256,9 +256,9 @@ export function VenueComboSearch({
             placeholder="Search existing venues or find on Google..."
             disabled={disabled || loadingPlace}
             className={cn(
-              "w-full rounded-lg border border-gray-300 pl-9 pr-9 py-2 text-sm text-gray-900 placeholder-gray-400",
+              "w-full rounded-lg border border-border pl-9 pr-9 py-2 text-sm text-foreground placeholder-gray-400",
               "focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal",
-              "disabled:bg-gray-50 disabled:text-gray-500"
+              "disabled:bg-muted disabled:text-muted-foreground"
             )}
           />
           {query && (
@@ -271,7 +271,7 @@ export function VenueComboSearch({
                 setPendingPlace(null);
                 inputRef.current?.focus();
               }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground"
             >
               <X className="w-4 h-4" />
             </button>
@@ -279,11 +279,11 @@ export function VenueComboSearch({
 
           {/* Dropdown */}
           {showDropdown && (
-            <div className="absolute z-50 mt-1 w-full bg-white rounded-lg border border-gray-200 shadow-lg max-h-72 overflow-y-auto">
+            <div className="absolute z-50 mt-1 w-full bg-card rounded-lg border border-border shadow-lg max-h-72 overflow-y-auto">
               {/* DB results */}
               {filteredDbVenues.length > 0 && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 flex items-center gap-1.5">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted flex items-center gap-1.5">
                     <Database className="w-3 h-3" />
                     Existing Venues
                   </div>
@@ -292,11 +292,11 @@ export function VenueComboSearch({
                       key={v.id}
                       type="button"
                       onClick={() => selectDbVenue(v.id)}
-                      className="w-full text-left px-3 py-2 hover:bg-brand-blue-light flex items-center gap-2 text-sm border-b border-gray-50"
+                      className="w-full text-left px-3 py-2 hover:bg-brand-blue-light flex items-center gap-2 text-sm border-b border-border"
                     >
-                      <MapPin className="w-4 h-4 text-gray-600 shrink-0" />
+                      <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
                       <span className="font-medium">{v.name}</span>
-                      <span className="text-gray-500 text-xs">
+                      <span className="text-muted-foreground text-xs">
                         {v.city}, {v.state}
                       </span>
                     </button>
@@ -307,7 +307,7 @@ export function VenueComboSearch({
               {/* Google results */}
               {(googleSuggestions.length > 0 || loadingGoogle) && (
                 <div>
-                  <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 flex items-center gap-1.5">
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted flex items-center gap-1.5">
                     <ExternalLink className="w-3 h-3" />
                     From Google
                     {loadingGoogle && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
@@ -317,13 +317,15 @@ export function VenueComboSearch({
                       key={s.placeId}
                       type="button"
                       onClick={() => selectGoogleSuggestion(s)}
-                      className="w-full text-left px-3 py-2 hover:bg-green-50 flex items-start gap-2 text-sm border-b border-gray-50 last:border-0"
+                      className="w-full text-left px-3 py-2 hover:bg-green-50 flex items-start gap-2 text-sm border-b border-border last:border-0"
                     >
                       <Plus className="w-4 h-4 mt-0.5 text-green-600 shrink-0" />
                       <div className="min-w-0">
-                        <div className="font-medium text-gray-900 truncate">{s.mainText}</div>
+                        <div className="font-medium text-foreground truncate">{s.mainText}</div>
                         {s.secondaryText && (
-                          <div className="text-xs text-gray-500 truncate">{s.secondaryText}</div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {s.secondaryText}
+                          </div>
                         )}
                       </div>
                     </button>
@@ -376,7 +378,7 @@ export function VenueComboSearch({
                 setPendingPlace(null);
                 setQuery("");
               }}
-              className="px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50"
+              className="px-3 py-1.5 text-xs font-medium rounded-md border border-border text-foreground hover:bg-muted"
             >
               Cancel
             </button>

@@ -79,9 +79,9 @@ export function MobileFilterDrawer({ children, label = "Filters", activeCount }:
           role="dialog"
           aria-modal="true"
           aria-label={label}
-          className="lg:hidden fixed inset-0 z-50 bg-white overflow-y-auto"
+          className="lg:hidden fixed inset-0 z-50 bg-card overflow-y-auto"
         >
-          <div className="sticky top-0 z-10 flex items-center justify-between bg-white border-b border-stone-100 px-4 py-3">
+          <div className="sticky top-0 z-10 flex items-center justify-between bg-card border-b border-stone-100 px-4 py-3">
             <span className="font-semibold text-stone-900">{label}</span>
             {/* U7 (2026-06-07) — migrated to IconButton primitive so the
                 hit-area floor (40×40 at size="md") is enforced at the type
@@ -97,11 +97,11 @@ export function MobileFilterDrawer({ children, label = "Filters", activeCount }:
             />
           </div>
           <div className="p-4">{children}</div>
-          <div className="sticky bottom-0 bg-white border-t border-stone-100 px-4 py-3">
+          <div className="sticky bottom-0 bg-card border-t border-stone-100 px-4 py-3">
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="w-full py-2.5 rounded-lg bg-navy text-white font-semibold"
+              className="w-full py-2.5 rounded-lg bg-secondary text-secondary-foreground font-semibold"
             >
               Apply filters
             </button>

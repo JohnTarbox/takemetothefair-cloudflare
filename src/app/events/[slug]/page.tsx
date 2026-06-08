@@ -1192,7 +1192,7 @@ export default async function EventDetailPage({ params }: Props) {
               {event.indoorOutdoor && (
                 <div className="flex items-start gap-3">
                   {event.indoorOutdoor === "INDOOR" ? (
-                    <Home className="w-5 h-5 text-blue-500 mt-0.5" />
+                    <Home className="w-5 h-5 text-royal mt-0.5" />
                   ) : (
                     <Trees className="w-5 h-5 text-green-500 mt-0.5" />
                   )}
@@ -1266,7 +1266,7 @@ export default async function EventDetailPage({ params }: Props) {
                         kind="application"
                         eventSlug={event.slug}
                         href={event.applicationUrl}
-                        className="text-sm text-blue-600 hover:underline mt-1 inline-block"
+                        className="text-sm text-royal hover:underline mt-1 inline-block"
                       >
                         Apply Now →
                       </OutboundEventLink>

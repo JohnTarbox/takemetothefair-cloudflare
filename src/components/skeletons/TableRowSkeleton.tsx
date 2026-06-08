@@ -1,9 +1,9 @@
 export function TableRowSkeleton({ columns = 5 }: { columns?: number }) {
   return (
-    <tr className="animate-pulse border-b border-gray-100">
+    <tr className="animate-pulse border-b border-border">
       {Array.from({ length: columns }).map((_, i) => (
         <td key={i} className="px-4 py-3">
-          <div className="h-4 bg-gray-200 rounded w-full" />
+          <div className="h-4 bg-muted rounded w-full" />
         </td>
       ))}
     </tr>
@@ -15,10 +15,10 @@ export function TableSkeleton({ rows = 10, columns = 5 }: { rows?: number; colum
     <div className="overflow-x-auto">
       <table className="w-full">
         <thead>
-          <tr className="bg-gray-50">
+          <tr className="bg-muted">
             {Array.from({ length: columns }).map((_, i) => (
               <th key={i} className="px-4 py-3 text-left">
-                <div className="h-4 bg-gray-300 rounded w-20 animate-pulse" />
+                <div className="h-4 bg-border rounded w-20 animate-pulse" />
               </th>
             ))}
           </tr>

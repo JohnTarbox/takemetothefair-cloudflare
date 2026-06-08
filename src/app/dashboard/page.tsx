@@ -249,10 +249,12 @@ export default async function DashboardPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">
+        <h1 className="text-2xl font-bold text-foreground">
           Welcome back, {session.user.name || "Friend"}!
         </h1>
-        <p className="mt-1 text-gray-600">Here&apos;s what&apos;s happening with your account</p>
+        <p className="mt-1 text-muted-foreground">
+          Here&apos;s what&apos;s happening with your account
+        </p>
       </div>
 
       {showChecklist && (
@@ -317,8 +319,8 @@ export default async function DashboardPage() {
                   <Calendar className="w-6 h-6 text-amber-dark" />
                 </div>
                 <div>
-                  <h3 className="font-medium text-gray-900">Browse Events</h3>
-                  <p className="text-sm text-gray-500">Find upcoming fairs and festivals</p>
+                  <h3 className="font-medium text-foreground">Browse Events</h3>
+                  <p className="text-sm text-muted-foreground">Find upcoming fairs and festivals</p>
                 </div>
               </div>
             </CardContent>
@@ -332,8 +334,8 @@ export default async function DashboardPage() {
                   <Heart className="w-6 h-6 text-terracotta" />
                 </div>
                 <div>
-                  <h3 className="font-medium text-gray-900">My Favorites</h3>
-                  <p className="text-sm text-gray-500">
+                  <h3 className="font-medium text-foreground">My Favorites</h3>
+                  <p className="text-sm text-muted-foreground">
                     {state.favoritesCount} saved item{state.favoritesCount === 1 ? "" : "s"}
                   </p>
                 </div>
@@ -349,8 +351,8 @@ export default async function DashboardPage() {
                   <Settings className="w-6 h-6 text-navy" />
                 </div>
                 <div>
-                  <h3 className="font-medium text-gray-900">Account Settings</h3>
-                  <p className="text-sm text-gray-500">Manage your profile</p>
+                  <h3 className="font-medium text-foreground">Account Settings</h3>
+                  <p className="text-sm text-muted-foreground">Manage your profile</p>
                 </div>
               </div>
             </CardContent>
@@ -362,7 +364,7 @@ export default async function DashboardPage() {
         <Card className="mb-8">
           <CardHeader>
             <div className="flex items-baseline justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">What&apos;s next</h2>
+              <h2 className="text-lg font-semibold text-foreground">What&apos;s next</h2>
               <Link
                 href="/events"
                 className="text-sm font-medium text-navy hover:underline inline-flex items-center gap-1"
@@ -387,15 +389,15 @@ export default async function DashboardPage() {
                       />
                     )}
                   </div>
-                  <h3 className="text-sm font-semibold text-gray-900 line-clamp-2 group-hover:text-navy">
+                  <h3 className="text-sm font-semibold text-foreground line-clamp-2 group-hover:text-navy">
                     {event.name}
                   </h3>
-                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
                     {formatDateRange(event.startDate, event.endDate)}
                   </p>
                   {event.venue && (
-                    <p className="text-xs text-gray-500 flex items-center gap-1">
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
                       <MapPin className="w-3 h-3" />
                       {event.venue.city}, {event.venue.state}
                     </p>
@@ -409,7 +411,7 @@ export default async function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold text-gray-900">Your Profile</h2>
+          <h2 className="text-lg font-semibold text-foreground">Your Profile</h2>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4">
@@ -434,9 +436,9 @@ export default async function DashboardPage() {
               )}
             </div>
             <div>
-              <p className="font-medium text-gray-900">{session.user.name || "No name set"}</p>
-              <p className="text-sm text-gray-500">{session.user.email}</p>
-              <p className="text-xs text-gray-600 mt-1 capitalize">
+              <p className="font-medium text-foreground">{session.user.name || "No name set"}</p>
+              <p className="text-sm text-muted-foreground">{session.user.email}</p>
+              <p className="text-xs text-muted-foreground mt-1 capitalize">
                 {session.user.role.toLowerCase()} Account
               </p>
             </div>
@@ -454,8 +456,8 @@ export default async function DashboardPage() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium text-gray-900">Promoter Portal</h3>
-                <p className="text-sm text-gray-500">Manage your events and submissions</p>
+                <h3 className="font-medium text-foreground">Promoter Portal</h3>
+                <p className="text-sm text-muted-foreground">Manage your events and submissions</p>
               </div>
               <Link href="/promoter/events">
                 <Button>Go to Promoter Portal</Button>
@@ -470,8 +472,10 @@ export default async function DashboardPage() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium text-gray-900">Vendor Portal</h3>
-                <p className="text-sm text-gray-500">Manage your profile and event applications</p>
+                <h3 className="font-medium text-foreground">Vendor Portal</h3>
+                <p className="text-sm text-muted-foreground">
+                  Manage your profile and event applications
+                </p>
               </div>
               <Link href="/vendor/profile">
                 <Button>Go to Vendor Portal</Button>
@@ -486,8 +490,10 @@ export default async function DashboardPage() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-medium text-gray-900">Admin Dashboard</h3>
-                <p className="text-sm text-gray-500">Manage all events, venues, and users</p>
+                <h3 className="font-medium text-foreground">Admin Dashboard</h3>
+                <p className="text-sm text-muted-foreground">
+                  Manage all events, venues, and users
+                </p>
               </div>
               <Link href="/admin">
                 <Button>Go to Admin Dashboard</Button>

@@ -102,9 +102,9 @@ export function CorrectionForm({ token, initial }: CorrectionFormProps) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <label className="block text-sm font-medium text-gray-700">State</label>
+          <label className="block text-sm font-medium text-foreground">State</label>
           <select
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            className="mt-1 block w-full rounded-md border-border shadow-sm focus:border-ring focus:ring-ring"
             value={values.stateCode}
             onChange={handleChange("stateCode")}
           >
@@ -138,7 +138,7 @@ export function CorrectionForm({ token, initial }: CorrectionFormProps) {
       <button
         type="submit"
         disabled={state === "submitting"}
-        className="rounded-md bg-blue-600 px-4 py-2 text-white shadow hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+        className="rounded-md bg-secondary px-4 py-2 text-secondary-foreground shadow hover:bg-secondary/90 disabled:cursor-not-allowed disabled:bg-secondary/40"
       >
         {state === "submitting" ? "Saving…" : "Save corrections"}
       </button>
@@ -157,13 +157,13 @@ interface FieldProps {
 function Field({ label, value, onChange, type = "text", required = false }: FieldProps) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700">{label}</label>
+      <label className="block text-sm font-medium text-foreground">{label}</label>
       <input
         type={type}
         value={value}
         onChange={onChange}
         required={required}
-        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        className="mt-1 block w-full rounded-md border-border shadow-sm focus:border-ring focus:ring-ring"
       />
     </div>
   );
@@ -179,12 +179,12 @@ interface TextareaProps {
 function Textarea({ label, value, onChange, rows = 3 }: TextareaProps) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700">{label}</label>
+      <label className="block text-sm font-medium text-foreground">{label}</label>
       <textarea
         value={value}
         onChange={onChange}
         rows={rows}
-        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        className="mt-1 block w-full rounded-md border-border shadow-sm focus:border-ring focus:ring-ring"
       />
     </div>
   );

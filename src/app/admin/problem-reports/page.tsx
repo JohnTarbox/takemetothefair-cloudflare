@@ -77,7 +77,7 @@ export default async function AdminProblemReportsPage({
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-8">
       <h1 className="text-2xl font-bold text-navy mb-2">Problem reports</h1>
-      <p className="text-sm text-gray-600 mb-6">
+      <p className="text-sm text-muted-foreground mb-6">
         User-submitted problem reports from the web form (
         <code className="text-xs">/report-problem</code>) and email (
         <code className="text-xs">report@</code> / <code className="text-xs">feedback@</code>).
@@ -99,7 +99,7 @@ export default async function AdminProblemReportsPage({
           param="resolved"
         />
         <FilterLink current={resolvedFilter} value="all" label="All" param="resolved" />
-        <span className="text-gray-400 mx-2">·</span>
+        <span className="text-muted-foreground mx-2">·</span>
         <FilterLink current={severityFilter} value="all" label="Any severity" param="severity" />
         <FilterLink
           current={severityFilter}
@@ -112,34 +112,34 @@ export default async function AdminProblemReportsPage({
 
       {rows.length === 0 ? (
         <Card>
-          <CardContent className="py-12 text-center text-gray-500">
+          <CardContent className="py-12 text-center text-muted-foreground">
             No reports match the current filter.
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardHeader>
-            <h2 className="text-sm font-semibold text-gray-800">
+            <h2 className="text-sm font-semibold text-foreground">
               {rows.length} report{rows.length === 1 ? "" : "s"}
             </h2>
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-t border-gray-200">
+              <thead className="bg-muted border-t border-border">
                 <tr>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">When</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">Severity</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">Source</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">Reporter</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">Page</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">Body excerpt</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-700">Status</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">When</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">Severity</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">Source</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">Reporter</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">Page</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">Body excerpt</th>
+                  <th className="text-left px-4 py-2 font-medium text-foreground">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {rows.map((r) => (
-                  <tr key={r.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 whitespace-nowrap text-gray-700">
+                  <tr key={r.id} className="hover:bg-muted">
+                    <td className="px-4 py-2 whitespace-nowrap text-foreground">
                       <Link
                         href={`/admin/problem-reports/${r.id}`}
                         className="text-royal hover:underline"
@@ -154,14 +154,16 @@ export default async function AdminProblemReportsPage({
                         <Badge variant="default">LOW</Badge>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-gray-700">{r.source}</td>
-                    <td className="px-4 py-2 text-gray-700">
-                      {r.reporterEmail ?? <span className="text-gray-400 italic">anonymous</span>}
+                    <td className="px-4 py-2 text-foreground">{r.source}</td>
+                    <td className="px-4 py-2 text-foreground">
+                      {r.reporterEmail ?? (
+                        <span className="text-muted-foreground italic">anonymous</span>
+                      )}
                     </td>
-                    <td className="px-4 py-2 text-gray-700">
+                    <td className="px-4 py-2 text-foreground">
                       {r.path ? <code className="text-xs">{r.path}</code> : "—"}
                     </td>
-                    <td className="px-4 py-2 text-gray-700 max-w-md">
+                    <td className="px-4 py-2 text-foreground max-w-md">
                       <span className="line-clamp-2">{r.body.slice(0, 200)}</span>
                     </td>
                     <td className="px-4 py-2">
@@ -200,7 +202,9 @@ function FilterLink({
     <Link
       href={`/admin/problem-reports?${params.toString()}`}
       className={`text-xs px-3 py-1 rounded-full transition-colors ${
-        active ? "bg-royal text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+        active
+          ? "bg-secondary text-secondary-foreground"
+          : "bg-muted text-foreground hover:bg-muted"
       }`}
     >
       {label}

@@ -77,7 +77,7 @@ export default function ClassifierAccuracyPage() {
     <main className="mx-auto max-w-5xl space-y-6 p-8">
       <header>
         <h1 className="text-2xl font-semibold">Classifier accuracy — weekly trend</h1>
-        <p className="mt-1 text-sm text-gray-600">
+        <p className="mt-1 text-sm text-muted-foreground">
           Last {data.windowWeeks} weeks, per classifier_version. Disagreements counted from{" "}
           <code>admin_reroute</code> + <code>sender_feedback</code> rows only (confirmations
           excluded).
@@ -99,7 +99,7 @@ export default function ClassifierAccuracyPage() {
         </CardHeader>
         <CardContent>
           {data.topDisagreements.length === 0 ? (
-            <p className="text-sm text-gray-500">No disagreements in this window.</p>
+            <p className="text-sm text-muted-foreground">No disagreements in this window.</p>
           ) : (
             <ol className="space-y-2">
               {data.topDisagreements.map((d, i) => (
@@ -113,7 +113,7 @@ export default function ClassifierAccuracyPage() {
                       {d.correctedIntent}
                     </code>
                   </span>
-                  <span className="font-mono text-gray-700">{d.n}</span>
+                  <span className="font-mono text-foreground">{d.n}</span>
                 </li>
               ))}
             </ol>
@@ -124,7 +124,7 @@ export default function ClassifierAccuracyPage() {
       <Card>
         <CardHeader>
           <h2 className="text-lg font-medium">Disagreement heatmap</h2>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="mt-1 text-xs text-muted-foreground">
             Rows = classifier&apos;s call; columns = admin/sender correction. Darker = more
             disagreements.
           </p>
@@ -162,7 +162,9 @@ function AccuracyChart({ buckets, versions }: { buckets: WeeklyBucket[]; version
   }, [byVersion]);
 
   if (weekCount === 0) {
-    return <p className="text-sm text-gray-500">No classified emails in this window yet.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">No classified emails in this window yet.</p>
+    );
   }
 
   // SVG coordinate system: 720x240 with 40px left + 30px bottom padding.
@@ -270,7 +272,7 @@ function AccuracyChart({ buckets, versions }: { buckets: WeeklyBucket[]; version
               className="inline-block h-2 w-3"
               style={{ backgroundColor: LINE_COLORS[vi % LINE_COLORS.length] }}
             />
-            <code className="text-gray-700">{version}</code>
+            <code className="text-foreground">{version}</code>
           </li>
         ))}
       </ul>
@@ -302,7 +304,7 @@ function DisagreementHeatmap({ matrix }: { matrix: DisagreementPair[] }) {
   const maxN = useMemo(() => Math.max(1, ...matrix.map((m) => m.n)), [matrix]);
 
   if (originals.length === 0 || correcteds.length === 0) {
-    return <p className="text-sm text-gray-500">No disagreements in this window.</p>;
+    return <p className="text-sm text-muted-foreground">No disagreements in this window.</p>;
   }
 
   return (
@@ -312,7 +314,7 @@ function DisagreementHeatmap({ matrix }: { matrix: DisagreementPair[] }) {
           <tr>
             <th className="border-b border-r p-2"></th>
             {correcteds.map((c) => (
-              <th key={c} className="border-b border-r p-2 text-left font-medium text-gray-700">
+              <th key={c} className="border-b border-r p-2 text-left font-medium text-foreground">
                 <code>{c}</code>
               </th>
             ))}
@@ -321,7 +323,7 @@ function DisagreementHeatmap({ matrix }: { matrix: DisagreementPair[] }) {
         <tbody>
           {originals.map((o) => (
             <tr key={o}>
-              <th className="border-b border-r p-2 text-left font-medium text-gray-700">
+              <th className="border-b border-r p-2 text-left font-medium text-foreground">
                 <code>{o}</code>
               </th>
               {correcteds.map((c) => {

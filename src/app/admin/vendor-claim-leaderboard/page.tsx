@@ -249,7 +249,7 @@ async function loadLeaderboard(): Promise<LeaderboardRow[]> {
 function scoreBadgeClasses(score: number): string {
   if (score >= 0.6) return "bg-green-50 text-green-800 border-green-300";
   if (score >= 0.3) return "bg-amber-50 text-amber-800 border-amber-300";
-  return "bg-gray-50 text-gray-600 border-gray-200";
+  return "bg-muted text-muted-foreground border-border";
 }
 
 // Outcome chip colors mirror the operator's mental model: claimed=green,
@@ -262,11 +262,11 @@ function outcomeBadgeClasses(outcome: string): string {
     case "claimed":
       return "bg-green-50 text-green-800 border-green-300";
     case "rejected":
-      return "bg-gray-50 text-gray-600 border-gray-200";
+      return "bg-muted text-muted-foreground border-border";
     case "bounced":
       return "bg-red-50 text-red-800 border-red-300";
     case "replied":
-      return "bg-blue-50 text-blue-800 border-blue-200";
+      return "bg-info-soft text-navy-dark border-info-soft";
     case "sent":
     case "opened":
     case "no_response":
@@ -282,8 +282,8 @@ export default async function VendorClaimLeaderboardPage() {
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">Probability-to-claim leaderboard</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Probability-to-claim leaderboard</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Unclaimed vendors with <code>contact_email</code> set, ranked by composite of
           event-participation count, /vendors/&lt;slug&gt; view count, completeness, and
           contact-channel richness (phone + website). The pool is small (~29 today); the ranking
@@ -315,14 +315,14 @@ export default async function VendorClaimLeaderboardPage() {
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (
-            <p className="p-6 text-sm text-gray-500">
+            <p className="p-6 text-sm text-muted-foreground">
               No vendors match the contactable-and-unclaimed filter. Likely no vendors have{" "}
               <code>contact_email</code> set yet, or all are claimed.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200 text-left text-gray-600">
+                <thead className="bg-muted border-b border-border text-left text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2 font-medium">#</th>
                     <th className="px-4 py-2 font-medium">vendor</th>
@@ -337,21 +337,21 @@ export default async function VendorClaimLeaderboardPage() {
                 </thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-4 py-2 text-gray-500 tabular-nums">{i + 1}</td>
+                    <tr key={r.id} className="border-b border-border hover:bg-muted">
+                      <td className="px-4 py-2 text-muted-foreground tabular-nums">{i + 1}</td>
                       <td className="px-4 py-2">
                         <Link
                           href={`/vendors/${r.slug}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-600 hover:underline font-medium"
+                          className="text-royal hover:underline font-medium"
                         >
                           {r.businessName}
                         </Link>
-                        <div className="text-xs text-gray-500 font-mono">{r.slug}</div>
-                        {r.state && <div className="text-xs text-gray-500">{r.state}</div>}
+                        <div className="text-xs text-muted-foreground font-mono">{r.slug}</div>
+                        {r.state && <div className="text-xs text-muted-foreground">{r.state}</div>}
                       </td>
-                      <td className="px-4 py-2 text-xs text-gray-600">
+                      <td className="px-4 py-2 text-xs text-muted-foreground">
                         <div className="font-mono">{r.contactEmail}</div>
                         {r.contactPhone && <div>{r.contactPhone}</div>}
                         {r.website && (
@@ -359,19 +359,19 @@ export default async function VendorClaimLeaderboardPage() {
                             href={r.website}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-blue-600 hover:underline truncate inline-block max-w-[200px]"
+                            className="text-royal hover:underline truncate inline-block max-w-[200px]"
                           >
                             {r.website.replace(/^https?:\/\//, "")}
                           </a>
                         )}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.eventCount}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.viewCount}
                       </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.completenessScore}
                       </td>
                       <td className="px-4 py-2 text-right">
@@ -382,9 +382,9 @@ export default async function VendorClaimLeaderboardPage() {
                           {(r.score * 100).toFixed(1)}
                         </span>
                       </td>
-                      <td className="px-4 py-2 text-xs text-gray-600">
+                      <td className="px-4 py-2 text-xs text-muted-foreground">
                         {r.outreachCount === 0 ? (
-                          <span className="text-gray-600">never</span>
+                          <span className="text-muted-foreground">never</span>
                         ) : (
                           <span>
                             {r.outreachCount}× · last{" "}
@@ -411,7 +411,7 @@ export default async function VendorClaimLeaderboardPage() {
         </CardContent>
       </Card>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         Score weights: events {WEIGHT_EVENT_COUNT * 100}%, views {WEIGHT_VIEW_COUNT * 100}%,
         completeness {WEIGHT_COMPLETENESS * 100}%, contact richness {WEIGHT_CONTACT_RICHNESS * 100}
         %. Hover any score for the per-component breakdown. Normalization is proportional-to-max
@@ -433,11 +433,11 @@ function Stat({
   suffix?: string;
   accent?: "green";
 }) {
-  const cls = accent === "green" ? "text-green-700" : "text-gray-900";
+  const cls = accent === "green" ? "text-green-700" : "text-foreground";
   return (
     <Card>
       <CardContent className="p-4">
-        <p className="text-xs text-gray-500">{label}</p>
+        <p className="text-xs text-muted-foreground">{label}</p>
         <p className={`text-2xl font-semibold tabular-nums mt-1 ${cls}`}>
           {value}
           {suffix && <span className="text-xs ml-1">{suffix}</span>}

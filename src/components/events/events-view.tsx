@@ -385,37 +385,39 @@ function CalendarView({
     const dayEvents = getEventsForDate(events, currentDate);
 
     return (
-      <div className="border-t border-gray-200">
-        <div className="text-center py-2 border-b border-gray-200 bg-gray-50">
-          <div className="text-sm text-gray-500">
+      <div className="border-t border-border">
+        <div className="text-center py-2 border-b border-border bg-muted">
+          <div className="text-sm text-muted-foreground">
             {currentDate.toLocaleDateString("en-US", { weekday: "long" })}
           </div>
           <div
-            className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-royal" : "text-gray-900"}`}
+            className={`text-2xl font-semibold ${isSameDay(currentDate, today) ? "text-royal" : "text-foreground"}`}
           >
             {currentDate.getDate()}
           </div>
         </div>
         <div className="max-h-[600px] overflow-y-auto print:max-h-none print:overflow-visible">
           {dayEvents.length === 0 ? (
-            <div className="py-12 text-center text-gray-500">No events scheduled for this day</div>
+            <div className="py-12 text-center text-muted-foreground">
+              No events scheduled for this day
+            </div>
           ) : (
-            <div className="divide-y divide-gray-200">
+            <div className="divide-y divide-border">
               {dayEvents.map((event) => (
                 <button
                   key={event.id}
                   onClick={(e) => openEventPopover(e, event)}
-                  className="block w-full text-left p-4 hover:bg-gray-50 transition-colors"
+                  className="block w-full text-left p-4 hover:bg-muted transition-colors"
                 >
                   <div className="flex items-start gap-3">
                     <div className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`} />
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-gray-900">{event.name}</div>
-                      <div className="text-sm text-gray-500 mt-1">
+                      <div className="font-medium text-foreground">{event.name}</div>
+                      <div className="text-sm text-muted-foreground mt-1">
                         {formatDateRange(event.startDate, event.endDate)}
                       </div>
                       {event.venue && (
-                        <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                        <div className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                           <MapPin className="w-3 h-3" />
                           {event.venue.name}, {event.venue.city}
                         </div>
@@ -443,13 +445,13 @@ function CalendarView({
     return (
       <div>
         {/* Week day headers */}
-        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+        <div className="grid grid-cols-7 border-b border-border bg-muted">
           {days.map((day, i) => (
             <div
               key={i}
-              className="py-2 print:py-1 text-center border-r border-gray-200 last:border-r-0"
+              className="py-2 print:py-1 text-center border-r border-border last:border-r-0"
             >
-              <div className="text-xs print:text-[0.6rem] text-gray-500 uppercase">
+              <div className="text-xs print:text-[0.6rem] text-muted-foreground uppercase">
                 {weekDays[i]}
               </div>
               <button
@@ -457,7 +459,7 @@ function CalendarView({
                   setCurrentDate(day);
                   setCalendarViewType("day");
                 }}
-                className={`text-lg print:text-sm font-semibold cursor-pointer hover:bg-gray-200 rounded-full w-8 h-8 flex items-center justify-center mx-auto transition-colors ${isSameDay(day, today) ? "bg-royal text-white hover:bg-navy" : "text-gray-900"}`}
+                className={`text-lg print:text-sm font-semibold cursor-pointer hover:bg-muted rounded-full w-8 h-8 flex items-center justify-center mx-auto transition-colors ${isSameDay(day, today) ? "bg-secondary text-secondary-foreground hover:bg-secondary/90" : "text-foreground"}`}
               >
                 {day.getDate()}
               </button>
@@ -469,7 +471,7 @@ function CalendarView({
           {days.map((day, i) => {
             const dayEvents = getEventsForDate(events, day);
             return (
-              <div key={i} className="border-r border-gray-200 last:border-r-0 p-1 print:p-px">
+              <div key={i} className="border-r border-border last:border-r-0 p-1 print:p-px">
                 {/* Screen: capped at 5 events */}
                 <div className="space-y-1 print:hidden">
                   {dayEvents.slice(0, 5).map((event) => (
@@ -495,7 +497,7 @@ function CalendarView({
                           anchor: { x: rect.left, y: rect.bottom },
                         });
                       }}
-                      className="text-xs text-gray-500 px-1.5 hover:text-navy transition-colors"
+                      className="text-xs text-muted-foreground px-1.5 hover:text-navy transition-colors"
                     >
                       +{dayEvents.length - 5} more
                     </button>
@@ -567,7 +569,7 @@ function CalendarView({
                     anchor: { x: rect.left, y: rect.bottom },
                   });
                 }}
-                className="block w-full text-left px-1.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                className="block w-full text-left px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted rounded"
               >
                 +{dayEvents.length - 3} more
               </button>
@@ -615,10 +617,10 @@ function CalendarView({
           }}
           className={`inline-flex h-6 w-6 items-center justify-center text-xs rounded-full transition-colors cursor-pointer ${
             day.isToday
-              ? "bg-royal text-white font-semibold hover:bg-navy"
+              ? "bg-secondary text-secondary-foreground font-semibold hover:bg-secondary/90"
               : day.inMonth
-                ? "font-medium text-gray-700 hover:bg-gray-200"
-                : "text-gray-600 hover:bg-gray-100"
+                ? "font-medium text-foreground hover:bg-muted"
+                : "text-muted-foreground hover:bg-muted"
           }`}
         >
           {day.day}
@@ -637,7 +639,7 @@ function CalendarView({
       renderDayContent={renderMonthDayContent}
       renderDayNumber={renderMonthDayNumber}
       cellMinHeight="100px"
-      todayClassName="rounded-full bg-royal text-white font-semibold"
+      todayClassName="rounded-full bg-secondary text-secondary-foreground font-semibold"
       className="border-0 rounded-none shadow-none"
     />
   );
@@ -668,14 +670,14 @@ function CalendarView({
           return (
             <div
               key={monthIndex}
-              className="bg-white border border-gray-200 rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+              className="bg-card border border-border rounded-lg overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
               onClick={() => {
                 setCurrentDate(new Date(year, monthIndex, 1));
                 setCalendarViewType("month");
               }}
             >
-              <div className="bg-gray-50 px-3 py-2 border-b border-gray-200">
-                <div className="text-sm font-medium text-gray-900">
+              <div className="bg-muted px-3 py-2 border-b border-border">
+                <div className="text-sm font-medium text-foreground">
                   {monthDate.toLocaleDateString("en-US", { month: "long" })}
                 </div>
                 {monthEvents.length > 0 && (
@@ -687,7 +689,7 @@ function CalendarView({
               <div className="p-2">
                 <div className="grid grid-cols-7 gap-0.5 text-center">
                   {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                    <div key={i} className="text-[10px] text-gray-600 font-medium">
+                    <div key={i} className="text-[10px] text-muted-foreground font-medium">
                       {d}
                     </div>
                   ))}
@@ -702,10 +704,10 @@ function CalendarView({
                         key={i}
                         className={`text-[10px] w-5 h-5 flex items-center justify-center rounded-full ${
                           isCurrentDay
-                            ? "bg-royal text-white"
+                            ? "bg-secondary text-secondary-foreground"
                             : hasEvent
                               ? "bg-amber-light text-amber-bg-fg"
-                              : "text-gray-700"
+                              : "text-foreground"
                         }`}
                       >
                         {day}
@@ -759,30 +761,30 @@ function CalendarView({
     return (
       <div className="max-h-[600px] overflow-y-auto print:max-h-none print:overflow-visible">
         {sortedDates.length === 0 ? (
-          <div className="py-12 text-center text-gray-500">No upcoming events</div>
+          <div className="py-12 text-center text-muted-foreground">No upcoming events</div>
         ) : (
-          <div className="divide-y divide-gray-200">
+          <div className="divide-y divide-border">
             {sortedDates.map((dateKey) => {
               const date = new Date(dateKey);
               const isCurrentDay = isSameDay(date, today);
               return (
                 <div key={dateKey}>
                   <div
-                    className={`sticky top-0 px-4 py-2 bg-gray-50 border-b border-gray-100 ${isCurrentDay ? "bg-brand-blue-light" : ""}`}
+                    className={`sticky top-0 px-4 py-2 bg-muted border-b border-border ${isCurrentDay ? "bg-brand-blue-light" : ""}`}
                   >
                     <div className="flex items-center gap-3">
                       <div
-                        className={`text-2xl font-bold ${isCurrentDay ? "text-royal" : "text-gray-900"}`}
+                        className={`text-2xl font-bold ${isCurrentDay ? "text-royal" : "text-foreground"}`}
                       >
                         {date.getDate()}
                       </div>
                       <div>
                         <div
-                          className={`text-sm font-medium ${isCurrentDay ? "text-royal" : "text-gray-900"}`}
+                          className={`text-sm font-medium ${isCurrentDay ? "text-royal" : "text-foreground"}`}
                         >
                           {date.toLocaleDateString("en-US", { weekday: "long" })}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-muted-foreground">
                           {date.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
                         </div>
                       </div>
@@ -793,19 +795,19 @@ function CalendarView({
                       <button
                         key={event.id}
                         onClick={(e) => openEventPopover(e, event)}
-                        className="block w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
+                        className="block w-full text-left px-4 py-3 hover:bg-muted transition-colors"
                       >
                         <div className="flex items-start gap-3">
                           <div
                             className={`w-1 h-full min-h-[40px] rounded ${getEventColor(event.id)}`}
                           />
                           <div className="flex-1 min-w-0">
-                            <div className="font-medium text-gray-900">{event.name}</div>
-                            <div className="text-sm text-gray-500 mt-1">
+                            <div className="font-medium text-foreground">{event.name}</div>
+                            <div className="text-sm text-muted-foreground mt-1">
                               {formatDateRange(event.startDate, event.endDate)}
                             </div>
                             {event.venue && (
-                              <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
+                              <div className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
                                 <MapPin className="w-3 h-3" />
                                 {event.venue.name}, {event.venue.city}, {event.venue.state}
                               </div>
@@ -825,49 +827,49 @@ function CalendarView({
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden print:border-0 print:rounded-none print:overflow-visible">
+    <div className="bg-card rounded-lg border border-border overflow-hidden print:border-0 print:rounded-none print:overflow-visible">
       {/* Print-only title */}
-      <div className="hidden print:block print:px-2 print:py-1 px-4 py-3 border-b border-gray-200">
-        <h1 className="text-xl font-bold text-gray-900">Events Calendar — {getTitle()}</h1>
+      <div className="hidden print:block print:px-2 print:py-1 px-4 py-3 border-b border-border">
+        <h1 className="text-xl font-bold text-foreground">Events Calendar — {getTitle()}</h1>
       </div>
       {/* Calendar Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 print:hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted print:hidden">
         <div className="flex items-center gap-2">
           <button
             onClick={goToToday}
-            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            className="px-3 py-1.5 text-sm font-medium text-foreground bg-card border border-border rounded-md hover:bg-muted transition-colors"
           >
             Today
           </button>
           <div className="flex items-center">
             <button
               onClick={() => navigate("prev")}
-              className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+              className="p-1.5 text-muted-foreground hover:bg-muted rounded-full transition-colors"
               aria-label="Previous"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
             <button
               onClick={() => navigate("next")}
-              className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+              className="p-1.5 text-muted-foreground hover:bg-muted rounded-full transition-colors"
               aria-label="Next"
             >
               <ChevronRight className="w-5 h-5" />
             </button>
           </div>
-          <h2 className="text-lg font-semibold text-gray-900 ml-2">{getTitle()}</h2>
+          <h2 className="text-lg font-semibold text-foreground ml-2">{getTitle()}</h2>
         </div>
 
         {/* View Type Selector */}
-        <div className="flex items-center gap-1 bg-white border border-gray-300 rounded-lg p-0.5">
+        <div className="flex items-center gap-1 bg-card border border-border rounded-lg p-0.5">
           {viewOptions.map((option) => (
             <button
               key={option.value}
               onClick={() => setCalendarViewType(option.value)}
               className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
                 calendarViewType === option.value
-                  ? "bg-royal text-white"
-                  : "text-gray-600 hover:bg-gray-100"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
               }`}
             >
               {option.label}
@@ -913,8 +915,8 @@ function CalendarView({
       )}
 
       {/* Legend */}
-      <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 print:hidden">
-        <p className="text-xs text-gray-500">
+      <div className="px-4 py-3 bg-muted border-t border-border print:hidden">
+        <p className="text-xs text-muted-foreground">
           {calendarViewType === "year"
             ? "Click on a month to view details. Highlighted days have events."
             : "Click an event for a preview. Click a date number to view that day. Multi-day events appear on each day."}
@@ -1031,7 +1033,7 @@ export function EventsView({
   if (events.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">{emptyMessage}</p>
+        <p className="text-muted-foreground">{emptyMessage}</p>
       </div>
     );
   }
@@ -1058,7 +1060,9 @@ export function EventsView({
   return (
     <div>
       {/* Summary Text */}
-      {summaryText && <p className="text-sm text-gray-600 mb-4 print:hidden">{summaryText}</p>}
+      {summaryText && (
+        <p className="text-sm text-muted-foreground mb-4 print:hidden">{summaryText}</p>
+      )}
 
       {/* Sort, View Toggle, and Download */}
       <div className="flex justify-end items-center gap-3 mb-4 print:hidden">
@@ -1083,7 +1087,7 @@ export function EventsView({
             }
             switchSort(val);
           }}
-          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent"
+          className="text-sm border border-border rounded-md px-2 py-1.5 bg-card text-muted-foreground focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent"
         >
           {SORT_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>
@@ -1113,7 +1117,7 @@ export function EventsView({
             }
             setMaxRadius(radius);
           }}
-          className="text-sm border border-gray-200 rounded-md px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent mr-auto"
+          className="text-sm border border-border rounded-md px-2 py-1.5 bg-card text-muted-foreground focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent mr-auto"
         >
           <option value="">Any distance</option>
           <option value="25">Within 25 mi</option>
@@ -1124,7 +1128,7 @@ export function EventsView({
         {viewMode === "table" && (
           <button
             onClick={downloadCSV}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted border border-border bg-card transition-colors"
           >
             <Download className="w-4 h-4" />
             Download CSV
@@ -1133,17 +1137,19 @@ export function EventsView({
         {viewMode === "calendar" && (
           <button
             onClick={() => window.print()}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted border border-border bg-card transition-colors"
           >
             <Printer className="w-4 h-4" />
             Print
           </button>
         )}
-        <div className="inline-flex rounded-lg border border-gray-200 p-1 bg-white">
+        <div className="inline-flex rounded-lg border border-border p-1 bg-card">
           <button
             onClick={() => switchView("cards")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "cards" ? "bg-navy text-white" : "text-gray-600 hover:bg-gray-100"
+              viewMode === "cards"
+                ? "bg-secondary text-secondary-foreground"
+                : "text-muted-foreground hover:bg-muted"
             }`}
           >
             <LayoutGrid className="w-4 h-4" />
@@ -1152,7 +1158,9 @@ export function EventsView({
           <button
             onClick={() => switchView("table")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "table" ? "bg-navy text-white" : "text-gray-600 hover:bg-gray-100"
+              viewMode === "table"
+                ? "bg-secondary text-secondary-foreground"
+                : "text-muted-foreground hover:bg-muted"
             }`}
           >
             <Table className="w-4 h-4" />
@@ -1161,7 +1169,9 @@ export function EventsView({
           <button
             onClick={() => switchView("calendar")}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              viewMode === "calendar" ? "bg-navy text-white" : "text-gray-600 hover:bg-gray-100"
+              viewMode === "calendar"
+                ? "bg-secondary text-secondary-foreground"
+                : "text-muted-foreground hover:bg-muted"
             }`}
           >
             <CalendarIcon className="w-4 h-4" />
@@ -1190,10 +1200,10 @@ export function EventsView({
 
       {/* Table View */}
       {viewMode === "table" && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-card rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-muted border-b border-border">
                 <tr>
                   <SortableHeader
                     column="name"
@@ -1226,18 +1236,18 @@ export function EventsView({
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600 w-24">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground w-24">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-border">
                 {sortedEvents.map((event) => (
-                  <tr key={event.id} className="hover:bg-gray-50">
+                  <tr key={event.id} className="hover:bg-muted">
                     <td className="py-3 px-4">
                       <Link
                         href={`/events/${event.slug}`}
-                        className="font-medium text-gray-900 hover:text-navy"
+                        className="font-medium text-foreground hover:text-navy"
                       >
                         {event.name}
                       </Link>
@@ -1252,17 +1262,23 @@ export function EventsView({
                         </Badge>
                       )}
                       {event.status === "TENTATIVE" && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-blue-800">
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-brand-blue-light text-navy-dark">
                           Tentative
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.name || "-"}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.city || "-"}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{event.venue?.state || "-"}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600 whitespace-nowrap">
+                    <td className="py-3 px-4 text-sm text-muted-foreground">
+                      {event.venue?.name || "-"}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-muted-foreground">
+                      {event.venue?.city || "-"}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-muted-foreground">
+                      {event.venue?.state || "-"}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-muted-foreground whitespace-nowrap">
                       <div className="flex items-center gap-1">
-                        <CalendarIcon className="w-4 h-4 text-gray-600" />
+                        <CalendarIcon className="w-4 h-4 text-muted-foreground" />
                         {formatDateRange(event.startDate, event.endDate)}
                       </div>
                     </td>
@@ -1270,7 +1286,7 @@ export function EventsView({
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/events/${event.slug}`}
-                          className="text-royal hover:text-blue-800 text-sm font-medium"
+                          className="text-royal hover:text-navy-dark text-sm font-medium"
                         >
                           View
                         </Link>
@@ -1279,7 +1295,7 @@ export function EventsView({
                             href={event.ticketUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-gray-600 hover:text-gray-600"
+                            className="text-muted-foreground hover:text-muted-foreground"
                             title="Event Website"
                           >
                             <ExternalLink className="w-4 h-4" />

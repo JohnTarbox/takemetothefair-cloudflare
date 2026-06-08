@@ -14,10 +14,10 @@ export default function NotFound() {
     <div className="min-h-[60vh] flex items-center justify-center px-4">
       <div className="text-center max-w-md">
         <div className="mb-6">
-          <span className="text-8xl font-bold text-gray-200">404</span>
+          <span className="text-8xl font-bold text-muted-foreground/40">404</span>
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Page Not Found</h1>
-        <p className="text-gray-600 mb-8">
+        <h1 className="text-2xl font-bold text-foreground mb-2">Page Not Found</h1>
+        <p className="text-muted-foreground mb-8">
           Sorry, we couldn&apos;t find the page you&apos;re looking for. It may have been moved or
           no longer exists.
         </p>
@@ -26,7 +26,7 @@ export default function NotFound() {
             give the user a quick way to tell us. Path pre-fills via
             window.location on the form page so the operator sees which
             URL they hit. */}
-        <p className="text-sm text-gray-500 mb-6">
+        <p className="text-sm text-muted-foreground mb-6">
           Think this page should exist?{" "}
           <Link
             href="/report-problem?source=not-found"
@@ -52,8 +52,8 @@ export default function NotFound() {
           </Link>
         </div>
 
-        <div className="mt-8 pt-8 border-t border-gray-200">
-          <p className="text-sm text-gray-500 mb-4">Looking for something specific?</p>
+        <div className="mt-8 pt-8 border-t border-border">
+          <p className="text-sm text-muted-foreground mb-4">Looking for something specific?</p>
           <div className="flex flex-wrap justify-center gap-4 text-sm">
             <Link href="/venues" className="text-royal hover:text-navy">
               Venues

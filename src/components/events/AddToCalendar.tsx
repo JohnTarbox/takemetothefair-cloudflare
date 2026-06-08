@@ -208,7 +208,7 @@ export function AddToCalendar({
         />
 
         {isOpen && (
-          <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+          <div className="absolute right-0 mt-1 w-56 bg-card rounded-lg shadow-lg border border-border py-1 z-50">
             {calendarOptions.map((option) => (
               <a
                 key={option.name}
@@ -216,12 +216,14 @@ export function AddToCalendar({
                 target="_blank"
                 rel="noopener noreferrer"
                 download={option.download}
-                className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted"
                 onClick={() => handleCalendarClick(option.name)}
               >
                 {option.icon}
                 <span className="flex-1">{option.name}</span>
-                {option.note && <span className="text-xs text-gray-600">{option.note}</span>}
+                {option.note && (
+                  <span className="text-xs text-muted-foreground">{option.note}</span>
+                )}
               </a>
             ))}
           </div>
@@ -250,7 +252,7 @@ export function AddToCalendar({
         </button>
 
         {isOpen && (
-          <div className="absolute left-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+          <div className="absolute left-0 mt-1 w-56 bg-card rounded-lg shadow-lg border border-border py-1 z-50">
             {calendarOptions.map((option) => (
               <a
                 key={option.name}
@@ -258,12 +260,14 @@ export function AddToCalendar({
                 target="_blank"
                 rel="noopener noreferrer"
                 download={option.download}
-                className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted"
                 onClick={() => handleCalendarClick(option.name)}
               >
                 {option.icon}
                 <span className="flex-1">{option.name}</span>
-                {option.note && <span className="text-xs text-gray-600">{option.note}</span>}
+                {option.note && (
+                  <span className="text-xs text-muted-foreground">{option.note}</span>
+                )}
               </a>
             ))}
           </div>
@@ -293,7 +297,7 @@ export function AddToCalendar({
       </Button>
 
       {isOpen && (
-        <div className="absolute left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
+        <div className="absolute left-0 right-0 mt-1 bg-card rounded-lg shadow-lg border border-border py-1 z-50">
           {calendarOptions.map((option) => (
             <a
               key={option.name}
@@ -301,12 +305,12 @@ export function AddToCalendar({
               target="_blank"
               rel="noopener noreferrer"
               download={option.download}
-              className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              className="flex items-center gap-2 min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted"
               onClick={() => setIsOpen(false)}
             >
               {option.icon}
               <span className="flex-1">{option.name}</span>
-              {option.note && <span className="text-xs text-gray-600">{option.note}</span>}
+              {option.note && <span className="text-xs text-muted-foreground">{option.note}</span>}
             </a>
           ))}
         </div>

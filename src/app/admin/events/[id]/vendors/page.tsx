@@ -251,8 +251,8 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -260,8 +260,8 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
   if (!event) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-600">Event not found</p>
-        <Link href="/admin/events" className="text-blue-600 hover:underline mt-2 inline-block">
+        <p className="text-muted-foreground">Event not found</p>
+        <Link href="/admin/events" className="text-royal hover:underline mt-2 inline-block">
           Back to Events
         </Link>
       </div>
@@ -273,7 +273,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
       <div className="mb-6">
         <Link
           href="/admin/events"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Events
@@ -282,8 +282,8 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Manage Vendors</h1>
-          <p className="text-gray-600 mt-1">{event.name}</p>
+          <h1 className="text-2xl font-bold text-foreground">Manage Vendors</h1>
+          <p className="text-muted-foreground mt-1">{event.name}</p>
           {!event.commercialVendorsAllowed && (
             <Badge variant="warning" className="mt-2">
               Commercial vendors not allowed
@@ -330,7 +330,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
             <div className="space-y-4">
               {/* Search */}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
                   placeholder="Search vendors by name or type..."
                   value={bulkSearchQuery}
@@ -341,7 +341,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
 
               {/* Selection controls */}
               <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-600">
+                <div className="text-sm text-muted-foreground">
                   {selectedVendorIds.size} vendor{selectedVendorIds.size !== 1 ? "s" : ""} selected
                 </div>
                 <div className="flex gap-2">
@@ -357,7 +357,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
               {/* Vendor list with checkboxes */}
               <div className="border rounded-lg max-h-80 overflow-y-auto">
                 {filteredAvailableVendors.length === 0 ? (
-                  <div className="p-4 text-center text-gray-500">
+                  <div className="p-4 text-center text-muted-foreground">
                     {availableVendors.length === 0
                       ? "All vendors have been added to this event"
                       : "No vendors match your search"}
@@ -367,15 +367,15 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                     {filteredAvailableVendors.map((vendor) => (
                       <label
                         key={vendor.id}
-                        className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer"
+                        className="flex items-center gap-3 p-3 hover:bg-muted cursor-pointer"
                       >
                         <input
                           type="checkbox"
                           checked={selectedVendorIds.has(vendor.id)}
                           onChange={() => toggleVendorSelection(vendor.id)}
-                          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          className="w-4 h-4 rounded border-border text-royal focus:ring-ring"
                         />
-                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
                           {vendor.logoUrl ? (
                             <img
                               src={vendor.logoUrl}
@@ -383,14 +383,14 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                               className="w-10 h-10 rounded-lg object-cover"
                             />
                           ) : (
-                            <Store className="w-5 h-5 text-gray-600" />
+                            <Store className="w-5 h-5 text-muted-foreground" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium text-gray-900 truncate">
+                          <div className="font-medium text-foreground truncate">
                             {vendor.businessName}
                           </div>
-                          <div className="text-sm text-gray-500 flex items-center gap-2">
+                          <div className="text-sm text-muted-foreground flex items-center gap-2">
                             {vendor.vendorType && <span>{vendor.vendorType}</span>}
                             {vendor.commercial && (
                               <Badge variant="default" className="text-xs">
@@ -457,7 +457,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                   ))}
                 </select>
                 {availableVendors.length === 0 && (
-                  <p className="text-sm text-gray-500 mt-1">
+                  <p className="text-sm text-muted-foreground mt-1">
                     All vendors have been added to this event
                   </p>
                 )}
@@ -486,7 +486,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                         </option>
                       ))}
                   </select>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Leave on &quot;Regular participant&quot; for vendors that attend every
                     occurrence. Pick a specific date for one-time featured slots.
                   </p>
@@ -531,9 +531,9 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
         <CardContent>
           {eventVendors.length === 0 ? (
             <div className="text-center py-8">
-              <Store className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-              <p className="text-gray-500">No vendors added to this event yet</p>
-              <p className="text-sm text-gray-600 mt-1">
+              <Store className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">No vendors added to this event yet</p>
+              <p className="text-sm text-muted-foreground mt-1">
                 Use &quot;Quick Add Multiple&quot; to add several vendors at once
               </p>
             </div>
@@ -545,7 +545,7 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                   className="flex items-center justify-between p-4 border rounded-lg"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center">
                       {ev.vendor.logoUrl ? (
                         <img
                           src={ev.vendor.logoUrl}
@@ -553,14 +553,14 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                           className="w-12 h-12 rounded-lg object-cover"
                         />
                       ) : (
-                        <Store className="w-6 h-6 text-gray-600" />
+                        <Store className="w-6 h-6 text-muted-foreground" />
                       )}
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/admin/vendors/${ev.vendor.id}/edit`}
-                          className="font-medium text-gray-900 hover:text-blue-600"
+                          className="font-medium text-foreground hover:text-royal"
                         >
                           {ev.vendor.businessName}
                         </Link>
@@ -574,10 +574,10 @@ export default function ManageEventVendorsPage({ params }: { params: Promise<{ i
                         )}
                       </div>
                       {ev.vendor.vendorType && (
-                        <p className="text-sm text-gray-500">{ev.vendor.vendorType}</p>
+                        <p className="text-sm text-muted-foreground">{ev.vendor.vendorType}</p>
                       )}
                       {ev.boothInfo && (
-                        <p className="text-sm text-gray-500">Booth: {ev.boothInfo}</p>
+                        <p className="text-sm text-muted-foreground">Booth: {ev.boothInfo}</p>
                       )}
                     </div>
                   </div>

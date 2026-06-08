@@ -42,7 +42,7 @@ export default function ImportUrlPage() {
       <div className="mb-6">
         <Link
           href="/admin"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Admin
@@ -51,8 +51,8 @@ export default function ImportUrlPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Import from URL</h1>
-          <p className="text-gray-600 mt-1">
+          <h1 className="text-2xl font-bold text-foreground">Import from URL</h1>
+          <p className="text-muted-foreground mt-1">
             Import event details from any webpage using AI extraction
           </p>
         </div>
@@ -63,11 +63,11 @@ export default function ImportUrlPage() {
 
       {/* Tip for supported sources */}
       {state.step === "url-input" && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md text-sm">
-          <p className="text-blue-800">
+        <div className="mb-4 p-3 bg-info-soft border border-info-soft rounded-md text-sm">
+          <p className="text-navy-dark">
             <strong>Tip:</strong> For pages with many events from supported sources
             (fairsandfestivals.net, mainefairs.net, etc.), use the{" "}
-            <Link href="/admin/import" className="underline font-medium hover:text-blue-900">
+            <Link href="/admin/import" className="underline font-medium hover:text-navy-dark">
               Bulk Import page
             </Link>{" "}
             instead. It uses dedicated scrapers that can import all events without AI limitations.

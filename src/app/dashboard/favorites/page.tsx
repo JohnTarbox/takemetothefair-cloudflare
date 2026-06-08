@@ -121,8 +121,8 @@ export default async function FavoritesPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">My Favorites</h1>
-        <p className="mt-1 text-gray-600">{totalFavorites} saved items</p>
+        <h1 className="text-2xl font-bold text-foreground">My Favorites</h1>
+        <p className="mt-1 text-muted-foreground">{totalFavorites} saved items</p>
       </div>
 
       {totalFavorites === 0 ? (
@@ -155,7 +155,7 @@ export default async function FavoritesPage() {
         <div className="space-y-8">
           {eventsList.length > 0 && (
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Calendar className="w-5 h-5" />
                 Events ({eventsList.length})
               </h2>
@@ -168,8 +168,8 @@ export default async function FavoritesPage() {
                           <Calendar className="w-8 h-8 text-royal" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">{event.name}</h3>
-                          <p className="text-sm text-gray-500">
+                          <h3 className="font-medium text-foreground">{event.name}</h3>
+                          <p className="text-sm text-muted-foreground">
                             {event.venue.name}, {event.venue.city}
                           </p>
                         </div>
@@ -183,7 +183,7 @@ export default async function FavoritesPage() {
 
           {venuesList.length > 0 && (
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
                 <MapPin className="w-5 h-5" />
                 Venues ({venuesList.length})
               </h2>
@@ -196,8 +196,8 @@ export default async function FavoritesPage() {
                           <MapPin className="w-8 h-8 text-green-600" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">{venue.name}</h3>
-                          <p className="text-sm text-gray-500">
+                          <h3 className="font-medium text-foreground">{venue.name}</h3>
+                          <p className="text-sm text-muted-foreground">
                             {venue.city}, {venue.state}
                           </p>
                         </div>
@@ -211,7 +211,7 @@ export default async function FavoritesPage() {
 
           {vendorsList.length > 0 && (
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h2 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Store className="w-5 h-5" />
                 Vendors ({vendorsList.length})
               </h2>
@@ -224,8 +224,8 @@ export default async function FavoritesPage() {
                           <Store className="w-8 h-8 text-purple-600" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-gray-900">{vendor.businessName}</h3>
-                          <p className="text-sm text-gray-500">{vendor.vendorType}</p>
+                          <h3 className="font-medium text-foreground">{vendor.businessName}</h3>
+                          <p className="text-sm text-muted-foreground">{vendor.vendorType}</p>
                         </div>
                       </CardContent>
                     </Card>

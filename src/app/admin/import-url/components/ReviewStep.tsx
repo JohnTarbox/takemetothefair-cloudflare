@@ -58,7 +58,7 @@ export function ReviewStep({
             <CardTitle className="text-sm">Source Content</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="max-h-[600px] overflow-y-auto text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 p-3 rounded-lg">
+            <div className="max-h-[600px] overflow-y-auto text-sm text-muted-foreground whitespace-pre-wrap bg-muted p-3 rounded-lg">
               {fetchedContent || "No content available"}
             </div>
           </CardContent>
@@ -79,7 +79,7 @@ export function ReviewStep({
               </span>
               <div className="flex items-center gap-2">
                 {eventsToImport.length > 1 && (
-                  <span className="text-sm font-normal text-gray-500">
+                  <span className="text-sm font-normal text-muted-foreground">
                     Review and edit each event
                   </span>
                 )}
@@ -115,7 +115,7 @@ export function ReviewStep({
               </Label>
               <textarea
                 id="description"
-                className="mt-1 w-full h-24 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="mt-1 w-full h-24 rounded-lg border border-border px-3 py-2 text-sm"
                 value={extractedData.description || ""}
                 onChange={(e) => onUpdateData({ description: e.target.value })}
               />
@@ -143,8 +143,8 @@ export function ReviewStep({
                       }}
                       className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
                         selected
-                          ? "bg-blue-100 text-blue-700 ring-1 ring-blue-300"
-                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                          ? "bg-info-soft text-navy ring-1 ring-blue-300"
+                          : "bg-muted text-muted-foreground hover:bg-muted"
                       }`}
                     >
                       {cat}
@@ -189,7 +189,7 @@ export function ReviewStep({
                 type="checkbox"
                 checked={datesConfirmed}
                 onChange={(e) => onSetDatesConfirmed(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-border"
               />
               Dates are confirmed
             </label>
@@ -229,7 +229,7 @@ export function ReviewStep({
                 type="checkbox"
                 checked={extractedData.hoursVaryByDay}
                 onChange={(e) => onUpdateData({ hoursVaryByDay: e.target.checked })}
-                className="rounded border-gray-300"
+                className="rounded border-border"
               />
               Hours vary by day
             </label>
@@ -242,7 +242,7 @@ export function ReviewStep({
                 </Label>
                 <textarea
                   id="hoursNotes"
-                  className="mt-1 w-full h-16 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  className="mt-1 w-full h-16 rounded-lg border border-border px-3 py-2 text-sm"
                   placeholder="e.g., Fri 5-9pm, Sat 10am-6pm, Sun 10am-4pm"
                   value={extractedData.hoursNotes || ""}
                   onChange={(e) => onUpdateData({ hoursNotes: e.target.value || null })}
@@ -279,7 +279,7 @@ export function ReviewStep({
                           );
                           onUpdateData({ specificDates: updated.length > 0 ? updated : null });
                         }}
-                        className="text-gray-600 hover:text-red-600 p-1 h-8 w-8"
+                        className="text-muted-foreground hover:text-red-600 p-1 h-8 w-8"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -316,7 +316,7 @@ export function ReviewStep({
                   <ConfidenceBadge field="ticketPriceMin" confidence={confidence} />
                 </Label>
                 <div className="relative mt-1">
-                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     id="ticketPriceMin"
                     type="number"
@@ -338,7 +338,7 @@ export function ReviewStep({
                   <ConfidenceBadge field="ticketPriceMax" confidence={confidence} />
                 </Label>
                 <div className="relative mt-1">
-                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                  <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     id="ticketPriceMax"
                     type="number"

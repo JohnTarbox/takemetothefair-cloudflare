@@ -69,12 +69,12 @@ export function UrlInputStep({
                 </Button>
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm text-gray-600">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
               <input
                 type="checkbox"
                 checked={manualPaste}
                 onChange={(e) => onManualPasteChange(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-border"
               />
               I can&apos;t fetch the page - let me paste content
             </label>
@@ -85,7 +85,7 @@ export function UrlInputStep({
               <Label htmlFor="pastedContent">Paste Page Content</Label>
               <textarea
                 id="pastedContent"
-                className="mt-1 w-full h-48 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                className="mt-1 w-full h-48 rounded-lg border border-border px-3 py-2 text-sm"
                 placeholder="Paste the event page content here..."
                 value={pastedContent}
                 onChange={(e) => onPastedContentChange(e.target.value)}

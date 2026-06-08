@@ -92,8 +92,8 @@ export default async function AllEventsPage() {
       />
 
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">All Upcoming Events</h1>
-        <p className="mt-2 text-gray-600">
+        <h1 className="text-3xl font-bold text-foreground">All Upcoming Events</h1>
+        <p className="mt-2 text-muted-foreground">
           Complete directory of {upcomingEvents.length} upcoming fairs, festivals, and events in New
           England.
         </p>
@@ -104,7 +104,7 @@ export default async function AllEventsPage() {
         const stateName = STATE_NAMES[stateCode] || "Other Locations";
         return (
           <section key={stateCode} className="mb-8">
-            <h2 className="text-xl font-semibold text-gray-800 border-b border-gray-200 pb-2 mb-3">
+            <h2 className="text-xl font-semibold text-foreground border-b border-border pb-2 mb-3">
               {stateName} ({stateEvents.length})
             </h2>
             <ul className="columns-1 sm:columns-2 lg:columns-3 gap-x-8">
@@ -112,7 +112,7 @@ export default async function AllEventsPage() {
                 <li key={event.slug} className="break-inside-avoid mb-1">
                   <Link
                     href={`/events/${event.slug}`}
-                    className="text-royal hover:text-blue-800 hover:underline text-sm"
+                    className="text-royal hover:text-navy-dark hover:underline text-sm"
                   >
                     {event.name}
                   </Link>
@@ -123,7 +123,7 @@ export default async function AllEventsPage() {
         );
       })}
 
-      <div className="mt-8 pt-6 border-t border-gray-200 text-sm text-gray-500">
+      <div className="mt-8 pt-6 border-t border-border text-sm text-muted-foreground">
         <Link href="/events" className="text-royal hover:underline">
           Browse events with filters
         </Link>

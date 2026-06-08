@@ -43,7 +43,7 @@ export default function AdminUsersPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users");
-      const data = await res.json() as User[];
+      const data = (await res.json()) as User[];
       setUsers(data);
     } catch (error) {
       console.error("Failed to fetch users:", error);
@@ -82,8 +82,8 @@ export default function AdminUsersPage() {
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -91,18 +91,18 @@ export default function AdminUsersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Manage Users</h1>
+        <h1 className="text-2xl font-bold text-foreground">Manage Users</h1>
       </div>
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">{users.length} users total</p>
+          <p className="text-sm text-muted-foreground">{users.length} users total</p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-border">
                   <SortableHeader
                     column="email"
                     label="Email"
@@ -127,26 +127,22 @@ export default function AdminUsersPage() {
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
+                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {sortedUsers.map((user) => (
-                  <tr key={user.id} className="border-b border-gray-100">
+                  <tr key={user.id} className="border-b border-border">
                     <td className="py-3 px-4">
-                      <p className="font-medium text-gray-900">{user.email}</p>
+                      <p className="font-medium text-foreground">{user.email}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
-                      {user.name || "-"}
-                    </td>
+                    <td className="py-3 px-4 text-muted-foreground">{user.name || "-"}</td>
                     <td className="py-3 px-4">
-                      <Badge variant={roleColors[user.role]}>
-                        {user.role}
-                      </Badge>
+                      <Badge variant={roleColors[user.role]}>{user.role}</Badge>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">
+                    <td className="py-3 px-4 text-muted-foreground">
                       {formatDate(user.createdAt)}
                     </td>
                     <td className="py-3 px-4">

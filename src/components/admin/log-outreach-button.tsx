@@ -35,7 +35,7 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+        className="text-xs text-royal hover:text-navy-dark hover:underline"
       >
         Log
       </button>
@@ -73,24 +73,24 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
   };
 
   return (
-    <div className="text-left bg-white border border-gray-300 rounded p-2 text-xs space-y-1.5 shadow-sm w-56">
+    <div className="text-left bg-card border border-border rounded p-2 text-xs space-y-1.5 shadow-sm w-56">
       <div className="flex items-center justify-between">
-        <span className="font-medium text-gray-700">Log outreach</span>
+        <span className="font-medium text-foreground">Log outreach</span>
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="text-gray-600 hover:text-gray-600"
+          className="text-muted-foreground hover:text-muted-foreground"
           aria-label="Cancel"
         >
           ×
         </button>
       </div>
       <div>
-        <label className="block text-gray-500">Channel</label>
+        <label className="block text-muted-foreground">Channel</label>
         <select
           value={channel}
           onChange={(e) => setChannel(e.target.value as Channel)}
-          className="w-full border border-gray-200 rounded px-1 py-0.5"
+          className="w-full border border-border rounded px-1 py-0.5"
           disabled={submitting}
         >
           <option value="email">email</option>
@@ -100,11 +100,11 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
         </select>
       </div>
       <div>
-        <label className="block text-gray-500">Outcome</label>
+        <label className="block text-muted-foreground">Outcome</label>
         <select
           value={outcome}
           onChange={(e) => setOutcome(e.target.value as Outcome | "")}
-          className="w-full border border-gray-200 rounded px-1 py-0.5"
+          className="w-full border border-border rounded px-1 py-0.5"
           disabled={submitting}
         >
           <option value="">(in flight, no outcome yet)</option>
@@ -118,13 +118,13 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
         </select>
       </div>
       <div>
-        <label className="block text-gray-500">Notes (optional)</label>
+        <label className="block text-muted-foreground">Notes (optional)</label>
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={2}
           maxLength={500}
-          className="w-full border border-gray-200 rounded px-1 py-0.5 text-xs"
+          className="w-full border border-border rounded px-1 py-0.5 text-xs"
           disabled={submitting}
         />
       </div>
@@ -133,7 +133,7 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="px-2 py-0.5 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
+          className="px-2 py-0.5 border border-border rounded text-muted-foreground hover:bg-muted"
           disabled={submitting}
         >
           Cancel
@@ -141,7 +141,7 @@ export function LogOutreachButton({ vendorId }: LogOutreachButtonProps) {
         <button
           type="button"
           onClick={handleSubmit}
-          className="px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          className="px-2 py-0.5 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90 disabled:opacity-50"
           disabled={submitting}
         >
           {submitting ? "Saving…" : "Save"}

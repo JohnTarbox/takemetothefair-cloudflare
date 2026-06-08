@@ -30,9 +30,9 @@ export function SelectEventsStep({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-gray-600">
-          Select the events you want to import. You&apos;ll be able to review
-          and edit each one before saving.
+        <p className="text-sm text-muted-foreground">
+          Select the events you want to import. You&apos;ll be able to review and edit each one
+          before saving.
         </p>
 
         {/* Select All / Deselect All */}
@@ -42,15 +42,13 @@ export function SelectEventsStep({
               type="checkbox"
               checked={selectedEventIds.size === extractedEvents.length}
               onChange={onToggleSelectAll}
-              className="rounded border-gray-300"
+              className="rounded border-border"
             />
             <span className="font-medium">
-              {selectedEventIds.size === extractedEvents.length
-                ? "Deselect All"
-                : "Select All"}
+              {selectedEventIds.size === extractedEvents.length ? "Deselect All" : "Select All"}
             </span>
           </label>
-          <span className="text-sm text-gray-500">
+          <span className="text-sm text-muted-foreground">
             {selectedEventIds.size} of {extractedEvents.length} selected
           </span>
         </div>
@@ -62,22 +60,20 @@ export function SelectEventsStep({
               key={event._extractId}
               className={`flex items-start p-4 border rounded-lg cursor-pointer transition-colors ${
                 selectedEventIds.has(event._extractId)
-                  ? "border-blue-500 bg-blue-50"
-                  : "hover:bg-gray-50"
+                  ? "border-royal bg-info-soft"
+                  : "hover:bg-muted"
               }`}
             >
               <input
                 type="checkbox"
                 checked={selectedEventIds.has(event._extractId)}
                 onChange={() => onToggleEvent(event._extractId)}
-                className="mt-1 rounded border-gray-300"
+                className="mt-1 rounded border-border"
               />
               <div className="ml-3 flex-1">
-                <div className="font-medium text-gray-900">
-                  {event.name || "Unnamed Event"}
-                </div>
+                <div className="font-medium text-foreground">{event.name || "Unnamed Event"}</div>
                 {event.startDate && (
-                  <div className="flex items-center text-sm text-gray-600 mt-1">
+                  <div className="flex items-center text-sm text-muted-foreground mt-1">
                     <Calendar className="w-3 h-3 mr-1" />
                     {formatDateForDisplay(event.startDate)}
                     {event.endDate && event.endDate !== event.startDate && (
@@ -86,7 +82,7 @@ export function SelectEventsStep({
                   </div>
                 )}
                 {(event.venueName || event.venueCity) && (
-                  <div className="flex items-center text-sm text-gray-600 mt-1">
+                  <div className="flex items-center text-sm text-muted-foreground mt-1">
                     <MapPin className="w-3 h-3 mr-1" />
                     {event.venueName}
                     {event.venueCity && `, ${event.venueCity}`}
@@ -94,7 +90,7 @@ export function SelectEventsStep({
                   </div>
                 )}
                 {event.description && (
-                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">
+                  <p className="text-sm text-muted-foreground mt-2 line-clamp-2">
                     {event.description}
                   </p>
                 )}
@@ -109,10 +105,7 @@ export function SelectEventsStep({
             <ChevronLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
-          <Button
-            onClick={onProceedToReview}
-            disabled={selectedEventIds.size === 0}
-          >
+          <Button onClick={onProceedToReview} disabled={selectedEventIds.size === 0}>
             Review Selected Events ({selectedEventIds.size})
             <ChevronRight className="w-4 h-4 ml-1" />
           </Button>

@@ -36,7 +36,7 @@ export default function AdminSubmissionsPage() {
   const fetchSubmissions = async () => {
     try {
       const res = await fetch("/api/admin/events?status=PENDING");
-      const data = await res.json() as Event[];
+      const data = (await res.json()) as Event[];
       setSubmissions(data);
     } catch (error) {
       console.error("Failed to fetch submissions:", error);
@@ -64,8 +64,8 @@ export default function AdminSubmissionsPage() {
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -73,8 +73,8 @@ export default function AdminSubmissionsPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Submission Queue</h1>
-        <p className="mt-1 text-gray-600">
+        <h1 className="text-2xl font-bold text-foreground">Submission Queue</h1>
+        <p className="mt-1 text-muted-foreground">
           Review and approve event submissions from promoters
         </p>
       </div>
@@ -82,7 +82,7 @@ export default function AdminSubmissionsPage() {
       {submissions.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <p className="text-gray-500">No pending submissions</p>
+            <p className="text-muted-foreground">No pending submissions</p>
           </CardContent>
         </Card>
       ) : (
@@ -91,12 +91,15 @@ export default function AdminSubmissionsPage() {
             <Card key={event.id}>
               <CardHeader className="flex flex-row items-start justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    {event.name}
-                  </h2>
-                  <p className="text-sm text-gray-500">
+                  <h2 className="text-lg font-semibold text-foreground">{event.name}</h2>
+                  <p className="text-sm text-muted-foreground">
                     Submitted by{" "}
-                    {event.submitter?.name || event.submitter?.email || event.suggesterEmail || event.sourceName || event.promoter?.companyName || "Unknown"}{" "}
+                    {event.submitter?.name ||
+                      event.submitter?.email ||
+                      event.suggesterEmail ||
+                      event.sourceName ||
+                      event.promoter?.companyName ||
+                      "Unknown"}{" "}
                     on {formatDate(event.createdAt)}
                   </p>
                 </div>
@@ -105,31 +108,27 @@ export default function AdminSubmissionsPage() {
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Venue</p>
-                    <p className="text-gray-600">
+                    <p className="text-sm font-medium text-foreground">Venue</p>
+                    <p className="text-muted-foreground">
                       {event.venue
                         ? `${event.venue.name}, ${event.venue.city}, ${event.venue.state}`
                         : "No venue assigned"}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Dates</p>
-                    <p className="text-gray-600">
+                    <p className="text-sm font-medium text-foreground">Dates</p>
+                    <p className="text-muted-foreground">
                       {formatDateRange(event.startDate, event.endDate)}
                     </p>
                   </div>
                 </div>
                 {event.description && (
                   <div className="mb-4">
-                    <p className="text-sm font-medium text-gray-700">
-                      Description
-                    </p>
-                    <p className="text-gray-600 line-clamp-3">
-                      {event.description}
-                    </p>
+                    <p className="text-sm font-medium text-foreground">Description</p>
+                    <p className="text-muted-foreground line-clamp-3">{event.description}</p>
                   </div>
                 )}
-                <div className="flex items-center gap-3 pt-4 border-t border-gray-100">
+                <div className="flex items-center gap-3 pt-4 border-t border-border">
                   <Button
                     onClick={() => handleAction(event.id, "approve")}
                     disabled={processing === event.id}
@@ -146,9 +145,7 @@ export default function AdminSubmissionsPage() {
                     <X className="w-4 h-4 mr-2" />
                     Reject
                   </Button>
-                  <a
-                    href={`/admin/events/${event.id}/edit`}
-                  >
+                  <a href={`/admin/events/${event.id}/edit`}>
                     <Button variant="outline">
                       <Eye className="w-4 h-4 mr-2" />
                       Review

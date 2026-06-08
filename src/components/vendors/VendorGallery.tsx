@@ -33,7 +33,7 @@ export function VendorGallery({ images, vendorName }: Props) {
             key={img.url}
             type="button"
             onClick={() => setOpen(i)}
-            className="aspect-square relative overflow-hidden rounded-lg border border-gray-200 hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
+            className="aspect-square relative overflow-hidden rounded-lg border border-border hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-royal"
             aria-label={`Open ${img.alt || "image"} from ${vendorName} gallery`}
           >
             <Image

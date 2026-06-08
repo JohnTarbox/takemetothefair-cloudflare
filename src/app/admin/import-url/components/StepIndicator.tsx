@@ -24,19 +24,15 @@ export function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
         return (
           <div key={step.label} className="flex items-center">
             {i > 0 && (
-              <div
-                className={`w-4 h-px mx-1 ${
-                  isCompleted ? "bg-blue-500" : "bg-gray-300"
-                }`}
-              />
+              <div className={`w-4 h-px mx-1 ${isCompleted ? "bg-secondary" : "bg-border"}`} />
             )}
             <span
               className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${
                 isActive
-                  ? "bg-blue-100 text-blue-700 font-medium"
+                  ? "bg-info-soft text-navy font-medium"
                   : isCompleted
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-100 text-gray-500"
+                    ? "bg-secondary text-secondary-foreground"
+                    : "bg-muted text-muted-foreground"
               }`}
             >
               {step.label}

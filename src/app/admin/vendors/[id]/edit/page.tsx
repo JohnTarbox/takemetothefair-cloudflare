@@ -248,8 +248,8 @@ export default function EditVendorPage() {
   if (fetching) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -259,7 +259,7 @@ export default function EditVendorPage() {
       <div className="mb-6">
         <Link
           href="/admin/vendors"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Vendors
@@ -451,7 +451,7 @@ export default function EditVendorPage() {
                     }
                     placeholder="Cash, Credit, Venmo"
                   />
-                  <p className="text-xs text-gray-500">Separate with commas</p>
+                  <p className="text-xs text-muted-foreground">Separate with commas</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="licenseInfo">License/Permit Info</Label>
@@ -487,7 +487,7 @@ export default function EditVendorPage() {
                 Most vendors are INDEPENDENT and only see role + relationshipType + alias inputs. */}
             <div className="border-t pt-6">
               <h3 className="text-lg font-medium mb-4">Vendor Hierarchy</h3>
-              <p className="text-sm text-gray-600 mb-4">
+              <p className="text-sm text-muted-foreground mb-4">
                 Most vendors are <strong>Independent</strong>. Use <strong>National</strong> for
                 parent brands (e.g. LeafFilter HQ) and <strong>Local Office</strong> for franchise /
                 regional offices that should show under a national parent. Set{" "}
@@ -505,7 +505,7 @@ export default function EditVendorPage() {
                         role: e.target.value as Vendor["role"],
                       })
                     }
-                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                    className="block w-full rounded-md border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
                   >
                     <option value="INDEPENDENT">Independent (default)</option>
                     <option value="NATIONAL">National (parent brand)</option>
@@ -527,7 +527,7 @@ export default function EditVendorPage() {
                         relationshipType: e.target.value as Vendor["relationshipType"],
                       })
                     }
-                    className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                    className="block w-full rounded-md border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
                   >
                     <option value="independent">independent (default — no relationship)</option>
                     <option value="branch">branch (W-2 office of operator)</option>
@@ -555,7 +555,7 @@ export default function EditVendorPage() {
                       }
                       placeholder="UUID of the NATIONAL brand parent vendor"
                     />
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       The consumer-facing brand (who appears on signage). Look up the NATIONAL
                       parent at <code>/admin/vendors</code> and paste its <code>id</code> here.
                     </p>
@@ -577,7 +577,7 @@ export default function EditVendorPage() {
                       }
                       placeholder="UUID of the operator (contracts/billing) vendor"
                     />
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       Who signs contracts / pays booth fees. Equal to brand parent for branch
                       shapes; distinct for franchise-with-operator shapes (e.g. Esler Companies).
                     </p>
@@ -597,7 +597,7 @@ export default function EditVendorPage() {
                     onChange={(e) => setFormData({ ...formData, aliasOfVendorId: e.target.value })}
                     placeholder="UUID of the canonical vendor (if this is an alias)"
                   />
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     Use the <code>set_vendor_alias</code> MCP tool instead to also repoint events.
                     This input is for read-only inspection or manual cleanup.
                   </p>
@@ -625,7 +625,7 @@ export default function EditVendorPage() {
                             | "both",
                         })
                       }
-                      className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                      className="block w-full rounded-md border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
                     >
                       <option value="">— Unset —</option>
                       <option value="self">self (children pages indexed)</option>
@@ -658,9 +658,9 @@ export default function EditVendorPage() {
                             displayOverridePermitted: e.target.checked,
                           })
                         }
-                        className="rounded border-gray-300"
+                        className="rounded border-border"
                       />
-                      <span className="text-sm text-gray-600">
+                      <span className="text-sm text-muted-foreground">
                         Let this office&apos;s preference override the brand&apos;s default
                       </span>
                     </div>
@@ -689,7 +689,7 @@ export default function EditVendorPage() {
                             | "both",
                         })
                       }
-                      className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
+                      className="block w-full rounded-md border border-border bg-card px-3 py-2 text-sm shadow-sm focus:border-royal focus:outline-none focus:ring-1 focus:ring-royal"
                     >
                       <option value="">— Unset —</option>
                       <option value="inherit">inherit (fall through to brand)</option>
@@ -700,7 +700,7 @@ export default function EditVendorPage() {
                       </option>
                       <option value="both">both (office indexed + shown under brand)</option>
                     </select>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       Only takes effect when the brand parent grants{" "}
                       <em>Display Override Permitted</em>.
                     </p>
@@ -716,7 +716,7 @@ export default function EditVendorPage() {
                   id="verified"
                   checked={formData.verified}
                   onChange={(e) => setFormData({ ...formData, verified: e.target.checked })}
-                  className="rounded border-gray-300"
+                  className="rounded border-border"
                 />
                 <Label htmlFor="verified">Verified Vendor</Label>
               </div>
@@ -726,7 +726,7 @@ export default function EditVendorPage() {
                   id="commercial"
                   checked={formData.commercial}
                   onChange={(e) => setFormData({ ...formData, commercial: e.target.checked })}
-                  className="rounded border-gray-300"
+                  className="rounded border-border"
                 />
                 <Label htmlFor="commercial">Commercial Vendor</Label>
               </div>
@@ -736,11 +736,11 @@ export default function EditVendorPage() {
                   id="canSelfConfirm"
                   checked={formData.canSelfConfirm}
                   onChange={(e) => setFormData({ ...formData, canSelfConfirm: e.target.checked })}
-                  className="rounded border-gray-300"
+                  className="rounded border-border"
                 />
                 <div>
                   <Label htmlFor="canSelfConfirm">Can Self-Confirm Events</Label>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-muted-foreground">
                     Vendor can confirm participation without admin approval
                   </p>
                 </div>

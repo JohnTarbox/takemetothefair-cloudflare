@@ -65,11 +65,11 @@ export default async function FollowupPage({ params, searchParams }: PageProps) 
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
-      <div className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold text-gray-900">
+      <div className="rounded-lg border border-border bg-card p-8 shadow-sm">
+        <h1 className="text-xl font-semibold text-foreground">
           {wantsIntentPicker ? "What did you mean to send?" : "Tell us what needs fixing"}
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           {wantsIntentPicker
             ? "We classified this message but it sounds like we got it wrong. Help us route it to the right place."
             : "Briefly describe what's wrong on the listing — even one sentence helps."}
@@ -82,14 +82,14 @@ export default async function FollowupPage({ params, searchParams }: PageProps) 
           <input type="hidden" name="v" value={value} />
           {wantsIntentPicker && (
             <div>
-              <label htmlFor="intent" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="intent" className="block text-sm font-medium text-foreground">
                 What were you trying to do?
               </label>
               <select
                 id="intent"
                 name="intendedIntent"
                 required
-                className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+                className="mt-1 block w-full rounded border border-border px-3 py-2"
                 defaultValue=""
               >
                 <option value="" disabled>
@@ -104,7 +104,7 @@ export default async function FollowupPage({ params, searchParams }: PageProps) 
             </div>
           )}
           <div>
-            <label htmlFor="freeText" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="freeText" className="block text-sm font-medium text-foreground">
               {wantsIntentPicker ? "Anything else to add? (optional)" : "What needs to change?"}
             </label>
             <textarea
@@ -113,16 +113,16 @@ export default async function FollowupPage({ params, searchParams }: PageProps) 
               rows={4}
               maxLength={1000}
               required={wantsCorrection}
-              className="mt-1 block w-full rounded border border-gray-300 px-3 py-2"
+              className="mt-1 block w-full rounded border border-border px-3 py-2"
             />
           </div>
           <button
             type="submit"
-            className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
+            className="rounded bg-secondary px-4 py-2 text-secondary-foreground hover:bg-secondary/90"
           >
             Send feedback
           </button>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             <Link href="/" className="hover:underline">
               ← Back to Meet Me at the Fair
             </Link>

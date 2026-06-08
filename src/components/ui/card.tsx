@@ -3,10 +3,10 @@ import { cn } from "@/lib/utils";
 // Design System keystone PR 2 (2026-06-07) — token migration + variant axis.
 //
 // Variants:
-//   - `default` (was: bg-white border-gray-200) → bg-card border-border
+//   - `default` (was: bg-card border-border) → bg-card border-border
 //     The "elevated card on the page background" — what 95% of callsites want.
 //   - `muted` — bg-muted border-border. Subtle / secondary card surface;
-//     consolidates the inline `<div className="bg-gray-50 border rounded p-4">`
+//     consolidates the inline `<div className="bg-muted border rounded p-4">`
 //     ad-hoc pattern that recurs across detail pages.
 //   - `outlined` — transparent bg, just a border. For empty-state cards.
 //

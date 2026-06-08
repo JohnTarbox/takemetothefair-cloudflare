@@ -69,15 +69,15 @@ export default async function NewsletterConfirmedPage({ searchParams }: Props) {
 
   return (
     <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-16">
-      <div className="rounded-xl border border-gray-200 bg-white p-8 text-center">
+      <div className="rounded-xl border border-border bg-card p-8 text-center">
         <div className="flex justify-center mb-4">
           <Icon className={`w-12 h-12 ${copy.iconClass}`} aria-hidden="true" />
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-3">{copy.heading}</h1>
-        <p className="text-gray-600 mb-8">{copy.body}</p>
+        <h1 className="text-2xl font-bold text-foreground mb-3">{copy.heading}</h1>
+        <p className="text-muted-foreground mb-8">{copy.body}</p>
         <Link
           href="/"
-          className="inline-flex items-center px-5 py-2.5 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+          className="inline-flex items-center px-5 py-2.5 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
         >
           Back to Meet Me at the Fair
         </Link>

@@ -241,11 +241,11 @@ export default async function VenuesPage({
         pageUrl="https://meetmeatthefair.com/venues"
       />
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Venues</h1>
-        <p className="mt-2 text-gray-600">
+        <h1 className="text-3xl font-bold text-foreground">Venues</h1>
+        <p className="mt-2 text-muted-foreground">
           Discover fairgrounds and event spaces hosting upcoming events
           {totalCount > 0 && (
-            <span className="ml-1 text-gray-500">
+            <span className="ml-1 text-muted-foreground">
               ({totalCount.toLocaleString()} {totalCount === 1 ? "venue" : "venues"})
             </span>
           )}
@@ -274,13 +274,13 @@ export default async function VenuesPage({
                     <input type="hidden" name="missingGoogle" value={params.missingGoogle} />
                   )}
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <input
                       type="text"
                       name="q"
                       defaultValue={params.q || ""}
                       placeholder="Search venues..."
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
+                      className="w-full pl-10 pr-4 py-2 border border-border rounded-lg text-sm focus:ring-2 focus:ring-royal focus:border-royal"
                     />
                   </div>
                 </form>
@@ -288,14 +288,14 @@ export default async function VenuesPage({
 
               {/* State Filter */}
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Filter by State</h3>
+                <h3 className="font-medium text-foreground mb-3">Filter by State</h3>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   <Link
                     href={`/venues${buildQueryString({ q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
                     className={`block px-3 py-2 rounded-lg text-sm ${
                       !params.state
                         ? "bg-amber-light text-amber-bg-fg font-medium"
-                        : "text-gray-600 hover:bg-gray-50"
+                        : "text-muted-foreground hover:bg-muted"
                     }`}
                   >
                     All States
@@ -307,7 +307,7 @@ export default async function VenuesPage({
                       className={`block px-3 py-2 rounded-lg text-sm ${
                         params.state === state
                           ? "bg-amber-light text-amber-bg-fg font-medium"
-                          : "text-gray-600 hover:bg-gray-50"
+                          : "text-muted-foreground hover:bg-muted"
                       }`}
                     >
                       {state}
@@ -318,7 +318,7 @@ export default async function VenuesPage({
 
               {/* Has Events Filter */}
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Events</h3>
+                <h3 className="font-medium text-foreground mb-3">Events</h3>
                 {showingWithEvents ? (
                   <Link
                     href={`/venues${buildQueryString({ state: params.state, q: params.q, favorites: params.favorites, missingGoogle: params.missingGoogle })}`}
@@ -330,7 +330,7 @@ export default async function VenuesPage({
                 ) : (
                   <Link
                     href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: "true", favorites: params.favorites })}`}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted"
                   >
                     <Calendar className="w-4 h-4" />
                     With Upcoming Events
@@ -341,7 +341,7 @@ export default async function VenuesPage({
               {/* Favorites Filter */}
               {isLoggedIn && (
                 <div>
-                  <h3 className="font-medium text-gray-900 mb-3">Favorites</h3>
+                  <h3 className="font-medium text-foreground mb-3">Favorites</h3>
                   {showingFavorites ? (
                     <Link
                       href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, missingGoogle: params.missingGoogle })}`}
@@ -353,7 +353,7 @@ export default async function VenuesPage({
                   ) : (
                     <Link
                       href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: "true" })}`}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted"
                     >
                       <Heart className="w-4 h-4" />
                       My Favorites
@@ -365,7 +365,7 @@ export default async function VenuesPage({
               {/* Admin: Missing Google Place ID Filter */}
               {isAdmin && (
                 <div>
-                  <h3 className="font-medium text-gray-900 mb-3">Admin</h3>
+                  <h3 className="font-medium text-foreground mb-3">Admin</h3>
                   {showingMissingGoogle ? (
                     <Link
                       href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites })}`}
@@ -377,7 +377,7 @@ export default async function VenuesPage({
                   ) : (
                     <Link
                       href={`/venues${buildQueryString({ state: params.state, q: params.q, hasEvents: params.hasEvents, favorites: params.favorites, missingGoogle: "true" })}`}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-muted"
                     >
                       <Filter className="w-4 h-4" />
                       Missing Google ID
@@ -390,7 +390,7 @@ export default async function VenuesPage({
               {hasFilters && (
                 <Link
                   href="/venues"
-                  className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2 text-sm font-medium text-foreground bg-muted hover:bg-muted rounded-lg transition-colors"
                 >
                   <X className="w-4 h-4" />
                   Clear Filters

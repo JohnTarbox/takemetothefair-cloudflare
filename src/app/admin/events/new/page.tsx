@@ -178,7 +178,7 @@ export default function NewEventPage() {
       <div className="mb-6">
         <Link
           href="/admin/events"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Events
@@ -218,7 +218,7 @@ export default function NewEventPage() {
                     type="checkbox"
                     checked={isStatewide}
                     onChange={(e) => setIsStatewide(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   <Label htmlFor="isStatewide" className="font-normal">
                     Statewide event (no specific venue)
@@ -289,7 +289,7 @@ export default function NewEventPage() {
                         setDatesTBD(e.target.checked);
                         if (e.target.checked) setDiscontinuousDates(false);
                       }}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     <Label htmlFor="datesTBD" className="font-normal">
                       Dates TBD
@@ -302,7 +302,7 @@ export default function NewEventPage() {
                         type="checkbox"
                         checked={discontinuousDates}
                         onChange={(e) => setDiscontinuousDates(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300"
+                        className="h-4 w-4 rounded border-border"
                       />
                       <Label htmlFor="discontinuousDates" className="font-normal">
                         Non-contiguous dates (specific dates that aren&apos;t consecutive)
@@ -425,7 +425,7 @@ export default function NewEventPage() {
                     id="featured"
                     name="featured"
                     type="checkbox"
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   <Label htmlFor="featured" className="font-normal">
                     Featured Event
@@ -437,7 +437,7 @@ export default function NewEventPage() {
                     name="commercialVendorsAllowed"
                     type="checkbox"
                     defaultChecked
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   <Label htmlFor="commercialVendorsAllowed" className="font-normal">
                     Commercial Vendors Allowed
@@ -447,7 +447,7 @@ export default function NewEventPage() {
 
               {/* Vendor Information */}
               <div className="border-t pt-4 mt-4">
-                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Information</h3>
+                <h3 className="font-medium text-sm text-foreground mb-3">Vendor Information</h3>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -525,7 +525,7 @@ export default function NewEventPage() {
                       id="walkInsAllowed"
                       name="walkInsAllowed"
                       type="checkbox"
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
                     <Label htmlFor="walkInsAllowed" className="font-normal">
                       Walk-in Vendors Accepted
@@ -536,7 +536,7 @@ export default function NewEventPage() {
 
               {/* Application Information */}
               <div className="border-t pt-4 mt-4">
-                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Application</h3>
+                <h3 className="font-medium text-sm text-foreground mb-3">Vendor Application</h3>
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="applicationDeadline">Application Deadline</Label>

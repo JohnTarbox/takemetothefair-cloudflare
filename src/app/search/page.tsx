@@ -30,9 +30,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   if (!q || q.length < 2) {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 text-center">
-        <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+        <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
         <h1 className="text-2xl font-bold text-navy mb-2">Search</h1>
-        <p className="text-gray-500">Enter at least 2 characters to search.</p>
+        <p className="text-muted-foreground">Enter at least 2 characters to search.</p>
       </div>
     );
   }
@@ -123,7 +123,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy">Search Results</h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           {totalResults === 0
             ? `No results found for "${q}"`
             : `Found ${totalResults} result${totalResults !== 1 ? "s" : ""} for "${q}"`}
@@ -132,8 +132,10 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
       {totalResults === 0 && (
         <div className="text-center py-12">
-          <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500">Try a different search term or browse by category.</p>
+          <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <p className="text-muted-foreground">
+            Try a different search term or browse by category.
+          </p>
           <div className="flex justify-center gap-4 mt-6">
             <Link href="/events" className="text-royal hover:underline">
               Browse Events
@@ -164,7 +166,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                 <Link key={event.slug} href={`/events/${event.slug}`}>
                   <Card className="p-4 hover:shadow-md transition-shadow h-full">
                     <h3 className="font-medium text-navy">{event.name}</h3>
-                    <p className="text-sm text-gray-500 mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       {formatDateRange(event.startDate, event.endDate)}
                     </p>
                   </Card>
@@ -188,7 +190,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                   <Link key={post.slug} href={`/blog/${post.slug}`}>
                     <Card className="hover:shadow-md transition-shadow h-full overflow-hidden">
                       {imageUrl && (
-                        <div className="aspect-video relative bg-gray-100">
+                        <div className="aspect-video relative bg-muted">
                           <Image
                             src={imageUrl}
                             alt={post.title}
@@ -201,9 +203,11 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                       <div className="p-4">
                         <h3 className="font-medium text-navy">{post.title}</h3>
                         {post.excerpt && (
-                          <p className="text-sm text-gray-500 mt-1 line-clamp-2">{post.excerpt}</p>
+                          <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
+                            {post.excerpt}
+                          </p>
                         )}
-                        <div className="flex items-center gap-3 text-xs text-gray-600 mt-2">
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-2">
                           {post.publishDate && <span>{formatDateMedium(post.publishDate)}</span>}
                           {post.authorName && <span>{post.authorName}</span>}
                         </div>
@@ -229,7 +233,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                   <Card className="p-4 hover:shadow-md transition-shadow h-full">
                     <h3 className="font-medium text-navy">{venue.name}</h3>
                     {(venue.city || venue.state) && (
-                      <p className="text-sm text-gray-500 mt-1">
+                      <p className="text-sm text-muted-foreground mt-1">
                         {[venue.city, venue.state].filter(Boolean).join(", ")}
                       </p>
                     )}
@@ -253,7 +257,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                   <Card className="p-4 hover:shadow-md transition-shadow h-full">
                     <h3 className="font-medium text-navy">{vendor.businessName}</h3>
                     {vendor.vendorType && (
-                      <p className="text-sm text-gray-500 mt-1">{vendor.vendorType}</p>
+                      <p className="text-sm text-muted-foreground mt-1">{vendor.vendorType}</p>
                     )}
                   </Card>
                 </Link>

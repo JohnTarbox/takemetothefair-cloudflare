@@ -170,8 +170,8 @@ export default async function PromoterQualityPage() {
   return (
     <div className="max-w-7xl space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">Per-promoter quality</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Per-promoter quality</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Reliability metrics grouped by promoter. Composite concern % combines rejection,
           cancellation (post-approval lifecycle), postponement, gate-flag, and unresolved-drift
           rates. Tier classification gates downstream auto-approval scrutiny — T1 = clean, T2 =
@@ -197,11 +197,11 @@ export default async function PromoterQualityPage() {
         </CardHeader>
         <CardContent className="p-0">
           {rows.length === 0 ? (
-            <p className="p-6 text-sm text-gray-500">No promoters tracked yet.</p>
+            <p className="p-6 text-sm text-muted-foreground">No promoters tracked yet.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200 text-left text-gray-600">
+                <thead className="bg-muted border-b border-border text-left text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2 font-medium">promoter</th>
                     <th className="px-4 py-2 font-medium">tier</th>
@@ -218,17 +218,19 @@ export default async function PromoterQualityPage() {
                 </thead>
                 <tbody>
                   {rows.map((r) => (
-                    <tr key={r.promoterId} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="px-4 py-2 font-mono text-gray-900">
+                    <tr key={r.promoterId} className="border-b border-border hover:bg-muted">
+                      <td className="px-4 py-2 font-mono text-foreground">
                         <Link
                           href={`/promoters/${r.promoterSlug}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-blue-600 hover:underline font-medium"
+                          className="text-royal hover:underline font-medium"
                         >
                           {r.promoterName}
                         </Link>
-                        <div className="text-xs text-gray-500 font-mono">{r.promoterSlug}</div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {r.promoterSlug}
+                        </div>
                       </td>
                       <td className="px-4 py-2">
                         <TierBadge tier={r.tier} />
@@ -240,7 +242,7 @@ export default async function PromoterQualityPage() {
                       <Num value={r.gateFlagged} pct={pct(r.gateFlagged, r.total)} />
                       <Num value={r.unresolvedDrift} pct={pct(r.unresolvedDrift, r.total)} />
                       <Num value={r.imageless} pct={pct(r.imageless, r.total)} muted />
-                      <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.avgCompleteness}
                       </td>
                       <td className="px-4 py-2 text-right">
@@ -255,7 +257,7 @@ export default async function PromoterQualityPage() {
         </CardContent>
       </Card>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         Concern % = (rejected + cancelled + postponed + gate-flagged + unresolved-drift) / total.
         Tier thresholds: T1 &lt; 10%, T2 10–25%, T3 ≥ 25%. Promoters with fewer than{" "}
         {MIN_EVENTS_FOR_TIER} events default to T2 (insufficient signal). Imageless rate shown
@@ -273,10 +275,12 @@ function pct(n: number, total: number): number {
 function Num({ value, pct, muted }: { value: number; pct?: number; muted?: boolean }) {
   return (
     <td
-      className={`px-4 py-2 text-right tabular-nums ${muted ? "text-gray-500" : "text-gray-900"}`}
+      className={`px-4 py-2 text-right tabular-nums ${muted ? "text-muted-foreground" : "text-foreground"}`}
     >
       {value.toLocaleString()}
-      {pct != null && pct > 0 && <span className="ml-1 text-xs text-gray-500">({pct}%)</span>}
+      {pct != null && pct > 0 && (
+        <span className="ml-1 text-xs text-muted-foreground">({pct}%)</span>
+      )}
     </td>
   );
 }
@@ -303,7 +307,7 @@ function ConcernBadge({ pct }: { pct: number }) {
       : pct >= 10
         ? "bg-amber-50 text-amber-800 border-amber-300"
         : pct > 0
-          ? "bg-blue-50 text-blue-800 border-blue-200"
+          ? "bg-info-soft text-navy-dark border-info-soft"
           : "bg-green-50 text-green-800 border-green-300";
   return (
     <span
@@ -316,7 +320,7 @@ function ConcernBadge({ pct }: { pct: number }) {
 
 function TierStat({ label, value, tier }: { label: string; value: number; tier?: Tier }) {
   const cls = !tier
-    ? "text-gray-900"
+    ? "text-foreground"
     : tier === "T1"
       ? "text-green-700"
       : tier === "T2"
@@ -325,7 +329,7 @@ function TierStat({ label, value, tier }: { label: string; value: number; tier?:
   return (
     <div>
       <p className={`text-2xl font-bold tabular-nums ${cls}`}>{value.toLocaleString()}</p>
-      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }

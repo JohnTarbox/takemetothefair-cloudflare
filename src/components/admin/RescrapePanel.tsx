@@ -79,8 +79,8 @@ export function RescrapePanel({
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold text-gray-900">Source Data</h3>
-            <p className="text-sm text-gray-500 mt-1">
+            <h3 className="font-semibold text-foreground">Source Data</h3>
+            <p className="text-sm text-muted-foreground mt-1">
               Re-scrape this event from its original source to refresh data.
             </p>
           </div>
@@ -98,17 +98,17 @@ export function RescrapePanel({
       <CardContent>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-gray-500">Source</span>
-            <span className="text-gray-900">{sourceName || "Unknown"}</span>
+            <span className="text-muted-foreground">Source</span>
+            <span className="text-foreground">{sourceName || "Unknown"}</span>
           </div>
           {sourceUrl && (
             <div className="flex justify-between">
-              <span className="text-gray-500">URL</span>
+              <span className="text-muted-foreground">URL</span>
               <a
                 href={sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:underline flex items-center gap-1 max-w-xs truncate"
+                className="text-royal hover:underline flex items-center gap-1 max-w-xs truncate"
               >
                 {new URL(sourceUrl).hostname}
                 <ExternalLink className="w-3 h-3 flex-shrink-0" />
@@ -116,8 +116,8 @@ export function RescrapePanel({
             </div>
           )}
           <div className="flex justify-between">
-            <span className="text-gray-500">Last synced</span>
-            <span className="text-gray-900">{formattedSyncDate}</span>
+            <span className="text-muted-foreground">Last synced</span>
+            <span className="text-foreground">{formattedSyncDate}</span>
           </div>
         </div>
 
@@ -137,7 +137,7 @@ export function RescrapePanel({
               </div>
             )}
             {detail.status === "skipped" && (
-              <div className="p-2 bg-gray-50 text-gray-600 text-sm rounded">
+              <div className="p-2 bg-muted text-muted-foreground text-sm rounded">
                 No changes found — data is already up to date.
               </div>
             )}

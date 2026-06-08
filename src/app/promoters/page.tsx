@@ -75,14 +75,14 @@ export default async function PromotersIndex() {
         ]}
       />
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
-        <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">Event Promoters</h1>
-        <p className="text-gray-600 mb-8">
+        <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">Event Promoters</h1>
+        <p className="text-muted-foreground mb-8">
           The organizations behind the fairs, festivals, and markets you see on this site.
         </p>
 
         {list.length === 0 ? (
           <Card>
-            <CardContent className="py-8 text-center text-gray-500">
+            <CardContent className="py-8 text-center text-muted-foreground">
               No promoters published yet.
             </CardContent>
           </Card>
@@ -92,11 +92,11 @@ export default async function PromotersIndex() {
               <Link
                 key={p.id}
                 href={`/promoters/${p.slug}`}
-                className="block rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 hover:shadow-sm transition"
+                className="block rounded-lg border border-border bg-card p-4 hover:border-border hover:shadow-sm transition"
               >
                 <div className="flex items-start gap-3">
                   {p.logoUrl ? (
-                    <div className="w-12 h-12 rounded-md overflow-hidden bg-gray-50 border border-gray-200 relative shrink-0">
+                    <div className="w-12 h-12 rounded-md overflow-hidden bg-muted border border-border relative shrink-0">
                       <Image
                         src={p.logoUrl}
                         alt={`${p.companyName} logo`}
@@ -106,10 +106,10 @@ export default async function PromotersIndex() {
                       />
                     </div>
                   ) : (
-                    <div className="w-12 h-12 rounded-md bg-gray-100 shrink-0" />
+                    <div className="w-12 h-12 rounded-md bg-muted shrink-0" />
                   )}
                   <div className="min-w-0">
-                    <p className="font-semibold text-gray-900 flex items-center gap-1 flex-wrap">
+                    <p className="font-semibold text-foreground flex items-center gap-1 flex-wrap">
                       <span className="truncate">{p.companyName}</span>
                       {p.verified && (
                         <Badge variant="info" className="text-xs">
@@ -119,7 +119,7 @@ export default async function PromotersIndex() {
                       )}
                     </p>
                     {(p.city || p.state) && (
-                      <p className="text-sm text-gray-500 truncate">
+                      <p className="text-sm text-muted-foreground truncate">
                         {[p.city, p.state].filter(Boolean).join(", ")}
                       </p>
                     )}

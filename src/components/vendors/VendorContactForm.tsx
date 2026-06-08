@@ -72,11 +72,11 @@ export function VendorContactForm({ vendorSlug, vendorName }: Props) {
           aria-modal="true"
           className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
         >
-          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+          <div className="bg-card rounded-lg max-w-md w-full p-6 relative">
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="absolute top-3 right-3 text-gray-500 hover:text-gray-900"
+              className="absolute top-3 right-3 text-muted-foreground hover:text-foreground"
               aria-label="Close"
             >
               <X className="w-5 h-5" />
@@ -85,7 +85,7 @@ export function VendorContactForm({ vendorSlug, vendorName }: Props) {
 
             {status === "ok" ? (
               <div>
-                <p className="text-sm text-gray-700">
+                <p className="text-sm text-foreground">
                   Your message has been sent. {vendorName} will reply directly to your email.
                 </p>
                 <Button type="button" onClick={() => setOpen(false)} className="mt-4">
@@ -104,7 +104,7 @@ export function VendorContactForm({ vendorSlug, vendorName }: Props) {
                     type="text"
                     required
                     maxLength={100}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
@@ -117,7 +117,7 @@ export function VendorContactForm({ vendorSlug, vendorName }: Props) {
                     type="email"
                     required
                     maxLength={255}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
@@ -130,7 +130,7 @@ export function VendorContactForm({ vendorSlug, vendorName }: Props) {
                     required
                     rows={5}
                     maxLength={2000}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm"
                   />
                 </div>
                 {status === "err" && errMsg && <p className="text-sm text-red-600">{errMsg}</p>}

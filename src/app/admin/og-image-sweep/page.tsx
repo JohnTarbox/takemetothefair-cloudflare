@@ -103,8 +103,8 @@ export default function OgImageSweepPage() {
   return (
     <div className="max-w-5xl space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">og:image sweep</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">og:image sweep</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Fills <code>events.image_url</code> for APPROVED events with no image by extracting the
           source page&apos;s <code>og:image</code> and re-hosting in R2. Phase 2a gates: real
           JPEG/PNG/WebP dimension parsing (≥600px long edge), logo down-rank, junk-URL pre-filter.
@@ -114,36 +114,36 @@ export default function OgImageSweepPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="font-semibold text-gray-900">Progress</h2>
+          <h2 className="font-semibold text-foreground">Progress</h2>
         </CardHeader>
         <CardContent>
           {progress == null ? (
-            <p className="text-sm text-gray-500">Loading…</p>
+            <p className="text-sm text-muted-foreground">Loading…</p>
           ) : (
             <div className="flex items-center gap-6 flex-wrap">
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {progress.remaining.toLocaleString()}
                 </p>
-                <p className="text-xs text-gray-500">never-attempted candidates</p>
+                <p className="text-xs text-muted-foreground">never-attempted candidates</p>
               </div>
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {(progress.attemptedSkipped ?? 0).toLocaleString()}
                 </p>
-                <p className="text-xs text-gray-500">attempted &amp; skipped</p>
+                <p className="text-xs text-muted-foreground">attempted &amp; skipped</p>
               </div>
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {progress.totalApproved.toLocaleString()}
                 </p>
-                <p className="text-xs text-gray-500">total APPROVED events</p>
+                <p className="text-xs text-muted-foreground">total APPROVED events</p>
               </div>
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {progress.pctImageless == null ? "—" : `${progress.pctImageless}%`}
                 </p>
-                <p className="text-xs text-gray-500">imageless</p>
+                <p className="text-xs text-muted-foreground">imageless</p>
               </div>
               {done && <Badge variant="success">Done</Badge>}
             </div>
@@ -153,7 +153,7 @@ export default function OgImageSweepPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="font-semibold text-gray-900">Actions</h2>
+          <h2 className="font-semibold text-foreground">Actions</h2>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
@@ -178,7 +178,7 @@ export default function OgImageSweepPage() {
             </Button>
           </div>
           {loading && (
-            <p className="text-sm text-gray-500 mt-3">
+            <p className="text-sm text-muted-foreground mt-3">
               Running… can take 20-30s while each source page is fetched.
             </p>
           )}
@@ -193,7 +193,7 @@ export default function OgImageSweepPage() {
       {result && (
         <Card>
           <CardHeader>
-            <h2 className="font-semibold text-gray-900">
+            <h2 className="font-semibold text-foreground">
               Last run {result.summary.apply ? "(applied)" : "(dry-run)"}
             </h2>
           </CardHeader>
@@ -218,8 +218,8 @@ export default function OgImageSweepPage() {
 
             {Object.keys(result.summary.by_outcome).length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">By outcome</h3>
-                <ul className="text-sm text-gray-700 space-y-1">
+                <h3 className="text-sm font-semibold text-foreground mb-2">By outcome</h3>
+                <ul className="text-sm text-foreground space-y-1">
                   {Object.entries(result.summary.by_outcome)
                     .sort((a, b) => b[1] - a[1])
                     .map(([outcome, count]) => (
@@ -234,11 +234,11 @@ export default function OgImageSweepPage() {
 
             {result.outcomes.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">Per-event detail</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-2">Per-event detail</h3>
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-xs">
                     <thead>
-                      <tr className="border-b border-gray-200 text-left text-gray-600">
+                      <tr className="border-b border-border text-left text-muted-foreground">
                         <th className="py-2 pr-3">outcome</th>
                         <th className="py-2 pr-3">source_url</th>
                         <th className="py-2 pr-3">image / reason</th>
@@ -246,32 +246,32 @@ export default function OgImageSweepPage() {
                     </thead>
                     <tbody>
                       {result.outcomes.map((row) => (
-                        <tr key={row.event_id} className="border-b border-gray-100">
+                        <tr key={row.event_id} className="border-b border-border">
                           <td className="py-2 pr-3">
                             <OutcomeBadge outcome={row.outcome} />
                           </td>
-                          <td className="py-2 pr-3 font-mono text-gray-700 max-w-[300px] truncate">
+                          <td className="py-2 pr-3 font-mono text-foreground max-w-[300px] truncate">
                             <a
                               href={row.source_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline"
+                              className="text-royal hover:underline"
                             >
-                              {row.source_url || <span className="text-gray-600">—</span>}
+                              {row.source_url || <span className="text-muted-foreground">—</span>}
                             </a>
                           </td>
-                          <td className="py-2 pr-3 font-mono text-gray-700 max-w-[420px] truncate">
+                          <td className="py-2 pr-3 font-mono text-foreground max-w-[420px] truncate">
                             {row.image_url ? (
                               <a
                                 href={row.image_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-blue-600 hover:underline"
+                                className="text-royal hover:underline"
                               >
                                 {row.image_url}
                               </a>
                             ) : (
-                              (row.reason ?? <span className="text-gray-600">—</span>)
+                              (row.reason ?? <span className="text-muted-foreground">—</span>)
                             )}
                           </td>
                         </tr>
@@ -291,11 +291,11 @@ export default function OgImageSweepPage() {
 function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
   return (
     <div>
-      <p className="text-2xl font-bold text-gray-900 tabular-nums">
+      <p className="text-2xl font-bold text-foreground tabular-nums">
         {value.toLocaleString()}
         {suffix}
       </p>
-      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }

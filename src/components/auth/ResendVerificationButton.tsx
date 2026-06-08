@@ -68,7 +68,7 @@ export function ResendVerificationButton({ email: prefilledEmail, label }: Props
       {!prefilledEmail && (
         <div className="relative">
           <Mail
-            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600"
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
             aria-hidden="true"
           />
           <input
@@ -77,7 +77,7 @@ export function ResendVerificationButton({ email: prefilledEmail, label }: Props
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="your@email.com"
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent"
+            className="w-full pl-9 pr-3 py-2 border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-royal focus:border-transparent"
             aria-label="Your email address"
           />
         </div>
@@ -85,7 +85,7 @@ export function ResendVerificationButton({ email: prefilledEmail, label }: Props
       <button
         type="submit"
         disabled={status === "sending"}
-        className="inline-flex items-center px-4 py-2 bg-royal text-white text-sm font-medium rounded-md hover:bg-navy transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        className="inline-flex items-center px-4 py-2 bg-secondary text-secondary-foreground text-sm font-medium rounded-md hover:bg-secondary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
       >
         {status === "sending" ? "Sending…" : buttonLabel}
       </button>

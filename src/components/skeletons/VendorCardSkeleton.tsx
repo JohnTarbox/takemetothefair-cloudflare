@@ -6,48 +6,48 @@ export function VendorCardSkeleton() {
       <div className="p-6">
         <div className="flex gap-4">
           {/* Logo placeholder */}
-          <div className="w-16 h-16 bg-gray-200 rounded-lg flex-shrink-0" />
+          <div className="w-16 h-16 bg-muted rounded-lg flex-shrink-0" />
 
           <div className="flex-1 min-w-0 space-y-2">
             {/* Business name + badges */}
             <div className="flex items-center gap-2">
-              <div className="h-5 bg-gray-200 rounded w-40" />
-              <div className="w-4 h-4 bg-gray-200 rounded-full" />
+              <div className="h-5 bg-muted rounded w-40" />
+              <div className="w-4 h-4 bg-muted rounded-full" />
             </div>
 
             {/* Type and location */}
             <div className="flex items-center gap-2">
-              <div className="h-4 bg-gray-200 rounded w-20" />
-              <div className="h-4 bg-gray-200 rounded w-24" />
+              <div className="h-4 bg-muted rounded w-20" />
+              <div className="h-4 bg-muted rounded w-24" />
             </div>
 
             {/* Description */}
             <div className="space-y-1 pt-1">
-              <div className="h-4 bg-gray-200 rounded w-full" />
-              <div className="h-4 bg-gray-200 rounded w-4/5" />
+              <div className="h-4 bg-muted rounded w-full" />
+              <div className="h-4 bg-muted rounded w-4/5" />
             </div>
 
             {/* Products */}
             <div className="flex gap-1 pt-1">
-              <div className="h-5 bg-gray-200 rounded-full w-16" />
-              <div className="h-5 bg-gray-200 rounded-full w-14" />
-              <div className="h-5 bg-gray-200 rounded-full w-18" />
+              <div className="h-5 bg-muted rounded-full w-16" />
+              <div className="h-5 bg-muted rounded-full w-14" />
+              <div className="h-5 bg-muted rounded-full w-18" />
             </div>
           </div>
         </div>
 
         {/* Events section */}
-        <div className="mt-6 pt-6 border-t border-gray-100">
+        <div className="mt-6 pt-6 border-t border-border">
           <div className="flex items-center gap-2 mb-3">
-            <div className="w-4 h-4 bg-gray-200 rounded" />
-            <div className="h-4 bg-gray-200 rounded w-32" />
+            <div className="w-4 h-4 bg-muted rounded" />
+            <div className="h-4 bg-muted rounded w-32" />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="p-3 bg-gray-50 rounded-lg">
-                <div className="aspect-video bg-gray-200 rounded-md mb-2" />
-                <div className="h-4 bg-gray-200 rounded w-3/4 mb-1" />
-                <div className="h-3 bg-gray-200 rounded w-1/2" />
+              <div key={i} className="p-3 bg-muted rounded-lg">
+                <div className="aspect-video bg-muted rounded-md mb-2" />
+                <div className="h-4 bg-muted rounded w-3/4 mb-1" />
+                <div className="h-3 bg-muted rounded w-1/2" />
               </div>
             ))}
           </div>

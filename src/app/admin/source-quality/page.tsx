@@ -232,8 +232,8 @@ export default async function SourceQualityPage({
   return (
     <div className="max-w-7xl space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">Per-source quality</h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <h1 className="text-2xl font-bold text-foreground">Per-source quality</h1>
+        <p className="text-sm text-muted-foreground mt-1">
           Reliability metrics grouped by <code>source_domain</code> + <code>ingestion_method</code>{" "}
           (the columns shipped in PR #247). Sources with fewer than {MIN_EVENTS_FOR_SCORING} events
           are filtered out. Sorted by composite concern % (highest first).
@@ -254,7 +254,7 @@ export default async function SourceQualityPage({
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between gap-4">
-            <h2 className="font-semibold text-gray-900">Filter</h2>
+            <h2 className="font-semibold text-foreground">Filter</h2>
             <nav className="flex flex-wrap gap-1 text-xs">
               {METHOD_OPTIONS.map((opt) => {
                 const active = (opt.value ?? "all") === (filterMethod ?? "all");
@@ -266,7 +266,9 @@ export default async function SourceQualityPage({
                     key={opt.label}
                     href={href}
                     className={`px-3 py-1 rounded ${
-                      active ? "bg-navy text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      active
+                        ? "bg-secondary text-secondary-foreground"
+                        : "bg-muted text-foreground hover:bg-muted"
                     }`}
                   >
                     {opt.label}
@@ -282,7 +284,7 @@ export default async function SourceQualityPage({
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200 text-left text-gray-600">
+              <thead className="bg-muted border-b border-border text-left text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2 font-medium">source_domain</th>
                   <th className="px-4 py-2 font-medium">method</th>
@@ -305,21 +307,21 @@ export default async function SourceQualityPage({
                 {rows.map((r) => (
                   <tr
                     key={`${r.sourceDomain ?? ""}|${r.ingestionMethod ?? ""}`}
-                    className="border-b border-gray-100 hover:bg-gray-50"
+                    className="border-b border-border hover:bg-muted"
                   >
-                    <td className="px-4 py-2 font-mono text-gray-900">
+                    <td className="px-4 py-2 font-mono text-foreground">
                       {r.sourceDomain ? (
                         <Link
                           href={`/admin/events?source=${encodeURIComponent(r.sourceDomain)}`}
-                          className="text-blue-600 hover:underline"
+                          className="text-royal hover:underline"
                         >
                           {r.sourceDomain}
                         </Link>
                       ) : (
-                        <span className="text-gray-600">(no domain)</span>
+                        <span className="text-muted-foreground">(no domain)</span>
                       )}
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-gray-700">
+                    <td className="px-4 py-2 font-mono text-xs text-foreground">
                       {r.ingestionMethod}
                     </td>
                     <Num value={r.total} />
@@ -328,9 +330,9 @@ export default async function SourceQualityPage({
                     <Num value={r.gateFlagged} pct={pct(r.gateFlagged, r.total)} />
                     <Num value={r.unresolvedDrift} pct={pct(r.unresolvedDrift, r.total)} />
                     <Num value={r.imageless} pct={pct(r.imageless, r.total)} muted />
-                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">
+                    <td className="px-4 py-2 text-right tabular-nums text-foreground">
                       {r.yield30dPct == null ? (
-                        <span className="text-gray-600">—</span>
+                        <span className="text-muted-foreground">—</span>
                       ) : (
                         <span>{r.yield30dPct}%</span>
                       )}
@@ -342,7 +344,7 @@ export default async function SourceQualityPage({
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                       No sources match the current filter.
                     </td>
                   </tr>
@@ -355,7 +357,7 @@ export default async function SourceQualityPage({
 
       <ExtractionMethodCard />
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         Concern % = (rejected + cancelled + gate-flagged + unresolved-drift) / total. Imageless rate
         shown separately — it&apos;s a coverage gap, not a quality flag.
       </p>
@@ -437,9 +439,9 @@ async function ExtractionMethodCard() {
   return (
     <Card>
       <CardHeader>
-        <h2 className="font-semibold text-gray-900">
+        <h2 className="font-semibold text-foreground">
           Email-submission extractor mix
-          <span className="ml-2 text-xs font-normal text-gray-500">
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
             (inbound_emails only — other ingestion paths don&apos;t persist extraction_method per
             row)
           </span>
@@ -447,14 +449,14 @@ async function ExtractionMethodCard() {
       </CardHeader>
       <CardContent className="p-0">
         {pivoted.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-gray-500">
+          <p className="px-4 py-6 text-sm text-muted-foreground">
             No email submissions with a recorded extraction method yet. Submit one to
             <code>submit@meetmeatthefair.com</code> and rerun the dashboard.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200 text-left text-gray-600">
+              <thead className="bg-muted border-b border-border text-left text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2 font-medium">source_domain</th>
                   {methodColumns.map((m) => (
@@ -469,31 +471,31 @@ async function ExtractionMethodCard() {
                 {pivoted.map((r) => (
                   <tr
                     key={r.sourceDomain ?? "(no domain)"}
-                    className="border-b border-gray-100 hover:bg-gray-50"
+                    className="border-b border-border hover:bg-muted"
                   >
-                    <td className="px-4 py-2 font-mono text-gray-900">
-                      {r.sourceDomain ?? <span className="text-gray-600">(no domain)</span>}
+                    <td className="px-4 py-2 font-mono text-foreground">
+                      {r.sourceDomain ?? <span className="text-muted-foreground">(no domain)</span>}
                     </td>
                     {methodColumns.map((m) => (
-                      <td key={m} className="px-4 py-2 text-right tabular-nums text-gray-700">
+                      <td key={m} className="px-4 py-2 text-right tabular-nums text-foreground">
                         {r.methods[m] ?? 0}
                       </td>
                     ))}
-                    <td className="px-4 py-2 text-right tabular-nums font-medium text-gray-900">
+                    <td className="px-4 py-2 text-right tabular-nums font-medium text-foreground">
                       {r.total}
                     </td>
                   </tr>
                 ))}
                 {/* Totals row — helps distinguish a 10-event source with
                     50% json-ld from a 100-event source with 5%. */}
-                <tr className="bg-gray-50 border-t border-gray-300 font-medium">
-                  <td className="px-4 py-2 text-gray-700">total</td>
+                <tr className="bg-muted border-t border-border font-medium">
+                  <td className="px-4 py-2 text-foreground">total</td>
                   {methodColumns.map((m) => (
-                    <td key={m} className="px-4 py-2 text-right tabular-nums text-gray-900">
+                    <td key={m} className="px-4 py-2 text-right tabular-nums text-foreground">
                       {methodTotals.get(m) ?? 0}
                     </td>
                   ))}
-                  <td className="px-4 py-2 text-right tabular-nums text-gray-900">
+                  <td className="px-4 py-2 text-right tabular-nums text-foreground">
                     {[...methodTotals.values()].reduce((a, b) => a + b, 0)}
                   </td>
                 </tr>
@@ -509,11 +511,11 @@ async function ExtractionMethodCard() {
 function Stat({ label, value, suffix }: { label: string; value: number; suffix?: string }) {
   return (
     <div>
-      <p className="text-2xl font-bold text-gray-900 tabular-nums">
+      <p className="text-2xl font-bold text-foreground tabular-nums">
         {value.toLocaleString()}
         {suffix}
       </p>
-      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }
@@ -526,10 +528,12 @@ function pct(n: number, total: number): number {
 function Num({ value, pct, muted }: { value: number; pct?: number; muted?: boolean }) {
   return (
     <td
-      className={`px-4 py-2 text-right tabular-nums ${muted ? "text-gray-500" : "text-gray-900"}`}
+      className={`px-4 py-2 text-right tabular-nums ${muted ? "text-muted-foreground" : "text-foreground"}`}
     >
       {value.toLocaleString()}
-      {pct != null && pct > 0 && <span className="ml-1 text-xs text-gray-500">({pct}%)</span>}
+      {pct != null && pct > 0 && (
+        <span className="ml-1 text-xs text-muted-foreground">({pct}%)</span>
+      )}
     </td>
   );
 }

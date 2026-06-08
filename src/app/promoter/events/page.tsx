@@ -132,8 +132,8 @@ export default async function PromoterEventsPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">My Events</h1>
-          <p className="mt-1 text-gray-600">Manage your events and track their status</p>
+          <h1 className="text-2xl font-bold text-foreground">My Events</h1>
+          <p className="mt-1 text-muted-foreground">Manage your events and track their status</p>
         </div>
         <Link href="/promoter/events/new">
           <Button>
@@ -207,7 +207,7 @@ export default async function PromoterEventsPage() {
           {submitted.length > 0 && (
             <Card>
               <CardHeader>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-muted-foreground">
                   {submitted.length} event{submitted.length === 1 ? "" : "s"}
                 </p>
               </CardHeader>
@@ -217,13 +217,13 @@ export default async function PromoterEventsPage() {
                     <div key={event.id} className="py-4 flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <h3 className="font-medium text-gray-900">{event.name}</h3>
+                          <h3 className="font-medium text-foreground">{event.name}</h3>
                           <Badge variant={statusColors[event.status] ?? "default"}>
                             {event.status}
                           </Badge>
                           {event.featured && <Badge variant="warning">Featured</Badge>}
                         </div>
-                        <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 flex-wrap">
+                        <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
                           <span>{event.venueName}</span>
                           {event.startDate && (
                             <span className="flex items-center gap-1">

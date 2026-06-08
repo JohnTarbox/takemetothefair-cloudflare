@@ -197,13 +197,13 @@ export async function CategoryEventsPage({ categorySlug, searchParams }: Categor
           <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-light">
             <Tag className="w-5 h-5 text-amber-fg" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">{cat.label} in New England</h1>
+          <h1 className="text-3xl font-bold text-foreground">{cat.label} in New England</h1>
         </div>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           Browse {total} {includePast ? "" : "upcoming "}
           {cat.label.toLowerCase()} across New England.
         </p>
-        <nav className="mt-4 text-sm text-gray-500" aria-label="Breadcrumb">
+        <nav className="mt-4 text-sm text-muted-foreground" aria-label="Breadcrumb">
           <Link href="/" className="hover:text-navy">
             Home
           </Link>
@@ -212,7 +212,7 @@ export async function CategoryEventsPage({ categorySlug, searchParams }: Categor
             Events
           </Link>
           <span className="mx-2">/</span>
-          <span className="text-gray-900">{cat.label}</span>
+          <span className="text-foreground">{cat.label}</span>
         </nav>
       </div>
 
@@ -223,9 +223,9 @@ export async function CategoryEventsPage({ categorySlug, searchParams }: Categor
             name="includePast"
             value="true"
             defaultChecked={includePast}
-            className="rounded border-gray-300 text-royal focus:ring-royal"
+            className="rounded border-border text-royal focus:ring-royal"
           />
-          <span className="text-sm text-gray-700">Include past events</span>
+          <span className="text-sm text-foreground">Include past events</span>
         </label>
         <button type="submit" className="text-sm text-royal hover:text-navy font-medium">
           Apply
@@ -248,9 +248,11 @@ export async function CategoryEventsPage({ categorySlug, searchParams }: Categor
         />
       ) : (
         <div className="text-center py-12">
-          <Tag className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-600 text-lg">No upcoming {cat.label.toLowerCase()} found.</p>
-          <p className="text-gray-500 mt-2">
+          <Tag className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <p className="text-muted-foreground text-lg">
+            No upcoming {cat.label.toLowerCase()} found.
+          </p>
+          <p className="text-muted-foreground mt-2">
             Check back soon or{" "}
             <Link href="/events" className="text-royal hover:text-navy font-medium">
               browse all events

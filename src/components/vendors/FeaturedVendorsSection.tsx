@@ -40,7 +40,7 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
     <section className="mb-8">
       <div className="flex items-center gap-2 mb-4">
         <Sparkles className="w-5 h-5 text-amber-fg" />
-        <h2 className="text-lg font-semibold text-gray-900">Featured Vendors</h2>
+        <h2 className="text-lg font-semibold text-foreground">Featured Vendors</h2>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {rotated.map((v) => (
@@ -61,7 +61,7 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
             </div>
             <Link href={`/vendors/${v.slug}`} className="block p-4">
               <div className="flex gap-3">
-                <div className="w-20 h-20 rounded-lg bg-white flex items-center justify-center relative overflow-hidden flex-shrink-0">
+                <div className="w-20 h-20 rounded-lg bg-card flex items-center justify-center relative overflow-hidden flex-shrink-0">
                   {v.logoUrl ? (
                     <Image
                       src={v.logoUrl}
@@ -71,12 +71,12 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
                       className="object-cover"
                     />
                   ) : (
-                    <Store className="w-10 h-10 text-gray-600" />
+                    <Store className="w-10 h-10 text-muted-foreground" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <h3 className="font-semibold text-gray-900 truncate">{v.businessName}</h3>
+                    <h3 className="font-semibold text-foreground truncate">{v.businessName}</h3>
                     <CheckCircle
                       className="w-4 h-4 text-royal flex-shrink-0"
                       aria-label="Verified"
@@ -89,9 +89,11 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
                       size="sm"
                     />
                   </div>
-                  {v.vendorType && <p className="text-xs text-gray-600 mt-0.5">{v.vendorType}</p>}
+                  {v.vendorType && (
+                    <p className="text-xs text-muted-foreground mt-0.5">{v.vendorType}</p>
+                  )}
                   {(v.city || v.state) && (
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       {[v.city, v.state].filter(Boolean).join(", ")}
                     </p>
                   )}

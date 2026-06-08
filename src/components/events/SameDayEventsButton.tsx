@@ -66,10 +66,10 @@ export function SameDayEventsButton({ slug, startDate, endDate }: Props) {
 
   return (
     <section className="mt-8" aria-labelledby="same-day-heading">
-      <h2 id="same-day-heading" className="text-xl font-semibold text-gray-900">
+      <h2 id="same-day-heading" className="text-xl font-semibold text-foreground">
         Curious what else is happening?
       </h2>
-      <p className="mt-1 text-sm text-gray-600">
+      <p className="mt-1 text-sm text-muted-foreground">
         Other public events whose dates overlap with this one.
       </p>
 
@@ -90,13 +90,13 @@ export function SameDayEventsButton({ slug, startDate, endDate }: Props) {
           data-testid="same-day-loading"
         >
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-72 rounded-lg bg-gray-100 animate-pulse" aria-hidden />
+            <div key={i} className="h-72 rounded-lg bg-muted animate-pulse" aria-hidden />
           ))}
         </div>
       )}
 
       {state.kind === "loaded" && state.events.length === 0 && (
-        <p className="mt-4 text-sm text-gray-600" data-testid="same-day-empty">
+        <p className="mt-4 text-sm text-muted-foreground" data-testid="same-day-empty">
           No other public events found whose dates overlap with this one.
         </p>
       )}

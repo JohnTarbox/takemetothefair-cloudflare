@@ -293,7 +293,7 @@ export default async function BlogPostPage({ params }: Props) {
           <h1 className="text-3xl sm:text-4xl font-bold text-navy mb-4">{post.title}</h1>
 
           {/* Meta line */}
-          <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 mb-6">
+          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mb-6">
             {publishDate && (
               <span className="flex items-center gap-1.5">
                 <Calendar className="w-4 h-4" />
@@ -328,7 +328,7 @@ export default async function BlogPostPage({ params }: Props) {
 
           {/* Tags */}
           {tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-8 pt-6 border-t border-gray-200">
+            <div className="flex flex-wrap gap-2 mt-8 pt-6 border-t border-border">
               {tags.map((tag) => (
                 <Link
                   key={tag}
@@ -343,7 +343,7 @@ export default async function BlogPostPage({ params }: Props) {
           )}
 
           {/* Share */}
-          <div className="mt-6 pt-6 border-t border-gray-200">
+          <div className="mt-6 pt-6 border-t border-border">
             <ShareButtons url={url} title={post.title} description={post.excerpt || post.title} />
           </div>
         </article>
@@ -360,7 +360,7 @@ export default async function BlogPostPage({ params }: Props) {
                   Admin Actions
                 </h3>
                 <BlogStatusButton slug={post.slug} currentStatus={post.status} />
-                <div className="text-xs text-gray-500 space-y-1">
+                <div className="text-xs text-muted-foreground space-y-1">
                   <p>
                     Status:{" "}
                     <Badge
@@ -403,7 +403,9 @@ export default async function BlogPostPage({ params }: Props) {
                 </h3>
                 {linkedEntities.events.length > 0 && (
                   <div className="mb-3">
-                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1.5">Events</p>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
+                      Events
+                    </p>
                     <ul className="space-y-1">
                       {linkedEntities.events.map((e) => (
                         <li key={`e-${e.slug}`}>
@@ -420,7 +422,9 @@ export default async function BlogPostPage({ params }: Props) {
                 )}
                 {linkedEntities.venues.length > 0 && (
                   <div className="mb-3">
-                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1.5">Venues</p>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
+                      Venues
+                    </p>
                     <ul className="space-y-1">
                       {linkedEntities.venues.map((v) => (
                         <li key={`vn-${v.slug}`}>
@@ -437,7 +441,9 @@ export default async function BlogPostPage({ params }: Props) {
                 )}
                 {linkedEntities.vendors.length > 0 && (
                   <div>
-                    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1.5">Vendors</p>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
+                      Vendors
+                    </p>
                     <ul className="space-y-1">
                       {linkedEntities.vendors.map((v) => (
                         <li key={`vd-${v.slug}`}>
@@ -458,7 +464,7 @@ export default async function BlogPostPage({ params }: Props) {
 
           {/* Post info */}
           <Card>
-            <CardContent className="p-4 text-xs text-gray-500 space-y-1">
+            <CardContent className="p-4 text-xs text-muted-foreground space-y-1">
               {post.createdAt && <p>Created: {formatDateMedium(post.createdAt)}</p>}
               {post.updatedAt && <p>Updated: {formatDateMedium(post.updatedAt)}</p>}
             </CardContent>
@@ -468,14 +474,14 @@ export default async function BlogPostPage({ params }: Props) {
 
       {/* Related Events */}
       {relatedEvents.length > 0 && (
-        <section className="mt-12 pt-8 border-t border-gray-200">
+        <section className="mt-12 pt-8 border-t border-border">
           <h2 className="text-2xl font-bold text-navy mb-6">Related Events</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {relatedEvents.map((event) => (
               <Link
                 key={event.id}
                 href={`/events/${event.slug}`}
-                className="flex gap-4 p-4 bg-white rounded-lg border border-gray-200 hover:border-royal hover:shadow-sm transition-all group"
+                className="flex gap-4 p-4 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all group"
               >
                 {event.imageUrl && (
                   <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 relative">
@@ -489,16 +495,16 @@ export default async function BlogPostPage({ params }: Props) {
                   </div>
                 )}
                 <div className="min-w-0">
-                  <p className="font-medium text-gray-900 group-hover:text-navy line-clamp-1">
+                  <p className="font-medium text-foreground group-hover:text-navy line-clamp-1">
                     {event.name}
                   </p>
                   {event.startDate && (
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-muted-foreground mt-1">
                       {formatDateMedium(event.startDate)}
                     </p>
                   )}
                   {event.venueName && (
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       {event.venueName}
                       {event.venueCity ? `, ${event.venueCity}` : ""}
                       {event.venueState ? `, ${event.venueState}` : ""}
@@ -513,7 +519,7 @@ export default async function BlogPostPage({ params }: Props) {
 
       {/* Recent posts */}
       {parsedRecentPosts.length > 0 && (
-        <section className="mt-12 pt-8 border-t border-gray-200">
+        <section className="mt-12 pt-8 border-t border-border">
           <h2 className="text-2xl font-bold text-navy mb-6">More from the Blog</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {parsedRecentPosts.map((p) => (

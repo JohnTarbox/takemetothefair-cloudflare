@@ -78,8 +78,8 @@ export default function AdminPromotersPage() {
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-64 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-64 bg-muted rounded"></div>
       </div>
     );
   }
@@ -87,7 +87,7 @@ export default function AdminPromotersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Manage Promoters</h1>
+        <h1 className="text-2xl font-bold text-foreground">Manage Promoters</h1>
         <Link href="/admin/promoters/new">
           <Button>
             <Plus className="w-4 h-4 mr-2" />
@@ -98,13 +98,13 @@ export default function AdminPromotersPage() {
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">{promoters.length} promoters total</p>
+          <p className="text-sm text-muted-foreground">{promoters.length} promoters total</p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-border">
                   <SortableHeader
                     column="companyName"
                     label="Company"
@@ -129,19 +129,21 @@ export default function AdminPromotersPage() {
                     sortConfig={sortConfig}
                     onSort={handleSort}
                   />
-                  <th className="text-right py-3 px-4 text-sm font-medium text-gray-600">
+                  <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {sortedPromoters.map((promoter) => (
-                  <tr key={promoter.id} className="border-b border-gray-100">
+                  <tr key={promoter.id} className="border-b border-border">
                     <td className="py-3 px-4">
-                      <p className="font-medium text-gray-900">{promoter.companyName}</p>
+                      <p className="font-medium text-foreground">{promoter.companyName}</p>
                     </td>
-                    <td className="py-3 px-4 text-gray-600">{promoter.user?.email || "-"}</td>
-                    <td className="py-3 px-4 text-gray-600">{promoter._count.events}</td>
+                    <td className="py-3 px-4 text-muted-foreground">
+                      {promoter.user?.email || "-"}
+                    </td>
+                    <td className="py-3 px-4 text-muted-foreground">{promoter._count.events}</td>
                     <td className="py-3 px-4">
                       {promoter.verified ? (
                         <Badge variant="success" className="inline-flex items-center gap-1">

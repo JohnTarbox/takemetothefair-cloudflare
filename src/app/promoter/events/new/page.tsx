@@ -412,7 +412,7 @@ function CreateEventWizard() {
         body="Walk through the four steps — you can come back and finish later, we'll save as you go."
       />
       <div className="flex items-baseline justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">
+        <h1 className="text-2xl font-bold text-foreground">
           {draftId ? "Edit draft event" : "Create new event"}
         </h1>
         {savedAgo && (
@@ -433,7 +433,7 @@ function CreateEventWizard() {
 
       <Card>
         <CardHeader>
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             {stage === "basics" && "Start with the event's name, venue, and core details."}
             {stage === "schedule" && "When is it happening?"}
             {stage === "vendor" && "Details vendors need to decide whether to apply."}
@@ -463,18 +463,20 @@ function CreateEventWizard() {
                 required
               />
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Description
+                </label>
                 <textarea
                   name="description"
                   value={form.description}
                   onChange={handleChange}
                   rows={4}
-                  className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
+                  className="block w-full rounded-lg border border-border px-3 py-2 text-foreground focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
                   placeholder="Describe your event…"
                 />
               </div>
               <div className="space-y-2">
-                <label className="flex items-center gap-2 text-sm text-gray-700">
+                <label className="flex items-center gap-2 text-sm text-foreground">
                   <input
                     type="checkbox"
                     checked={form.isStatewide}
@@ -486,13 +488,15 @@ function CreateEventWizard() {
                         venueId: e.target.checked ? "" : prev.venueId,
                       }))
                     }
-                    className="h-4 w-4 rounded border-gray-300"
+                    className="h-4 w-4 rounded border-border"
                   />
                   Statewide event (no specific venue)
                 </label>
                 {form.isStatewide ? (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">State *</label>
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      State *
+                    </label>
                     <select
                       value={form.stateCode}
                       onChange={(e) =>
@@ -502,7 +506,7 @@ function CreateEventWizard() {
                         }))
                       }
                       required
-                      className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
+                      className="block w-full rounded-lg border border-border px-3 py-2 text-foreground focus:border-navy focus:outline-none focus:ring-1 focus:ring-navy"
                     >
                       <option value="">Select a state</option>
                       {STATE_CODES.map((code) => (
@@ -569,9 +573,9 @@ function CreateEventWizard() {
                   type="checkbox"
                   checked={discontinuousDates}
                   onChange={(e) => setDiscontinuousDates(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-border"
                 />
-                <label htmlFor="discontinuousDates" className="text-sm font-normal text-gray-700">
+                <label htmlFor="discontinuousDates" className="text-sm font-normal text-foreground">
                   Non-contiguous dates (specific dates that aren&apos;t consecutive)
                 </label>
               </div>
@@ -626,7 +630,7 @@ function CreateEventWizard() {
               />
 
               <div className="border-t pt-4 mt-2">
-                <h3 className="font-medium text-sm text-gray-700 mb-3">Tickets</h3>
+                <h3 className="font-medium text-sm text-foreground mb-3">Tickets</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <Input
                     label="Min Ticket Price"
@@ -692,14 +696,14 @@ function CreateEventWizard() {
               />
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-foreground mb-1">
                     Indoor / Outdoor
                   </label>
                   <select
                     name="indoorOutdoor"
                     value={form.indoorOutdoor}
                     onChange={handleChange}
-                    className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                    className="w-full h-10 rounded-md border border-border bg-card px-3 py-2 text-sm"
                   >
                     <option value="">Not specified</option>
                     <option value="INDOOR">Indoor</option>
@@ -708,14 +712,14 @@ function CreateEventWizard() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-foreground mb-1">
                     Event Scale
                   </label>
                   <select
                     name="eventScale"
                     value={form.eventScale}
                     onChange={handleChange}
-                    className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                    className="w-full h-10 rounded-md border border-border bg-card px-3 py-2 text-sm"
                   >
                     <option value="">Not specified</option>
                     <option value="SMALL">Small</option>
@@ -740,15 +744,15 @@ function CreateEventWizard() {
                   type="checkbox"
                   checked={form.walkInsAllowed}
                   onChange={handleChange}
-                  className="h-4 w-4 rounded border-gray-300"
+                  className="h-4 w-4 rounded border-border"
                 />
-                <label htmlFor="walkInsAllowed" className="text-sm text-gray-700">
+                <label htmlFor="walkInsAllowed" className="text-sm text-foreground">
                   Walk-in vendors accepted
                 </label>
               </div>
 
               <div className="border-t pt-4 mt-2">
-                <h3 className="font-medium text-sm text-gray-700 mb-3">Vendor Application</h3>
+                <h3 className="font-medium text-sm text-foreground mb-3">Vendor Application</h3>
                 <Input
                   label="Application Deadline"
                   type="date"
@@ -767,7 +771,7 @@ function CreateEventWizard() {
                   />
                 </div>
                 <div className="mt-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-foreground mb-1">
                     Application Instructions
                   </label>
                   <textarea
@@ -775,7 +779,7 @@ function CreateEventWizard() {
                     value={form.applicationInstructions}
                     onChange={handleChange}
                     rows={3}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm"
                     placeholder="How to apply, requirements, contact info…"
                   />
                 </div>

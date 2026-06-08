@@ -99,7 +99,7 @@ export function VendorApplicationRow({ application, conflicts, highlighted }: Pr
               <div className="flex items-center gap-3 flex-wrap">
                 <Link
                   href={`/events/${application.event.slug}`}
-                  className="text-lg font-semibold text-gray-900 hover:text-navy"
+                  className="text-lg font-semibold text-foreground hover:text-navy"
                 >
                   {application.event.name}
                 </Link>
@@ -114,7 +114,7 @@ export function VendorApplicationRow({ application, conflicts, highlighted }: Pr
                     application.status}
                 </Badge>
               </div>
-              <div className="mt-2 space-y-1 text-sm text-gray-600">
+              <div className="mt-2 space-y-1 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4" />
                   {formatDateRange(application.event.startDate, application.event.endDate)}

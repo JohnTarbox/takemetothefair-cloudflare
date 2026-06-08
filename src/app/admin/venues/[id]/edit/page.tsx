@@ -239,8 +239,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
   if (loading) {
     return (
       <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-        <div className="h-96 bg-gray-200 rounded"></div>
+        <div className="h-8 bg-muted rounded w-1/4"></div>
+        <div className="h-96 bg-muted rounded"></div>
       </div>
     );
   }
@@ -248,8 +248,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
   if (!venue) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-600">Venue not found</p>
-        <Link href="/admin/venues" className="text-blue-600 hover:underline mt-2 inline-block">
+        <p className="text-muted-foreground">Venue not found</p>
+        <Link href="/admin/venues" className="text-royal hover:underline mt-2 inline-block">
           Back to Venues
         </Link>
       </div>
@@ -261,7 +261,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       <div className="mb-6">
         <Link
           href="/admin/venues"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Venues
@@ -274,8 +274,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
         </CardHeader>
         <CardContent>
           {/* Search-first: Google Place Search */}
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-sm font-medium text-blue-900 mb-2">
+          <div className="mb-6 p-4 bg-info-soft border border-info-soft rounded-lg">
+            <p className="text-sm font-medium text-navy-dark mb-2">
               Re-link or update from Google Places
             </p>
             <GooglePlaceSearch
@@ -471,32 +471,32 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
             {/* Google Places Data Section */}
             {Object.keys(googleData).length > 0 && (
               <div className="border-t pt-4 mt-4">
-                <p className="text-sm font-medium text-gray-700 mb-3">Google Places Data</p>
+                <p className="text-sm font-medium text-foreground mb-3">Google Places Data</p>
                 <div className="space-y-3">
                   {googleData.googlePlaceId && (
                     <div>
-                      <Label className="text-xs text-gray-500">Place ID</Label>
+                      <Label className="text-xs text-muted-foreground">Place ID</Label>
                       <Input
                         readOnly
                         value={googleData.googlePlaceId}
-                        className="bg-gray-50 text-sm"
+                        className="bg-muted text-sm"
                       />
                     </div>
                   )}
                   {googleData.googleMapsUrl && (
                     <div>
-                      <Label className="text-xs text-gray-500">Google Maps URL</Label>
+                      <Label className="text-xs text-muted-foreground">Google Maps URL</Label>
                       <div className="flex gap-2">
                         <Input
                           readOnly
                           value={googleData.googleMapsUrl}
-                          className="bg-gray-50 text-sm"
+                          className="bg-muted text-sm"
                         />
                         <a
                           href={googleData.googleMapsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-gray-50"
+                          className="shrink-0 inline-flex items-center px-3 py-2 text-xs border rounded-md hover:bg-muted"
                         >
                           Open
                         </a>
@@ -505,31 +505,31 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label className="text-xs text-gray-500">Rating</Label>
+                      <Label className="text-xs text-muted-foreground">Rating</Label>
                       <Input
                         readOnly
                         value={googleData.googleRating || ""}
-                        className="bg-gray-50 text-sm"
+                        className="bg-muted text-sm"
                       />
                     </div>
                     <div>
-                      <Label className="text-xs text-gray-500">Rating Count</Label>
+                      <Label className="text-xs text-muted-foreground">Rating Count</Label>
                       <Input
                         readOnly
                         value={googleData.googleRatingCount || ""}
-                        className="bg-gray-50 text-sm"
+                        className="bg-muted text-sm"
                       />
                     </div>
                   </div>
                   {googleData.googleTypes && (
                     <div>
-                      <Label className="text-xs text-gray-500">Types</Label>
+                      <Label className="text-xs text-muted-foreground">Types</Label>
                       <div className="flex flex-wrap gap-1 mt-1">
                         {(() => {
                           try {
                             return (JSON.parse(googleData.googleTypes) as string[]).map(
                               (t: string) => (
-                                <span key={t} className="px-2 py-0.5 bg-gray-100 rounded text-xs">
+                                <span key={t} className="px-2 py-0.5 bg-muted rounded text-xs">
                                   {t.replace(/_/g, " ")}
                                 </span>
                               )
@@ -543,8 +543,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                   )}
                   {googleData.openingHours && (
                     <div>
-                      <Label className="text-xs text-gray-500">Opening Hours</Label>
-                      <div className="mt-1 text-sm bg-gray-50 rounded-md p-2 space-y-0.5">
+                      <Label className="text-xs text-muted-foreground">Opening Hours</Label>
+                      <div className="mt-1 text-sm bg-muted rounded-md p-2 space-y-0.5">
                         {(() => {
                           try {
                             const hours = JSON.parse(googleData.openingHours) as {
@@ -556,11 +556,15 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                                   {d}
                                 </div>
                               )) || (
-                                <div className="text-xs text-gray-600">No schedule available</div>
+                                <div className="text-xs text-muted-foreground">
+                                  No schedule available
+                                </div>
                               )
                             );
                           } catch {
-                            return <div className="text-xs text-gray-600">Invalid format</div>;
+                            return (
+                              <div className="text-xs text-muted-foreground">Invalid format</div>
+                            );
                           }
                         })()}
                       </div>
@@ -568,7 +572,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                   )}
                   {googleData.accessibility && (
                     <div>
-                      <Label className="text-xs text-gray-500">Accessibility</Label>
+                      <Label className="text-xs text-muted-foreground">Accessibility</Label>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {(() => {
                           try {
@@ -596,7 +600,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                   )}
                   {googleData.parking && (
                     <div>
-                      <Label className="text-xs text-gray-500">Parking</Label>
+                      <Label className="text-xs text-muted-foreground">Parking</Label>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {(() => {
                           try {
@@ -607,7 +611,7 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                               .map(([k]) => (
                                 <span
                                   key={k}
-                                  className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs"
+                                  className="px-2 py-0.5 bg-info-soft text-navy rounded text-xs"
                                 >
                                   {k
                                     .replace(/([A-Z])/g, " $1")

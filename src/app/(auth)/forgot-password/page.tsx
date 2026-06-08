@@ -44,8 +44,8 @@ export default function ForgotPasswordPage() {
     <div className="min-h-[80vh] flex items-center justify-center px-4 py-12">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <h1 className="text-2xl font-bold text-center text-gray-900">Reset your password</h1>
-          <p className="text-center text-gray-600 mt-2">
+          <h1 className="text-2xl font-bold text-center text-foreground">Reset your password</h1>
+          <p className="text-center text-muted-foreground mt-2">
             Enter the email on your account and we&apos;ll send you a reset link.
           </p>
         </CardHeader>
@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
               >
                 Send reset link
               </Button>
-              <p className="text-center text-sm text-gray-600">
+              <p className="text-center text-sm text-muted-foreground">
                 Remembered it?{" "}
                 <Link href="/login" className="text-navy hover:underline font-medium">
                   Sign in

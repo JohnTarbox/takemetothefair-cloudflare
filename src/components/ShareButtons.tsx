@@ -79,24 +79,24 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
         aria-haspopup="menu"
         // Match FavoriteButton's pill silhouette next door so the two
         // header actions read as a paired set.
-        className="rounded-full bg-white shadow-md border border-gray-200 hover:shadow-lg transition-all"
+        className="rounded-full bg-card shadow-md border border-border hover:shadow-lg transition-all"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           setIsOpen(!isOpen);
         }}
-        icon={<Share2 className="w-5 h-5 text-gray-600" />}
+        icon={<Share2 className="w-5 h-5 text-muted-foreground" />}
       />
 
       {isOpen && (
         <div
-          className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50"
+          className="absolute right-0 mt-2 w-48 bg-card rounded-lg shadow-lg border border-border py-1 z-50"
           role="menu"
           aria-label="Share options"
         >
           <button
             onClick={() => openShareWindow(shareLinks.twitter)}
-            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label="Share on Twitter"
           >
@@ -105,7 +105,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </button>
           <button
             onClick={() => openShareWindow(shareLinks.facebook)}
-            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label="Share on Facebook"
           >
@@ -114,7 +114,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </button>
           <button
             onClick={() => openShareWindow(shareLinks.linkedin)}
-            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label="Share on LinkedIn"
           >
@@ -123,7 +123,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </button>
           <a
             href={shareLinks.email}
-            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             onClick={() => setIsOpen(false)}
             role="menuitem"
             aria-label="Share via email"
@@ -133,7 +133,7 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           </a>
           <button
             onClick={copyToClipboard}
-            className="w-full min-h-[40px] px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+            className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label={copied ? "Link copied" : "Copy link to clipboard"}
           >

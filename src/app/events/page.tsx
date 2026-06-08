@@ -608,7 +608,7 @@ function EventsFilter({
           <button
             type="submit"
             aria-label="Search events"
-            className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2.5 rounded-md bg-royal text-white text-sm font-medium hover:bg-royal/90 focus:outline-none focus:ring-2 focus:ring-royal focus:ring-offset-1 transition-colors"
+            className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-w-[32px] min-h-[32px] px-2.5 rounded-md bg-secondary text-secondary-foreground text-sm font-medium hover:bg-royal/90 focus:outline-none focus:ring-2 focus:ring-royal focus:ring-offset-1 transition-colors"
           >
             Go
           </button>
@@ -748,7 +748,7 @@ function EventsFilter({
       <div className="flex gap-2">
         <button
           type="submit"
-          className="flex-1 bg-royal text-white py-2 px-4 rounded-lg hover:bg-navy transition-colors flex items-center justify-center gap-2"
+          className="flex-1 bg-secondary text-secondary-foreground py-2 px-4 rounded-lg hover:bg-secondary/90 transition-colors flex items-center justify-center gap-2"
         >
           <Filter className="w-4 h-4" />
           Apply Filters
@@ -834,7 +834,7 @@ export default async function EventsPage({
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 print:block">
         <aside className="lg:col-span-1 print:hidden">
           <MobileFilterDrawer>
-            <Suspense fallback={<div className="animate-pulse bg-gray-200 h-64 rounded-lg" />}>
+            <Suspense fallback={<div className="animate-pulse bg-muted h-64 rounded-lg" />}>
               <EventsFilter
                 categories={categories}
                 states={states}
@@ -870,7 +870,7 @@ export default async function EventsPage({
             </p>
             <Link
               href="/events/past"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-royal text-white rounded-lg hover:bg-navy transition-colors text-sm font-medium"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/90 transition-colors text-sm font-medium"
             >
               Browse past events &rarr;
             </Link>

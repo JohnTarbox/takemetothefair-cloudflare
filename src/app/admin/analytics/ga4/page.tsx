@@ -60,18 +60,18 @@ export default async function Ga4DashboardPage({ searchParams }: PageProps) {
       <div className="mb-4">
         <Link
           href="/admin/analytics"
-          className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" /> Back to Analytics overview
         </Link>
       </div>
 
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">GA4 dashboard</h1>
+        <h1 className="text-2xl font-bold text-foreground">GA4 dashboard</h1>
         <div className="flex items-center gap-4">
           <Link
             href="/admin/analytics/ga4?refresh=1"
-            className="inline-flex items-center gap-1.5 text-sm text-gray-700 hover:text-gray-900"
+            className="inline-flex items-center gap-1.5 text-sm text-foreground hover:text-foreground"
           >
             <RefreshCw className="w-4 h-4" /> Refresh data
           </Link>
@@ -80,7 +80,7 @@ export default async function Ga4DashboardPage({ searchParams }: PageProps) {
               href={`https://analytics.google.com/analytics/web/#/p${result.data.propertyId}/reports`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
             >
               Open in GA4 <ExternalLink className="w-3.5 h-3.5" />
             </a>
@@ -114,7 +114,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">AI engine</th>
                 <th className="text-right px-6 py-2 font-medium">Sessions (7d)</th>
@@ -125,9 +125,9 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
             <tbody className="divide-y divide-gray-100">
               {AEO_BUCKET_ORDER.map((bucket) => (
                 <tr key={bucket}>
-                  <td className="px-6 py-2 text-gray-900">{AEO_BUCKET_LABELS[bucket]}</td>
+                  <td className="px-6 py-2 text-foreground">{AEO_BUCKET_LABELS[bucket]}</td>
                   <td className="px-6 py-2 text-right tabular-nums">{fmt(aeo.totals[bucket])}</td>
-                  <td className="px-6 py-2 text-right tabular-nums text-gray-500">
+                  <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                     {fmt(aeo.previous[bucket])}
                   </td>
                   <td className="px-6 py-2 text-right tabular-nums">
@@ -135,10 +135,10 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
                   </td>
                 </tr>
               ))}
-              <tr className="bg-gray-50 font-semibold">
-                <td className="px-6 py-2 text-gray-900">Total</td>
+              <tr className="bg-muted font-semibold">
+                <td className="px-6 py-2 text-foreground">Total</td>
                 <td className="px-6 py-2 text-right tabular-nums">{fmt(aeo.total)}</td>
-                <td className="px-6 py-2 text-right tabular-nums text-gray-500">
+                <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                   {fmt(aeo.previousTotal)}
                 </td>
                 <td className="px-6 py-2 text-right tabular-nums">
@@ -158,7 +158,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
         </CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-gray-600">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Path</th>
                 <th className="text-left px-6 py-2 font-medium">Title</th>
@@ -169,7 +169,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
             <tbody className="divide-y divide-gray-100">
               {data.topPages.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-6 text-gray-500">
+                  <td colSpan={4} className="px-6 py-6 text-muted-foreground">
                     No data yet.
                   </td>
                 </tr>
@@ -179,14 +179,14 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
                     <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
                       <Link
                         href={`/admin/analytics/page?path=${encodeURIComponent(row.path)}`}
-                        className="text-blue-600 hover:text-blue-700 hover:underline"
+                        className="text-royal hover:text-navy hover:underline"
                       >
                         {row.path}
                       </Link>
                     </td>
-                    <td className="px-6 py-2 text-gray-700 truncate max-w-xs">{row.title}</td>
+                    <td className="px-6 py-2 text-foreground truncate max-w-xs">{row.title}</td>
                     <td className="px-6 py-2 text-right tabular-nums">{fmt(row.views)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                       {fmt(row.activeUsers)}
                     </td>
                   </tr>
@@ -204,7 +204,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-muted text-muted-foreground">
                 <tr>
                   <th className="text-left px-6 py-2 font-medium">Event</th>
                   <th className="text-right px-6 py-2 font-medium">Count</th>
@@ -213,14 +213,16 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
               <tbody className="divide-y divide-gray-100">
                 {data.topEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={2} className="px-6 py-6 text-gray-500">
+                    <td colSpan={2} className="px-6 py-6 text-muted-foreground">
                       No events tracked yet.
                     </td>
                   </tr>
                 ) : (
                   data.topEvents.map((row, i) => (
                     <tr key={`${row.eventName}-${i}`}>
-                      <td className="px-6 py-2 font-mono text-xs text-gray-900">{row.eventName}</td>
+                      <td className="px-6 py-2 font-mono text-xs text-foreground">
+                        {row.eventName}
+                      </td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
                     </tr>
                   ))
@@ -236,7 +238,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
           </CardHeader>
           <CardContent className="p-0">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-muted text-muted-foreground">
                 <tr>
                   <th className="text-left px-6 py-2 font-medium">Source</th>
                   <th className="text-left px-6 py-2 font-medium">Medium</th>
@@ -247,17 +249,17 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
               <tbody className="divide-y divide-gray-100">
                 {data.trafficSources.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-6 text-gray-500">
+                    <td colSpan={4} className="px-6 py-6 text-muted-foreground">
                       No data yet.
                     </td>
                   </tr>
                 ) : (
                   data.trafficSources.map((row, i) => (
                     <tr key={`${row.source}-${row.medium}-${i}`}>
-                      <td className="px-6 py-2 text-gray-900">{row.source || "(direct)"}</td>
-                      <td className="px-6 py-2 text-gray-700">{row.medium || "(none)"}</td>
+                      <td className="px-6 py-2 text-foreground">{row.source || "(direct)"}</td>
+                      <td className="px-6 py-2 text-foreground">{row.medium || "(none)"}</td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(row.sessions)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                         {fmt(row.activeUsers)}
                       </td>
                     </tr>
@@ -269,7 +271,7 @@ function MetricsView({ data, aeo }: { data: DashboardMetrics; aeo: AeoReferralsR
         </Card>
       </div>
 
-      <p className="text-xs text-gray-500 mt-6">
+      <p className="text-xs text-muted-foreground mt-6">
         Property {data.propertyId} · Generated {formatTimestampForServer(data.generatedAt)} · Cached
         up to 10 min
       </p>
@@ -284,7 +286,7 @@ function FacebookTrafficCard({ data }: { data: DashboardMetrics }) {
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
           <span>Facebook traffic (last 28 days)</span>
-          <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">
+          <span className="inline-flex items-center rounded-full bg-info-soft px-2.5 py-0.5 text-xs font-medium text-navy-dark">
             {fmt(fb.sessions)} session{fb.sessions === 1 ? "" : "s"} · {fmt(fb.activeUsers)} user
             {fb.activeUsers === 1 ? "" : "s"}
           </span>
@@ -292,7 +294,7 @@ function FacebookTrafficCard({ data }: { data: DashboardMetrics }) {
       </CardHeader>
       <CardContent className="p-0">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-gray-600">
+          <thead className="bg-muted text-muted-foreground">
             <tr>
               <th className="text-left px-6 py-2 font-medium">Source</th>
               <th className="text-left px-6 py-2 font-medium">Medium</th>
@@ -303,9 +305,9 @@ function FacebookTrafficCard({ data }: { data: DashboardMetrics }) {
           <tbody className="divide-y divide-gray-100">
             {fb.rows.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-6 py-6 text-gray-500">
+                <td colSpan={4} className="px-6 py-6 text-muted-foreground">
                   No Facebook referrals in the last 28 days. Manual posts with
-                  <code className="mx-1 px-1 bg-gray-100 rounded text-xs">
+                  <code className="mx-1 px-1 bg-muted rounded text-xs">
                     ?utm_source=facebook&amp;utm_medium=social
                   </code>
                   on the link will start showing up here.
@@ -314,10 +316,10 @@ function FacebookTrafficCard({ data }: { data: DashboardMetrics }) {
             ) : (
               fb.rows.map((row, i) => (
                 <tr key={`${row.source}-${row.medium}-${i}`}>
-                  <td className="px-6 py-2 text-gray-900">{row.source}</td>
-                  <td className="px-6 py-2 text-gray-700">{row.medium || "(none)"}</td>
+                  <td className="px-6 py-2 text-foreground">{row.source}</td>
+                  <td className="px-6 py-2 text-foreground">{row.medium || "(none)"}</td>
                   <td className="px-6 py-2 text-right tabular-nums">{fmt(row.sessions)}</td>
-                  <td className="px-6 py-2 text-right tabular-nums text-gray-600">
+                  <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
                     {fmt(row.activeUsers)}
                   </td>
                 </tr>
@@ -349,10 +351,11 @@ function AeoTotalBadge({ total }: { total: number }) {
 
 function AeoDeltaCell({ current, previous }: { current: number; previous: number }) {
   const pct = aeoDeltaPercent(current, previous);
-  if (pct === null) return <span className="text-gray-600">—</span>;
+  if (pct === null) return <span className="text-muted-foreground">—</span>;
   const rounded = Math.round(pct);
   const sign = rounded > 0 ? "+" : "";
-  const color = rounded > 0 ? "text-green-700" : rounded < 0 ? "text-red-700" : "text-gray-600";
+  const color =
+    rounded > 0 ? "text-green-700" : rounded < 0 ? "text-red-700" : "text-muted-foreground";
   return (
     <span className={color}>
       {sign}
@@ -367,11 +370,11 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <CardContent className="p-6">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-gray-600">{label}</p>
-            <p className="text-4xl font-bold text-gray-900 mt-1 tabular-nums">{value}</p>
+            <p className="text-sm text-muted-foreground">{label}</p>
+            <p className="text-4xl font-bold text-foreground mt-1 tabular-nums">{value}</p>
           </div>
-          <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-blue-100">
-            <Users className="w-6 h-6 text-blue-600" />
+          <div className="w-12 h-12 rounded-lg flex items-center justify-center bg-info-soft">
+            <Users className="w-6 h-6 text-royal" />
           </div>
         </div>
       </CardContent>
@@ -385,15 +388,15 @@ function ErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; mes
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5 text-gray-500" />
+          <BarChart3 className="w-5 h-5 text-muted-foreground" />
           {isConfig ? "GA4 analytics not configured" : "Could not load GA4 data"}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-sm text-gray-700 mb-4">{message}</p>
+        <p className="text-sm text-foreground mb-4">{message}</p>
 
         {isConfig && (
-          <div className="text-sm text-gray-700 space-y-3">
+          <div className="text-sm text-foreground space-y-3">
             <p className="font-medium">One-time setup:</p>
             <ol className="list-decimal pl-5 space-y-2">
               <li>
@@ -402,7 +405,7 @@ function ErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; mes
                   href="https://console.cloud.google.com/iam-admin/serviceaccounts"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-700"
+                  className="text-royal hover:text-navy"
                 >
                   Google Cloud Console
                 </a>
@@ -410,7 +413,7 @@ function ErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; mes
               </li>
               <li>
                 Enable the{" "}
-                <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">
                   Google Analytics Data API
                 </span>{" "}
                 on the same GCP project.
@@ -424,16 +427,16 @@ function ErrorPanel({ kind, message }: { kind: "config" | "api" | "unknown"; mes
                 deployment:
                 <ul className="list-disc pl-5 mt-2 space-y-1 font-mono text-xs">
                   <li>
-                    <span className="bg-gray-100 px-1.5 py-0.5 rounded">GA4_PROPERTY_ID</span> —
+                    <span className="bg-muted px-1.5 py-0.5 rounded">GA4_PROPERTY_ID</span> —
                     numeric property ID
                   </li>
                   <li>
-                    <span className="bg-gray-100 px-1.5 py-0.5 rounded">GA4_SA_CLIENT_EMAIL</span> —{" "}
+                    <span className="bg-muted px-1.5 py-0.5 rounded">GA4_SA_CLIENT_EMAIL</span> —{" "}
                     <code>client_email</code> from the JSON key
                   </li>
                   <li>
-                    <span className="bg-gray-100 px-1.5 py-0.5 rounded">GA4_SA_PRIVATE_KEY</span> —
-                    the full <code>private_key</code> PEM (encrypt this one)
+                    <span className="bg-muted px-1.5 py-0.5 rounded">GA4_SA_PRIVATE_KEY</span> — the
+                    full <code>private_key</code> PEM (encrypt this one)
                   </li>
                 </ul>
               </li>

@@ -263,8 +263,8 @@ export default function VendorGuidePage() {
       <article className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-12">
         <header className="mb-10">
           <p className="text-sm font-medium text-royal mb-2">For Vendors</p>
-          <h1 className="text-4xl font-bold text-gray-900 mb-3">Vendor Guide</h1>
-          <p className="text-lg text-gray-600">
+          <h1 className="text-4xl font-bold text-foreground mb-3">Vendor Guide</h1>
+          <p className="text-lg text-muted-foreground">
             How to get on Meet Me at the Fair, get your listing set up, and keep it current.
           </p>
         </header>
@@ -273,18 +273,18 @@ export default function VendorGuidePage() {
           <MarkdownContent content={GUIDE_MARKDOWN} />
         </div>
 
-        <hr className="my-12 border-gray-200" />
+        <hr className="my-12 border-border" />
 
         <div className="flex flex-wrap gap-4 justify-center">
           <Link
             href="/register?role=VENDOR"
-            className="inline-flex items-center px-5 py-2.5 bg-royal text-white font-medium rounded-lg hover:bg-navy transition-colors"
+            className="inline-flex items-center px-5 py-2.5 bg-secondary text-secondary-foreground font-medium rounded-lg hover:bg-secondary/90 transition-colors"
           >
             Sign up as a vendor
           </Link>
           <Link
             href="/vendors"
-            className="inline-flex items-center px-5 py-2.5 border border-gray-300 text-gray-900 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center px-5 py-2.5 border border-border text-foreground font-medium rounded-lg hover:bg-muted transition-colors"
           >
             Browse vendor listings
           </Link>

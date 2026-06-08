@@ -36,7 +36,7 @@ export function WizardSteps({ steps, currentIndex, onStepClick }: Props) {
           const circleStyle = isDone
             ? "bg-sage-700 text-white"
             : isActive
-              ? "bg-navy text-white"
+              ? "bg-secondary text-secondary-foreground"
               : "bg-stone-100 text-stone-600";
           const labelStyle = isActive
             ? "text-navy font-semibold"

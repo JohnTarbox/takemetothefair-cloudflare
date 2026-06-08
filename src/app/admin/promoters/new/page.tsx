@@ -31,7 +31,7 @@ export default function NewPromoterPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users?available=promoter");
-      const data = await res.json() as User[];
+      const data = (await res.json()) as User[];
       setUsers(data);
     } catch (err) {
       console.error("Failed to fetch users:", err);
@@ -60,7 +60,7 @@ export default function NewPromoterPage() {
       });
 
       if (!res.ok) {
-        const result = await res.json() as { error?: string };
+        const result = (await res.json()) as { error?: string };
         throw new Error(result.error || "Failed to create promoter");
       }
 
@@ -77,7 +77,7 @@ export default function NewPromoterPage() {
       <div className="mb-6">
         <Link
           href="/admin/promoters"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
+          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Promoters
@@ -90,9 +90,7 @@ export default function NewPromoterPage() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">
-              {error}
-            </div>
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-md text-sm">{error}</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -111,7 +109,7 @@ export default function NewPromoterPage() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   Optional - link to a user account or leave blank
                 </p>
               </div>
@@ -133,12 +131,7 @@ export default function NewPromoterPage() {
 
               <div>
                 <Label htmlFor="website">Website</Label>
-                <Input
-                  id="website"
-                  name="website"
-                  type="url"
-                  placeholder="https://example.com"
-                />
+                <Input id="website" name="website" type="url" placeholder="https://example.com" />
               </div>
 
               <div>

@@ -28,7 +28,7 @@ export default async function VerifyEmailPage({ params }: Props) {
               <AlertTriangle className="w-12 h-12 text-warning" />
             )}
           </div>
-          <h1 className="text-2xl font-bold text-center text-gray-900">
+          <h1 className="text-2xl font-bold text-center text-foreground">
             {result.ok
               ? "Email verified"
               : result.reason === "expired"
@@ -39,7 +39,7 @@ export default async function VerifyEmailPage({ params }: Props) {
         <CardContent>
           {result.ok ? (
             <div className="space-y-4 text-center">
-              <p className="text-gray-600">
+              <p className="text-muted-foreground">
                 Thanks for confirming <strong>{result.email}</strong>. You&apos;re all set.
               </p>
               <Link
@@ -51,18 +51,18 @@ export default async function VerifyEmailPage({ params }: Props) {
             </div>
           ) : (
             <div className="space-y-4 text-center">
-              <p className="text-gray-600">
+              <p className="text-muted-foreground">
                 {result.reason === "expired"
                   ? "This verification link has expired. Links are valid for 24 hours."
                   : "This verification link isn't valid. It may have already been used."}
               </p>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Enter the email you signed up with — we&apos;ll send a fresh link.
               </p>
               <div className="flex justify-center">
                 <ResendVerificationButton label="Send a new link" />
               </div>
-              <p className="text-sm text-gray-500 pt-2">
+              <p className="text-sm text-muted-foreground pt-2">
                 Already verified?{" "}
                 <Link href="/login" className="text-navy hover:underline font-medium">
                   Sign in

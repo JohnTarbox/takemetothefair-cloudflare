@@ -18,19 +18,19 @@ export default function ReportProblemThanksPage() {
         </div>
       </div>
       <h1 className="text-2xl font-bold text-navy">Thanks — we&apos;ve logged your report</h1>
-      <p className="mt-3 text-gray-700">
+      <p className="mt-3 text-foreground">
         If your report coincided with a site outage, it&apos;s been flagged HIGH priority and the
         technical team has been alerted. Otherwise we&apos;ll review it and act on what you
         described.
       </p>
-      <p className="mt-3 text-sm text-gray-600">
+      <p className="mt-3 text-sm text-muted-foreground">
         We may reply directly if we need more detail — leave your email next time if you&apos;d like
         a guaranteed response.
       </p>
       <div className="mt-8">
         <Link
           href="/"
-          className="inline-block px-5 py-2.5 rounded-lg bg-royal text-white font-semibold hover:bg-royal/90"
+          className="inline-block px-5 py-2.5 rounded-lg bg-secondary text-secondary-foreground font-semibold hover:bg-royal/90"
         >
           Back to home
         </Link>

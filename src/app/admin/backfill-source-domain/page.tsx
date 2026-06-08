@@ -99,10 +99,10 @@ export default function BackfillSourceDomainPage() {
   return (
     <div className="max-w-5xl space-y-6">
       <header>
-        <h1 className="text-2xl font-bold text-gray-900">
+        <h1 className="text-2xl font-bold text-foreground">
           Backfill: source_domain + ingestion_method
         </h1>
-        <p className="text-sm text-gray-600 mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           Populates the two new columns on <code>events</code> from the existing{" "}
           <code>source_name</code> + <code>source_url</code>. Idempotent — re-running is safe. See{" "}
           <code>drizzle/0090</code> and <code>src/lib/source-classification.ts</code>.
@@ -111,30 +111,30 @@ export default function BackfillSourceDomainPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="font-semibold text-gray-900">Progress</h2>
+          <h2 className="font-semibold text-foreground">Progress</h2>
         </CardHeader>
         <CardContent>
           {progress == null ? (
-            <p className="text-sm text-gray-500">Loading…</p>
+            <p className="text-sm text-muted-foreground">Loading…</p>
           ) : (
             <div className="flex items-center gap-6">
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {progress.remaining.toLocaleString()}
                 </p>
-                <p className="text-xs text-gray-500">rows remaining</p>
+                <p className="text-xs text-muted-foreground">rows remaining</p>
               </div>
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {progress.total.toLocaleString()}
                 </p>
-                <p className="text-xs text-gray-500">total events</p>
+                <p className="text-xs text-muted-foreground">total events</p>
               </div>
               <div>
-                <p className="text-3xl font-bold text-gray-900 tabular-nums">
+                <p className="text-3xl font-bold text-foreground tabular-nums">
                   {progress.pctComplete == null ? "—" : `${progress.pctComplete}%`}
                 </p>
-                <p className="text-xs text-gray-500">complete</p>
+                <p className="text-xs text-muted-foreground">complete</p>
               </div>
               {done && <Badge variant="success">Done</Badge>}
             </div>
@@ -144,7 +144,7 @@ export default function BackfillSourceDomainPage() {
 
       <Card>
         <CardHeader>
-          <h2 className="font-semibold text-gray-900">Actions</h2>
+          <h2 className="font-semibold text-foreground">Actions</h2>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-3">
@@ -168,7 +168,7 @@ export default function BackfillSourceDomainPage() {
               Refresh progress
             </Button>
           </div>
-          {loading && <p className="text-sm text-gray-500 mt-3">Running…</p>}
+          {loading && <p className="text-sm text-muted-foreground mt-3">Running…</p>}
           {error && (
             <p className="text-sm text-red-600 mt-3" role="alert">
               {error}
@@ -180,7 +180,7 @@ export default function BackfillSourceDomainPage() {
       {result && (
         <Card>
           <CardHeader>
-            <h2 className="font-semibold text-gray-900">
+            <h2 className="font-semibold text-foreground">
               Last run {result.apply ? "(applied)" : "(dry-run)"}
             </h2>
           </CardHeader>
@@ -194,8 +194,8 @@ export default function BackfillSourceDomainPage() {
 
             {Object.keys(result.methodCounts).length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">By ingestion method</h3>
-                <ul className="text-sm text-gray-700 space-y-1">
+                <h3 className="text-sm font-semibold text-foreground mb-2">By ingestion method</h3>
+                <ul className="text-sm text-foreground space-y-1">
                   {Object.entries(result.methodCounts)
                     .sort((a, b) => b[1] - a[1])
                     .map(([method, count]) => (
@@ -210,13 +210,13 @@ export default function BackfillSourceDomainPage() {
 
             {result.sample.length > 0 && (
               <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                <h3 className="text-sm font-semibold text-foreground mb-2">
                   Sample (first {result.sample.length})
                 </h3>
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-xs">
                     <thead>
-                      <tr className="border-b border-gray-200 text-left text-gray-600">
+                      <tr className="border-b border-border text-left text-muted-foreground">
                         <th className="py-2 pr-3">source_name</th>
                         <th className="py-2 pr-3">source_url</th>
                         <th className="py-2 pr-3">→ source_domain</th>
@@ -225,18 +225,22 @@ export default function BackfillSourceDomainPage() {
                     </thead>
                     <tbody>
                       {result.sample.map((row) => (
-                        <tr key={row.id} className="border-b border-gray-100">
-                          <td className="py-2 pr-3 font-mono text-gray-700 max-w-[160px] truncate">
-                            {row.sourceName ?? <span className="text-gray-600">null</span>}
+                        <tr key={row.id} className="border-b border-border">
+                          <td className="py-2 pr-3 font-mono text-foreground max-w-[160px] truncate">
+                            {row.sourceName ?? <span className="text-muted-foreground">null</span>}
                           </td>
-                          <td className="py-2 pr-3 font-mono text-gray-700 max-w-[280px] truncate">
-                            {row.sourceUrl ?? <span className="text-gray-600">null</span>}
+                          <td className="py-2 pr-3 font-mono text-foreground max-w-[280px] truncate">
+                            {row.sourceUrl ?? <span className="text-muted-foreground">null</span>}
                           </td>
-                          <td className="py-2 pr-3 font-mono text-gray-900">
-                            {row.sourceDomain ?? <span className="text-gray-600">null</span>}
+                          <td className="py-2 pr-3 font-mono text-foreground">
+                            {row.sourceDomain ?? (
+                              <span className="text-muted-foreground">null</span>
+                            )}
                           </td>
-                          <td className="py-2 pr-3 font-mono text-gray-900">
-                            {row.ingestionMethod ?? <span className="text-gray-600">null</span>}
+                          <td className="py-2 pr-3 font-mono text-foreground">
+                            {row.ingestionMethod ?? (
+                              <span className="text-muted-foreground">null</span>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -255,8 +259,8 @@ export default function BackfillSourceDomainPage() {
 function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div>
-      <p className="text-2xl font-bold text-gray-900 tabular-nums">{value.toLocaleString()}</p>
-      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-2xl font-bold text-foreground tabular-nums">{value.toLocaleString()}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }

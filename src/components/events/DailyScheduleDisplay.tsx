@@ -73,7 +73,7 @@ export function DailyScheduleDisplay({
       const first = openDays[0];
       return (
         <div className={className}>
-          <p className="text-sm text-gray-500 flex items-center gap-1">
+          <p className="text-sm text-muted-foreground flex items-center gap-1">
             <Clock className="w-4 h-4" />
             Daily: {formatTime(first.openTime)} - {formatTime(first.closeTime)}
           </p>
@@ -131,17 +131,17 @@ function RecurringScheduleView({
   return (
     <div className={className}>
       {cadenceText && (
-        <p className="text-sm font-medium text-gray-700 flex items-center gap-1">
+        <p className="text-sm font-medium text-foreground flex items-center gap-1">
           <Clock className="w-4 h-4 text-royal" />
           {cadenceText}
         </p>
       )}
       {summaryUniformHoursLabel && (
-        <p className="text-sm text-gray-600 mt-0.5">{summaryUniformHoursLabel}</p>
+        <p className="text-sm text-muted-foreground mt-0.5">{summaryUniformHoursLabel}</p>
       )}
       {nextUpcoming && (
-        <p className="text-sm text-gray-600 mt-0.5">
-          Next: <span className="font-medium text-gray-900">{formatDateShort(nextUpcoming)}</span>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Next: <span className="font-medium text-foreground">{formatDateShort(nextUpcoming)}</span>
         </p>
       )}
 
@@ -165,7 +165,7 @@ function RecurringScheduleView({
             // Only show the legacy "Hours:" header when we have no cadence
             // line above; otherwise it's a redundant label for a list that
             // really shows dates, not hours.
-            <p className="text-sm font-medium text-gray-700 mb-1">Dates:</p>
+            <p className="text-sm font-medium text-foreground mb-1">Dates:</p>
           )}
           <div className="space-y-1">
             {visibleDays.map((day) => {
@@ -176,19 +176,19 @@ function RecurringScheduleView({
                   className={`flex items-start text-sm ${day.vendorOnly && showVendorDays === "badge" ? "text-amber-700" : ""}`}
                 >
                   <span
-                    className={`w-28 ${day.vendorOnly && showVendorDays === "badge" ? "text-amber-600" : "text-gray-600"}`}
+                    className={`w-28 ${day.vendorOnly && showVendorDays === "badge" ? "text-amber-600" : "text-muted-foreground"}`}
                   >
                     {formatDateShort(day.date)}
                     {showHours ? ":" : ""}
                   </span>
                   {day.closed ? (
-                    <span className="text-gray-600">Closed</span>
+                    <span className="text-muted-foreground">Closed</span>
                   ) : showHours ? (
                     <span
                       className={
                         day.vendorOnly && showVendorDays === "badge"
                           ? "text-amber-700"
-                          : "text-gray-900"
+                          : "text-foreground"
                       }
                     >
                       {formatTime(day.openTime)} - {formatTime(day.closeTime)}
@@ -204,10 +204,14 @@ function RecurringScheduleView({
                       {day.vendorOnly && showVendorDays === "all" && (
                         <span className="ml-2 text-xs text-amber-600">[Vendor Only]</span>
                       )}
-                      {day.notes && <span className="text-gray-500 ml-2">({day.notes})</span>}
+                      {day.notes && (
+                        <span className="text-muted-foreground ml-2">({day.notes})</span>
+                      )}
                     </span>
                   ) : (
-                    day.notes && <span className="text-gray-500 text-sm">({day.notes})</span>
+                    day.notes && (
+                      <span className="text-muted-foreground text-sm">({day.notes})</span>
+                    )
                   )}
                 </div>
               );

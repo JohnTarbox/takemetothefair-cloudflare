@@ -30,7 +30,7 @@ export function EventList({ events, emptyMessage = "No events found" }: EventLis
   if (events.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">{emptyMessage}</p>
+        <p className="text-muted-foreground">{emptyMessage}</p>
       </div>
     );
   }

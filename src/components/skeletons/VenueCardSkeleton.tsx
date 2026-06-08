@@ -4,40 +4,40 @@ export function VenueCardSkeleton() {
   return (
     <Card className="h-full animate-pulse">
       {/* Image placeholder */}
-      <div className="aspect-video bg-gray-200" />
+      <div className="aspect-video bg-muted" />
 
       <div className="p-4 space-y-3">
         {/* Title */}
-        <div className="h-6 bg-gray-200 rounded w-2/3" />
+        <div className="h-6 bg-muted rounded w-2/3" />
 
         {/* Address lines */}
         <div className="space-y-2">
           <div className="flex items-start space-x-2">
-            <div className="w-4 h-4 bg-gray-200 rounded mt-0.5" />
+            <div className="w-4 h-4 bg-muted rounded mt-0.5" />
             <div className="space-y-1 flex-1">
-              <div className="h-4 bg-gray-200 rounded w-full" />
-              <div className="h-4 bg-gray-200 rounded w-3/4" />
+              <div className="h-4 bg-muted rounded w-full" />
+              <div className="h-4 bg-muted rounded w-3/4" />
             </div>
           </div>
         </div>
 
         {/* Capacity */}
         <div className="flex items-center space-x-2">
-          <div className="w-4 h-4 bg-gray-200 rounded" />
-          <div className="h-4 bg-gray-200 rounded w-28" />
+          <div className="w-4 h-4 bg-muted rounded" />
+          <div className="h-4 bg-muted rounded w-28" />
         </div>
 
         {/* Events count */}
         <div className="flex items-center space-x-2">
-          <div className="w-4 h-4 bg-gray-200 rounded" />
-          <div className="h-4 bg-gray-200 rounded w-32" />
+          <div className="w-4 h-4 bg-muted rounded" />
+          <div className="h-4 bg-muted rounded w-32" />
         </div>
 
         {/* Amenities */}
         <div className="flex gap-1 pt-1">
-          <div className="h-5 bg-gray-200 rounded-full w-14" />
-          <div className="h-5 bg-gray-200 rounded-full w-18" />
-          <div className="h-5 bg-gray-200 rounded-full w-12" />
+          <div className="h-5 bg-muted rounded-full w-14" />
+          <div className="h-5 bg-muted rounded-full w-18" />
+          <div className="h-5 bg-muted rounded-full w-12" />
         </div>
       </div>
     </Card>

@@ -169,22 +169,22 @@ export function VendorEnhancedProfilePanel({
   }
 
   return (
-    <section className="border border-gray-200 rounded-lg p-6 bg-white">
+    <section className="border border-border rounded-lg p-6 bg-card">
       <h2 className="text-lg font-semibold mb-4">Enhanced Profile</h2>
 
       <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 text-sm">
         <div>
-          <dt className="text-gray-500">Status</dt>
+          <dt className="text-muted-foreground">Status</dt>
           <dd className="font-medium">
             {enhancedProfile ? (inGrace ? "Active (in grace)" : "Active") : "Inactive"}
           </dd>
         </div>
         <div>
-          <dt className="text-gray-500">Started at</dt>
+          <dt className="text-muted-foreground">Started at</dt>
           <dd>{formatDate(enhancedProfileStartedAt)}</dd>
         </div>
         <div>
-          <dt className="text-gray-500">Expires at</dt>
+          <dt className="text-muted-foreground">Expires at</dt>
           <dd>{formatDate(enhancedProfileExpiresAt)}</dd>
         </div>
       </dl>
@@ -205,15 +205,15 @@ export function VendorEnhancedProfilePanel({
         </Button>
       </div>
 
-      <div className="border-t border-gray-200 pt-4 mb-6">
+      <div className="border-t border-border pt-4 mb-6">
         <h3 className="text-sm font-semibold mb-2">Claimed status</h3>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 text-sm">
           <div>
-            <dt className="text-gray-500">Claimed</dt>
+            <dt className="text-muted-foreground">Claimed</dt>
             <dd className="font-medium">{claimed ? "Yes" : "No"}</dd>
           </div>
           <div>
-            <dt className="text-gray-500">Claimed at</dt>
+            <dt className="text-muted-foreground">Claimed at</dt>
             <dd>{formatDate(claimedAt)}</dd>
           </div>
         </dl>
@@ -228,21 +228,21 @@ export function VendorEnhancedProfilePanel({
             </Button>
           )}
         </div>
-        <p className="text-xs text-gray-500 mt-2">
+        <p className="text-xs text-muted-foreground mt-2">
           Granting fires a confirmation email to the vendor account email. Revoke does not. The
           badge appears on /vendors/[slug] within the page revalidate window (5 min).
         </p>
       </div>
 
-      <div className="border-t border-gray-200 pt-4 mb-6">
+      <div className="border-t border-border pt-4 mb-6">
         <h3 className="text-sm font-semibold mb-2">Verified Pro status</h3>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 text-sm">
           <div>
-            <dt className="text-gray-500">Verified Pro</dt>
+            <dt className="text-muted-foreground">Verified Pro</dt>
             <dd className="font-medium">{verifiedPro ? "Yes" : "No"}</dd>
           </div>
           <div>
-            <dt className="text-gray-500">Verified at</dt>
+            <dt className="text-muted-foreground">Verified at</dt>
             <dd>{formatDate(verifiedProAt)}</dd>
           </div>
         </dl>
@@ -257,7 +257,7 @@ export function VendorEnhancedProfilePanel({
             </Button>
           )}
         </div>
-        <p className="text-xs text-gray-500 mt-2">
+        <p className="text-xs text-muted-foreground mt-2">
           Credentialed identity-verification signal — admin-only set. No vendor email on grant or
           revoke. Orthogonal to Claimed; admin grants each independently.
         </p>
@@ -272,9 +272,9 @@ export function VendorEnhancedProfilePanel({
             id="slugInput"
             value={slugInput}
             onChange={(e) => setSlugInput(e.target.value)}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded-md border border-border px-3 py-2 text-sm"
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Changing this writes a redirect from the old slug. /vendors/[old-slug] → /vendors/
             {slugInput || "[new]"}
           </p>
@@ -290,9 +290,9 @@ export function VendorEnhancedProfilePanel({
             min={0}
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
-            className="w-32 rounded-md border border-gray-300 px-3 py-2 text-sm"
+            className="w-32 rounded-md border border-border px-3 py-2 text-sm"
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             0 = participate in daily shuffle; &gt;0 = pinned above the shuffle, descending priority.
           </p>
         </div>
@@ -300,24 +300,24 @@ export function VendorEnhancedProfilePanel({
         <div>
           <h3 className="text-sm font-medium mb-2">Gallery images (max 2)</h3>
           {gallery.map((img, i) => (
-            <div key={i} className="border border-gray-200 rounded-md p-3 mb-2 space-y-2">
+            <div key={i} className="border border-border rounded-md p-3 mb-2 space-y-2">
               <input
                 value={img.url}
                 onChange={(e) => updateGalleryItem(i, { url: e.target.value })}
                 placeholder="https://cdn.meetmeatthefair.com/vendors/..."
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-border px-3 py-2 text-sm"
               />
               <input
                 value={img.alt}
                 onChange={(e) => updateGalleryItem(i, { alt: e.target.value })}
                 placeholder="Alt text"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-border px-3 py-2 text-sm"
               />
               <input
                 value={img.caption ?? ""}
                 onChange={(e) => updateGalleryItem(i, { caption: e.target.value })}
                 placeholder="Caption (optional)"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-border px-3 py-2 text-sm"
               />
               <Button
                 type="button"
@@ -341,7 +341,7 @@ export function VendorEnhancedProfilePanel({
         </Button>
       </div>
 
-      {statusMsg && <p className="text-sm mt-3 text-gray-700">{statusMsg}</p>}
+      {statusMsg && <p className="text-sm mt-3 text-foreground">{statusMsg}</p>}
     </section>
   );
 }

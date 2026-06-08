@@ -110,11 +110,11 @@ export default function VendorEventsPage() {
     return (
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-          <div className="h-12 bg-gray-200 rounded"></div>
+          <div className="h-8 bg-muted rounded w-1/4"></div>
+          <div className="h-12 bg-muted rounded"></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
-              <div key={i} className="h-64 bg-gray-200 rounded"></div>
+              <div key={i} className="h-64 bg-muted rounded"></div>
             ))}
           </div>
         </div>
@@ -139,15 +139,15 @@ export default function VendorEventsPage() {
       <div className="mb-8">
         <Link
           href={`/vendors/${slug}`}
-          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-navy mb-4"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-navy mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Vendor
         </Link>
-        <h1 className="text-3xl font-bold text-gray-900">
+        <h1 className="text-3xl font-bold text-foreground">
           Events for {vendorInfo?.businessName || "Vendor"}
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-muted-foreground">
           {upcomingCount} upcoming, {pastCount} past event{pastCount !== 1 ? "s" : ""}
         </p>
       </div>
@@ -155,31 +155,31 @@ export default function VendorEventsPage() {
       {/* Filters */}
       <div className="mb-6 flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
           <input
             type="text"
             placeholder="Search events..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
+            className="w-full pl-10 pr-4 py-2 border border-border rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
           />
         </div>
         <select
           value={timeFilter}
           onChange={(e) => setTimeFilter(e.target.value as "all" | "upcoming" | "past")}
-          className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
+          className="px-4 py-2 border border-border rounded-lg focus:ring-2 focus:ring-royal focus:border-royal"
         >
           <option value="all">All Events ({events.length})</option>
           <option value="upcoming">Upcoming ({upcomingCount})</option>
           <option value="past">Past ({pastCount})</option>
         </select>
-        <div className="flex gap-1 border border-gray-300 rounded-lg p-1">
+        <div className="flex gap-1 border border-border rounded-lg p-1">
           <button
             onClick={() => setViewMode("grid")}
             className={`p-2 rounded ${
               viewMode === "grid"
                 ? "bg-amber-light text-amber-bg-fg"
-                : "text-gray-600 hover:bg-gray-100"
+                : "text-muted-foreground hover:bg-muted"
             }`}
             aria-label="Grid view"
           >
@@ -190,7 +190,7 @@ export default function VendorEventsPage() {
             className={`p-2 rounded ${
               viewMode === "list"
                 ? "bg-amber-light text-amber-bg-fg"
-                : "text-gray-600 hover:bg-gray-100"
+                : "text-muted-foreground hover:bg-muted"
             }`}
             aria-label="List view"
           >
@@ -203,9 +203,11 @@ export default function VendorEventsPage() {
       {sortedEvents.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Calendar className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No events found</h3>
-            <p className="mt-1 text-gray-500">Try adjusting your search or filter criteria</p>
+            <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-foreground">No events found</h3>
+            <p className="mt-1 text-muted-foreground">
+              Try adjusting your search or filter criteria
+            </p>
           </CardContent>
         </Card>
       ) : viewMode === "grid" ? (
@@ -217,7 +219,7 @@ export default function VendorEventsPage() {
                 <Card
                   className={`h-full hover:shadow-lg transition-shadow ${isPast ? "opacity-75" : ""}`}
                 >
-                  <div className="aspect-video relative bg-gray-100">
+                  <div className="aspect-video relative bg-muted">
                     {event.imageUrl ? (
                       <img
                         src={event.imageUrl}
@@ -225,7 +227,7 @@ export default function VendorEventsPage() {
                         className="w-full h-full object-cover"
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-600">
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">
                         <Calendar className="w-12 h-12" />
                       </div>
                     )}
@@ -236,8 +238,8 @@ export default function VendorEventsPage() {
                     )}
                   </div>
                   <CardContent className="p-4">
-                    <h3 className="font-semibold text-gray-900 line-clamp-2">{event.name}</h3>
-                    <div className="mt-2 space-y-1 text-sm text-gray-600">
+                    <h3 className="font-semibold text-foreground line-clamp-2">{event.name}</h3>
+                    <div className="mt-2 space-y-1 text-sm text-muted-foreground">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1">
                           <Calendar className="w-4 h-4" />
@@ -286,7 +288,7 @@ export default function VendorEventsPage() {
               <Link key={event.id} href={`/events/${event.slug}`}>
                 <Card className={`hover:shadow-md transition-shadow ${isPast ? "opacity-75" : ""}`}>
                   <CardContent className="p-4 flex items-center gap-4">
-                    <div className="w-24 h-24 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                    <div className="w-24 h-24 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden">
                       {event.imageUrl ? (
                         <img
                           src={event.imageUrl}
@@ -294,15 +296,15 @@ export default function VendorEventsPage() {
                           className="w-24 h-24 object-cover"
                         />
                       ) : (
-                        <Calendar className="w-8 h-8 text-gray-600" />
+                        <Calendar className="w-8 h-8 text-muted-foreground" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900">{event.name}</h3>
+                        <h3 className="font-semibold text-foreground">{event.name}</h3>
                         {isPast && <Badge variant="default">Past</Badge>}
                       </div>
-                      <div className="mt-1 flex items-center gap-4 text-sm text-gray-600">
+                      <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
                         <div className="flex items-center gap-1">
                           <Calendar className="w-4 h-4" />
                           <span>{formatDateRange(event.startDate, event.endDate)}</span>
@@ -320,7 +322,7 @@ export default function VendorEventsPage() {
                           />
                         )}
                       </div>
-                      <div className="mt-1 flex items-center gap-1 text-sm text-gray-500">
+                      <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
                         <MapPin className="w-4 h-4" />
                         <span>
                           {event.venue.name}, {event.venue.city}, {event.venue.state}

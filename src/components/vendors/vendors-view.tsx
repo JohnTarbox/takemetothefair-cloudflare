@@ -77,7 +77,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
   if (vendors.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">{emptyMessage}</p>
+        <p className="text-muted-foreground">{emptyMessage}</p>
       </div>
     );
   }
@@ -86,14 +86,14 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
     <div>
       {/* View Toggle and Download */}
       <div className="flex justify-between items-center mb-4">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           {vendors.length} vendor{vendors.length !== 1 ? "s" : ""} found
         </p>
         <div className="flex items-center gap-3">
           {viewMode === "table" && (
             <button
               onClick={downloadCSV}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 bg-white transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-muted border border-border bg-card transition-colors"
               aria-label="Download vendors as CSV"
             >
               <Download className="w-4 h-4" aria-hidden="true" />
@@ -101,14 +101,16 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
             </button>
           )}
           <div
-            className="inline-flex rounded-lg border border-gray-200 p-1 bg-white"
+            className="inline-flex rounded-lg border border-border p-1 bg-card"
             role="group"
             aria-label="View mode"
           >
             <button
               onClick={() => setViewMode("cards")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "cards" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+                viewMode === "cards"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
               }`}
               aria-pressed={viewMode === "cards"}
               aria-label="Card view"
@@ -119,7 +121,9 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
             <button
               onClick={() => setViewMode("table")}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "table" ? "bg-royal text-white" : "text-gray-600 hover:bg-gray-100"
+                viewMode === "table"
+                  ? "bg-secondary text-secondary-foreground"
+                  : "text-muted-foreground hover:bg-muted"
               }`}
               aria-pressed={viewMode === "table"}
               aria-label="Table view"
@@ -142,10 +146,10 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
 
       {/* Table View */}
       {viewMode === "table" && (
-        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-card rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-muted border-b border-border">
                 <tr>
                   <SortableHeader
                     column="businessName"
@@ -173,17 +177,17 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                     onSort={handleSort}
                     className="w-28"
                   />
-                  <th className="text-left py-3 px-4 text-sm font-medium text-gray-600 w-24">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground w-24">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-border">
                 {sortedVendors.map((vendor) => (
-                  <tr key={vendor.id} className="hover:bg-gray-50">
+                  <tr key={vendor.id} className="hover:bg-muted">
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 overflow-hidden relative">
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden relative">
                           {vendor.logoUrl ? (
                             <img
                               src={vendor.logoUrl}
@@ -191,26 +195,30 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                               className="w-full h-full object-cover"
                             />
                           ) : (
-                            <Store className="w-5 h-5 text-gray-600" />
+                            <Store className="w-5 h-5 text-muted-foreground" />
                           )}
                         </div>
                         <div>
                           <Link
                             href={`/vendors/${vendor.slug}`}
-                            className="font-medium text-gray-900 hover:text-navy"
+                            className="font-medium text-foreground hover:text-navy"
                           >
                             {vendor.businessName}
                           </Link>
                           {vendor.description && (
-                            <p className="text-xs text-gray-500 line-clamp-1 max-w-md">
+                            <p className="text-xs text-muted-foreground line-clamp-1 max-w-md">
                               {vendor.description}
                             </p>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{vendor.vendorType || "-"}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{vendor.events.length}</td>
+                    <td className="py-3 px-4 text-sm text-muted-foreground">
+                      {vendor.vendorType || "-"}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-muted-foreground">
+                      {vendor.events.length}
+                    </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         {vendor.verified && (
@@ -225,7 +233,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                           </Badge>
                         )}
                         {!vendor.verified && !vendor.commercial && (
-                          <span className="text-xs text-gray-600">-</span>
+                          <span className="text-xs text-muted-foreground">-</span>
                         )}
                       </div>
                     </td>
@@ -233,7 +241,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                       <div className="flex items-center gap-2">
                         <Link
                           href={`/vendors/${vendor.slug}`}
-                          className="text-royal hover:text-blue-800 text-sm font-medium"
+                          className="text-royal hover:text-navy-dark text-sm font-medium"
                         >
                           View
                         </Link>
@@ -242,7 +250,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                             href={vendor.website}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-gray-600 hover:text-gray-600"
+                            className="text-muted-foreground hover:text-muted-foreground"
                             title="Vendor Website"
                           >
                             <ExternalLink className="w-4 h-4" />

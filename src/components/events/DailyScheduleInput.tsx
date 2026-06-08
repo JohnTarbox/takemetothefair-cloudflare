@@ -286,8 +286,8 @@ export function DailyScheduleInput({
     return (
       <div className="space-y-4">
         <div className="border rounded-lg overflow-hidden">
-          <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
-            <span className="text-sm font-medium text-gray-700">
+          <div className="bg-muted px-4 py-2 flex items-center justify-between border-b">
+            <span className="text-sm font-medium text-foreground">
               Event Dates ({days.length} of {MAX_EVENT_DAYS})
             </span>
             <div className="flex items-center gap-2">
@@ -319,7 +319,7 @@ export function DailyScheduleInput({
           </div>
 
           {days.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-gray-500">
+            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
               No dates added yet. Click &quot;Add Date&quot; to add specific dates for this event.
             </div>
           ) : (
@@ -328,7 +328,7 @@ export function DailyScheduleInput({
                 <div
                   key={`${day.date}-${index}`}
                   className={`px-4 py-3 grid grid-cols-[160px_auto_1fr_32px] gap-3 items-center ${
-                    day.closed ? "bg-gray-50" : day.vendorOnly ? "bg-amber-50" : ""
+                    day.closed ? "bg-muted" : day.vendorOnly ? "bg-amber-50" : ""
                   }`}
                 >
                   <div>
@@ -348,9 +348,9 @@ export function DailyScheduleInput({
                         checked={day.closed}
                         onChange={(e) => handleDayChange(index, "closed", e.target.checked)}
                         disabled={disabled}
-                        className="h-4 w-4 rounded border-gray-300"
+                        className="h-4 w-4 rounded border-border"
                       />
-                      <span className="text-gray-600">Closed</span>
+                      <span className="text-muted-foreground">Closed</span>
                     </label>
 
                     {showVendorOnly && (
@@ -375,7 +375,7 @@ export function DailyScheduleInput({
                           disabled={disabled}
                           className="w-28"
                         />
-                        <span className="text-gray-500">to</span>
+                        <span className="text-muted-foreground">to</span>
                         <Input
                           type="time"
                           value={day.closeTime}
@@ -405,7 +405,7 @@ export function DailyScheduleInput({
                     size="sm"
                     onClick={() => handleRemoveDate(index)}
                     disabled={disabled}
-                    className="text-gray-600 hover:text-red-600 p-1 h-8 w-8"
+                    className="text-muted-foreground hover:text-red-600 p-1 h-8 w-8"
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>
@@ -445,7 +445,7 @@ export function DailyScheduleInput({
         <div className="border rounded-lg p-4 space-y-4">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <Label htmlFor="singleDayOpenTime" className="text-sm text-gray-600 w-12">
+              <Label htmlFor="singleDayOpenTime" className="text-sm text-muted-foreground w-12">
                 Open
               </Label>
               <Input
@@ -458,7 +458,7 @@ export function DailyScheduleInput({
               />
             </div>
             <div className="flex items-center gap-2">
-              <Label htmlFor="singleDayCloseTime" className="text-sm text-gray-600 w-12">
+              <Label htmlFor="singleDayCloseTime" className="text-sm text-muted-foreground w-12">
                 Close
               </Label>
               <Input
@@ -472,7 +472,7 @@ export function DailyScheduleInput({
             </div>
           </div>
           <div>
-            <Label htmlFor="singleDayNotes" className="text-sm text-gray-600">
+            <Label htmlFor="singleDayNotes" className="text-sm text-muted-foreground">
               Notes (optional)
             </Label>
             <Input
@@ -506,7 +506,7 @@ export function DailyScheduleInput({
           checked={enabled}
           onChange={handleToggle}
           disabled={disabled}
-          className="h-4 w-4 rounded border-gray-300"
+          className="h-4 w-4 rounded border-border"
         />
         <Label htmlFor="enableDailySchedule" className="font-normal">
           Different hours on each day
@@ -529,8 +529,8 @@ export function DailyScheduleInput({
 
       {enabled && days.length > 0 && (
         <div className="border rounded-lg overflow-hidden">
-          <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
-            <span className="text-sm font-medium text-gray-700">Daily Schedule</span>
+          <div className="bg-muted px-4 py-2 flex items-center justify-between border-b">
+            <span className="text-sm font-medium text-foreground">Daily Schedule</span>
             <Button
               type="button"
               variant="ghost"
@@ -548,10 +548,10 @@ export function DailyScheduleInput({
               <div
                 key={day.date}
                 className={`px-4 py-3 grid grid-cols-[140px_auto_1fr] gap-4 items-center ${
-                  day.closed ? "bg-gray-50" : day.vendorOnly ? "bg-amber-50" : ""
+                  day.closed ? "bg-muted" : day.vendorOnly ? "bg-amber-50" : ""
                 }`}
               >
-                <div className="text-sm font-medium text-gray-700">
+                <div className="text-sm font-medium text-foreground">
                   {formatDateDisplay(day.date)}
                 </div>
 
@@ -562,9 +562,9 @@ export function DailyScheduleInput({
                       checked={day.closed}
                       onChange={(e) => handleDayChange(index, "closed", e.target.checked)}
                       disabled={disabled}
-                      className="h-4 w-4 rounded border-gray-300"
+                      className="h-4 w-4 rounded border-border"
                     />
-                    <span className="text-gray-600">Closed</span>
+                    <span className="text-muted-foreground">Closed</span>
                   </label>
 
                   {showVendorOnly && (
@@ -589,7 +589,7 @@ export function DailyScheduleInput({
                         disabled={disabled}
                         className="w-28"
                       />
-                      <span className="text-gray-500">to</span>
+                      <span className="text-muted-foreground">to</span>
                       <Input
                         type="time"
                         value={day.closeTime}

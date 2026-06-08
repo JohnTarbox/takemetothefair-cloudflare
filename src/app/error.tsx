@@ -54,10 +54,10 @@ export default function Error({
             H1 text below to fail on error-UI-rendered-at-200. Coordinate
             any copy change with the smoke step. See
             docs/k2-spike-status-rewrite.md for the underlying K2 context. */}
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">
+        <h1 className="text-2xl font-bold text-foreground mb-2">
           {isFetchError ? "Service temporarily unavailable" : "Something went wrong"}
         </h1>
-        <p className="text-gray-600 mb-4">
+        <p className="text-muted-foreground mb-4">
           {isFetchError ? (
             <>
               We&apos;re having trouble loading the data for this page. This is usually a brief
@@ -71,7 +71,7 @@ export default function Error({
             <>We&apos;re sorry, but something unexpected happened while loading this page.</>
           )}
         </p>
-        <div className="text-sm text-gray-500 mb-8 space-y-1">
+        <div className="text-sm text-muted-foreground mb-8 space-y-1">
           <p>You can try:</p>
           <ul className="list-disc list-inside text-left max-w-xs mx-auto">
             <li>Clicking &quot;Try Again&quot; to reload</li>
@@ -112,7 +112,9 @@ export default function Error({
           </Link>
         </div>
 
-        {error.digest && <p className="mt-8 text-xs text-gray-600">Error ID: {error.digest}</p>}
+        {error.digest && (
+          <p className="mt-8 text-xs text-muted-foreground">Error ID: {error.digest}</p>
+        )}
       </div>
     </div>
   );

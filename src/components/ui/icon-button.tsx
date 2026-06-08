@@ -53,7 +53,7 @@ const ICON_SIZE: Record<IconButtonSize, string> = {
 // - `solid` retains the royal/navy brand pattern but routes through
 //   semantic tokens: bg-primary (amber brand) is reserved for primary
 //   CTAs; the solid IconButton variant uses bg-secondary (navy) since
-//   the original was bg-royal hover:bg-navy. --secondary-foreground
+//   the original was bg-royal hover:bg-secondary/90. --secondary-foreground
 //   provides the AAA white text on navy.
 // - `danger` migrates to --destructive (the shadcn-convention name).
 const VARIANT: Record<IconButtonVariant, string> = {
