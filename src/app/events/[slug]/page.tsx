@@ -59,6 +59,7 @@ import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { ShareButtons } from "@/components/ShareButtons";
 import { PrintButton } from "@/components/print/PrintButton";
 import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
+import { PrintEventMap } from "@/components/print/PrintEventMap";
 import { getCategoryBadgeClass, getCategoryColors } from "@/lib/category-colors";
 import { formatAudienceBadge } from "@/lib/event-audience";
 import { buildEventMetaDescription, buildEventTitle } from "@/lib/seo-utils";
@@ -1603,6 +1604,23 @@ export default async function EventDetailPage({ params }: Props) {
       {!isPastEvent && !session && <StickyApplyBar label="Login to Apply" href="/login" />}
       {!isPastEvent && vendorInfo && !vendorInfo.existingApplication && (
         <StickyApplyBar label="Apply as Vendor" scrollTarget="vendor-apply" />
+      )}
+
+      {/* MMATF-UIUX-PrintSheet-Spec — static map "visual anchor" for
+          the printed event sheet. Hidden on screen (the existing
+          inline event-detail venue card serves the "where" question
+          on screen). Rendered only when venue coords exist; ~90% of
+          events have lat/lng per spec, so this lands on most sheets.
+
+          Routes through /api/static-map (a server-side proxy) so the
+          GOOGLE_MAPS_API_KEY stays out of client-visible HTML. See
+          that route's docblock for the rationale. */}
+      {event.venue?.latitude != null && event.venue?.longitude != null && (
+        <PrintEventMap
+          latitude={event.venue.latitude}
+          longitude={event.venue.longitude}
+          venueName={event.venue.name}
+        />
       )}
 
       {/* MMATF-UIUX-PrintSheet-Spec Item 1 — print-only footer: QR
