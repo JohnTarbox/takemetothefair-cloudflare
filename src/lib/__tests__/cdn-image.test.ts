@@ -54,9 +54,31 @@ describe("cdnImage — URL composition", () => {
     );
   });
 
-  it("omits unset optional params (height / fit / gravity / format / quality)", () => {
+  it("omits unset optional params (height / fit / gravity / format / quality / onerror)", () => {
     const out = cdnImage(local, { width: 400 });
     expect(out).toBe(`https://meetmeatthefair.com/cdn-cgi/image/width=400/${local}`);
+  });
+
+  it("appends onerror=redirect last when set (resilience fallback)", () => {
+    // Verified against prod 2026-06-07: a transform whose source 404s
+    // returns 404 without this param and 307→source with it. Pin the
+    // exact param ordering so a future CF doc change can't quietly
+    // shuffle it and weaken the contract.
+    const out = cdnImage(local, {
+      width: 800,
+      format: "auto",
+      quality: 80,
+      onerror: "redirect",
+    });
+    expect(out).toBe(
+      `https://meetmeatthefair.com/cdn-cgi/image/width=800,format=auto,quality=80,onerror=redirect/${local}`
+    );
+  });
+
+  it("omits onerror when not set (callers can opt out)", () => {
+    const out = cdnImage(local, { width: 800, format: "auto" });
+    expect(out).not.toContain("onerror=");
+    expect(out).toBe(`https://meetmeatthefair.com/cdn-cgi/image/width=800,format=auto/${local}`);
   });
 });
 

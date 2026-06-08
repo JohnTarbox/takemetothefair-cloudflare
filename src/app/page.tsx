@@ -336,7 +336,11 @@ export default async function HomePage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {weekendEvents.map((event, i) => (
-                <EventCard key={event.id} event={event} priority={i < 2} />
+                // IMG-followup (2026-06-07) — exactly one preload per page
+                // (i === 0). Cards 1-3 use loading="eager" to skip the lazy
+                // delay for the first visible row without competing for the
+                // browser's single high-priority slot.
+                <EventCard key={event.id} event={event} priority={i === 0} eagerLoad={i < 4} />
               ))}
             </div>
           </div>

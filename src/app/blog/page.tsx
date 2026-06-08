@@ -262,7 +262,12 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {parsedPosts.map((post, i) => (
-                  <BlogPostCard key={post.id} post={post} priority={i < 3} />
+                  // IMG-followup (2026-06-07) — exactly one preload per page
+                  // (i === 0). Baseline measured /blog at 3 preloads which
+                  // forced the browser to deprioritize competing slots;
+                  // cards 1-2 still load eagerly to keep the visible row
+                  // above the lazy-load fold.
+                  <BlogPostCard key={post.id} post={post} priority={i === 0} eagerLoad={i < 3} />
                 ))}
               </div>
 

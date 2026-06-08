@@ -1174,10 +1174,15 @@ export function EventsView({
       {viewMode === "cards" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {displayEvents.map((event, index) => (
+            // IMG-followup (2026-06-07) — exactly one preload per page
+            // (index === 0); cards 1-2 still load eagerly. Pre-fix
+            // priority={index < 3} would emit 3 preloads when all 3
+            // first cards had R2 images (latent multi-priority bug).
             <EventCard
               key={event.id}
               event={event}
-              priority={index < 3}
+              priority={index === 0}
+              eagerLoad={index < 3}
               distance={distanceMap.get(event.id)}
             />
           ))}
