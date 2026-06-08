@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { cdnImage, OG_EVENT, OG_SQUARE, CARD_THUMB, AVATAR_SM, HERO_DESKTOP } from "../cdn-image";
+import {
+  cdnImage,
+  focalPointGravity,
+  OG_EVENT,
+  OG_SQUARE,
+  CARD_THUMB,
+  AVATAR_SM,
+  HERO_DESKTOP,
+} from "../cdn-image";
 
 // These tests pin the URL-shape contract that `cdn-cgi/image` consumers
 // rely on. If a Cloudflare API change ever required a different param
@@ -106,5 +114,67 @@ describe("preset constants", () => {
 
   it("AVATAR_SM uses gravity=face for OAuth headshots", () => {
     expect(AVATAR_SM.gravity).toBe("face");
+  });
+});
+
+describe("focalPointGravity — IMG1 §1b Phase 1", () => {
+  it("returns undefined for the (0.5, 0.5) center default", () => {
+    // Critical for cache-key stability: omitting `gravity` from the URL
+    // entirely means events at default focal point share the cache key
+    // with pre-IMG1 derivative URLs (no re-billing on rollout).
+    expect(focalPointGravity(0.5, 0.5)).toBeUndefined();
+  });
+
+  it("returns undefined for null/undefined inputs (treat as default)", () => {
+    expect(focalPointGravity(null, null)).toBeUndefined();
+    expect(focalPointGravity(undefined, undefined)).toBeUndefined();
+    expect(focalPointGravity(null, 0.5)).toBeUndefined();
+    expect(focalPointGravity(0.5, null)).toBeUndefined();
+  });
+
+  it("formats non-default coords as Cloudflare's XxY syntax", () => {
+    expect(focalPointGravity(0.3, 0.7)).toBe("0.3x0.7");
+    expect(focalPointGravity(0, 0)).toBe("0x0");
+    expect(focalPointGravity(1, 1)).toBe("1x1");
+  });
+
+  it("clamps out-of-range inputs to [0, 1]", () => {
+    expect(focalPointGravity(-0.5, 0.5)).toBe("0x0.5");
+    expect(focalPointGravity(0.5, 1.5)).toBe("0.5x1");
+    expect(focalPointGravity(-2, 2)).toBe("0x1");
+  });
+
+  it("treats non-finite inputs as default (0.5), not clamp-to-1", () => {
+    // Deliberate: NaN/Infinity could plausibly clamp to a sentinel value
+    // (0 for NaN, 1 for Infinity) but those would produce surprising
+    // crops if a buggy form binding ever fed Infinity. Treating all
+    // non-finite as "use default" matches the null/undefined path and
+    // keeps invalid input from silently producing valid-looking URLs.
+    expect(focalPointGravity(NaN, 0.3)).toBe("0.5x0.3");
+    expect(focalPointGravity(0.3, Infinity)).toBe("0.3x0.5");
+    expect(focalPointGravity(NaN, NaN)).toBeUndefined(); // both default → center → undefined
+  });
+
+  it("rounds to 3 decimal places to keep cache keys deterministic", () => {
+    // Float drift: 0.1 + 0.2 = 0.30000000000000004 in JS. Round to 0.3
+    // so two events with identical operator-intent focal points share
+    // the same CDN cache entry.
+    expect(focalPointGravity(0.1 + 0.2, 0.5)).toBe("0.3x0.5");
+    expect(focalPointGravity(1 / 3, 2 / 3)).toBe("0.333x0.667");
+  });
+
+  it("composes correctly into a cdnImage call", () => {
+    const src = "https://cdn.meetmeatthefair.com/events/abc/hero.jpg";
+    const gravity = focalPointGravity(0.25, 0.75);
+    const url = cdnImage(src, {
+      width: 800,
+      height: 450,
+      fit: "cover",
+      gravity, // type asserts: CdnImageCustomGravity | undefined ✓
+      format: "auto",
+    });
+    expect(url).toContain("gravity=0.25x0.75");
+    expect(url).toContain("fit=cover");
+    expect(url).toContain("width=800");
   });
 });

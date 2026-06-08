@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { MapPin, Users, Calendar } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +10,7 @@ import { pluralize } from "@/lib/text";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { getStateColors } from "@/lib/state-colors";
 import { displayVenueName } from "@/lib/venue-display";
+import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
 
 interface VenueCardProps {
   venue: {
@@ -24,6 +24,8 @@ interface VenueCardProps {
     capacity: number | null;
     amenities: string | null;
     imageUrl: string | null;
+    imageFocalX?: number;
+    imageFocalY?: number;
     _count: {
       events: number;
     };
@@ -73,15 +75,54 @@ export function VenueCard({ venue, priority = false }: VenueCardProps) {
           className={`aspect-video relative ${venue.imageUrl && !imgError ? "bg-muted" : stateColors.bg}`}
         >
           {venue.imageUrl && !imgError ? (
-            <Image
-              src={venue.imageUrl}
-              alt={`Photo of ${venue.name} venue`}
-              fill
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-              className="object-cover"
-              priority={priority}
-              onError={() => setImgError(true)}
-            />
+            // IMG1 §1b Phase 1 (2026-06-08) — same skill pattern as
+            // EventCard (PR #394): server-side fit=cover at the right
+            // size + per-image focal point. Reads venue.imageFocalX/Y
+            // (default 0.5 = center). See event-card.tsx for the full
+            // explanation of the architecture choice.
+            (() => {
+              const gravity = focalPointGravity(venue.imageFocalX, venue.imageFocalY);
+              const cardWidths = [400, 600, 800, 1200];
+              const cardSrcSet = cardWidths
+                .map((w) =>
+                  cdnImage(venue.imageUrl!, {
+                    width: w,
+                    height: Math.round((w * 9) / 16),
+                    fit: "cover",
+                    ...(gravity ? { gravity } : {}),
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  })
+                )
+                .map((url, i) => `${url} ${cardWidths[i]}w`)
+                .join(", ");
+              const cardSrc = cdnImage(venue.imageUrl, {
+                width: 800,
+                height: 450,
+                fit: "cover",
+                ...(gravity ? { gravity } : {}),
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              });
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={cardSrc}
+                  srcSet={cardSrcSet}
+                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                  alt={`Photo of ${venue.name} venue`}
+                  width={800}
+                  height={450}
+                  loading={priority ? "eager" : "lazy"}
+                  fetchPriority={priority ? "high" : "auto"}
+                  decoding="async"
+                  className="absolute inset-0 w-full h-full object-cover"
+                  onError={() => setImgError(true)}
+                />
+              );
+            })()
           ) : (
             <div className={`w-full h-full flex items-center justify-center ${stateColors.icon}`}>
               <MapPin className="w-12 h-12" />

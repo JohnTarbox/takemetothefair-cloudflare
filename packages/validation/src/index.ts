@@ -86,6 +86,9 @@ const _venueCreateBaseSchema = z.object({
   longitude: z.number().min(-180).max(180).optional().nullable(),
   capacity: z.number().int().positive().optional().nullable(),
   amenities: z.array(z.string()).optional().default([]),
+  // IMG1 §1b Phase 1 — per-image focal point (0–1). Applies to image_url.
+  imageFocalX: z.number().min(0).max(1).optional().default(0.5),
+  imageFocalY: z.number().min(0).max(1).optional().default(0.5),
   contactEmail: emailSchema,
   contactPhone: phoneSchema,
   website: urlSchema,
@@ -128,6 +131,9 @@ export const promoterCreateSchema = z.object({
   socialLinks: z.string().optional().nullable(), // JSON string
   logoUrl: urlSchema,
   verified: z.boolean().optional().default(false),
+  // IMG1 §1b Phase 1 — per-image focal point (0–1). Applies to logo_url.
+  imageFocalX: z.number().min(0).max(1).optional().default(0.5),
+  imageFocalY: z.number().min(0).max(1).optional().default(0.5),
 });
 
 export const promoterUpdateSchema = promoterCreateSchema.partial().omit({ userId: true });
@@ -144,6 +150,9 @@ export const vendorCreateSchema = z.object({
   logoUrl: urlSchema,
   verified: z.boolean().optional().default(false),
   commercial: z.boolean().optional().default(false),
+  // IMG1 §1b Phase 1 — per-image focal point (0–1). Applies to logo_url.
+  imageFocalX: z.number().min(0).max(1).optional().default(0.5),
+  imageFocalY: z.number().min(0).max(1).optional().default(0.5),
   canSelfConfirm: z.boolean().optional().default(false),
   // Contact Information
   contactName: z.string().max(VALIDATION.NAME_MAX_LENGTH).optional().nullable(),
@@ -289,6 +298,13 @@ const eventBaseSchema = z.object({
   ticketPriceMin: z.number().min(0).optional().nullable(),
   ticketPriceMax: z.number().min(0).optional().nullable(),
   imageUrl: urlSchema,
+  // IMG1 §1b Phase 1 (2026-06-08) — per-image focal-point (0–1 fraction
+  // of image dimensions). Default 0.5/0.5 = center; flows through cards
+  // and (in future) any crop-on-hero rendering as Cloudflare's gravity=XxY.
+  // Clamped here at the schema boundary; cdnImage()'s focalPointGravity
+  // helper also clamps + short-circuits the (0.5, 0.5) default.
+  imageFocalX: z.number().min(0).max(1).optional().default(0.5),
+  imageFocalY: z.number().min(0).max(1).optional().default(0.5),
   featured: z.boolean().optional().default(false),
   commercialVendorsAllowed: z.boolean().optional().default(true),
   // Vendor decision-support fields

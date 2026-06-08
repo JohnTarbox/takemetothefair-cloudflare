@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { cdnImage } from "@/lib/cdn-image";
+import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
 import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -146,6 +146,14 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             // srcSet + per-width crop params can be expressed (the
             // next/image loader signature can't pass `fit`/`gravity`).
             (() => {
+              // IMG1 §1b Phase 1 (2026-06-08) — per-image focal point.
+              // Pulled from events.image_focal_x/y (defaults 0.5/0.5 =
+              // center, identical URL to pre-focal-point cards). When an
+              // operator sets a non-default focal point in the admin UI,
+              // it flows through here to Cloudflare as `gravity=XxY` and
+              // the crop window slides accordingly — same data model as
+              // Eventbrite's fp-x/fp-y.
+              const gravity = focalPointGravity(event.imageFocalX, event.imageFocalY);
               const cardWidths = [400, 600, 800, 1200];
               const cardSrcSet = cardWidths
                 .map((w) =>
@@ -153,6 +161,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                     width: w,
                     height: Math.round((w * 9) / 16),
                     fit: "cover",
+                    ...(gravity ? { gravity } : {}),
                     format: "auto",
                     quality: 80,
                     onerror: "redirect",
@@ -164,6 +173,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                 width: 800,
                 height: 450,
                 fit: "cover",
+                ...(gravity ? { gravity } : {}),
                 format: "auto",
                 quality: 80,
                 onerror: "redirect",

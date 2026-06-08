@@ -55,7 +55,9 @@ const SCHEMA_SQL = `
     locale TEXT NOT NULL DEFAULT 'en-US',
     country TEXT NOT NULL DEFAULT 'US',
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    image_focal_x REAL NOT NULL DEFAULT 0.5,
+    image_focal_y REAL NOT NULL DEFAULT 0.5
   );
 
   CREATE TABLE promoters (
@@ -73,7 +75,9 @@ const SCHEMA_SQL = `
     contact_phone TEXT,
     verified INTEGER DEFAULT 0,
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    image_focal_x REAL NOT NULL DEFAULT 0.5,
+    image_focal_y REAL NOT NULL DEFAULT 0.5
   );
 
   CREATE TABLE events (
@@ -151,7 +155,9 @@ const SCHEMA_SQL = `
     access_notes TEXT,
     registration_required INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    image_focal_x REAL NOT NULL DEFAULT 0.5,
+    image_focal_y REAL NOT NULL DEFAULT 0.5
   );
 
   CREATE TABLE event_date_drift_findings (
@@ -311,7 +317,9 @@ const SCHEMA_SQL = `
     display_override_permitted INTEGER NOT NULL DEFAULT 0,
     display_mode TEXT,
     created_at INTEGER,
-    updated_at INTEGER
+    updated_at INTEGER,
+    image_focal_x REAL NOT NULL DEFAULT 0.5,
+    image_focal_y REAL NOT NULL DEFAULT 0.5
   );
 
   CREATE TABLE vendor_slug_history (

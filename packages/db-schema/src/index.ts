@@ -118,6 +118,12 @@ export const venues = sqliteTable(
     country: text("country").default("US").notNull(), // ISO 3166-1 alpha-2
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // IMG1 §1b Phase 1 (2026-06-08) — per-image focal-point override.
+    // Range 0.0–1.0 (0,0 = top-left, 1,1 = bottom-right). Default 0.5/0.5
+    // = center, matching the pre-IMG1 dumb-crop behavior. Consumed by
+    // cdnImage() as `gravity=${x}x${y}` when non-default.
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
   },
   (table) => [
     index("idx_venues_status").on(table.status),
@@ -151,6 +157,10 @@ export const promoters = sqliteTable("promoters", {
   verified: integer("verified", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  // IMG1 §1b Phase 1 — applies to logo_url for promoters (square-ish, but
+  // operators may want focal-point on non-square uploads). See events table.
+  imageFocalX: real("image_focal_x").notNull().default(0.5),
+  imageFocalY: real("image_focal_y").notNull().default(0.5),
 });
 
 // Events table
@@ -351,6 +361,14 @@ export const events = sqliteTable(
       .default(false),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    // IMG1 §1b Phase 1 (2026-06-08) — per-image focal-point override.
+    // Applies to image_url (the hero/card photo). See venues table for the
+    // full comment. Cards + heroes read this and pass to cdnImage as
+    // `gravity=${x}x${y}` when non-default; matches Eventbrite's
+    // `fp-x`/`fp-y` UX pattern. Defaults to center, so existing events
+    // render identically until an operator sets a focal point.
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
   },
   (table) => [
     index("idx_events_status_startdate").on(table.status, table.startDate),
@@ -565,6 +583,9 @@ export const vendors = sqliteTable("vendors", {
   }),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  // IMG1 §1b Phase 1 — applies to logo_url. See events table comment.
+  imageFocalX: real("image_focal_x").notNull().default(0.5),
+  imageFocalY: real("image_focal_y").notNull().default(0.5),
 });
 
 // Vendor self-serve claim verification tokens (drizzle/0050).

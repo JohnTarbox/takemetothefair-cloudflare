@@ -163,6 +163,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.vendorType !== undefined) updateData.vendorType = data.vendorType;
     if (data.website !== undefined) updateData.website = data.website;
     if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
+    // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.
+    if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
+      updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
+    }
+    if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
+      updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
+    }
     if (data.verified !== undefined) updateData.verified = data.verified;
     if (data.commercial !== undefined) updateData.commercial = data.commercial;
     if (data.canSelfConfirm !== undefined) updateData.canSelfConfirm = data.canSelfConfirm;
