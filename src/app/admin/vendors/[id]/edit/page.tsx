@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { VendorEnhancedProfilePanel } from "@/components/admin/VendorEnhancedProfilePanel";
 import { VendorLogoUpload } from "@/components/admin/VendorLogoUpload";
+import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 
 export const runtime = "edge";
 
@@ -23,6 +24,8 @@ interface Vendor {
   vendorType: string | null;
   website: string | null;
   logoUrl: string | null;
+  imageFocalX?: number;
+  imageFocalY?: number;
   verified: boolean;
   commercial: boolean;
   canSelfConfirm: boolean;
@@ -82,6 +85,11 @@ export default function EditVendorPage() {
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
   const [vendor, setVendor] = useState<Vendor | null>(null);
+  // IMG1 §1b Phase 1 — focal-point state for the logo. Read-only re:
+  // the URL itself (VendorLogoUpload owns that flow); the picker uses
+  // vendor.logoUrl which was loaded from the API on mount.
+  const [imageFocalX, setImageFocalX] = useState<number>(0.5);
+  const [imageFocalY, setImageFocalY] = useState<number>(0.5);
   const [formData, setFormData] = useState({
     businessName: "",
     description: "",
@@ -148,6 +156,8 @@ export default function EditVendorPage() {
           paymentMethods = [];
         }
 
+        setImageFocalX(typeof data.imageFocalX === "number" ? data.imageFocalX : 0.5);
+        setImageFocalY(typeof data.imageFocalY === "number" ? data.imageFocalY : 0.5);
         setFormData({
           businessName: data.businessName,
           description: data.description || "",
@@ -212,6 +222,8 @@ export default function EditVendorPage() {
       } = formData;
       const submitData = {
         ...restFormData,
+        imageFocalX,
+        imageFocalY,
         yearEstablished: formData.yearEstablished ? parseInt(formData.yearEstablished, 10) : null,
         role,
         brand_parent_vendor_id:
@@ -269,6 +281,30 @@ export default function EditVendorPage() {
       {vendor && (
         <div className="mb-6 space-y-6">
           <VendorLogoUpload vendorId={vendor.id} currentLogoUrl={vendor.logoUrl} />
+          {vendor.logoUrl && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Logo focal point</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground mb-3">
+                  Drag the dot to mark the focal point of the logo. Most logos are square so the
+                  default center works; use this if your logo crops badly into the square card slot.
+                  Set + Save here, then upload a new logo above if you want to replace it.
+                </p>
+                <FocalPointPicker
+                  src={vendor.logoUrl}
+                  x={imageFocalX}
+                  y={imageFocalY}
+                  onChange={(nx, ny) => {
+                    setImageFocalX(nx);
+                    setImageFocalY(ny);
+                  }}
+                  previewAspect={1}
+                />
+              </CardContent>
+            </Card>
+          )}
           <VendorEnhancedProfilePanel
             vendorId={vendor.id}
             enhancedProfile={vendor.enhancedProfile}

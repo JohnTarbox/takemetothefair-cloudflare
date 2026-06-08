@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { GooglePlaceSearch } from "@/components/google-place-search";
+import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 
 export const runtime = "edge";
@@ -29,6 +30,8 @@ interface Venue {
   website: string | null;
   description: string | null;
   imageUrl: string | null;
+  imageFocalX?: number;
+  imageFocalY?: number;
   googlePlaceId: string | null;
   googleMapsUrl: string | null;
   openingHours: string | null;
@@ -64,6 +67,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
     contactPhone: "",
     website: "",
     imageUrl: "",
+    imageFocalX: 0.5,
+    imageFocalY: 0.5,
     status: "ACTIVE",
   });
 
@@ -93,6 +98,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
         contactPhone: data.contactPhone || "",
         website: data.website || "",
         imageUrl: data.imageUrl || "",
+        imageFocalX: typeof data.imageFocalX === "number" ? data.imageFocalX : 0.5,
+        imageFocalY: typeof data.imageFocalY === "number" ? data.imageFocalY : 0.5,
         status: data.status || "ACTIVE",
       });
       // Initialize google data from existing venue
@@ -171,6 +178,8 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
       website: formData.website || null,
       description: formData.description || null,
       imageUrl: formData.imageUrl || null,
+      imageFocalX: formData.imageFocalX,
+      imageFocalY: formData.imageFocalY,
       googlePlaceId: googleData.googlePlaceId || null,
       googleMapsUrl: googleData.googleMapsUrl || null,
       openingHours: googleData.openingHours || null,
@@ -451,6 +460,25 @@ export default function EditVenuePage({ params }: { params: Promise<{ id: string
                   value={formData.imageUrl}
                   onChange={handleChange}
                 />
+                {formData.imageUrl && (
+                  <div className="mt-3 p-3 rounded border border-border bg-muted/30">
+                    <div className="text-sm font-medium text-foreground mb-2">
+                      Card-thumbnail focal point
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Drag the dot to mark the most-important part of the venue photo. Cards will
+                      crop around this focal point instead of dumb-center.
+                    </p>
+                    <FocalPointPicker
+                      src={formData.imageUrl}
+                      x={formData.imageFocalX}
+                      y={formData.imageFocalY}
+                      onChange={(nx, ny) =>
+                        setFormData((prev) => ({ ...prev, imageFocalX: nx, imageFocalY: ny }))
+                      }
+                    />
+                  </div>
+                )}
               </div>
 
               <div>

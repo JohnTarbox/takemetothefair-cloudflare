@@ -10,6 +10,7 @@ import { parseJsonArray } from "@/types";
 import { formatDateRange } from "@/lib/utils";
 import { FavoriteButton } from "@/components/FavoriteButton";
 import { VendorTierBadges } from "./VendorTierBadges";
+import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
 
 interface VendorEvent {
   id: string;
@@ -34,6 +35,8 @@ interface VendorCardProps {
     vendorType: string | null;
     products: string | null;
     logoUrl: string | null;
+    imageFocalX?: number;
+    imageFocalY?: number;
     verified: boolean | null;
     commercial: boolean | null;
     claimed?: boolean | null;
@@ -56,14 +59,52 @@ export function VendorCard({ vendor }: VendorCardProps) {
           <Link href={`/vendors/${vendor.slug}`} className="flex-shrink-0">
             <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center relative overflow-hidden hover:opacity-80 transition-opacity">
               {vendor.logoUrl && !logoError ? (
-                <Image
-                  src={vendor.logoUrl}
-                  alt={`${vendor.businessName} logo`}
-                  fill
-                  sizes="64px"
-                  className="object-cover"
-                  onError={() => setLogoError(true)}
-                />
+                // IMG1 §1b Phase 1 (2026-06-08) — server-side fit=cover
+                // + per-image focal point. 64px slot, so 1x/2x DPR
+                // variants. For square logos the focal point is no-op
+                // (matches default center crop), but non-square uploads
+                // get rescued via the admin focal-point picker.
+                (() => {
+                  const gravity = focalPointGravity(vendor.imageFocalX, vendor.imageFocalY);
+                  const srcSet = [64, 128]
+                    .map(
+                      (w) =>
+                        `${cdnImage(vendor.logoUrl!, {
+                          width: w,
+                          height: w,
+                          fit: "cover",
+                          ...(gravity ? { gravity } : {}),
+                          format: "auto",
+                          quality: 80,
+                          onerror: "redirect",
+                        })} ${w}w`
+                    )
+                    .join(", ");
+                  const src = cdnImage(vendor.logoUrl, {
+                    width: 64,
+                    height: 64,
+                    fit: "cover",
+                    ...(gravity ? { gravity } : {}),
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  });
+                  return (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      srcSet={srcSet}
+                      sizes="64px"
+                      alt={`${vendor.businessName} logo`}
+                      width={64}
+                      height={64}
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute inset-0 w-full h-full object-cover"
+                      onError={() => setLogoError(true)}
+                    />
+                  );
+                })()
               ) : (
                 <Store className="w-8 h-8 text-muted-foreground" />
               )}

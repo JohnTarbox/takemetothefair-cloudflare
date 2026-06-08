@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 
 export const runtime = "edge";
 
@@ -18,6 +19,8 @@ interface Promoter {
   description: string | null;
   website: string | null;
   logoUrl: string | null;
+  imageFocalX?: number;
+  imageFocalY?: number;
   verified: boolean;
   user: { email: string; name: string | null } | null;
 }
@@ -29,6 +32,13 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // IMG1 §1b Phase 1 (2026-06-08) — focal-point state (controlled).
+  // logo URL stays uncontrolled (defaultValue) for minimal-diff;
+  // we read it from the DOM via the form ref at submit-time so the
+  // FocalPointPicker has the current value.
+  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [imageFocalX, setImageFocalX] = useState<number>(0.5);
+  const [imageFocalY, setImageFocalY] = useState<number>(0.5);
 
   useEffect(() => {
     fetchPromoter();
@@ -40,6 +50,9 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
       if (!res.ok) throw new Error("Promoter not found");
       const data = (await res.json()) as Promoter;
       setPromoter(data);
+      setLogoUrl(data.logoUrl ?? "");
+      setImageFocalX(typeof data.imageFocalX === "number" ? data.imageFocalX : 0.5);
+      setImageFocalY(typeof data.imageFocalY === "number" ? data.imageFocalY : 0.5);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load promoter");
     } finally {
@@ -57,7 +70,9 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
       companyName: formData.get("companyName"),
       description: formData.get("description") || null,
       website: formData.get("website") || null,
-      logoUrl: formData.get("logoUrl") || null,
+      logoUrl: logoUrl || null,
+      imageFocalX,
+      imageFocalY,
       verified: formData.get("verified") === "on",
     };
 
@@ -166,8 +181,29 @@ export default function EditPromoterPage({ params }: { params: Promise<{ id: str
                   id="logoUrl"
                   name="logoUrl"
                   type="url"
-                  defaultValue={promoter.logoUrl ?? ""}
+                  value={logoUrl}
+                  onChange={(e) => setLogoUrl(e.target.value)}
                 />
+                {logoUrl && (
+                  <div className="mt-3 p-3 rounded border border-border bg-muted/30">
+                    <div className="text-sm font-medium text-foreground mb-2">Logo focal point</div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Drag the dot to mark the focal point. Most logos are square so the default
+                      center works; use this only if your logo crops badly into the square card
+                      slot.
+                    </p>
+                    <FocalPointPicker
+                      src={logoUrl}
+                      x={imageFocalX}
+                      y={imageFocalY}
+                      onChange={(nx, ny) => {
+                        setImageFocalX(nx);
+                        setImageFocalY(ny);
+                      }}
+                      previewAspect={1}
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">

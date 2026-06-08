@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
 import { SchemaOrgPanel } from "@/components/admin/SchemaOrgPanel";
 import { RescrapePanel } from "@/components/admin/RescrapePanel";
+import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 import { parseDateOnly, toIsoDateOnly } from "@/lib/datetime";
 
@@ -55,6 +56,8 @@ interface Event {
   ticketPriceMin: number | null;
   ticketPriceMax: number | null;
   imageUrl: string | null;
+  imageFocalX: number;
+  imageFocalY: number;
   featured: boolean;
   commercialVendorsAllowed: boolean;
   status: string;
@@ -97,6 +100,14 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [eventDays, setEventDays] = useState<EventDayInput[]>([]);
+  // IMG1 §1b Phase 1 (2026-06-08) — controlled state for the image URL
+  // + focal point. Image URL was previously uncontrolled (defaultValue
+  // + formData.get on submit); promoted to controlled so the
+  // FocalPointPicker can re-render against the current src as the
+  // operator types a new URL. Focal point is genuinely new state.
+  const [imageUrl, setImageUrl] = useState<string>("");
+  const [imageFocalX, setImageFocalX] = useState<number>(0.5);
+  const [imageFocalY, setImageFocalY] = useState<number>(0.5);
 
   useEffect(() => {
     fetchEvent();
@@ -115,6 +126,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       setIsStatewide(!!data.isStatewide);
       setStateCode((data.stateCode as StateCode) || "");
       setSyncEnabled(data.syncEnabled !== false);
+      setImageUrl(data.imageUrl ?? "");
+      setImageFocalX(typeof data.imageFocalX === "number" ? data.imageFocalX : 0.5);
+      setImageFocalY(typeof data.imageFocalY === "number" ? data.imageFocalY : 0.5);
       if (data.startDate) {
         setStartDate(formatDateForInput(data.startDate));
       }
@@ -221,7 +235,9 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
       ticketPriceMax: formData.get("ticketPriceMax")
         ? parseFloat(formData.get("ticketPriceMax") as string)
         : null,
-      imageUrl: formData.get("imageUrl") || null,
+      imageUrl: imageUrl || null,
+      imageFocalX,
+      imageFocalY,
       featured: formData.get("featured") === "on",
       commercialVendorsAllowed: formData.get("commercialVendorsAllowed") === "on",
       status: formData.get("status"),
@@ -520,8 +536,36 @@ export default function EditEventPage({ params }: { params: Promise<{ id: string
                   id="imageUrl"
                   name="imageUrl"
                   type="url"
-                  defaultValue={event.imageUrl ?? ""}
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
                 />
+                {/* IMG1 §1b Phase 1 (2026-06-08) — focal-point picker.
+                    Only shown when there's an imageUrl to pick on.
+                    Drag the dot to mark the subject; cards will crop
+                    around that point instead of dumb-center. Default
+                    is (0.5, 0.5) = center for backwards compatibility
+                    with existing events. */}
+                {imageUrl && (
+                  <div className="mt-3 p-3 rounded border border-border bg-muted/30">
+                    <div className="text-sm font-medium text-foreground mb-2">
+                      Card-thumbnail focal point
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">
+                      Drag the dot to mark the most-important point of the image. Card thumbnails
+                      will crop around this focal point. Use this to rescue posters or wide
+                      panoramas where the default center-crop loses the title or main subject.
+                    </p>
+                    <FocalPointPicker
+                      src={imageUrl}
+                      x={imageFocalX}
+                      y={imageFocalY}
+                      onChange={(nx, ny) => {
+                        setImageFocalX(nx);
+                        setImageFocalY(ny);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
 
               <div>

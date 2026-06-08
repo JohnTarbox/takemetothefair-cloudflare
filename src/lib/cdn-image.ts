@@ -31,7 +31,63 @@
 
 export type CdnImageFit = "cover" | "contain" | "scale-down" | "crop" | "pad";
 
-export type CdnImageGravity = "auto" | "face" | "center" | "top" | "bottom" | "left" | "right";
+/**
+ * Cloudflare `cdn-cgi/image` `gravity` values.
+ *
+ * Named modes (`auto` / `face` / `center` / etc.) per Cloudflare docs.
+ *
+ * The branded `CustomGravity` string carries a per-image focal point in
+ * Cloudflare's `${x}x${y}` syntax (e.g. `"0.3x0.7"` = 30% from left, 70%
+ * from top). Use `focalPointGravity(x, y)` to construct one; it returns
+ * `undefined` for the (0.5, 0.5) center default so the cache key stays
+ * identical to `gravity`-omitted URLs (avoids invalidating the entire
+ * derivative cache on rollout).
+ *
+ * See https://developers.cloudflare.com/images/transform-images/transform-via-url/
+ * §gravity for the full reference.
+ */
+export type CdnImageNamedGravity = "auto" | "face" | "center" | "top" | "bottom" | "left" | "right";
+
+/** Branded type for custom focal-point coords `${x}x${y}`. */
+export type CdnImageCustomGravity = `${number}x${number}`;
+
+export type CdnImageGravity = CdnImageNamedGravity | CdnImageCustomGravity;
+
+/**
+ * Clamp `n` to [0, 1] and round to 3 decimal places — enough precision
+ * for sub-pixel focal points without blowing out the URL cache key with
+ * floating-point noise (`0.49999999` vs `0.5` would otherwise produce
+ * separate CDN cache entries).
+ */
+function clampFocal(n: number): number {
+  if (!Number.isFinite(n)) return 0.5;
+  const clamped = Math.max(0, Math.min(1, n));
+  return Math.round(clamped * 1000) / 1000;
+}
+
+/**
+ * Build a `gravity=${x}x${y}` value for a per-image focal point, OR
+ * return `undefined` to signal "use Cloudflare default (center)".
+ *
+ * Returning `undefined` for the center default is intentional: it means
+ * the URL emitted by `cdnImage()` doesn't include a `gravity` segment
+ * for events at (0.5, 0.5), matching the URL shape pre-IMG1 §1b. So the
+ * rollout of this feature doesn't invalidate the entire Cloudflare
+ * derivative cache (which would otherwise re-bill ~10K transformations
+ * on first hit per image).
+ *
+ * The (0.5, 0.5) short-circuit also means operators who never set a
+ * focal point pay zero cache-key cost.
+ */
+export function focalPointGravity(
+  x: number | null | undefined,
+  y: number | null | undefined
+): CdnImageCustomGravity | undefined {
+  const fx = clampFocal(x ?? 0.5);
+  const fy = clampFocal(y ?? 0.5);
+  if (fx === 0.5 && fy === 0.5) return undefined;
+  return `${fx}x${fy}` as CdnImageCustomGravity;
+}
 
 export type CdnImageFormat = "auto" | "webp" | "avif" | "jpg" | "png";
 

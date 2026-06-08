@@ -228,6 +228,18 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.ticketPriceMin !== undefined) updateData.ticketPriceMin = data.ticketPriceMin;
     if (data.ticketPriceMax !== undefined) updateData.ticketPriceMax = data.ticketPriceMax;
     if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
+    // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped to [0,1] here
+    // as defense-in-depth: the UI clamps in FocalPointPicker + Zod
+    // validates at the schema boundary, but admin PATCH callers can
+    // bypass both (curl, MCP tools). The migration's NOT NULL DEFAULT
+    // 0.5 means an undefined value falls through cleanly to whatever
+    // the row currently holds (we just don't write the column).
+    if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
+      updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
+    }
+    if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
+      updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
+    }
     if (data.featured !== undefined) updateData.featured = data.featured;
     if (data.commercialVendorsAllowed !== undefined)
       updateData.commercialVendorsAllowed = data.commercialVendorsAllowed;
