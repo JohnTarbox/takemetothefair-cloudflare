@@ -100,6 +100,12 @@ async function getUpcomingEvents() {
   const db = getCloudflareDb();
   try {
     // Narrow projection — see getFeaturedEvents above.
+    //
+    // Over-fetch (10 instead of 6) so the HomePage render-time dedup
+    // against weekendEvents (limit 4) can still produce a full 6-card
+    // grid even when all 4 weekend events overlap upcoming. Worst case
+    // post-dedup: 10 - 4 = 6 cards. The HomePage component slices to
+    // 6 visible after filtering.
     const results = await db
       .select(eventJoinProjection)
       .from(events)
@@ -107,7 +113,7 @@ async function getUpcomingEvents() {
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date())))
       .orderBy(events.startDate)
-      .limit(6);
+      .limit(10);
 
     // Cast the narrow venue/promoter projection back to full row types so
     // the EventCard/EventList prop contract compiles unchanged. Sound
@@ -237,13 +243,32 @@ async function getRecentBlogPosts() {
 }
 
 export default async function HomePage() {
-  const [featuredEvents, upcomingEvents, weekendEvents, counts, recentPosts] = await Promise.all([
-    getFeaturedEvents(),
-    getUpcomingEvents(),
-    getWeekendEvents(),
-    getPlatformCounts(),
-    getRecentBlogPosts(),
-  ]);
+  const [featuredEvents, upcomingEventsRaw, weekendEvents, counts, recentPosts] = await Promise.all(
+    [
+      getFeaturedEvents(),
+      getUpcomingEvents(),
+      getWeekendEvents(),
+      getPlatformCounts(),
+      getRecentBlogPosts(),
+    ]
+  );
+
+  // Homepage dedup (2026-06-08) — pre-fix, the 4 recurring farmers markets
+  // happening this week appeared in BOTH the "This weekend" grid AND the
+  // "Upcoming events" grid (each query qualified them independently). User
+  // saw "same 4 markets twice" on the homepage.
+  //
+  // Fix: filter Weekend IDs out of the Upcoming list at render-time.
+  // Weekend stays primary (most-relevant). Upcoming then shows the next
+  // distinct events after the weekend window.
+  //
+  // Featured is intentionally NOT deduped — the `featured` flag is
+  // operator-curated and shouldn't be suppressed just because the same
+  // event also happens this weekend; if an operator marked it featured,
+  // we want it visible in both contexts (and most featured events are
+  // multi-day specials, not the recurring markets that drove this bug).
+  const weekendIds = new Set(weekendEvents.map((e) => e.id));
+  const upcomingEvents = upcomingEventsRaw.filter((e) => !weekendIds.has(e.id)).slice(0, 6);
 
   return (
     <div>

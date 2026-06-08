@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import {
   MapPin,
   Phone,
@@ -230,18 +229,68 @@ export default async function VenueDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
-            {venue.imageUrl && (
-              <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
-                <Image
-                  src={venue.imageUrl}
-                  alt={venueDisplayName}
-                  fill
-                  priority
-                  sizes="(max-width: 1024px) 100vw, 66vw"
-                  className="object-cover"
-                />
-              </div>
-            )}
+            {venue.imageUrl &&
+              (() => {
+                // IMG1 §1b (2026-06-08) — blurred-fill hero, mirroring the
+                // event-detail pattern from PR #393. Pre-fix this was
+                // <Image fill object-cover>, which center-cropped wide
+                // panoramas (chops 26% width for AR 2.40 sources) and
+                // smart-crop wouldn't help because venue photos can be
+                // posters/banners too. Blurred-fill: foreground in full
+                // via object-contain; surrounding strips filled with a
+                // blurred 200w copy of the same image.
+                //
+                // Pattern is reusable per [[project_img1_smart_crop_hero]] —
+                // applied here without changes to the helper signatures.
+                const heroWidths = [400, 640, 800, 1200, 1600, 1942];
+                const heroSrcSet = heroWidths
+                  .map((w) =>
+                    cdnImage(venue.imageUrl!, {
+                      width: w,
+                      format: "auto",
+                      quality: 80,
+                      onerror: "redirect",
+                    })
+                  )
+                  .map((url, i) => `${url} ${heroWidths[i]}w`)
+                  .join(", ");
+                const heroSrc = cdnImage(venue.imageUrl, {
+                  width: 1600,
+                  format: "auto",
+                  quality: 80,
+                  onerror: "redirect",
+                });
+                const backdropSrc = cdnImage(venue.imageUrl, {
+                  width: 200,
+                  format: "auto",
+                  quality: 60,
+                  onerror: "redirect",
+                });
+                return (
+                  <div className="aspect-video rounded-xl overflow-hidden bg-muted relative">
+                    {/* Blurred backdrop — decorative, fills letterbox strips. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={backdropSrc}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 w-full h-full object-cover scale-110 blur-2xl"
+                    />
+                    {/* Foreground — full image, no crop. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={heroSrc}
+                      srcSet={heroSrcSet}
+                      sizes="(max-width: 1024px) 100vw, 66vw"
+                      alt={venueDisplayName}
+                      fetchPriority="high"
+                      loading="eager"
+                      decoding="async"
+                      className="relative w-full h-full object-contain"
+                    />
+                  </div>
+                );
+              })()}
 
             <div>
               {/* Cohort 8 follow-up: same fallback as the venue-card H3 — keeps
