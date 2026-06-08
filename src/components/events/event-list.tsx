@@ -24,9 +24,30 @@ interface EventListProps {
     eventDayDates?: string[];
   })[];
   emptyMessage?: string;
+  /**
+   * IMG backlog closeout (2026-06-08) — caller-controlled LCP priority.
+   *
+   * Pre-fix, EventList unconditionally set `priority={index === 0}` on
+   * its first card. That defeats the "exactly one fetchpriority=high
+   * per page" rule whenever a page renders multiple EventList grids
+   * (e.g., the homepage with weekend / featured / upcoming = 3
+   * priority cards on one page; the browser then deprioritizes all
+   * three).
+   *
+   * Now defaults to false. Callers explicitly pass `firstCardPriority`
+   * when this grid is the LCP candidate. On a page with multiple
+   * grids, exactly one should opt in (typically the topmost one
+   * with content; if uncertain, leave false — text H1 / non-image
+   * elements can be LCP too).
+   */
+  firstCardPriority?: boolean;
 }
 
-export function EventList({ events, emptyMessage = "No events found" }: EventListProps) {
+export function EventList({
+  events,
+  emptyMessage = "No events found",
+  firstCardPriority = false,
+}: EventListProps) {
   if (events.length === 0) {
     return (
       <div className="text-center py-12">
@@ -38,11 +59,7 @@ export function EventList({ events, emptyMessage = "No events found" }: EventLis
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       {events.map((event, index) => (
-        // IMG-followup (2026-06-08) — exactly one preload per page
-        // (index === 0). Cards 1-N use Next/Image default lazy;
-        // eagerLoad prop reverted (Next.js 15.x emits preload for
-        // loading="eager" too, which defeats the single-priority rule).
-        <EventCard key={event.id} event={event} priority={index === 0} />
+        <EventCard key={event.id} event={event} priority={firstCardPriority && index === 0} />
       ))}
     </div>
   );
