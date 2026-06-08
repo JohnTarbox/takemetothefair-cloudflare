@@ -262,12 +262,12 @@ export default async function BlogPage({ searchParams }: { searchParams: Promise
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                 {parsedPosts.map((post, i) => (
-                  // IMG-followup (2026-06-07) — exactly one preload per page
-                  // (i === 0). Baseline measured /blog at 3 preloads which
-                  // forced the browser to deprioritize competing slots;
-                  // cards 1-2 still load eagerly to keep the visible row
-                  // above the lazy-load fold.
-                  <BlogPostCard key={post.id} post={post} priority={i === 0} eagerLoad={i < 3} />
+                  // IMG-followup (2026-06-08) — exactly one preload per page
+                  // (i === 0). Earlier eagerLoad attempt reverted: in
+                  // Next.js 15.x loading="eager" emits preload too, so it
+                  // recreated the 3-preload multi-priority bug it was
+                  // meant to prevent. Default lazy is correct for non-LCP.
+                  <BlogPostCard key={post.id} post={post} priority={i === 0} />
                 ))}
               </div>
 

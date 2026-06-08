@@ -34,15 +34,9 @@ interface VenueCardProps {
    * compete and the browser deprioritizes them — see EventCard docs.
    */
   priority?: boolean;
-  /**
-   * Set to true for above-the-fold cards that are NOT the LCP
-   * candidate. Passes `loading="eager"` instead of the default lazy.
-   * No effect when priority is true.
-   */
-  eagerLoad?: boolean;
 }
 
-export function VenueCard({ venue, priority = false, eagerLoad = false }: VenueCardProps) {
+export function VenueCard({ venue, priority = false }: VenueCardProps) {
   const [imgError, setImgError] = useState(false);
   const amenities = parseJsonArray(venue.amenities);
 
@@ -86,7 +80,6 @@ export function VenueCard({ venue, priority = false, eagerLoad = false }: VenueC
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
               className="object-cover"
               priority={priority}
-              loading={!priority && eagerLoad ? "eager" : undefined}
               onError={() => setImgError(true)}
             />
           ) : (

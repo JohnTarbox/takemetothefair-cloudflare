@@ -1174,15 +1174,14 @@ export function EventsView({
       {viewMode === "cards" && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {displayEvents.map((event, index) => (
-            // IMG-followup (2026-06-07) — exactly one preload per page
-            // (index === 0); cards 1-2 still load eagerly. Pre-fix
-            // priority={index < 3} would emit 3 preloads when all 3
-            // first cards had R2 images (latent multi-priority bug).
+            // IMG-followup (2026-06-08) — exactly one preload per page
+            // (index === 0). Cards 1-N use Next/Image default lazy;
+            // earlier eagerLoad attempt reverted (Next.js 15.x emits
+            // preload for loading="eager" too).
             <EventCard
               key={event.id}
               event={event}
               priority={index === 0}
-              eagerLoad={index < 3}
               distance={distanceMap.get(event.id)}
             />
           ))}
