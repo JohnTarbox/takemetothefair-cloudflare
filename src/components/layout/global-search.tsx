@@ -128,6 +128,12 @@ export function GlobalSearch() {
             }
           }}
           placeholder="Search events, venues, vendors, blog..."
+          // SEARCH1 (2026-06-09) — Mirror the server-side 100-char cap
+          // (src/app/api/search/route.ts MAX_QUERY_LENGTH). Belt-and-
+          // suspenders: server is authoritative; this just prevents
+          // a user from pasting a 10kb chunk that the server will
+          // then drop on the floor anyway.
+          maxLength={100}
           className="w-40 md:w-56 text-sm border-none outline-none bg-transparent"
         />
         {/* U7 (2026-06-07) — pre-migration this <button> rendered an
