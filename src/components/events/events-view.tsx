@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { MonthCalendar, type CalendarDay } from "@johntarbox/calendar-grid";
 import { useSearchParams } from "next/navigation";
@@ -252,6 +252,13 @@ interface CalendarViewProps {
   onDateChange: (date: Date) => void;
   calendarViewType: CalendarViewType;
   onViewTypeChange: (type: CalendarViewType) => void;
+  // F3.1 (Dev-Email-2026-06-09 §D, 2026-06-09) — category-legend
+  // filter. Hoisted to parent EventsView so future surfaces (cards,
+  // table) can reuse the same exclusion. Set<string> rather than
+  // array so toggling is O(1) and the order matches the legend's
+  // alphabetical sort (no implicit reordering).
+  excludedCategories: Set<string>;
+  onExcludedCategoriesChange: (next: Set<string>) => void;
 }
 
 // Additional helper functions for calendar views
@@ -322,9 +329,51 @@ function CalendarView({
   onDateChange,
   calendarViewType,
   onViewTypeChange,
+  excludedCategories,
+  onExcludedCategoriesChange,
 }: CalendarViewProps) {
   const setCurrentDate = onDateChange;
   const setCalendarViewType = onViewTypeChange;
+
+  // F3.1 — derive the legend's category list once per `events` change.
+  // Events with NO categories are always visible (no synthetic
+  // "Uncategorized" pill — see plan §D answer to John Q4).
+  // Alphabetical sort so the legend is stable across page loads and
+  // doesn't reorder when a single event is added/removed.
+  const allCategories = useMemo(() => {
+    const set = new Set<string>();
+    for (const event of events) {
+      const cats = parseJsonArray(event.categories);
+      for (const c of cats) set.add(c);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [events]);
+
+  // F3.1 — apply the exclusion filter. Events with no categories are
+  // visible regardless of exclusion (no category to filter on).
+  const visibleEvents = useMemo(() => {
+    if (excludedCategories.size === 0) return events;
+    return events.filter((e) => {
+      const cats = parseJsonArray(e.categories);
+      if (cats.length === 0) return true;
+      // Visible if AT LEAST ONE of the event's categories is NOT excluded
+      // (matches the "show events tagged with any visible category"
+      // semantic — hiding "Festival" doesn't hide an event also tagged
+      // "Craft Fair" if Craft Fair is still visible).
+      return cats.some((c) => !excludedCategories.has(c));
+    });
+  }, [events, excludedCategories]);
+
+  // F3.1 — handler closure for toggling a category pill.
+  const toggleCategory = useCallback(
+    (cat: string) => {
+      const next = new Set(excludedCategories);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      onExcludedCategoriesChange(next);
+    },
+    [excludedCategories, onExcludedCategoriesChange]
+  );
   const [popoverEvent, setPopoverEvent] = useState<{
     event: EventWithRelations;
     anchor: { x: number; y: number };
@@ -338,6 +387,20 @@ function CalendarView({
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
   const today = new Date();
+
+  // F3.2 (Dev-Email-2026-06-09 §D, 2026-06-09) — "Now: HH:MM" text label
+  // shown in today's day/week column. Per plan §D answer to John Q1:
+  // the current week/day views don't have an hours grid (they render
+  // stacked chip lists), so a literal horizontal time line has nothing
+  // to draw against. The label honors the spec's intent without
+  // requiring a multi-day grid refactor. Computed once per render so
+  // it updates when the calendar re-renders (date change, legend
+  // toggle, page navigation) — no minute tick. Acceptable: granularity
+  // of "what minute is it now" matters less than "is today now."
+  const nowLabel = today.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
 
   // Dismiss all popovers on Escape
   useEffect(() => {
@@ -418,7 +481,7 @@ function CalendarView({
 
   // Render Day View
   const renderDayView = () => {
-    const dayEvents = getEventsForDate(events, currentDate);
+    const dayEvents = getEventsForDate(visibleEvents, currentDate);
 
     return (
       <div className="border-t border-border">
@@ -431,6 +494,11 @@ function CalendarView({
           >
             {currentDate.getDate()}
           </div>
+          {/* F3.2 — "Now: HH:MM" label. Rendered only when the day
+              view is showing today; updates on view re-render. */}
+          {isSameDay(currentDate, today) && (
+            <div className="text-xs text-muted-foreground mt-0.5 print:hidden">Now: {nowLabel}</div>
+          )}
         </div>
         <div className="max-h-[600px] overflow-y-auto print:max-h-none print:overflow-visible">
           {dayEvents.length === 0 ? (
@@ -501,13 +569,20 @@ function CalendarView({
               >
                 {day.getDate()}
               </button>
+              {/* F3.2 — "Now: HH:MM" label. Only renders in today's
+                  column; updates on view re-render. */}
+              {isSameDay(day, today) && (
+                <div className="text-[0.65rem] text-muted-foreground mt-0.5 print:hidden">
+                  Now: {nowLabel}
+                </div>
+              )}
             </div>
           ))}
         </div>
         {/* Week grid */}
         <div className="grid grid-cols-7 min-h-[400px] print:min-h-0">
           {days.map((day, i) => {
-            const dayEvents = getEventsForDate(events, day);
+            const dayEvents = getEventsForDate(visibleEvents, day);
             return (
               <div key={i} className="border-r border-border last:border-r-0 p-1 print:p-px">
                 {/* Screen: capped at 5 events */}
@@ -567,7 +642,7 @@ function CalendarView({
     (day: CalendarDay) => {
       if (!day.inMonth) return null;
       const dayEvents = getEventsForDate(
-        events,
+        visibleEvents,
         new Date(
           parseInt(day.date.slice(0, 4)),
           parseInt(day.date.slice(5, 7)) - 1,
@@ -629,7 +704,7 @@ function CalendarView({
         </>
       );
     },
-    [events, openEventPopover, setDayEventsPopover]
+    [visibleEvents, openEventPopover, setDayEventsPopover]
   );
 
   const handleMonthChange = useCallback(
@@ -734,7 +809,7 @@ function CalendarView({
                   {miniDays.slice(0, 42).map((day, i) => {
                     const hasEvent =
                       day !== null &&
-                      getEventsForDate(events, new Date(year, monthIndex, day)).length > 0;
+                      getEventsForDate(visibleEvents, new Date(year, monthIndex, day)).length > 0;
                     const isCurrentDay =
                       day !== null && isSameDay(new Date(year, monthIndex, day), today);
                     return (
@@ -958,13 +1033,45 @@ function CalendarView({
         />
       )}
 
-      {/* Legend */}
+      {/* Legend — F3.1 (Dev-Email-2026-06-09 §D, 2026-06-09): static
+          help text replaced with category-toggleable pills. Year view
+          keeps its informational tip (no chips to filter at that
+          zoom). When there are zero categories present (events tagged
+          only with `null` categories columns), render the pre-F3
+          help-text fallback so the strip never reads empty. */}
       <div className="px-4 py-3 bg-muted border-t border-border print:hidden">
-        <p className="text-xs text-muted-foreground">
-          {calendarViewType === "year"
-            ? "Click on a month to view details. Highlighted days have events."
-            : "Click an event for a preview. Click a date number to view that day. Multi-day events appear on each day."}
-        </p>
+        {calendarViewType === "year" || allCategories.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {calendarViewType === "year"
+              ? "Click on a month to view details. Highlighted days have events."
+              : "Click an event for a preview. Click a date number to view that day. Multi-day events appear on each day."}
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-muted-foreground mr-1">Filter:</span>
+            {allCategories.map((cat) => {
+              const excluded = excludedCategories.has(cat);
+              const swatchClass = CALENDAR_EVENT_COLORS[paletteIndexForCategory(cat)];
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => toggleCategory(cat)}
+                  aria-pressed={!excluded}
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-xs rounded-full border transition-opacity ${
+                    excluded
+                      ? "bg-muted text-muted-foreground border-border opacity-60 line-through"
+                      : "bg-card text-foreground border-border hover:bg-muted"
+                  }`}
+                  title={excluded ? `Show "${cat}" events` : `Hide "${cat}" events`}
+                >
+                  <span className={`inline-block w-2.5 h-2.5 rounded-full ${swatchClass}`} />
+                  <span>{cat}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1021,7 +1128,6 @@ export function EventsView({
       // localStorage access can throw in some sandboxed contexts. Falls
       // back to the SSR default (month). Non-fatal.
     }
-     
   }, []);
   // Wrapper that persists every change.
   const setCalendarViewType = useCallback((v: CalendarViewType) => {
@@ -1030,6 +1136,40 @@ export function EventsView({
       window.localStorage.setItem(CALENDAR_VIEW_STORAGE_KEY, v);
     } catch {
       // Same swallow as above — persistence is best-effort.
+    }
+  }, []);
+
+  // F3.1 (Dev-Email-2026-06-09 §D, 2026-06-09) — category-legend
+  // exclusion set, hoisted to parent so it survives the calendar-view
+  // remount when user switches month/week/day/year and so list/cards
+  // surfaces can opt into the same filter later. localStorage key
+  // mirrors the calendarViewType pattern above.
+  const CALENDAR_EXCLUDED_CATS_STORAGE_KEY = "mmatf.calendar.excludedCategories";
+  const [excludedCategories, setExcludedCategoriesRaw] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(CALENDAR_EXCLUDED_CATS_STORAGE_KEY);
+      if (!stored) return;
+      const arr = JSON.parse(stored);
+      if (Array.isArray(arr) && arr.every((x) => typeof x === "string")) {
+        setExcludedCategoriesRaw(new Set(arr));
+      }
+    } catch {
+      // Bad JSON or sandboxed storage — keep the empty default.
+    }
+  }, []);
+  // Wrapper persists every change as a JSON array (Set is not
+  // JSON-serializable directly).
+  const setExcludedCategories = useCallback((next: Set<string>) => {
+    setExcludedCategoriesRaw(next);
+    try {
+      window.localStorage.setItem(
+        CALENDAR_EXCLUDED_CATS_STORAGE_KEY,
+        JSON.stringify(Array.from(next))
+      );
+    } catch {
+      // Best-effort, same pattern as calendarViewType persistence.
     }
   }, []);
 
@@ -1409,6 +1549,8 @@ export function EventsView({
           onDateChange={setCalendarDate}
           calendarViewType={calendarViewType}
           onViewTypeChange={setCalendarViewType}
+          excludedCategories={excludedCategories}
+          onExcludedCategoriesChange={setExcludedCategories}
         />
       )}
 
