@@ -371,7 +371,14 @@ export default async function BlogPostPage({ params }: Props) {
             })()}
 
           {/* Markdown body */}
-          <MarkdownContent content={post.body} />
+          {/* BC2 (2026-06-08) — passing sourceSlug enables the delegated
+              click handler in MarkdownContent that fires the
+              `blog_outbound_click` GA4 event when readers click internal
+              /events|/vendors|/venues|/blog links inside the prose. See
+              docs/bc2-ga4-custom-dimensions.md for the GA4 Admin
+              registration step that surfaces source_slug/target_type/
+              target_slug as custom dimensions. */}
+          <MarkdownContent content={post.body} sourceSlug={post.slug} />
 
           {/* Tags */}
           {tags.length > 0 && (
