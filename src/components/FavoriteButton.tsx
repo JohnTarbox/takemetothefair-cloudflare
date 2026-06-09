@@ -3,12 +3,10 @@
 import { useTransition } from "react";
 import { Heart } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { trackEvent } from "@/lib/analytics";
+import { trackFavoriteToggle, type FavoritableType } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { useFavorites } from "@/components/FavoritesProvider";
 import { IconButton } from "@/components/ui/icon-button";
-
-type FavoritableType = "EVENT" | "VENUE" | "VENDOR" | "PROMOTER";
 
 interface FavoriteButtonProps {
   type: FavoritableType;
@@ -67,7 +65,11 @@ export function FavoriteButton({ type, id, className, size = "md" }: FavoriteBut
     // (type, id) re-renders with the new heart fill.
     const newState = !isFavorited;
     setFavorited(type, id, newState);
-    trackEvent("favorite_toggle", { category: "engagement", label: `${type}:${id}` });
+    // ENG1.1 (2026-06-09) — dual-emit favorite_toggle (legacy) and
+    // add_to_favorites/remove_from_favorites (GA4 Recommended). Helper
+    // owns the 30-day cutover window; see src/lib/analytics.ts and
+    // docs/eng1-audit.md §B.1 for the safe-to-cutover invariant.
+    trackFavoriteToggle(type, id, newState ? "add" : "remove");
 
     startTransition(async () => {
       try {

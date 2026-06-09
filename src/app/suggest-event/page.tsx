@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
-import { trackEvent } from "@/lib/analytics";
+import { trackEvent, trackFormSubmit } from "@/lib/analytics";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
 export const runtime = "edge";
@@ -477,9 +477,17 @@ export default function SuggestEventPage() {
 
       setCreatedEvent(data.event || null);
       setStep("success");
+      // ENG1.3 (2026-06-09) — dual-emit during 30-day cutover window
+      // (legacy event_suggest stays for trendline continuity;
+      // suggest_event_public_submit is the GA4 Recommended Events
+      // naming with form_audience custom dim). Cutover follow-up PR
+      // on 2026-07-09 drops the legacy emit. See docs/eng1-audit.md.
       trackEvent("event_suggest", {
         category: "conversion",
         label: extractedData.name || undefined,
+      });
+      trackFormSubmit("suggest_event_public", {
+        event_name: extractedData.name || undefined,
       });
     } catch {
       setError("Failed to submit event. Please try again.");

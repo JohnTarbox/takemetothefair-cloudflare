@@ -130,6 +130,7 @@ export function VendorApplicationRow({ application, conflicts, highlighted }: Pr
                     endDate={application.event.endDate}
                     url={`https://meetmeatthefair.com/events/${application.event.slug}`}
                     variant="icon"
+                    eventSlug={application.event.slug}
                     venueTimezone={application.event.venue?.timezone ?? undefined}
                   />
                 </div>

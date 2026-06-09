@@ -21,7 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DailyScheduleInput, type EventDayInput } from "@/components/events/DailyScheduleInput";
-import { trackEvent } from "@/lib/analytics";
+import { trackEvent, trackFormSubmit } from "@/lib/analytics";
 import { EVENT_CATEGORIES } from "@/lib/constants";
 import type { ExtractedEventData, FieldConfidence } from "@/lib/url-import/types";
 
@@ -356,9 +356,15 @@ export default function VendorSuggestEventPage() {
 
       setCreatedEvent(data.event || null);
       setStep("success");
+      // ENG1.3 (2026-06-09) — dual-emit during 30-day cutover window
+      // (mirrors src/app/suggest-event/page.tsx; vendor audience for
+      // the form_audience custom dim).
       trackEvent("event_suggest", {
         category: "conversion",
         label: extractedData.name || undefined,
+      });
+      trackFormSubmit("suggest_event_vendor", {
+        event_name: extractedData.name || undefined,
       });
     } catch {
       setError("Failed to submit event. Please try again.");
