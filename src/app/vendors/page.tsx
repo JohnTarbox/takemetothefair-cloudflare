@@ -4,6 +4,11 @@ import { Search, X, Heart, Calendar } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, users, eventVendors, events, venues, userFavorites } from "@/lib/db/schema";
 import { eq, and, asc, isNotNull, isNull, inArray, sql } from "drizzle-orm";
+import {
+  collectBrandParentIdsToLoad,
+  groupVendorsForListing,
+  type GroupableVendor,
+} from "@/lib/vendor-listing-grouping";
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
@@ -124,9 +129,146 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
       return [];
     }
 
+    // ── EH2.2 brand-parent collapse pre-processing ────────────────────
+    // Spec §C2 — the listing renders one card per "display group", keyed
+    // by COALESCE(brand_parent_vendor_id, id). For brand_parent-mode
+    // brands the offices collapse into a single hub card; for self-mode
+    // brands the brand hub is suppressed from the listing entirely.
+    //
+    // The pure-function grouping rule lives in
+    // src/lib/vendor-listing-grouping.ts and is unit-tested there. This
+    // block is responsible only for the I/O: load the brand parent rows
+    // referenced by matched offices, load every office of any brand we
+    // intend to collapse (so its events aggregate into the brand card
+    // even when only some offices made the match set), then call the
+    // pure grouper.
+    const groupableMatches: (GroupableVendor & { rowIndex: number })[] = vendorResults.map(
+      (v, idx) => ({
+        rowIndex: idx,
+        id: v.vendors.id,
+        role: v.vendors.role,
+        brandParentVendorId: v.vendors.brandParentVendorId,
+        operatorParentVendorId: v.vendors.operatorParentVendorId,
+        aliasOfVendorId: v.vendors.aliasOfVendorId,
+        displayOverridePermitted: v.vendors.displayOverridePermitted,
+        displayMode: v.vendors.displayMode,
+        defaultChildDisplay: v.vendors.defaultChildDisplay,
+      })
+    );
+
+    // Brand parent rows referenced by matched offices but NOT in the
+    // match set themselves (caller searched for office only). One small
+    // batch SELECT to pull them in. Brand parents that ARE in the match
+    // set are already loaded — reuse those rows directly.
+    const matchedIds = new Set(vendorResults.map((v) => v.vendors.id));
+    const brandParentIdsNeeded = collectBrandParentIdsToLoad(groupableMatches);
+    const missingBrandParentIds = brandParentIdsNeeded.filter((id) => !matchedIds.has(id));
+    type VendorRow = (typeof vendorResults)[number]["vendors"];
+    const extraBrandParentRows: VendorRow[] =
+      missingBrandParentIds.length > 0
+        ? await db
+            .select()
+            .from(vendors)
+            .where(and(inArray(vendors.id, missingBrandParentIds), isNull(vendors.deletedAt)))
+        : [];
+    // Build a unified lookup: matched rows + extra brand parents, both
+    // keyed by id. Consumers (grouper + card renderer) only need to read
+    // the union.
+    const vendorRowById = new Map<string, VendorRow>();
+    for (const v of vendorResults) vendorRowById.set(v.vendors.id, v.vendors);
+    for (const v of extraBrandParentRows) vendorRowById.set(v.id, v);
+    const brandParentsForGrouping = new Map<string, GroupableVendor>();
+    for (const id of brandParentIdsNeeded) {
+      const row = vendorRowById.get(id);
+      if (!row) continue;
+      brandParentsForGrouping.set(id, {
+        id: row.id,
+        role: row.role,
+        brandParentVendorId: row.brandParentVendorId,
+        operatorParentVendorId: row.operatorParentVendorId,
+        aliasOfVendorId: row.aliasOfVendorId,
+        displayOverridePermitted: row.displayOverridePermitted,
+        displayMode: row.displayMode,
+        defaultChildDisplay: row.defaultChildDisplay,
+      });
+    }
+    // Also register any NATIONAL row that's a brand_parent-mode brand
+    // and is in the match set directly (search hit the brand). The
+    // grouper consults brandParentsForGrouping for the BRAND-row case
+    // when computing collapsedBrandIds for direct NATIONAL matches.
+    for (const v of vendorResults) {
+      if (v.vendors.role === "NATIONAL") {
+        brandParentsForGrouping.set(v.vendors.id, {
+          id: v.vendors.id,
+          role: v.vendors.role,
+          brandParentVendorId: v.vendors.brandParentVendorId,
+          operatorParentVendorId: v.vendors.operatorParentVendorId,
+          aliasOfVendorId: v.vendors.aliasOfVendorId,
+          displayOverridePermitted: v.vendors.displayOverridePermitted,
+          displayMode: v.vendors.displayMode,
+          defaultChildDisplay: v.vendors.defaultChildDisplay,
+        });
+      }
+    }
+
+    // For any brand_parent-mode brand we'll render as a collapsed card,
+    // fetch ALL its LOCAL_OFFICE children (whether or not they made the
+    // match set) so we can aggregate their events into the brand card.
+    const brandIdsToCollapse: string[] = [];
+    for (const [id, brand] of brandParentsForGrouping) {
+      if (brand.defaultChildDisplay === "brand_parent") brandIdsToCollapse.push(id);
+    }
+    type OfficeRow = VendorRow;
+    const allOfficesForCollapsed: OfficeRow[] =
+      brandIdsToCollapse.length > 0
+        ? await db
+            .select()
+            .from(vendors)
+            .where(
+              and(
+                inArray(vendors.brandParentVendorId, brandIdsToCollapse),
+                isNull(vendors.deletedAt)
+              )
+            )
+        : [];
+    // Register these office rows in vendorRowById so the renderer can
+    // pull their event ids without an additional SELECT.
+    for (const o of allOfficesForCollapsed) vendorRowById.set(o.id, o);
+    const officesByBrandId = new Map<string, GroupableVendor[]>();
+    for (const o of allOfficesForCollapsed) {
+      if (!o.brandParentVendorId) continue;
+      const arr = officesByBrandId.get(o.brandParentVendorId) ?? [];
+      arr.push({
+        id: o.id,
+        role: o.role,
+        brandParentVendorId: o.brandParentVendorId,
+        operatorParentVendorId: o.operatorParentVendorId,
+        aliasOfVendorId: o.aliasOfVendorId,
+        displayOverridePermitted: o.displayOverridePermitted,
+        displayMode: o.displayMode,
+        defaultChildDisplay: o.defaultChildDisplay,
+      });
+      officesByBrandId.set(o.brandParentVendorId, arr);
+    }
+
+    const cards = groupVendorsForListing({
+      matchedVendors: groupableMatches,
+      brandParentsById: brandParentsForGrouping,
+      officesByBrandId,
+    });
+
+    // ── End EH2.2 grouping. Below: existing event fetch, now keyed on
+    // the UNION of all vendor ids whose events the cards reference. ─
+
     // Query 2: Get all upcoming events for all vendors
     // D1 has a limit on SQL bind variables, so batch large arrays
-    const vendorIds = vendorResults.map((v) => v.vendors.id);
+    // EH2.2: vendor ids now include offices of collapsed brands so the
+    // aggregated events surface on the brand card.
+    const vendorIdsSet = new Set<string>();
+    for (const card of cards) {
+      for (const id of card.aggregatedEventVendorIds) vendorIdsSet.add(id);
+    }
+    const vendorIds = [...vendorIdsSet];
     const BATCH_SIZE = 50;
     const allVendorEvents: {
       vendorId: string;
@@ -180,52 +322,83 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
       eventsByVendor.set(event.vendorId, existing);
     }
 
-    // Combine vendors with their events
-    let result = vendorResults.map((v) => ({
-      id: v.vendors.id,
-      businessName: v.vendors.businessName,
-      // EH2.1 — surface display_name override on the listing. Brand-parent-
-      // mode grouping (one card per brand, not per office) lands with
-      // PR EH2.2's listing-grouping change. For now each office still
-      // renders its own card, with the display_name override honored.
-      displayName: v.vendors.displayName,
-      role: v.vendors.role,
-      brandParentVendorId: v.vendors.brandParentVendorId,
-      operatorParentVendorId: v.vendors.operatorParentVendorId,
-      aliasOfVendorId: v.vendors.aliasOfVendorId,
-      displayOverridePermitted: v.vendors.displayOverridePermitted,
-      displayMode: v.vendors.displayMode,
-      slug: v.vendors.slug,
-      description: v.vendors.description,
-      vendorType: v.vendors.vendorType,
-      products: v.vendors.products,
-      logoUrl: v.vendors.logoUrl,
-      imageFocalX: v.vendors.imageFocalX,
-      imageFocalY: v.vendors.imageFocalY,
-      website: v.vendors.website,
-      verified: v.vendors.verified,
-      commercial: v.vendors.commercial,
-      claimed: v.vendors.claimed,
-      enhancedProfile: v.vendors.enhancedProfile,
-      verifiedPro: v.vendors.verifiedPro,
-      city: v.vendors.city,
-      state: v.vendors.state,
-      events: (eventsByVendor.get(v.vendors.id) || []).map((e) => ({
-        id: e.eventId,
-        name: e.eventName,
-        slug: e.eventSlug,
-        startDate: e.startDate,
-        endDate: e.endDate,
-        imageUrl: e.imageUrl,
-        venue: e.venueName
-          ? {
-              name: e.venueName,
-              city: e.venueCity,
-              state: e.venueState,
-            }
-          : null,
-      })),
-    }));
+    // EH2.2 — build the result list from the card descriptors, not from
+    // vendorResults directly. Each card's canonical row is what renders;
+    // its aggregatedEventVendorIds drive the events shown on that card.
+    type AllVendorEvent = (typeof allVendorEvents)[number];
+    let result = cards
+      .map((card) => {
+        const v = vendorRowById.get(card.vendorId);
+        if (!v) return null;
+
+        // Aggregate events over the card's vendor-id set. Dedup by event
+        // id (an event could appear under multiple offices of the same
+        // brand if it's a multi-office sponsorship, though the schema
+        // doesn't currently allow it — defensive).
+        const eventById = new Map<string, AllVendorEvent>();
+        for (const vid of card.aggregatedEventVendorIds) {
+          for (const ev of eventsByVendor.get(vid) ?? []) {
+            if (!eventById.has(ev.eventId)) eventById.set(ev.eventId, ev);
+          }
+        }
+        const aggregatedEvents = [...eventById.values()].sort((a, b) => {
+          const at = a.startDate?.getTime() ?? Infinity;
+          const bt = b.startDate?.getTime() ?? Infinity;
+          return at - bt;
+        });
+
+        return {
+          id: v.id,
+          businessName: v.businessName,
+          displayName: v.displayName,
+          role: v.role,
+          brandParentVendorId: v.brandParentVendorId,
+          operatorParentVendorId: v.operatorParentVendorId,
+          aliasOfVendorId: v.aliasOfVendorId,
+          displayOverridePermitted: v.displayOverridePermitted,
+          displayMode: v.displayMode,
+          slug: v.slug,
+          description: v.description,
+          vendorType: v.vendorType,
+          products: v.products,
+          logoUrl: v.logoUrl,
+          imageFocalX: v.imageFocalX,
+          imageFocalY: v.imageFocalY,
+          website: v.website,
+          verified: v.verified,
+          commercial: v.commercial,
+          claimed: v.claimed,
+          enhancedProfile: v.enhancedProfile,
+          verifiedPro: v.verifiedPro,
+          city: v.city,
+          state: v.state,
+          // EH2.2 — flag set on brand-collapsed cards so the UI can show
+          // a subtle "X offices" indicator if/when we want one. v1 leaves
+          // the card visually identical; the flag is plumbing for v2.
+          isBrandCollapsed: card.isBrandCollapsed,
+          // Aggregated office count (for brand-collapsed cards). When
+          // not collapsed, the field is omitted.
+          officeCount: card.isBrandCollapsed
+            ? (officesByBrandId.get(v.id)?.length ?? 0)
+            : undefined,
+          events: aggregatedEvents.map((e) => ({
+            id: e.eventId,
+            name: e.eventName,
+            slug: e.eventSlug,
+            startDate: e.startDate,
+            endDate: e.endDate,
+            imageUrl: e.imageUrl,
+            venue: e.venueName
+              ? {
+                  name: e.venueName,
+                  city: e.venueCity,
+                  state: e.venueState,
+                }
+              : null,
+          })),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
 
     // Filter by hasEvents if requested
     if (searchParams.hasEvents === "true") {
