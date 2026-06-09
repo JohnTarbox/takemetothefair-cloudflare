@@ -31,6 +31,7 @@ import {
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
 import { runScheduledCompletenessRecompute } from "./completeness-recompute-canary.js";
 import { runScheduledPageErrorCanary } from "./page-error-canary.js";
+import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
@@ -1415,6 +1416,15 @@ export default {
         // recompute*Completeness. Cosmetic-failsoft: any per-row error
         // is swallowed inside the helper; the cron always resolves.
         runScheduledCompletenessRecompute(getDb(env.DB)).then(() => undefined),
+        // A5 (2026-06-08, REL3 sibling) — standing-failure detector.
+        // Catches "same error_logs.source recurring across ≥3 distinct
+        // days in 7-day window" — the persistence signal the page-error
+        // canary's 10-min rate window misses. REL3 itself ran silently
+        // for 3 weeks because of this exact gap. See
+        // mcp-server/src/standing-failure-canary.ts. Cosmetic-failsoft
+        // by construction (the helper catches its own errors and only
+        // logs).
+        runScheduledStandingFailureCanary(env),
       ]).then(() => undefined)
     );
   },

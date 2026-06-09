@@ -35,7 +35,12 @@
 import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "@/lib/db/schema";
-import { errorLogs, recommendationItems, recommendationRules } from "@/lib/db/schema";
+import {
+  errorLogs,
+  recommendationItems,
+  recommendationRules,
+  recommendationScanState,
+} from "@/lib/db/schema";
 import { buildCanonicalPathChecker, type CanonicalPathChecker } from "./canonical-paths";
 
 // GSC-derived rules whose payload.topPagePath can point at a renamed slug.
@@ -206,6 +211,12 @@ export type ScanResult = {
     inserted: number;
     refreshed: number;
     resolved: number;
+    /** Wall-clock ms for this rule's run() + dedup + INSERT/UPDATE writes.
+     *  REL3 (2026-06-08) — added so the cursor-resume workflow can surface
+     *  slow rules via error_logs WARN rows (`mcp:workflow:recommendations-scan:slow-rule`).
+     *  Always present (even on success and failure paths) so callers don't
+     *  have to special-case undefined. */
+    ms: number;
     /** Set when this rule's run() threw. Other rules in the same scan are
      *  unaffected (engine catches per-rule). lastScannedAt is NOT updated
      *  on the failed rule so the previous timestamp is preserved as a
@@ -304,6 +315,11 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
     if (!enabledKeys.has(def.ruleKey)) continue;
     const ruleId = ruleIds.get(def.ruleKey);
     if (!ruleId) continue;
+
+    // REL3 timing — captures both the success and failure paths via the
+    // `finally` block on the catch (variable lives in the for-iteration
+    // scope, recorded into the perRule entry below).
+    const ruleStart = Date.now();
 
     // Per-rule isolation: one rule's failure must not kill the scan for
     // every later rule. Daily cron + manual "Run scan" were both losing
@@ -432,6 +448,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
         inserted,
         refreshed,
         resolved,
+        ms: Date.now() - ruleStart,
       });
       totalInserted += inserted;
       totalRefreshed += refreshed;
@@ -456,6 +473,7 @@ export async function scanAll(db: Db, defs: RuleDefinition[]): Promise<ScanResul
         inserted: 0,
         refreshed: 0,
         resolved: 0,
+        ms: Date.now() - ruleStart,
         error: message,
       });
       failedRules++;
@@ -764,4 +782,48 @@ export async function getScanState(db: Db): Promise<ScanState> {
   failedRules.sort((a, b) => a.ruleKey.localeCompare(b.ruleKey));
   allRules.sort((a, b) => a.ruleKey.localeCompare(b.ruleKey));
   return { lastSuccessfulScanAt, failedRules, allRules };
+}
+
+/** REL3 (2026-06-08) — read the cursor-resume state for the daily
+ *  scan workflow. Powers the "Cycle progress" surface in the admin
+ *  recommendations tab.
+ *
+ *  Returns null if the migration hasn't been applied (cursor row
+ *  missing) — UI degrades to "scan state unknown" rather than crashing.
+ */
+export type CycleState = {
+  cursor: number;
+  totalRules: number;
+  lastRunAt: Date | null;
+  lastRunChunks: number;
+  completedCycles: number;
+  cycleStartedAt: Date | null;
+};
+
+export async function getCycleState(db: Db): Promise<CycleState | null> {
+  const rows = await db
+    .select({
+      cursor: recommendationScanState.cursor,
+      lastRunAt: recommendationScanState.lastRunAt,
+      lastRunChunks: recommendationScanState.lastRunChunks,
+      completedCycles: recommendationScanState.completedCycles,
+      cycleStartedAt: recommendationScanState.cycleStartedAt,
+    })
+    .from(recommendationScanState)
+    .where(eq(recommendationScanState.id, "default"))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  // totalRules is the source-of-truth rule count from the ALL_RULES
+  // export — keeping it co-located here avoids the surface having to
+  // re-import the rules array.
+  const { ALL_RULES } = await import("./rules/index");
+  return {
+    cursor: row.cursor,
+    totalRules: ALL_RULES.length,
+    lastRunAt: row.lastRunAt,
+    lastRunChunks: row.lastRunChunks,
+    completedCycles: row.completedCycles,
+    cycleStartedAt: row.cycleStartedAt,
+  };
 }
