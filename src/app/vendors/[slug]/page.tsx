@@ -28,7 +28,7 @@ import {
   vendorSlugHistory,
 } from "@/lib/db/schema";
 import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
-import { eq, ne, and, or, asc, desc, sql, isNull } from "drizzle-orm";
+import { eq, ne, and, or, asc, desc, sql, isNull, inArray, gte } from "drizzle-orm";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
 import { VendorMonogramLogo } from "@/components/vendors/VendorMonogramLogo";
@@ -341,6 +341,24 @@ async function getVendor(slug: string) {
         .limit(1);
       if (opRow) operatorParent = opRow;
     }
+    // EH2.3 — brand hub page extras. When this vendor is a NATIONAL brand,
+    // fetch its LOCAL_OFFICE children + all upcoming events linked to those
+    // offices so the hub page can render the "Upcoming Events" section
+    // (union across all offices, dedup by event id). National brands
+    // typically have no direct event_vendors of their own, so this is
+    // where the brand-hub activity surface comes from.
+    type AggregatedEvent = {
+      id: string;
+      name: string;
+      slug: string;
+      startDate: Date | null;
+      endDate: Date | null;
+      imageUrl: string | null;
+      venueName: string | null;
+      venueCity: string | null;
+      venueState: string | null;
+    };
+    const aggregatedChildEvents: AggregatedEvent[] = [];
     if (vendor.vendors.role === "NATIONAL") {
       children = await db
         .select({
@@ -358,6 +376,44 @@ async function getVendor(slug: string) {
         .from(vendors)
         .where(and(eq(vendors.brandParentVendorId, vendor.vendors.id), isNull(vendors.deletedAt)))
         .orderBy(asc(vendors.state), asc(vendors.city), asc(vendors.businessName));
+
+      // Aggregated upcoming events across all children. Dedup by event_id
+      // (rare but possible — same event with two offices both linked as
+      // exhibitors). Public-status gate matches the office-page event
+      // section so the hub doesn't surface anything the office page
+      // would suppress.
+      if (children.length > 0) {
+        const childIds = children.map((c) => c.id);
+        const childEventRows = await db
+          .select({
+            id: events.id,
+            name: events.name,
+            slug: events.slug,
+            startDate: events.startDate,
+            endDate: events.endDate,
+            imageUrl: events.imageUrl,
+            venueName: venues.name,
+            venueCity: venues.city,
+            venueState: venues.state,
+          })
+          .from(eventVendors)
+          .innerJoin(events, eq(eventVendors.eventId, events.id))
+          .leftJoin(venues, eq(events.venueId, venues.id))
+          .where(
+            and(
+              inArray(eventVendors.vendorId, childIds),
+              isPublicVendorStatus(),
+              gte(events.endDate, new Date())
+            )
+          )
+          .orderBy(asc(events.startDate));
+        const seenIds = new Set<string>();
+        for (const e of childEventRows) {
+          if (seenIds.has(e.id)) continue;
+          seenIds.add(e.id);
+          aggregatedChildEvents.push(e);
+        }
+      }
     }
 
     return {
@@ -371,6 +427,9 @@ async function getVendor(slug: string) {
       parent: brandParent,
       operatorParent,
       children,
+      /* EH2.3 — upcoming events aggregated across the brand's offices.
+         Empty array for non-NATIONAL rows. */
+      aggregatedChildEvents,
     };
   } catch (e) {
     await logError(db, {
@@ -714,6 +773,27 @@ export default async function VendorDetailPage({ params }: Props) {
         socialLinks={vendor.socialLinks}
         products={products}
         galleryImageUrls={isEnhanced ? galleryImages.map((g) => g.url) : undefined}
+        /* EH2.3 — JSON-LD parentOrganization for LOCAL_OFFICE rows, pointing
+           at the brand hub. Pairs with the brand hub's subOrganization
+           below so search engines see the brand → office relationship. */
+        parentOrganization={
+          vendor.parent
+            ? {
+                name: decodeHtmlEntities(vendor.parent.displayName ?? vendor.parent.businessName),
+                url: `https://meetmeatthefair.com/vendors/${vendor.parent.slug}`,
+              }
+            : null
+        }
+        /* EH2.3 — JSON-LD subOrganization on the brand hub (NATIONAL row)
+           listing each LOCAL_OFFICE child. */
+        subOrganizations={
+          isNationalHub && vendor.children.length > 0
+            ? vendor.children.map((child) => ({
+                name: decodeHtmlEntities(child.displayName ?? child.businessName),
+                url: `https://meetmeatthefair.com/vendors/${child.slug}`,
+              }))
+            : undefined
+        }
       />
       <BreadcrumbSchema
         items={[
@@ -828,6 +908,18 @@ export default async function VendorDetailPage({ params }: Props) {
                 {vendor.vendorType && (
                   <p className="mt-1 text-lg text-muted-foreground">{vendor.vendorType}</p>
                 )}
+                {/* EH2.3 — aggregated activity count on the brand hub.
+                    "Exhibits at N show{s}" per spec §C3. Only renders for
+                    NATIONAL rows with at least one aggregated upcoming
+                    event across their offices. */}
+                {isNationalHub && vendor.aggregatedChildEvents.length > 0 && (
+                  <p className="mt-2 text-sm text-muted-foreground flex items-center gap-1">
+                    <Calendar className="w-4 h-4" />
+                    Exhibits at {vendor.aggregatedChildEvents.length} upcoming{" "}
+                    {vendor.aggregatedChildEvents.length === 1 ? "show" : "shows"} across{" "}
+                    {vendor.children.length} {vendor.children.length === 1 ? "office" : "offices"}
+                  </p>
+                )}
                 {isEnhanced && (
                   <div className="mt-3">
                     <VendorContactForm vendorSlug={vendor.slug} vendorName={resolvedName} />
@@ -902,6 +994,15 @@ export default async function VendorDetailPage({ params }: Props) {
                               {child.contactPhone}
                             </p>
                           )}
+                          {/* EH2.3 — email surfaced on the brand-hub office
+                              card per spec §C3 "contact (incl. claimed
+                              offices' email/phone when set)". */}
+                          {child.contactEmail && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
+                              <Mail className="w-3 h-3" />
+                              {child.contactEmail}
+                            </p>
+                          )}
                         </CardContent>
                       </Card>
                     </Link>
@@ -914,6 +1015,46 @@ export default async function VendorDetailPage({ params }: Props) {
             {isNationalHub && vendor.children.length === 0 && (
               <div className="rounded-md border border-border bg-muted p-4 text-sm text-muted-foreground">
                 No local offices listed yet.
+              </div>
+            )}
+
+            {/* EH2.3 — aggregated upcoming events across the brand's offices.
+                Renders only on the NATIONAL hub. Each event card links to
+                the event detail (not to the office that's exhibiting),
+                matching the "the brand is at N shows" framing. Union is
+                deduped by event_id at the data layer. */}
+            {isNationalHub && vendor.aggregatedChildEvents.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold text-foreground">
+                    Upcoming Events ({vendor.aggregatedChildEvents.length})
+                  </h2>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {vendor.aggregatedChildEvents.slice(0, 12).map((ev) => (
+                    <Link key={ev.id} href={`/events/${ev.slug}`} className="block">
+                      <Card className="hover:shadow-md transition-shadow h-full">
+                        <CardContent className="p-4">
+                          <h3 className="font-medium text-foreground hover:text-navy">
+                            {decodeHtmlEntities(ev.name)}
+                          </h3>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            {formatDateRange(ev.startDate, ev.endDate)}
+                          </p>
+                          {ev.venueName && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
+                              <MapPin className="w-3 h-3" />
+                              {ev.venueName}
+                              {ev.venueCity && ev.venueState
+                                ? ` · ${ev.venueCity}, ${ev.venueState}`
+                                : ""}
+                            </p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  ))}
+                </div>
               </div>
             )}
 

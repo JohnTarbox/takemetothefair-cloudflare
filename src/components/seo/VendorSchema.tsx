@@ -68,6 +68,20 @@ interface VendorSchemaProps {
   // Round-3 additions: Enhanced Profile vendors emit an array of images
   // (logo + gallery) so social/AI crawlers see the full visual set.
   galleryImageUrls?: string[];
+  /**
+   * EH2.3 — parent brand organization. When a LOCAL_OFFICE vendor has a
+   * brand parent, emit JSON-LD `parentOrganization` pointing to the
+   * brand's hub page. Schema.org pairs with the brand hub's
+   * `subOrganization` for a structured-data graph search engines can
+   * follow.
+   */
+  parentOrganization?: { name: string; url: string } | null;
+  /**
+   * EH2.3 — sub-organizations (LOCAL_OFFICE children). Set on the brand
+   * hub page so search engines see the brand → office tree. Each entry
+   * is `{ name, url }`.
+   */
+  subOrganizations?: { name: string; url: string }[];
 }
 
 export function VendorSchema({
@@ -88,6 +102,8 @@ export function VendorSchema({
   products,
   vendorType,
   galleryImageUrls,
+  parentOrganization,
+  subOrganizations,
 }: VendorSchemaProps) {
   const sameAs: string[] = [];
   if (website) sameAs.push(website);
@@ -152,6 +168,25 @@ export function VendorSchema({
           name: state,
         }
       : undefined,
+    // EH2.3 — vendor hierarchy. parentOrganization links offices up to
+    // the brand; subOrganization lists offices on the brand hub. Both
+    // emit only when set so independent vendors (~99% of rows) see no
+    // change in their JSON-LD shape.
+    parentOrganization: parentOrganization
+      ? {
+          "@type": "Organization",
+          name: parentOrganization.name,
+          url: parentOrganization.url,
+        }
+      : undefined,
+    subOrganization:
+      subOrganizations && subOrganizations.length > 0
+        ? subOrganizations.map((s) => ({
+            "@type": "Organization",
+            name: s.name,
+            url: s.url,
+          }))
+        : undefined,
   };
 
   const cleanSchema = JSON.parse(JSON.stringify(schema));
