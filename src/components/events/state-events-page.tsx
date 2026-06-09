@@ -74,6 +74,7 @@ async function getStateEvents(
     eventId: string;
     vendorId: string;
     businessName: string;
+    displayName: string | null;
     slug: string;
     logoUrl: string | null;
     vendorType: string | null;
@@ -88,6 +89,9 @@ async function getStateEvents(
           eventId: eventVendors.eventId,
           vendorId: vendors.id,
           businessName: vendors.businessName,
+          // EH2.1 — brand display_name override surfaces on per-state event
+          // card vendor tiles.
+          displayName: vendors.displayName,
           slug: vendors.slug,
           logoUrl: vendors.logoUrl,
           vendorType: vendors.vendorType,
@@ -119,6 +123,7 @@ async function getStateEvents(
     vendors: (vendorsByEvent.get(r.events.id) || []).map((ev) => ({
       id: ev.vendorId,
       businessName: ev.businessName,
+      displayName: ev.displayName,
       slug: ev.slug,
       logoUrl: ev.logoUrl,
       vendorType: ev.vendorType,

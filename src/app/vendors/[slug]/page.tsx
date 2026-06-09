@@ -49,7 +49,13 @@ import { ClaimListingCTA } from "@/components/vendors/ClaimListingCTA";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
-import { canonicalParentSlugFor, type DisplayableParent } from "@/lib/vendor-hierarchy";
+import {
+  canonicalParentSlugFor,
+  displayVendorName,
+  type DisplayableParent,
+  type ParentDisplayInput,
+  type VendorDisplayInput,
+} from "@takemetothefair/utils";
 import { cdnImage, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
 export const runtime = "edge";
@@ -83,6 +89,45 @@ async function findCurrentSlugForOld(slug: string): Promise<string | null> {
     cursor = rows[0].newSlug;
   }
   return cursor;
+}
+
+/**
+ * EH2.1 — render-side glue between getVendor()'s return shape and the
+ * displayVendorName helper. Hoisted so both generateMetadata and the page
+ * render call the same code path (the alternative — two inlined input-
+ * builder blobs — drifts the moment one is edited and the other isn't).
+ */
+type VendorWithHierarchy = Awaited<ReturnType<typeof getVendor>>;
+function resolveDisplayName(vendor: NonNullable<VendorWithHierarchy>): string {
+  const vendorInput: VendorDisplayInput = {
+    role: vendor.role,
+    brandParentVendorId: vendor.brandParentVendorId,
+    operatorParentVendorId: vendor.operatorParentVendorId,
+    aliasOfVendorId: vendor.aliasOfVendorId,
+    displayOverridePermitted: vendor.displayOverridePermitted,
+    displayMode: vendor.displayMode,
+    businessName: vendor.businessName,
+    displayName: vendor.displayName,
+  };
+  const brandParentInput: ParentDisplayInput | null = vendor.parent
+    ? {
+        id: vendor.parent.id,
+        role: vendor.parent.role,
+        defaultChildDisplay: vendor.parent.defaultChildDisplay,
+        businessName: vendor.parent.businessName,
+        displayName: vendor.parent.displayName,
+      }
+    : null;
+  const operatorParentInput: ParentDisplayInput | null = vendor.operatorParent
+    ? {
+        id: vendor.operatorParent.id,
+        role: vendor.operatorParent.role,
+        defaultChildDisplay: vendor.operatorParent.defaultChildDisplay,
+        businessName: vendor.operatorParent.businessName,
+        displayName: vendor.operatorParent.displayName,
+      }
+    : null;
+  return displayVendorName(vendorInput, brandParentInput, operatorParentInput);
 }
 
 async function getVendor(slug: string) {
@@ -235,6 +280,11 @@ async function getVendor(slug: string) {
       role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
       defaultChildDisplay: "self" | "brand_parent" | "both" | null;
       businessName: string;
+      // EH2.1 — surface the brand's display_name override so the "Part of
+      // <brand>" line + breadcrumb + JSON-LD parentOrganization all see the
+      // brand's preferred marketing name (e.g. "LeafFilter" not "LeafFilter
+      // North LLC"). Helper falls back to businessName when null.
+      displayName: string | null;
     };
     let brandParent: ParentRow | null = null;
     let operatorParent: ParentRow | null = null;
@@ -242,6 +292,7 @@ async function getVendor(slug: string) {
       id: string;
       slug: string;
       businessName: string;
+      displayName: string | null;
       city: string | null;
       state: string | null;
       contactPhone: string | null;
@@ -258,6 +309,7 @@ async function getVendor(slug: string) {
           role: vendors.role,
           defaultChildDisplay: vendors.defaultChildDisplay,
           businessName: vendors.businessName,
+          displayName: vendors.displayName,
         })
         .from(vendors)
         .where(and(eq(vendors.id, vendor.vendors.brandParentVendorId), isNull(vendors.deletedAt)))
@@ -280,6 +332,7 @@ async function getVendor(slug: string) {
           role: vendors.role,
           defaultChildDisplay: vendors.defaultChildDisplay,
           businessName: vendors.businessName,
+          displayName: vendors.displayName,
         })
         .from(vendors)
         .where(
@@ -294,6 +347,7 @@ async function getVendor(slug: string) {
           id: vendors.id,
           slug: vendors.slug,
           businessName: vendors.businessName,
+          displayName: vendors.displayName,
           city: vendors.city,
           state: vendors.state,
           contactPhone: vendors.contactPhone,
@@ -360,6 +414,10 @@ async function getSimilarVendors(vendorId: string, vendorType: string | null, ci
         id: vendors.id,
         slug: vendors.slug,
         businessName: vendors.businessName,
+        // EH2.1 — surface brand display_name override on the similar-vendors
+        // module so the brand name (e.g. "LeafFilter") shows instead of
+        // the legal-entity name (e.g. "LeafFilter North LLC").
+        displayName: vendors.displayName,
         vendorType: vendors.vendorType,
         city: vendors.city,
         state: vendors.state,
@@ -414,7 +472,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     return { title: "Vendor Not Found" };
   }
 
-  const businessName = decodeHtmlEntities(vendor.businessName);
+  // EH2.1 — resolve the brand-aware display name. For INDEPENDENT vendors
+  // (the common case) this is identical to vendor.businessName, so meta
+  // tags / canonical / cache keys stay stable. For LOCAL_OFFICE rows under
+  // a brand_parent-mode brand, the brand's name surfaces here too so the
+  // page title + OG + Twitter all match what the user sees in the H1.
+  const resolvedDisplayName = resolveDisplayName(vendor);
+  const businessName = decodeHtmlEntities(resolvedDisplayName);
   const title = `${businessName} | Meet Me at the Fair`;
   const description = buildVendorMetaDescription(vendor);
   const url = `https://meetmeatthefair.com/vendors/${vendor.slug}`;
@@ -622,12 +686,19 @@ export default async function VendorDetailPage({ params }: Props) {
     : null;
   const inGrace = isEnhanced && expiresAt !== null && expiresAt.getTime() < now.getTime();
 
+  // EH2.1 — resolved display name for every surface EXCEPT the analytics
+  // tracker. The DetailPageTracker `name` is a GA4 dimension that should
+  // stay stable across an office's lifecycle so saved reports don't
+  // fragment when a brand later opts into brand-parent collapse. Render
+  // surfaces (H1, JSON-LD, breadcrumb, OG/Twitter, gallery alt) move to
+  // the resolved string.
+  const resolvedName = resolveDisplayName(vendor);
   return (
     <>
       <DetailPageTracker type="vendor" slug={vendor.slug} name={vendor.businessName} />
       <ScrollDepthTracker pageType="vendor-detail" />
       <VendorSchema
-        businessName={vendor.businessName}
+        businessName={resolvedName}
         description={vendor.description}
         logoUrl={vendor.logoUrl}
         url={`https://meetmeatthefair.com/vendors/${vendor.slug}`}
@@ -648,7 +719,7 @@ export default async function VendorDetailPage({ params }: Props) {
         items={[
           { name: "Home", url: "https://meetmeatthefair.com" },
           { name: "Vendors", url: "https://meetmeatthefair.com/vendors" },
-          { name: vendor.businessName, url: `https://meetmeatthefair.com/vendors/${vendor.slug}` },
+          { name: resolvedName, url: `https://meetmeatthefair.com/vendors/${vendor.slug}` },
         ]}
       />
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -685,12 +756,15 @@ export default async function VendorDetailPage({ params }: Props) {
                   {vendor.logoUrl ? (
                     <Image
                       src={vendor.logoUrl}
-                      alt={vendor.businessName}
+                      alt={resolvedName}
                       fill
                       sizes="200px"
                       className="object-cover rounded-xl"
                     />
                   ) : (
+                    // VendorMonogramLogo intentionally reads the raw
+                    // businessName: the initial-letter logo represents row
+                    // identity, not the resolved brand surface.
                     <VendorMonogramLogo businessName={vendor.businessName} size={200} />
                   )}
                 </div>
@@ -715,7 +789,7 @@ export default async function VendorDetailPage({ params }: Props) {
                       href={`/vendors/${vendor.parent.slug}`}
                       className="text-royal hover:text-navy font-medium underline"
                     >
-                      {decodeHtmlEntities(vendor.parent.businessName)}
+                      {decodeHtmlEntities(vendor.parent.displayName ?? vendor.parent.businessName)}
                     </Link>
                     {vendor.operatorParent && (
                       <>
@@ -725,14 +799,16 @@ export default async function VendorDetailPage({ params }: Props) {
                           href={`/vendors/${vendor.operatorParent.slug}`}
                           className="text-royal hover:text-navy font-medium underline"
                         >
-                          {decodeHtmlEntities(vendor.operatorParent.businessName)}
+                          {decodeHtmlEntities(
+                            vendor.operatorParent.displayName ?? vendor.operatorParent.businessName
+                          )}
                         </Link>
                       </>
                     )}
                   </p>
                 )}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-3xl font-bold text-foreground">{vendor.businessName}</h1>
+                  <h1 className="text-3xl font-bold text-foreground">{resolvedName}</h1>
                   {isEnhanced && vendor.verified && (
                     <span
                       className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-800 text-xs font-medium px-2 py-0.5"
@@ -754,14 +830,14 @@ export default async function VendorDetailPage({ params }: Props) {
                 )}
                 {isEnhanced && (
                   <div className="mt-3">
-                    <VendorContactForm vendorSlug={vendor.slug} vendorName={vendor.businessName} />
+                    <VendorContactForm vendorSlug={vendor.slug} vendorName={resolvedName} />
                   </div>
                 )}
               </div>
             </div>
 
             {isEnhanced && galleryImages.length > 0 && (
-              <VendorGallery images={galleryImages} vendorName={vendor.businessName} />
+              <VendorGallery images={galleryImages} vendorName={resolvedName} />
             )}
 
             {vendor.description && (
@@ -806,7 +882,13 @@ export default async function VendorDetailPage({ params }: Props) {
                       <Card className="hover:shadow-md transition-shadow h-full">
                         <CardContent className="p-4">
                           <h3 className="font-medium text-foreground hover:text-navy">
-                            {decodeHtmlEntities(child.businessName)}
+                            {/* Office card under the NATIONAL hub — show the
+                                OFFICE's own self-name (with display_name
+                                override) so the admin / public can identify
+                                each office. Even under brand_parent-mode
+                                collapse on /vendors listing, this section
+                                exists specifically to enumerate offices. */}
+                            {decodeHtmlEntities(child.displayName ?? child.businessName)}
                           </h3>
                           {(child.city || child.state) && (
                             <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
@@ -993,48 +1075,52 @@ export default async function VendorDetailPage({ params }: Props) {
                   )}
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {similarVendors.map((sv) => (
-                    <Link
-                      key={sv.id}
-                      href={`/vendors/${sv.slug}`}
-                      className="rounded-xl border border-border bg-card hover:shadow-md hover:-translate-y-0.5 transition-all p-4 flex items-center gap-3"
-                    >
-                      <div className="flex-shrink-0">
-                        {sv.logoUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={cdnImage(sv.logoUrl, {
-                              width: 56,
-                              height: 56,
-                              fit: "cover",
-                              format: "auto",
-                              quality: 80,
-                              onerror: "redirect",
-                            })}
-                            alt={`${sv.businessName} logo`}
-                            width={56}
-                            height={56}
-                            loading="lazy"
-                            decoding="async"
-                            className="w-14 h-14 rounded-lg object-cover"
-                          />
-                        ) : (
-                          <VendorMonogramLogo
-                            businessName={sv.businessName}
-                            size={56}
-                            className="!rounded-lg"
-                          />
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-foreground truncate">{sv.businessName}</p>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {sv.vendorType}
-                          {sv.city && sv.state && ` · ${sv.city}, ${sv.state}`}
-                        </p>
-                      </div>
-                    </Link>
-                  ))}
+                  {similarVendors.map((sv) => {
+                    const svName = sv.displayName ?? sv.businessName;
+                    return (
+                      <Link
+                        key={sv.id}
+                        href={`/vendors/${sv.slug}`}
+                        className="rounded-xl border border-border bg-card hover:shadow-md hover:-translate-y-0.5 transition-all p-4 flex items-center gap-3"
+                      >
+                        <div className="flex-shrink-0">
+                          {sv.logoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={cdnImage(sv.logoUrl, {
+                                width: 56,
+                                height: 56,
+                                fit: "cover",
+                                format: "auto",
+                                quality: 80,
+                                onerror: "redirect",
+                              })}
+                              alt={`${svName} logo`}
+                              width={56}
+                              height={56}
+                              loading="lazy"
+                              decoding="async"
+                              className="w-14 h-14 rounded-lg object-cover"
+                            />
+                          ) : (
+                            // Monogram still uses raw businessName — row identity.
+                            <VendorMonogramLogo
+                              businessName={sv.businessName}
+                              size={56}
+                              className="!rounded-lg"
+                            />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground truncate">{svName}</p>
+                          <p className="text-sm text-muted-foreground truncate">
+                            {sv.vendorType}
+                            {sv.city && sv.state && ` · ${sv.city}, ${sv.state}`}
+                          </p>
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             )}

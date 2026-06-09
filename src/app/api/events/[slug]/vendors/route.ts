@@ -32,6 +32,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       .select({
         id: vendors.id,
         businessName: vendors.businessName,
+        // EH2.1 — surface the brand display_name override so the client
+        // page falls back to it when set (e.g. "LeafFilter" vs "LeafFilter
+        // North LLC"). The full brand_parent gate is not applied here
+        // because event vendor lists are row-level — a brand with 6
+        // offices at one event still renders 6 rows, not collapsed.
+        displayName: vendors.displayName,
         slug: vendors.slug,
         vendorType: vendors.vendorType,
         logoUrl: vendors.logoUrl,

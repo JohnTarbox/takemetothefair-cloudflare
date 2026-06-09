@@ -441,6 +441,10 @@ export const vendors = sqliteTable("vendors", {
     .unique()
     .references(() => users.id, { onDelete: "cascade" }),
   businessName: text("business_name").notNull(),
+  // EH2.1 (drizzle/0121, 2026-06-09) — optional brand display override.
+  // Resolved at render time via displayVendorName() in @takemetothefair/utils.
+  // NULL = render business_name as today (zero behavior change for ~99% of rows).
+  displayName: text("display_name"),
   slug: text("slug").$type<Slug>().notNull().unique(),
   description: text("description"),
   vendorType: text("vendor_type"),

@@ -13,6 +13,8 @@ export const runtime = "edge";
 interface Vendor {
   id: string;
   businessName: string;
+  /** EH2.1 brand display override; null falls back to businessName. */
+  displayName?: string | null;
   slug: string;
   vendorType: string | null;
   logoUrl: string | null;
@@ -64,10 +66,15 @@ export default function EventVendorsPage() {
 
   // Filter vendors
   const filteredVendors = vendors.filter((vendor) => {
+    // EH2.1 — search matches against either business_name or the brand
+    // display_name override so a user typing the brand surface ("LeafFilter")
+    // finds the office even when only the override stores the surface.
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      vendor.businessName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      vendor.vendorType?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      vendor.description?.toLowerCase().includes(searchQuery.toLowerCase());
+      vendor.businessName.toLowerCase().includes(q) ||
+      vendor.displayName?.toLowerCase().includes(q) ||
+      vendor.vendorType?.toLowerCase().includes(q) ||
+      vendor.description?.toLowerCase().includes(q);
     const matchesType = selectedType === "all" || vendor.vendorType === selectedType;
     return matchesSearch && matchesType;
   });
@@ -95,7 +102,7 @@ export default function EventVendorsPage() {
           name={`Vendors at ${eventInfo.name}`}
           description={`Vendors participating in ${eventInfo.name}`}
           items={vendors.map((vendor) => ({
-            name: vendor.businessName,
+            name: vendor.displayName ?? vendor.businessName,
             url: `https://meetmeatthefair.com/vendors/${vendor.slug}`,
             image: vendor.logoUrl,
           }))}
@@ -190,7 +197,7 @@ export default function EventVendorsPage() {
                       {vendor.logoUrl ? (
                         <img
                           src={vendor.logoUrl}
-                          alt={vendor.businessName}
+                          alt={vendor.displayName ?? vendor.businessName}
                           className="w-16 h-16 rounded-lg object-cover"
                         />
                       ) : (
@@ -200,7 +207,7 @@ export default function EventVendorsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-foreground truncate">
-                          {vendor.businessName}
+                          {vendor.displayName ?? vendor.businessName}
                         </h3>
                         {vendor.verified && (
                           <CheckCircle className="w-4 h-4 text-royal flex-shrink-0" />
@@ -259,7 +266,9 @@ export default function EventVendorsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-foreground">{vendor.businessName}</h3>
+                      <h3 className="font-semibold text-foreground">
+                        {vendor.displayName ?? vendor.businessName}
+                      </h3>
                       {vendor.verified && <CheckCircle className="w-4 h-4 text-royal" />}
                       {vendor.vendorType && <Badge variant="default">{vendor.vendorType}</Badge>}
                     </div>

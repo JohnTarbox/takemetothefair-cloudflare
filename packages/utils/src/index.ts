@@ -361,3 +361,15 @@ export * from "./venue-name";
 // same anchor as the email pipeline. 5 main-app ingest paths bypassed
 // this convention pre-A3.
 export * from "./event-dates";
+
+// EH2.1 (2026-06-09): vendor display resolution + alias chain. Relocated
+// from src/lib/vendor-hierarchy.ts so the MCP server's vendor-returning
+// tools (search_vendors / list_event_vendors / list_event_vendors_admin /
+// get_vendor_details) can compute a resolved display_name alongside the
+// raw business_name, matching the public render layer.
+export * from "./vendor-hierarchy";
+
+// EH2.1 (2026-06-09): displayVendorName() — the render-time helper that
+// composes resolveAlias + resolveVendorDisplay into a single resolved
+// string. Mirrors the displayVenueName sweep from PR #296/#298.
+export * from "./vendor-display";

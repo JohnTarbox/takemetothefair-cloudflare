@@ -29,6 +29,19 @@ interface VendorEvent {
 interface VendorWithEvents {
   id: string;
   businessName: string;
+  /** EH2.1 brand display override; falls back to businessName when null. */
+  displayName?: string | null;
+  /** EH1 hierarchy fields — accepted by VendorCard for gate-aware resolution.
+   *  Populated by PR EH2.2's listing JOIN; for now the listing passes the
+   *  raw values and the card falls back to office self-name. */
+  role?: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT";
+  brandParentVendorId?: string | null;
+  operatorParentVendorId?: string | null;
+  aliasOfVendorId?: string | null;
+  displayOverridePermitted?: boolean;
+  displayMode?: "inherit" | "self" | "brand_parent" | "operator_parent" | "both" | null;
+  imageFocalX?: number;
+  imageFocalY?: number;
   slug: string;
   description: string | null;
   vendorType: string | null;
@@ -67,8 +80,12 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
     window.location.href = exportUrl;
   };
 
+  // EH2.1 — sort by resolved display string so the listing's alphabetical
+  // order reflects what users see (e.g. "LeafFilter" sorts under L, not
+  // "LeafFilter North LLC" under L for the same row — same letter today but
+  // a brand whose override drops "North LLC" reads differently here).
   const sortedVendors = sortData(vendors, sortConfig, {
-    businessName: (v) => v.businessName.toLowerCase(),
+    businessName: (v) => (v.displayName ?? v.businessName).toLowerCase(),
     vendorType: (v) => v.vendorType?.toLowerCase() || "",
     events: (v) => v.events.length,
     verified: (v) => v.verified || false,
@@ -191,7 +208,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                           {vendor.logoUrl ? (
                             <img
                               src={vendor.logoUrl}
-                              alt={vendor.businessName}
+                              alt={vendor.displayName ?? vendor.businessName}
                               className="w-full h-full object-cover"
                             />
                           ) : (
@@ -203,7 +220,7 @@ export function VendorsView({ vendors, emptyMessage = "No vendors found" }: Vend
                             href={`/vendors/${vendor.slug}`}
                             className="font-medium text-foreground hover:text-navy"
                           >
-                            {vendor.businessName}
+                            {vendor.displayName ?? vendor.businessName}
                           </Link>
                           {vendor.description && (
                             <p className="text-xs text-muted-foreground line-clamp-1 max-w-md">

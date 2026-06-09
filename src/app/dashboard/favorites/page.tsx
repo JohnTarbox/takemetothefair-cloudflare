@@ -232,7 +232,9 @@ export default async function FavoritesPage() {
                           <Store className="w-8 h-8 text-purple-600" />
                         </div>
                         <div className="flex-1">
-                          <h3 className="font-medium text-foreground">{vendor.businessName}</h3>
+                          <h3 className="font-medium text-foreground">
+                            {vendor.displayName ?? vendor.businessName}
+                          </h3>
                           <p className="text-sm text-muted-foreground">{vendor.vendorType}</p>
                         </div>
                       </CardContent>

@@ -106,9 +106,15 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
     // Filter by search query if provided
     if (searchParams.q) {
       const lowerQuery = searchParams.q.toLowerCase();
+      // EH2.1 — match against either business_name or the brand display_name
+      // override so brand searches surface rows whose only-the-override
+      // stores the brand surface (e.g. "LeafFilter" matches the row whose
+      // business_name is "LeafFilter North LLC"). Brand-parent search
+      // dedup (collapsing 6 offices into one hub row) is PR EH2.4.
       vendorResults = vendorResults.filter(
         (v) =>
           v.vendors.businessName.toLowerCase().includes(lowerQuery) ||
+          v.vendors.displayName?.toLowerCase().includes(lowerQuery) ||
           v.vendors.description?.toLowerCase().includes(lowerQuery) ||
           v.vendors.vendorType?.toLowerCase().includes(lowerQuery)
       );
@@ -178,11 +184,24 @@ async function getVendors(searchParams: SearchParams, favoriteUserId?: string) {
     let result = vendorResults.map((v) => ({
       id: v.vendors.id,
       businessName: v.vendors.businessName,
+      // EH2.1 — surface display_name override on the listing. Brand-parent-
+      // mode grouping (one card per brand, not per office) lands with
+      // PR EH2.2's listing-grouping change. For now each office still
+      // renders its own card, with the display_name override honored.
+      displayName: v.vendors.displayName,
+      role: v.vendors.role,
+      brandParentVendorId: v.vendors.brandParentVendorId,
+      operatorParentVendorId: v.vendors.operatorParentVendorId,
+      aliasOfVendorId: v.vendors.aliasOfVendorId,
+      displayOverridePermitted: v.vendors.displayOverridePermitted,
+      displayMode: v.vendors.displayMode,
       slug: v.vendors.slug,
       description: v.vendors.description,
       vendorType: v.vendors.vendorType,
       products: v.vendors.products,
       logoUrl: v.vendors.logoUrl,
+      imageFocalX: v.vendors.imageFocalX,
+      imageFocalY: v.vendors.imageFocalY,
       website: v.vendors.website,
       verified: v.vendors.verified,
       commercial: v.vendors.commercial,

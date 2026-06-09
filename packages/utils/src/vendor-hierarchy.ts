@@ -21,6 +21,10 @@
  *
  * Pure functions. No I/O. The caller is responsible for loading the
  * vendor + optional parents + (for alias chains) providing a lookup.
+ *
+ * Relocated to @takemetothefair/utils 2026-06-09 (EH2.1) so both the
+ * main app and the MCP server can consume the resolver — the MCP tool
+ * returns now compute display_name alongside business_name.
  */
 
 export type ResolvedDisplay = "self" | "brand_parent" | "operator_parent" | "both";

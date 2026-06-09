@@ -10,7 +10,12 @@ import { displayVenueName } from "@/lib/venue-display";
 interface SearchResults {
   events: { name: string; slug: string; startDate: string | null }[];
   venues: { name: string; slug: string; city: string | null; state: string | null }[];
-  vendors: { businessName: string; slug: string; vendorType: string | null }[];
+  vendors: {
+    businessName: string;
+    displayName?: string | null;
+    slug: string;
+    vendorType: string | null;
+  }[];
   blogPosts: { title: string; slug: string; excerpt: string | null }[];
 }
 
@@ -229,7 +234,11 @@ export function GlobalSearch() {
                       <Store className="w-4 h-4 text-green-600 flex-shrink-0" />
                       <div className="min-w-0">
                         <div className="text-sm text-foreground truncate">
-                          {vendor.businessName}
+                          {/* EH2.1 — honor brand display_name override (e.g.
+                              "LeafFilter" instead of "LeafFilter North LLC").
+                              Full brand_parent-mode collapse (one search row
+                              per brand) lands with PR EH2.4's search dedup. */}
+                          {vendor.displayName ?? vendor.businessName}
                         </div>
                         {vendor.vendorType && (
                           <div className="text-xs text-muted-foreground">{vendor.vendorType}</div>
