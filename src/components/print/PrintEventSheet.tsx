@@ -166,6 +166,20 @@ export function PrintEventSheet({ event, venue, promoter, canonicalUrl }: PrintE
       : null;
   const hasCoords = !!(venue?.latitude && venue?.longitude);
 
+  // 2026-06-08 follow-up: when no coordinates are available (e.g.
+  // Kingfield First Friday ArtWalk — venue carries city/state only,
+  // no lat/lng), `<PrintEventMap>` short-circuits to nothing. Surface
+  // a Google Maps search URL as a printable text line so the paper
+  // sheet still hands off navigation. The URL is constructed from the
+  // best-available locator parts; users scan or type into a phone.
+  // Skipped when we already have coordinates (the map carries this).
+  const venueMapSearchUrl =
+    !hasCoords && venue && (venue.name || venue.address || venue.city)
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          [venue.name, venue.address, venue.city, venue.state].filter(Boolean).join(", ")
+        )}`
+      : null;
+
   return (
     <div
       // .print-sheet is the print stylesheet's opt-in display:block target;
@@ -216,6 +230,17 @@ export function PrintEventSheet({ event, venue, promoter, canonicalUrl }: PrintE
           {venueAddressLine && (
             <p className="mt-1" style={{ fontSize: "10.5pt" }}>
               {venueAddressLine}
+            </p>
+          )}
+          {venueMapSearchUrl && (
+            // Fallback when venue has no coordinates — print the Google
+            // Maps search URL as paper-readable text. Better than a blank
+            // map placeholder; user can type the venue into Maps directly.
+            // The text-link styling is intentional — visible on paper
+            // (`text-black` parent), distinct enough to read as actionable.
+            <p className="mt-1 break-all" style={{ fontSize: "9.5pt" }}>
+              <span className="font-semibold">Find on Google Maps: </span>
+              {venueMapSearchUrl}
             </p>
           )}
           {hasCoords && (
