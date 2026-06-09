@@ -409,6 +409,13 @@ const SCHEMA_SQL = `
     closed INTEGER DEFAULT 0,
     vendor_only INTEGER DEFAULT 0,
     status TEXT,
+    -- F2 (drizzle/0120, 2026-06-08) — per-occurrence image + focal point.
+    -- MCP create_event_day / update_event_day tests pass image_url / focal
+    -- args; mirror the schema so vitest doesn't fail with "no column named
+    -- image_url" before our updates land.
+    image_url TEXT,
+    image_focal_x REAL NOT NULL DEFAULT 0.5,
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
     -- Drizzle eventDays schema declares createdAt with a $defaultFn so
     -- INSERTs always carry this column even when the caller does not pass it.
     -- Without this in the test schema, the K18 seedEventDay helpers fail
