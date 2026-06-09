@@ -3725,7 +3725,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── create_event_day ──────────────────────────────────────────
   server.tool(
     "create_event_day",
-    "Add a day to an event's schedule. Admin only. DQ4 (2026-06-08): open_time and close_time are now optional. When omitted, the row is created with NULL hours and the parent event is flagged for review (events.flagged_for_review=1).",
+    "Add a day to an event's schedule. Admin only. DQ4 (2026-06-08): open_time and close_time are now optional (NULL hours → events.flagged_for_review=1). F2 (2026-06-08): per-occurrence image_url + focal point — for series events with different art per occurrence (e.g. seasonal market posters).",
     {
       event_id: z.string().describe("Event ID"),
       date: z.string().describe("Date (YYYY-MM-DD)"),
@@ -3744,6 +3744,26 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .boolean()
         .optional()
         .describe("Whether this is a vendor-only day (e.g., setup)"),
+      // F2 — per-occurrence image. Optional; when provided, downstream
+      // consumers (print sheet, DailyScheduleDisplay) can prefer this
+      // over the parent event hero.
+      image_url: z
+        .string()
+        .url()
+        .optional()
+        .describe("Per-occurrence image URL (F2). Overrides parent event hero for this day."),
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Per-day image focal X (0.0–1.0). Default 0.5 (center)."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Per-day image focal Y (0.0–1.0). Default 0.5 (center)."),
     },
     async (params) => {
       // Verify event exists
@@ -3773,6 +3793,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         closeTime,
         notes: params.notes ?? null,
         vendorOnly: params.vendor_only ?? false,
+        // F2: per-day image; DB defaults take over when omitted.
+        ...(params.image_url !== undefined && { imageUrl: params.image_url }),
+        ...(params.image_focal_x !== undefined && { imageFocalX: params.image_focal_x }),
+        ...(params.image_focal_y !== undefined && { imageFocalY: params.image_focal_y }),
       });
 
       // Recompute public date range on parent event
@@ -3833,6 +3857,25 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .boolean()
         .optional()
         .describe("Whether this is a vendor-only day (e.g., setup)"),
+      // F2 — per-occurrence image; null clears, undefined skips.
+      image_url: z
+        .string()
+        .url()
+        .nullable()
+        .optional()
+        .describe("Per-occurrence image URL (F2). null to clear."),
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Per-day image focal X (0.0–1.0)."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Per-day image focal Y (0.0–1.0)."),
     },
     async (params) => {
       const dayRows = await db
@@ -3854,6 +3897,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (params.notes !== undefined) updates.notes = params.notes;
       if (params.closed !== undefined) updates.closed = params.closed;
       if (params.vendor_only !== undefined) updates.vendorOnly = params.vendor_only;
+      // F2 — per-occurrence image. Same null-vs-undefined distinction
+      // as the DQ4 time args.
+      if (params.image_url !== undefined) updates.imageUrl = params.image_url;
+      if (params.image_focal_x !== undefined) updates.imageFocalX = params.image_focal_x;
+      if (params.image_focal_y !== undefined) updates.imageFocalY = params.image_focal_y;
 
       if (Object.keys(updates).length === 0) {
         return {

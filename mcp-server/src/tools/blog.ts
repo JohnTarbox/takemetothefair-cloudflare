@@ -55,6 +55,22 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           "Array of {question, answer} pairs. When >= 3 pairs are set, overrides the markdown `## Q: ...` extraction for FAQPage JSON-LD. Use for non-pillar posts that should still emit FAQ schema, or to clean up rough pillar Q&A authoring."
         ),
       featured_image_url: z.string().url().optional().describe("URL of the featured image"),
+      // F1 (drizzle/0119, 2026-06-08) — focal point for the featured image.
+      // Drives the gravity arg the BlogPostCard srcset uses so the editor's
+      // "place the dot" gesture survives card crops at every responsive
+      // width. Defaults to 0.5/0.5 (center) when omitted.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Featured image focal X (0.0–1.0). Default 0.5 (center)."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Featured image focal Y (0.0–1.0). Default 0.5 (center)."),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("DRAFT (default) or PUBLISHED"),
       publish_date: z
         .string()
@@ -96,6 +112,9 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
             categories: params.categories || [],
             faqs: params.faqs ?? [],
             featuredImageUrl: params.featured_image_url,
+            // F1: forward focal-point args; omitted → backend default (0.5).
+            ...(params.image_focal_x !== undefined && { imageFocalX: params.image_focal_x }),
+            ...(params.image_focal_y !== undefined && { imageFocalY: params.image_focal_y }),
             status: params.status || "DRAFT",
             publishDate: params.publish_date,
             metaTitle: params.meta_title,
@@ -299,6 +318,21 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           "Replace the post's faqs array. Pass [] to clear and revert to markdown extraction. Omit to leave unchanged."
         ),
       featured_image_url: z.string().url().optional().describe("New featured image URL"),
+      // F1 (drizzle/0119, 2026-06-08) — focal point. See create_blog_post
+      // for the contract. Pass to recenter the card crop; omit to leave
+      // current values unchanged.
+      image_focal_x: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Featured image focal X (0.0–1.0). Default 0.5 (center)."),
+      image_focal_y: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Featured image focal Y (0.0–1.0). Default 0.5 (center)."),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("New status: DRAFT or PUBLISHED"),
       publish_date: z.string().optional().describe("New publish date (ISO 8601)"),
       meta_title: z.string().max(70).optional().describe("New SEO meta title"),
@@ -328,6 +362,8 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         if (params.faqs !== undefined) payload.faqs = params.faqs;
         if (params.featured_image_url !== undefined)
           payload.featuredImageUrl = params.featured_image_url;
+        if (params.image_focal_x !== undefined) payload.imageFocalX = params.image_focal_x;
+        if (params.image_focal_y !== undefined) payload.imageFocalY = params.image_focal_y;
         if (params.status !== undefined) payload.status = params.status;
         if (params.publish_date !== undefined) payload.publishDate = params.publish_date;
         if (params.meta_title !== undefined) payload.metaTitle = params.meta_title;
