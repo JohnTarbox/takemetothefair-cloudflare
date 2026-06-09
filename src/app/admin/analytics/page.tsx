@@ -1578,7 +1578,7 @@ function ScanFreshnessBadge({ lastScannedAt }: { lastScannedAt: Date | null }) {
 }
 
 async function RecommendationsTab() {
-  const { getActiveItems, getScanState, getOpenMatchCountsAsOf } =
+  const { getActiveItems, getScanState, getCycleState, getOpenMatchCountsAsOf } =
     await import("@/lib/recommendations/engine");
   const { RecommendationActions } = await import("@/components/admin/recommendation-actions");
   const { RecommendationBulkActions } =
@@ -1595,9 +1595,10 @@ async function RecommendationsTab() {
   // no schema change needed. Single COUNT(*) GROUP BY plus filter on
   // firstSeenAt + actedAt; cheap enough to run on every render.
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000);
-  const [rawItems, scanState, weekAgoCounts] = await Promise.all([
+  const [rawItems, scanState, cycleState, weekAgoCounts] = await Promise.all([
     getActiveItems(db),
     getScanState(db),
+    getCycleState(db),
     getOpenMatchCountsAsOf(db, sevenDaysAgo),
   ]);
 
@@ -1887,6 +1888,33 @@ async function RecommendationsTab() {
           <RecommendationScanButton />
         </div>
       </div>
+
+      {/* REL3 (2026-06-08) — cycle-progress surface. The daily scan now
+          runs N chunks per fire and persists a cursor across runs; the
+          full sweep wraps around every ~2 days. This banner shows where
+          the cursor sits so operators can correlate "tail-stale items"
+          with "we're 2 chunks into the next cycle." */}
+      {cycleState && (
+        <div className="mb-6 rounded-md border border-border bg-muted/40 p-4 text-xs space-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <span className="font-medium text-foreground">Scan cycle progress</span>
+            <span className="text-muted-foreground">
+              cursor {cycleState.cursor} of {cycleState.totalRules} rules
+              {cycleState.cursor === 0 ? " (at start)" : ""}
+            </span>
+            <span className="text-muted-foreground">
+              {cycleState.completedCycles} completed cycle
+              {cycleState.completedCycles === 1 ? "" : "s"}
+            </span>
+            {cycleState.lastRunAt && (
+              <span className="text-muted-foreground">
+                last run: {formatTimestampForServer(cycleState.lastRunAt)} (
+                {cycleState.lastRunChunks} chunk{cycleState.lastRunChunks === 1 ? "" : "s"})
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Per-rule scan-error banners. PR #148 + #150 (this PR): scanAll
           catches per-rule failures, persists the message on

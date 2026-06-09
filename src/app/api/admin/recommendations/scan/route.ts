@@ -53,6 +53,15 @@ export async function POST(request: Request) {
   const nextCursor = cursor + slice.length;
   const more = nextCursor < ALL_RULES.length;
 
+  // REL3 (2026-06-08) — flat `{ruleKey: ms}` map, easier to consume
+  // for the workflow's slow-rule WARN logging than digging through
+  // perRule. Each entry is wall-clock ms for the rule's run() +
+  // dedup + INSERT/UPDATE writes.
+  const ruleTimings: Record<string, number> = {};
+  for (const r of result.perRule) {
+    ruleTimings[r.ruleKey] = r.ms;
+  }
+
   return NextResponse.json({
     success: true,
     data: {
@@ -61,6 +70,7 @@ export async function POST(request: Request) {
       nextCursor,
       more,
       totalRules: ALL_RULES.length,
+      ruleTimings,
     },
   });
 }

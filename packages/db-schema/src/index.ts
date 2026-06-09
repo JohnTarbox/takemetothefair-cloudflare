@@ -1549,6 +1549,35 @@ export const recommendationItems = sqliteTable(
   ]
 );
 
+// REL3 (drizzle/0116, 2026-06-08) — cursor-resume state for the daily
+// recommendations-scan workflow. Single row keyed by `id='default'`; the
+// workflow reads cursor at the start of each cron fire, processes N
+// chunks, writes back the new cursor. Wraps to 0 + bumps completedCycles
+// when the cursor reaches ALL_RULES.length. See
+// mcp-server/src/workflows/recommendations-scan.ts.
+export const recommendationScanState = sqliteTable("recommendation_scan_state", {
+  id: text("id").primaryKey(),
+  cursor: integer("cursor").notNull().default(0),
+  cycleStartedAt: integer("cycle_started_at", { mode: "timestamp" }),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }),
+  lastRunChunks: integer("last_run_chunks").notNull().default(0),
+  completedCycles: integer("completed_cycles").notNull().default(0),
+  updatedAt: integer("updated_at", { mode: "timestamp" }),
+});
+
+// A5 (drizzle/0117, 2026-06-08) — standing-failure detector debounce.
+// Per-source PK; one row per error_logs.source we've alerted on. Detector
+// in mcp-server/src/standing-failure-canary.ts fires when the same source
+// recurs across ≥3 distinct days in a 7-day window. Per-source 7-day
+// debounce — once alerted, don't re-alert until the operator either
+// fixes the issue (rows stop appearing in the window) or 7 days pass.
+export const standingFailureState = sqliteTable("standing_failure_state", {
+  source: text("source").primaryKey(),
+  lastAlertedAt: integer("last_alerted_at", { mode: "timestamp" }).notNull(),
+  lastDayCount: integer("last_day_count").notNull(),
+  lastTotalCount: integer("last_total_count").notNull(),
+});
+
 // §10.2 enrichment audit trail (drizzle/0056). Append-only; one row per
 // attempt (success or failure). source values: ai_workers | scraper |
 // manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of
@@ -2005,6 +2034,8 @@ export type PendingSearchPing = typeof pendingSearchPings.$inferSelect;
 export type UrlDomainClassification = typeof urlDomainClassifications.$inferSelect;
 export type RecommendationRule = typeof recommendationRules.$inferSelect;
 export type RecommendationItem = typeof recommendationItems.$inferSelect;
+export type RecommendationScanState = typeof recommendationScanState.$inferSelect;
+export type StandingFailureState = typeof standingFailureState.$inferSelect;
 export type EnrichmentLog = typeof enrichmentLog.$inferSelect;
 export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
 export type CompetitorDomain = typeof competitorDomains.$inferSelect;
