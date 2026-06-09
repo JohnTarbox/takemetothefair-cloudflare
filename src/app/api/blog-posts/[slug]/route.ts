@@ -40,6 +40,10 @@ export async function GET(request: NextRequest, { params }: Params) {
         tags: blogPosts.tags,
         categories: blogPosts.categories,
         featuredImageUrl: blogPosts.featuredImageUrl,
+        // F1 — surface focal columns so consumers (admin edit form,
+        // BlogPostCard re-renders) see the current value.
+        imageFocalX: blogPosts.imageFocalX,
+        imageFocalY: blogPosts.imageFocalY,
         status: blogPosts.status,
         publishDate: blogPosts.publishDate,
         metaTitle: blogPosts.metaTitle,
@@ -136,6 +140,16 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (data.categories !== undefined) updateData.categories = JSON.stringify(data.categories);
     if (data.faqs !== undefined) updateData.faqs = JSON.stringify(data.faqs);
     if (data.featuredImageUrl !== undefined) updateData.featuredImageUrl = data.featuredImageUrl;
+    // F1 (PR #412 deferred-finisher, 2026-06-08) — pass focal-point through
+    // on update when present. `undefined` skips (preserves existing value);
+    // finite values clamped to 0–1 to defend the column constraint at the
+    // boundary. Mirrors src/app/api/admin/events/[id]/route.ts:237-241.
+    if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
+      updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
+    }
+    if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
+      updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
+    }
     if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
     if (data.metaDescription !== undefined) updateData.metaDescription = data.metaDescription;
 
@@ -188,6 +202,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
         tags: blogPosts.tags,
         categories: blogPosts.categories,
         featuredImageUrl: blogPosts.featuredImageUrl,
+        // F1 — surface focal columns in the PUT return payload so the
+        // caller (admin form, MCP update_blog_post) sees the written value.
+        imageFocalX: blogPosts.imageFocalX,
+        imageFocalY: blogPosts.imageFocalY,
         status: blogPosts.status,
         publishDate: blogPosts.publishDate,
         metaTitle: blogPosts.metaTitle,
