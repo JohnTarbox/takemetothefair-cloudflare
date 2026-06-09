@@ -172,6 +172,13 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
           categories: blogPosts.categories,
           faqs: blogPosts.faqs,
           featuredImageUrl: blogPosts.featuredImageUrl,
+          // E.1 (Dev-Email-2026-06-09 §E, 2026-06-09) — surface focal-
+          // point columns through the read side. Write side (create +
+          // update tools) already forwards image_focal_x/y per PR #396;
+          // PR #413 wired persistence. Without this, MCP-side editors
+          // couldn't read back what they wrote — silent drift hazard.
+          imageFocalX: blogPosts.imageFocalX,
+          imageFocalY: blogPosts.imageFocalY,
           status: blogPosts.status,
           publishDate: blogPosts.publishDate,
           metaTitle: blogPosts.metaTitle,

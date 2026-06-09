@@ -13,6 +13,13 @@ interface EventDay {
   closeTime: string | null;
   notes?: string | null;
   closed?: boolean | null;
+  // F2 / E.2b (Dev-Email-2026-06-09 §E.2, 2026-06-09) — per-occurrence
+  // image. PR #412 added the column; subEvent.image below prefers
+  // this per-day URL when present and falls back to the series-level
+  // `resolvedImage` otherwise. Schema.org allows multi-occurrence
+  // events to advertise per-day art; search results for a specific
+  // date can show the matching image.
+  imageUrl?: string | null;
   // Allow additional DB fields
   id?: string;
   eventId?: string;
@@ -362,7 +369,13 @@ export function EventSchema({
                 : formatIsoInVenueZone(endWall) || undefined,
               description: day.notes || description || `${name} - Day ${i + 1}`,
               location,
-              image: resolvedImage,
+              // E.2b — use per-day image when set, else series-level.
+              // resolvedImage covers the OG-fallback + transformations
+              // chain (see resolveImage above); the per-day URL is
+              // emitted as-is on the assumption that operators set it
+              // to a usable CDN URL (same convention as the series
+              // image_url column).
+              image: day.imageUrl || resolvedImage,
               eventStatus,
               offers,
               organizer: organizerBlock,
