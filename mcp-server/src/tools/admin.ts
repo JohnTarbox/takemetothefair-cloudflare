@@ -1645,6 +1645,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           boothInfo: eventVendors.boothInfo,
           createdAt: eventVendors.createdAt,
           businessName: vendors.businessName,
+          // EH2.1 — surface display_name override on the admin lineup so
+          // admins see the brand surface (e.g. "LeafFilter") consistently
+          // with what users see on the public event page.
+          vendorDisplayName: vendors.displayName,
           vendorSlug: vendors.slug,
           vendorType: vendors.vendorType,
           products: vendors.products,
@@ -1671,6 +1675,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         vendor: {
           id: r.vendorId,
           businessName: r.businessName,
+          // EH2.1 — computed surface name (display_name override applied;
+          // full brand-parent gate resolution is on get_vendor_details).
+          display_name: r.vendorDisplayName ?? r.businessName,
           slug: r.vendorSlug,
           type: r.vendorType,
           products: parseJsonArray(r.products),

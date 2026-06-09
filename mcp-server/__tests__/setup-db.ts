@@ -261,6 +261,8 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL UNIQUE,
     business_name TEXT NOT NULL,
+    -- EH2.1 (drizzle/0121, 2026-06-09) — optional brand display override.
+    display_name TEXT,
     slug TEXT NOT NULL UNIQUE,
     description TEXT,
     vendor_type TEXT,

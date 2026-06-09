@@ -16,7 +16,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
 
     // Get vendor by slug
     const vendorResults = await db
-      .select({ id: vendors.id, businessName: vendors.businessName, slug: vendors.slug })
+      .select({
+        id: vendors.id,
+        businessName: vendors.businessName,
+        // EH2.1 — surface brand display_name override for the vendor-events
+        // page H1 + JSON-LD ItemListSchema name.
+        displayName: vendors.displayName,
+        slug: vendors.slug,
+      })
       .from(vendors)
       .where(eq(vendors.slug, unsafeSlug(slug)))
       .limit(1);
@@ -79,6 +86,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       vendor: {
         id: vendor.id,
         businessName: vendor.businessName,
+        displayName: vendor.displayName,
         slug: vendor.slug,
       },
       events: formattedEvents,

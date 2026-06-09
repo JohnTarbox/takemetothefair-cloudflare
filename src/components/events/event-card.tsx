@@ -26,6 +26,8 @@ type Promoter = typeof promoters.$inferSelect;
 type VendorSummary = {
   id: string;
   businessName: string;
+  /** EH2.1 brand display override; falls back to businessName when null. */
+  displayName?: string | null;
   slug: string;
   logoUrl: string | null;
   vendorType: string | null;
@@ -377,28 +379,34 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             Vendors ({vendors.length})
           </p>
           <div className="grid grid-cols-4 gap-1">
-            {vendors.slice(0, 8).map((vendor) => (
-              <Link
-                key={vendor.id}
-                href={`/vendors/${vendor.slug}`}
-                className="block group"
-                title={vendor.businessName}
-              >
-                <div className="aspect-square rounded bg-muted flex items-center justify-center overflow-hidden group-hover:ring-2 ring-royal transition-all relative">
-                  {vendor.logoUrl ? (
-                    <Image
-                      src={vendor.logoUrl}
-                      alt={`${vendor.businessName} logo`}
-                      fill
-                      sizes="48px"
-                      className="object-cover"
-                    />
-                  ) : (
-                    <Store className="w-4 h-4 text-muted-foreground" />
-                  )}
-                </div>
-              </Link>
-            ))}
+            {vendors.slice(0, 8).map((vendor) => {
+              // EH2.1 — honor brand display_name override on the small
+              // vendor logo tiles. Tooltip + alt text use the override
+              // when present.
+              const vendorDisplay = vendor.displayName ?? vendor.businessName;
+              return (
+                <Link
+                  key={vendor.id}
+                  href={`/vendors/${vendor.slug}`}
+                  className="block group"
+                  title={vendorDisplay}
+                >
+                  <div className="aspect-square rounded bg-muted flex items-center justify-center overflow-hidden group-hover:ring-2 ring-royal transition-all relative">
+                    {vendor.logoUrl ? (
+                      <Image
+                        src={vendor.logoUrl}
+                        alt={`${vendorDisplay} logo`}
+                        fill
+                        sizes="48px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <Store className="w-4 h-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
             {vendors.length > 8 && (
               <Link
                 href={`/events/${event.slug}`}

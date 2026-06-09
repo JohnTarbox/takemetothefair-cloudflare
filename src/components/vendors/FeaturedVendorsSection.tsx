@@ -8,6 +8,8 @@ import { VendorTierBadges } from "./VendorTierBadges";
 export interface FeaturedVendor {
   id: string;
   businessName: string;
+  /** EH2.1 brand display override; falls back to businessName when null. */
+  displayName?: string | null;
   slug: string;
   vendorType: string | null;
   city: string | null;
@@ -62,21 +64,27 @@ export function FeaturedVendorsSection({ vendors, date }: Props) {
             <Link href={`/vendors/${v.slug}`} className="block p-4">
               <div className="flex gap-3">
                 <div className="w-20 h-20 rounded-lg bg-card flex items-center justify-center relative overflow-hidden flex-shrink-0">
-                  {v.logoUrl ? (
-                    <Image
-                      src={v.logoUrl}
-                      alt={`${v.businessName} logo`}
-                      fill
-                      sizes="80px"
-                      className="object-cover"
-                    />
-                  ) : (
-                    <Store className="w-10 h-10 text-muted-foreground" />
-                  )}
+                  {(() => {
+                    // EH2.1 — featured card uses brand display_name override.
+                    const featuredName = v.displayName ?? v.businessName;
+                    return v.logoUrl ? (
+                      <Image
+                        src={v.logoUrl}
+                        alt={`${featuredName} logo`}
+                        fill
+                        sizes="80px"
+                        className="object-cover"
+                      />
+                    ) : (
+                      <Store className="w-10 h-10 text-muted-foreground" />
+                    );
+                  })()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <h3 className="font-semibold text-foreground truncate">{v.businessName}</h3>
+                    <h3 className="font-semibold text-foreground truncate">
+                      {v.displayName ?? v.businessName}
+                    </h3>
                     <CheckCircle
                       className="w-4 h-4 text-royal flex-shrink-0"
                       aria-label="Verified"

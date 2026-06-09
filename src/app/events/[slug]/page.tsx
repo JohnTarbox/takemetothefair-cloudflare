@@ -655,7 +655,9 @@ export default async function EventDetailPage({ params }: Props) {
           previousEndDate={event.previousEndDate}
           eventDays={event.eventDays}
           vendors={event.eventVendors.slice(0, 10).map((ev) => ({
-            name: ev.vendor.businessName,
+            // EH2.1 — honor brand display_name override on JSON-LD too so
+            // the structured-data name matches what the user sees.
+            name: ev.vendor.displayName ?? ev.vendor.businessName,
             url: `https://meetmeatthefair.com/vendors/${ev.vendor.slug}`,
             // Drives schema.org performer-vs-sponsor placement (drizzle/0071).
             participationType: ev.participationType as
@@ -1052,7 +1054,7 @@ export default async function EventDetailPage({ params }: Props) {
                       {ev.vendor.logoUrl ? (
                         <Image
                           src={ev.vendor.logoUrl}
-                          alt={ev.vendor.businessName}
+                          alt={ev.vendor.displayName ?? ev.vendor.businessName}
                           fill
                           sizes="40px"
                           className="object-cover"
@@ -1063,7 +1065,15 @@ export default async function EventDetailPage({ params }: Props) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-foreground flex items-center gap-2">
-                        <span className="truncate">{ev.vendor.businessName}</span>
+                        <span className="truncate">
+                          {/* EH2.1 — display_name override surfaces in
+                              event vendor lists. Full brand_parent gate
+                              not applied here: an event's vendor list is
+                              row-level (each office's presence at the
+                              event is a separate event_vendors row) and
+                              should not collapse by brand. */}
+                          {ev.vendor.displayName ?? ev.vendor.businessName}
+                        </span>
                         {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
                           custom (text-[10px], rounded not rounded-full) to preserve
                           the inline-with-business-name layout; only the color pair

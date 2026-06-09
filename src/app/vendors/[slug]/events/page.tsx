@@ -36,6 +36,8 @@ interface Event {
 interface VendorInfo {
   id: string;
   businessName: string;
+  /** EH2.1 brand display override; falls back to businessName when null. */
+  displayName?: string | null;
   slug: string;
 }
 
@@ -126,8 +128,8 @@ export default function VendorEventsPage() {
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
       {vendorInfo && events.length > 0 && (
         <ItemListSchema
-          name={`${vendorInfo.businessName}'s Events`}
-          description={`Events featuring ${vendorInfo.businessName}`}
+          name={`${vendorInfo.displayName ?? vendorInfo.businessName}'s Events`}
+          description={`Events featuring ${vendorInfo.displayName ?? vendorInfo.businessName}`}
           items={events.map((event) => ({
             name: event.name,
             url: `https://meetmeatthefair.com/events/${event.slug}`,
@@ -145,7 +147,7 @@ export default function VendorEventsPage() {
           Back to Vendor
         </Link>
         <h1 className="text-3xl font-bold text-foreground">
-          Events for {vendorInfo?.businessName || "Vendor"}
+          Events for {vendorInfo?.displayName ?? vendorInfo?.businessName ?? "Vendor"}
         </h1>
         <p className="mt-2 text-muted-foreground">
           {upcomingCount} upcoming, {pastCount} past event{pastCount !== 1 ? "s" : ""}

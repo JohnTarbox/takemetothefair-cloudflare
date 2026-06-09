@@ -84,11 +84,22 @@ export const GET = withErrorHandler(async (request: Request) => {
     db
       .select({
         businessName: vendors.businessName,
+        // EH2.1 — surface display_name so the client dropdown can honor
+        // the brand override (e.g. "LeafFilter" not "LeafFilter North LLC").
+        // Full brand_parent-mode collapse (one row per brand, not per office)
+        // lands with PR EH2.4's search dedup.
+        displayName: vendors.displayName,
         slug: vendors.slug,
         vendorType: vendors.vendorType,
       })
       .from(vendors)
-      .where(sql`LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm})`)
+      .where(
+        // Match on either the raw business_name or the display_name override
+        // so brand-name searches surface a row even when only the override
+        // matches (e.g. user types "LeafFilter" but the row is "LeafFilter
+        // North LLC" with display_name='LeafFilter').
+        sql`LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${vendors.displayName}, '')) LIKE LOWER(${searchTerm})`
+      )
       .orderBy(vendors.businessName)
       .limit(5),
 

@@ -8,6 +8,8 @@ type Promoter = typeof promoters.$inferSelect;
 type VendorSummary = {
   id: string;
   businessName: string;
+  /** EH2.1 brand display override; null falls back to businessName. */
+  displayName?: string | null;
   slug: string;
   logoUrl: string | null;
   vendorType: string | null;

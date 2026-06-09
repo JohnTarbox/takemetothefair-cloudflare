@@ -15,6 +15,11 @@ import {
   jsonContent,
   unsafeSlug,
 } from "../helpers.js";
+import {
+  displayVendorName,
+  type ParentDisplayInput,
+  type VendorDisplayInput,
+} from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 
 export function registerPublicTools(server: McpServer, db: Db) {
@@ -403,6 +408,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .select({
           vendorId: vendors.id,
           businessName: vendors.businessName,
+          // EH2.1 — surface display_name override; full brand-parent gate
+          // resolution is deferred for list-returning tools (consumers
+          // can call get_vendor_details when they need the gate).
+          displayName: vendors.displayName,
           slug: vendors.slug,
           vendorType: vendors.vendorType,
           products: vendors.products,
@@ -431,6 +440,10 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const output = rows.map((r) => ({
         id: r.vendorId,
         businessName: r.businessName,
+        // EH2.1 — computed surface name. display_name override applied;
+        // INDEPENDENT vendors get businessName unchanged so consumers that
+        // key on this field stay stable for ~99% of rows.
+        display_name: r.displayName ?? r.businessName,
         slug: r.slug,
         type: r.vendorType,
         products: parseJsonArray(r.products),
@@ -472,7 +485,16 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const conditions = [];
 
       if (params.query) {
-        conditions.push(like(vendors.businessName, `%${escapeLike(params.query)}%`));
+        // EH2.1 — match on either business_name OR display_name so a query
+        // for the brand surface ("LeafFilter") finds the office row whose
+        // only-the-override stores that surface ("LeafFilter North LLC").
+        const q = `%${escapeLike(params.query)}%`;
+        conditions.push(
+          or(
+            like(vendors.businessName, q),
+            sql`${vendors.displayName} IS NOT NULL AND ${like(vendors.displayName, q)}`
+          )!
+        );
       }
       if (params.type) {
         conditions.push(like(vendors.vendorType, `%${escapeLike(params.type)}%`));
@@ -482,6 +504,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .select({
           id: vendors.id,
           businessName: vendors.businessName,
+          // EH2.1 — display_name override surfaced on every search result.
+          displayName: vendors.displayName,
           slug: vendors.slug,
           vendorType: vendors.vendorType,
           products: vendors.products,
@@ -500,6 +524,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const output = rows.map((r) => ({
         id: r.id,
         businessName: r.businessName,
+        // EH2.1 — computed surface name (display_name override applied).
+        // Full brand-parent gate resolution lives on get_vendor_details;
+        // search returns the row-level surface so a brand search returns
+        // each office row that matches.
+        display_name: r.displayName ?? r.businessName,
         slug: r.slug,
         type: r.vendorType,
         products: parseJsonArray(r.products),
@@ -706,6 +735,8 @@ export function registerPublicTools(server: McpServer, db: Db) {
         .select({
           id: vendors.id,
           businessName: vendors.businessName,
+          // EH2.1 — display_name override (drizzle/0121).
+          displayName: vendors.displayName,
           slug: vendors.slug,
           description: vendors.description,
           vendorType: vendors.vendorType,
@@ -744,13 +775,22 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       // EH1 bonus — resolve brand/operator parent in a single batch so a
       // single read shows the full hierarchy without a second roundtrip.
-      // Skipped (single empty SELECT) when both parent ids are null.
+      // Skipped (single empty SELECT) when both parent ids are null. The
+      // parent SELECT now includes display_name + default_child_display so
+      // EH2.1's displayVendorName() can run the full gate resolution.
       const parentIds = [vendor.brandParentVendorId, vendor.operatorParentVendorId].filter(
         (id): id is string => typeof id === "string" && id.length > 0
       );
       const parents = parentIds.length
         ? await db
-            .select({ id: vendors.id, slug: vendors.slug, businessName: vendors.businessName })
+            .select({
+              id: vendors.id,
+              slug: vendors.slug,
+              businessName: vendors.businessName,
+              displayName: vendors.displayName,
+              role: vendors.role,
+              defaultChildDisplay: vendors.defaultChildDisplay,
+            })
             .from(vendors)
             .where(inArray(vendors.id, parentIds))
         : [];
@@ -761,6 +801,44 @@ export function registerPublicTools(server: McpServer, db: Db) {
       const operatorParent = vendor.operatorParentVendorId
         ? (parentById.get(vendor.operatorParentVendorId) ?? null)
         : null;
+
+      // EH2.1 — full gate resolution. Composes resolveVendorDisplay's mode
+      // (self / brand_parent / operator_parent / both) with display_name
+      // override into a single resolved string, matching what the public
+      // /vendors/[slug] page renders as the H1.
+      const vendorInput: VendorDisplayInput = {
+        role: vendor.role,
+        brandParentVendorId: vendor.brandParentVendorId,
+        operatorParentVendorId: vendor.operatorParentVendorId,
+        aliasOfVendorId: vendor.aliasOfVendorId,
+        displayOverridePermitted: vendor.displayOverridePermitted,
+        displayMode: vendor.displayMode,
+        businessName: vendor.businessName,
+        displayName: vendor.displayName,
+      };
+      const brandParentInput: ParentDisplayInput | null = brandParent
+        ? {
+            id: brandParent.id,
+            role: brandParent.role,
+            defaultChildDisplay: brandParent.defaultChildDisplay,
+            businessName: brandParent.businessName,
+            displayName: brandParent.displayName,
+          }
+        : null;
+      const operatorParentInput: ParentDisplayInput | null = operatorParent
+        ? {
+            id: operatorParent.id,
+            role: operatorParent.role,
+            defaultChildDisplay: operatorParent.defaultChildDisplay,
+            businessName: operatorParent.businessName,
+            displayName: operatorParent.displayName,
+          }
+        : null;
+      const resolvedDisplayName = displayVendorName(
+        vendorInput,
+        brandParentInput,
+        operatorParentInput
+      );
 
       // Count upcoming confirmed events for this vendor
       const confirmedEvents = await db
@@ -781,6 +859,11 @@ export function registerPublicTools(server: McpServer, db: Db) {
           jsonContent({
             id: vendor.id,
             businessName: vendor.businessName,
+            // EH2.1 — display_name override + computed surface name.
+            // `display_name` is the resolved string honoring the full
+            // hierarchy gate (matches /vendors/<slug> H1).
+            displayName: vendor.displayName,
+            display_name: resolvedDisplayName,
             slug: vendor.slug,
             description: vendor.description,
             vendorType: vendor.vendorType,

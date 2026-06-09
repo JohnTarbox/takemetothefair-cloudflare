@@ -83,13 +83,19 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
     db
       .select({
         businessName: vendors.businessName,
+        // EH2.1 — surface display_name so the result card can render the
+        // brand surface (e.g. "LeafFilter" not "LeafFilter North LLC").
+        displayName: vendors.displayName,
         slug: vendors.slug,
         vendorType: vendors.vendorType,
         logoUrl: vendors.logoUrl,
       })
       .from(vendors)
       .where(
-        sql`(LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(${vendors.description}) LIKE LOWER(${searchTerm}))`
+        // Match against either business_name OR display_name OR description
+        // so brand-name searches surface a row even when only the override
+        // matches.
+        sql`(LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${vendors.displayName}, '')) LIKE LOWER(${searchTerm}) OR LOWER(${vendors.description}) LIKE LOWER(${searchTerm}))`
       )
       .orderBy(vendors.businessName)
       .limit(12),
@@ -255,7 +261,9 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
               {vendorResults.map((vendor) => (
                 <Link key={vendor.slug} href={`/vendors/${vendor.slug}`}>
                   <Card className="p-4 hover:shadow-md transition-shadow h-full">
-                    <h3 className="font-medium text-navy">{vendor.businessName}</h3>
+                    <h3 className="font-medium text-navy">
+                      {vendor.displayName ?? vendor.businessName}
+                    </h3>
                     {vendor.vendorType && (
                       <p className="text-sm text-muted-foreground mt-1">{vendor.vendorType}</p>
                     )}
