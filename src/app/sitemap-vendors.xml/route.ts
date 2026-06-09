@@ -125,6 +125,17 @@ async function buildVendorUrls(): Promise<SitemapUrl[]> {
            ))
         )
       )
+      -- EH2.4 (Dev-Email-2026-06-09-EH2.md §B3) — exclude self-mode
+      -- brand hubs from the sitemap. The hub page emits noindex,follow
+      -- (handled in /vendors/[slug]/page.tsx generateMetadata) and exists
+      -- only for direct-link discovery (admin paths, claim flows). The
+      -- franchise pages (LOCAL_OFFICE rows) get the SEO surface.
+      -- brand_parent-mode hubs STAY in the sitemap because they're the
+      -- canonical surface for the brand → office tree.
+      AND NOT (
+        v.role = 'NATIONAL'
+        AND (v.default_child_display = 'self' OR v.default_child_display IS NULL)
+      )
   `);
 
   return (
