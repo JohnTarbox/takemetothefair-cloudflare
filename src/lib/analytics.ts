@@ -259,3 +259,160 @@ export function trackFilterApplied(filterType: string, filterValue: string, page
     pageType,
   });
 }
+
+// ── ENG1 (Dev-Email-2026-06-09 §B + §C, 2026-06-09) ────────────────────────
+//
+// Engagement instrumentation cluster: favorites, share, login, segmented
+// form submissions, and print-sheet. All five wrappers mirror the existing
+// trackOutbound* pattern. Custom event params (entity_type, entity_id,
+// share_method, method, form_audience, favorite_action) require GA4 Admin
+// → Custom Definitions registration to surface in reports — see
+// docs/eng1-ga4-custom-dimensions.md for the operator runbook.
+
+/** Entity types that can be favorited (mirrors the userFavorites table's
+ *  favoritable_type enum). Used by ENG1.1's trackFavoriteToggle. */
+export type FavoritableType = "EVENT" | "VENUE" | "VENDOR" | "PROMOTER";
+
+/** ENG1.1 (2026-06-09) — favorite add/remove instrumentation.
+ *
+ *  Dual-emit: the historical `favorite_toggle` event continues for chart
+ *  continuity on the existing GA4 trendline, alongside the GA4 Recommended
+ *  Events name (`add_to_favorites` / `remove_from_favorites`). A follow-up
+ *  PR on 2026-07-09 drops the legacy emit.
+ *
+ *  Safe-to-cutover invariant (pre-flight verified 2026-06-09): the
+ *  admin Account-Engagement KPI sources `event_favorites` from the
+ *  `userFavorites` table directly (src/lib/analytics-overview.ts:1106-
+ *  1110), NOT from the GA4 event stream. Renaming the GA4 event does
+ *  not shift the admin KPI numerator. */
+export function trackFavoriteToggle(
+  entityType: FavoritableType,
+  entityId: string,
+  action: "add" | "remove"
+) {
+  const params = {
+    category: "engagement",
+    label: `${entityType}:${entityId}`,
+    entity_type: entityType,
+    entity_id: entityId,
+    favorite_action: action,
+  };
+  // Legacy name — 30-day overlap window, dropped 2026-07-09.
+  trackEvent("favorite_toggle", params);
+  // GA4 Recommended Events naming.
+  trackEvent(action === "add" ? "add_to_favorites" : "remove_from_favorites", params);
+}
+
+/** Share methods exposed by ShareButtons. */
+export type ShareMethod = "twitter" | "facebook" | "linkedin" | "email" | "copy";
+
+/** Entity types that have user-facing share affordances today. */
+export type ShareEntityType = "EVENT" | "BLOG";
+
+/** ENG1.2 (2026-06-09) — share-button instrumentation.
+ *
+ *  No beacon mirror: share volume is naturally low (~tens/day at current
+ *  scale) and the D1 mirror is not justified until we know the GA4 stream
+ *  is yielding usable per-method breakdowns. Revisit once `share_method`
+ *  custom dimension propagates and we have a baseline. */
+export function trackShare(
+  method: ShareMethod,
+  entityType: ShareEntityType,
+  entityId: string,
+  entitySlug: string
+) {
+  trackEvent("share", {
+    category: "engagement",
+    label: `${entityType}:${entitySlug}`,
+    share_method: method,
+    entity_type: entityType,
+    entity_id: entityId,
+    entity_slug: entitySlug,
+  });
+}
+
+/** Auth methods used by login + sign_up. */
+export type LoginMethod = "credentials" | "google" | "facebook";
+
+/** ENG1.2 (2026-06-09) — login instrumentation.
+ *
+ *  Caller-side semantic decision: credentials path fires AFTER `signIn()`
+ *  resolves (post-success), OAuth paths fire BEFORE the redirect (intent,
+ *  not confirmed completion). This mirrors the existing convention in
+ *  register/page.tsx:239,423,453 — the OAuth pre-redirect emit slightly
+ *  over-counts vs. credentials (cancelled OAuth dialogs still fire), but
+ *  we accept that for parity with sign_up. Confirmed-completion tracking
+ *  would require a NextAuth events.signIn callback on the server side
+ *  (deferred). */
+export function trackLogin(method: LoginMethod) {
+  trackEvent("login", {
+    category: "engagement",
+    label: method,
+    method,
+  });
+}
+
+/** Form audiences (mirrors GA4 form_audience custom dim values). */
+export type FormAudience =
+  | "newsletter"
+  | "suggest_event_public"
+  | "suggest_event_vendor"
+  | "vendor_application"
+  | "vendor_claim";
+
+/** ENG1.3 (2026-06-09) — segmented form-submit instrumentation.
+ *
+ *  Per-audience event names (e.g. `newsletter_submit`) replace GA4
+ *  enhanced-measurement's generic `form_submit` (which we disable
+ *  property-wide as part of the ENG1.High cutover — see
+ *  docs/eng1-ga4-custom-dimensions.md §A).
+ *
+ *  Two of the five audiences (`newsletter`, `vendor_claim`) mirror to
+ *  the D1 beacon because those are the events without existing GA4
+ *  coverage — the D1 copy gives operators an immediate view in
+ *  /admin/analytics → First-party events without the 24-hour GA4
+ *  registration delay. The other three audiences dual-emit alongside
+ *  pre-existing GA4 events (`event_suggest`, `vendor_apply`) which
+ *  already provide visibility. */
+export function trackFormSubmit(audience: FormAudience, extra?: Record<string, unknown>) {
+  const params = {
+    category: "conversion",
+    label: audience,
+    form_audience: audience,
+    ...extra,
+  };
+  trackEvent(`${audience}_submit`, params);
+  if (audience === "newsletter" || audience === "vendor_claim") {
+    sendBeacon(`${audience}_submit`, "conversion", {
+      formAudience: audience,
+      ...extra,
+    });
+  }
+}
+
+/** Entity types whose detail pages have print sheets today (only EVENT
+ *  ships with the PR #411 print template; VENDOR/VENUE wired for future
+ *  consistency but not exercised). */
+export type PrintEntityType = "EVENT" | "VENDOR" | "VENUE";
+
+/** PRINT2 (Dev-Email-2026-06-09 §C, 2026-06-09) — print-sheet
+ *  instrumentation. Fires from PrintBeacon on window.beforeprint, which
+ *  catches both the in-page Print button AND Ctrl+P / Cmd+P keyboard
+ *  shortcuts (the latter accounts for the older paper-carrying fairs
+ *  audience the sheet targets). Dual GA4 + beacon emit so operators see
+ *  the signal in /admin/analytics regardless of GA4 ingestion delays. */
+export function trackPrintSheet(entityType: PrintEntityType, entityId: string, entitySlug: string) {
+  const params = {
+    category: "engagement",
+    label: `${entityType}:${entitySlug}`,
+    entity_type: entityType,
+    entity_id: entityId,
+    entity_slug: entitySlug,
+  };
+  trackEvent("print_sheet", params);
+  sendBeacon("print_sheet", "engagement", {
+    entityType,
+    entityId,
+    entitySlug,
+  });
+}

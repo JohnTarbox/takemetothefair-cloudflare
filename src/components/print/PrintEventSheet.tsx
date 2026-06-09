@@ -137,7 +137,15 @@ export function PrintEventSheet({ event, venue, promoter, canonicalUrl }: PrintE
   });
   const headerDate = occurrence ? formatPrintDate(occurrence) : null;
 
-  const url = canonicalUrl ?? `https://meetmeatthefair.com/events/${event.slug}`;
+  // PRINT2 (Dev-Email-2026-06-09 §C, 2026-06-09) — UTM-tag the QR
+  // URL so paper-to-digital scans aren't lost in (direct) traffic
+  // (~84% of sessions before this tag, per GA4 90d). utm_content =
+  // event slug rather than DB id — slug is already in scope, and
+  // landing-page path already exposes it, so no PII / id leakage.
+  // Inline param-build is simpler than a one-call-site helper; the
+  // MCP build_utm_url tool lives in mcp-server/ (separate package).
+  const baseUrl = canonicalUrl ?? `https://meetmeatthefair.com/events/${event.slug}`;
+  const url = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}utm_source=print&utm_medium=qr&utm_campaign=event_sheet&utm_content=${encodeURIComponent(event.slug)}`;
 
   // Description: short events get the full string; long ones get
   // ellipsized at ~400 chars to fit one page. Caller can pass anything

@@ -398,7 +398,14 @@ export default async function BlogPostPage({ params }: Props) {
 
           {/* Share */}
           <div className="mt-6 pt-6 border-t border-border">
-            <ShareButtons url={url} title={post.title} description={post.excerpt || post.title} />
+            <ShareButtons
+              url={url}
+              title={post.title}
+              description={post.excerpt || post.title}
+              entityType="BLOG"
+              entityId={post.id}
+              entitySlug={post.slug}
+            />
           </div>
         </article>
 

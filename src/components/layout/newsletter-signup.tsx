@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Mail, Check } from "lucide-react";
+import { trackFormSubmit } from "@/lib/analytics";
 
 export function NewsletterSignup() {
   const [email, setEmail] = useState("");
@@ -18,6 +19,13 @@ export function NewsletterSignup() {
         body: JSON.stringify({ email, source: "footer" }),
       });
       setStatus(res.ok ? "done" : "error");
+      // ENG1.3 (2026-06-09) — fire AFTER res.ok so failed POSTs don't
+      // inflate the signup counter. Newsletter has no pre-existing
+      // GA4 event, so the beacon side mirrors to D1 (via the helper)
+      // for immediate /admin/analytics visibility.
+      if (res.ok) {
+        trackFormSubmit("newsletter", { source: "footer" });
+      }
     } catch {
       setStatus("error");
     }

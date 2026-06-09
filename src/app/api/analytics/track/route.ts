@@ -23,6 +23,17 @@ const ALLOWED_EVENT_NAMES = [
   // target_slug as custom dimensions after John registers them per
   // docs/bc2-ga4-custom-dimensions.md.
   "blog_outbound_click",
+  // ENG1.3 (2026-06-09) — segmented form-submit events. Only the two
+  // audiences without existing GA4 coverage are mirrored to the beacon;
+  // suggest_event_* / vendor_application_submit already have GA4-side
+  // visibility via the legacy event_suggest / vendor_apply dual-emit.
+  "newsletter_submit",
+  "vendor_claim_submit",
+  // PRINT2 (Dev-Email-2026-06-09 §C, 2026-06-09) — print-sheet beacon.
+  // Fires on window.beforeprint (covers Ctrl+P + Print-button). Dual GA4
+  // + beacon so operators see counts on /admin/analytics without waiting
+  // for the 24h GA4 custom-dim propagation.
+  "print_sheet",
 ] as const;
 
 const trackSchema = z.object({

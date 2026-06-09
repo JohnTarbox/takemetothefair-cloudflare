@@ -235,6 +235,7 @@ function PopoverContent({
             endDate={event.endDate}
             url={`https://meetmeatthefair.com/events/${event.slug}`}
             variant="icon"
+            eventSlug={event.slug}
             venueTimezone={event.venue?.timezone}
           />
           <Link

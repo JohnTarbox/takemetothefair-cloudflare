@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { trackFormSubmit } from "@/lib/analytics";
 
 interface Props {
   vendorSlug: string;
@@ -40,6 +41,11 @@ export function DirectClaimButton({ vendorSlug }: Props) {
         setMessage(body.message ?? body.error ?? "Claim failed. Try again or contact support.");
         return;
       }
+      // ENG1.3 (2026-06-09) — claim has no pre-existing GA4 event,
+      // so this is a NEW event. Fires after the API success but
+      // before router.refresh() so the beacon goes out under the
+      // current session before the navigation invalidates it.
+      trackFormSubmit("vendor_claim", { vendor_slug: vendorSlug });
       // Force a refresh so the page re-fetches the vendor with
       // claimed=true and the session.roles array picks up the new
       // VENDOR grant.

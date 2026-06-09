@@ -50,6 +50,13 @@ interface AddToCalendarProps {
   url?: string;
   variant?: "button" | "link" | "icon";
   className?: string;
+  // ENG1 audit (docs/eng1-audit.md §B.2, 2026-06-09) — the real event
+  // slug, used as the `event_slug` GA4 custom-dimension param on the
+  // add_to_calendar event. When omitted, the helper falls back to the
+  // pre-existing title-derived slug (which conflates events with the
+  // same title) — keep callers warning-free by passing event.slug
+  // wherever it's in scope.
+  eventSlug?: string;
   eventDays?: EventDay[];
   // Cohort 7 (C1/U1, 2026-06-01) — RFC 5545 RRULE for events whose
   // recurrence isn't captured by event_days. Forwarded to the
@@ -76,6 +83,7 @@ export function AddToCalendar({
   url,
   variant = "button",
   className = "",
+  eventSlug,
   eventDays = [],
   recurrenceRule = null,
   venueTimezone,
@@ -159,10 +167,15 @@ export function AddToCalendar({
     }
   };
 
+  // slugFromTitle still drives the .ics download filename below (kept
+  // for backward compat — older saved .ics files use this shape). But
+  // the analytics emit prefers the real eventSlug when available so
+  // GA4's event_slug custom dim groups by URL slug, not title (see
+  // docs/eng1-audit.md §B.2).
   const slugFromTitle = title.replace(/[^a-z0-9]/gi, "-").toLowerCase();
 
   const handleCalendarClick = (calendarType: string) => {
-    trackAddToCalendar(slugFromTitle, calendarType);
+    trackAddToCalendar(eventSlug ?? slugFromTitle, calendarType);
     setIsOpen(false);
   };
 

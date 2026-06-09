@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getErrorMessage } from "@/lib/error-messages";
-import { trackEvent } from "@/lib/analytics";
+import { trackEvent, trackFormSubmit } from "@/lib/analytics";
 import { formatDateMedium } from "@/lib/datetime";
 
 interface VendorApplyButtonProps {
@@ -85,7 +85,11 @@ export function VendorApplyButton({
       setWasAutoApproved(result.status === "CONFIRMED");
       if (result.id) setCreatedId(result.id);
       setSuccess(true);
+      // ENG1.3 (2026-06-09) — dual-emit during 30-day cutover window.
+      // vendor_application_submit is the GA4 Recommended Events name;
+      // legacy vendor_apply preserved for trendline continuity.
       trackEvent("vendor_apply", { category: "conversion", label: eventId });
+      trackFormSubmit("vendor_application", { event_id: eventId });
     } catch (err) {
       setError(getErrorMessage(err, "submit your application"));
     } finally {

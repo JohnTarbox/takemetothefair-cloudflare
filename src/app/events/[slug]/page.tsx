@@ -76,6 +76,7 @@ import { FavoriteButton } from "@/components/FavoriteButton";
 import { EventCard } from "@/components/events/event-card";
 import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
+import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
@@ -606,6 +607,9 @@ export default async function EventDetailPage({ params }: Props) {
       <div className="screen-only mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <DetailPageTracker type="event" slug={event.slug} name={event.name} />
         <ScrollDepthTracker pageType="event-detail" />
+        {/* PRINT2 (2026-06-09) — listens for window.beforeprint so it
+            catches both the in-page Print button and Ctrl+P/Cmd+P. */}
+        <PrintBeacon entityType="EVENT" entityId={event.id} entitySlug={event.slug} />
         <EventSchema
           name={event.name}
           slug={event.slug}
@@ -949,6 +953,9 @@ export default async function EventDetailPage({ params }: Props) {
                           url={`https://meetmeatthefair.com/events/${event.slug}`}
                           title={event.name}
                           description={event.description || undefined}
+                          entityType="EVENT"
+                          entityId={event.id}
+                          entitySlug={event.slug}
                         />
                         {/* MMATF-UIUX-PrintSheet-Spec Item 1 — paper handoff
                           for the fairs audience. Single button triggers
@@ -1222,6 +1229,7 @@ export default async function EventDetailPage({ params }: Props) {
                         endDate={event.endDate}
                         url={`https://meetmeatthefair.com/events/${event.slug}`}
                         variant="icon"
+                        eventSlug={event.slug}
                         eventDays={event.eventDays}
                       />
                     </div>

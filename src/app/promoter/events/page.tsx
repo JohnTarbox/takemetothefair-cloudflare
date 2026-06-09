@@ -236,6 +236,7 @@ export default async function PromoterEventsPage() {
                                 endDate={event.endDate}
                                 url={`https://meetmeatthefair.com/events/${event.slug}`}
                                 variant="icon"
+                                eventSlug={event.slug}
                               />
                             </span>
                           )}

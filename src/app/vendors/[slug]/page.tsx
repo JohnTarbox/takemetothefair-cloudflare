@@ -892,6 +892,7 @@ export default async function VendorDetailPage({ params }: Props) {
                                 endDate={event.endDate}
                                 url={`https://meetmeatthefair.com/events/${event.slug}`}
                                 variant="icon"
+                                eventSlug={event.slug}
                               />
                             </div>
                             {occurrenceLabel && (

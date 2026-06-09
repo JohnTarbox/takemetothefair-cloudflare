@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Share2, Twitter, Facebook, Linkedin, Mail, Link2, Check } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import { trackShare, type ShareMethod, type ShareEntityType } from "@/lib/analytics";
 
 // U7 / Phase D (2026-06-02) — trigger migrated from <Button size="sm">
 // (~28px tall, icon + "Share" text) to icon-only IconButton size="md"
@@ -16,9 +17,30 @@ interface ShareButtonsProps {
   url: string;
   title: string;
   description?: string;
+  // ENG1.2 (2026-06-09) — share-method analytics requires the entity
+  // identity for GA4 custom dimensions (entity_type, entity_id,
+  // entity_slug). All three are required; callers that don't have a
+  // DB id should pass the slug for both — share volume is too low
+  // to justify a permissive type. See docs/eng1-audit.md §A.
+  entityType: ShareEntityType;
+  entityId: string;
+  entitySlug: string;
 }
 
-export function ShareButtons({ url, title, description }: ShareButtonsProps) {
+export function ShareButtons({
+  url,
+  title,
+  description,
+  entityType,
+  entityId,
+  entitySlug,
+}: ShareButtonsProps) {
+  // ENG1.2 — close over the entity identity so each per-method handler
+  // can fire the share event without repeating the 3-tuple.
+  const fireShare = (method: ShareMethod) => {
+    trackShare(method, entityType, entityId, entitySlug);
+  };
+
   const [copied, setCopied] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -54,6 +76,9 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
   const copyToClipboard = async () => {
     try {
       await navigator.clipboard.writeText(url);
+      // Fire AFTER the clipboard write succeeds — a failed copy
+      // shouldn't inflate the share counter.
+      fireShare("copy");
       setCopied(true);
       setTimeout(() => {
         setCopied(false);
@@ -95,7 +120,10 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           aria-label="Share options"
         >
           <button
-            onClick={() => openShareWindow(shareLinks.twitter)}
+            onClick={() => {
+              fireShare("twitter");
+              openShareWindow(shareLinks.twitter);
+            }}
             className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label="Share on Twitter"
@@ -104,7 +132,10 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
             Twitter
           </button>
           <button
-            onClick={() => openShareWindow(shareLinks.facebook)}
+            onClick={() => {
+              fireShare("facebook");
+              openShareWindow(shareLinks.facebook);
+            }}
             className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label="Share on Facebook"
@@ -113,7 +144,10 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
             Facebook
           </button>
           <button
-            onClick={() => openShareWindow(shareLinks.linkedin)}
+            onClick={() => {
+              fireShare("linkedin");
+              openShareWindow(shareLinks.linkedin);
+            }}
             className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
             role="menuitem"
             aria-label="Share on LinkedIn"
@@ -124,7 +158,12 @@ export function ShareButtons({ url, title, description }: ShareButtonsProps) {
           <a
             href={shareLinks.email}
             className="w-full min-h-[40px] px-4 py-2 text-sm text-foreground hover:bg-muted flex items-center gap-2"
-            onClick={() => setIsOpen(false)}
+            onClick={() => {
+              // Email is an <a href="mailto:"> — the browser handles
+              // navigation. Fire before the navigation; the page stays.
+              fireShare("email");
+              setIsOpen(false);
+            }}
             role="menuitem"
             aria-label="Share via email"
           >
