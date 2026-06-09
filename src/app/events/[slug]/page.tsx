@@ -42,6 +42,7 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { DailyScheduleDisplay } from "@/components/events/DailyScheduleDisplay";
+import { EventDayImageStrip } from "@/components/events/EventDayImageStrip";
 import { parseJsonArray } from "@/types";
 import type { Metadata } from "next";
 import { auth } from "@/lib/auth";
@@ -1226,12 +1227,21 @@ export default async function EventDetailPage({ params }: Props) {
                       />
                     </div>
                     {event.eventDays && event.eventDays.length > 0 ? (
-                      <DailyScheduleDisplay
-                        days={event.eventDays}
-                        discontinuousDates={event.discontinuousDates ?? false}
-                        className="mt-2"
-                        showVendorDays={isAdmin ? "all" : isVendor ? "badge" : "hide"}
-                      />
+                      <>
+                        {/* E.2a (F2 public consumer, 2026-06-09) — per-
+                            occurrence art for events that ship day-
+                            specific images via PR #412's schema. Renders
+                            null when no day has imageUrl set, so this
+                            adds zero visual weight to the 99%+ of events
+                            that don't use the feature yet. */}
+                        <EventDayImageStrip days={event.eventDays} className="mt-3" />
+                        <DailyScheduleDisplay
+                          days={event.eventDays}
+                          discontinuousDates={event.discontinuousDates ?? false}
+                          className="mt-2"
+                          showVendorDays={isAdmin ? "all" : isVendor ? "badge" : "hide"}
+                        />
+                      </>
                     ) : event.discontinuousDates ? (
                       // Season-span case (analyst P7b sub-case): discontinuousDates
                       // is set but no event_days back it (e.g., "every Saturday

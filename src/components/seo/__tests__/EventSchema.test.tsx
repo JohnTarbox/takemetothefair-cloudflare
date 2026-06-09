@@ -283,3 +283,47 @@ describe("EventSchema venue.timezone threading (P3b)", () => {
     expect(subs[0].startDate).toBe("2026-07-15T09:00:00-04:00");
   });
 });
+
+describe("EventSchema subEvent.image per-occurrence (F2 / E.2b, 2026-06-09)", () => {
+  // Two-day event: first day has a per-occurrence image, second doesn't.
+  // The emitted subEvent.image should match each day's wiring — per-day
+  // URL when set, series-level resolvedImage when not.
+  const eventDays = [
+    {
+      date: "2026-07-15",
+      openTime: "09:00",
+      closeTime: "17:00",
+      imageUrl: "https://meetmeatthefair.com/day1-poster.jpg",
+    },
+    {
+      date: "2026-07-16",
+      openTime: "09:00",
+      closeTime: "17:00",
+      // No imageUrl — should fall back to series imageUrl from baseProps.
+    },
+  ];
+
+  it("per-day imageUrl wins; absent day falls back to series-level image", () => {
+    const { container } = render(<EventSchema {...baseProps} eventDays={eventDays} />);
+    const ld = extractJsonLd(container);
+    const subs = ld.subEvent as Array<{ image: string }>;
+    expect(subs).toHaveLength(2);
+    // Day 1 has its own image
+    expect(subs[0].image).toBe("https://meetmeatthefair.com/day1-poster.jpg");
+    // Day 2 falls back to series image (from baseProps.imageUrl)
+    expect(subs[1].image).toBe("https://meetmeatthefair.com/test.jpg");
+  });
+
+  it("eventDays without imageUrl at all → every subEvent uses series image (back-compat)", () => {
+    const daysWithoutImages = [
+      { date: "2026-07-15", openTime: "09:00", closeTime: "17:00" },
+      { date: "2026-07-16", openTime: "09:00", closeTime: "17:00" },
+    ];
+    const { container } = render(<EventSchema {...baseProps} eventDays={daysWithoutImages} />);
+    const ld = extractJsonLd(container);
+    const subs = ld.subEvent as Array<{ image: string }>;
+    for (const sub of subs) {
+      expect(sub.image).toBe("https://meetmeatthefair.com/test.jpg");
+    }
+  });
+});
