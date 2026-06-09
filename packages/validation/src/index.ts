@@ -719,6 +719,14 @@ export const blogPostCreateSchema = z.object({
   categories: z.array(z.string()).optional().default([]),
   faqs: z.array(blogFaqItemSchema).optional().default([]),
   featuredImageUrl: urlSchema,
+  // F1 (drizzle/0119, 2026-06-08) — focal point for the featured image.
+  // Drives the gravity arg BlogPostCard uses so the editor's "place the
+  // dot" gesture survives card crops at every responsive width. Optional
+  // and validated 0.0–1.0; omitted → backend default 0.5/0.5 (= center,
+  // which short-circuits to the gravity-omitted URL via focalPointGravity()
+  // so the pre-F1 derivative cache key is preserved).
+  imageFocalX: z.number().min(0).max(1).optional(),
+  imageFocalY: z.number().min(0).max(1).optional(),
   status: z
     .enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED])
     .optional()

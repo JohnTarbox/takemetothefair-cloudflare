@@ -67,6 +67,11 @@ export async function GET(request: NextRequest) {
           tags: blogPosts.tags,
           categories: blogPosts.categories,
           featuredImageUrl: blogPosts.featuredImageUrl,
+          // F1 — surface focal columns so admin form can re-populate the
+          // picker with the current value on edit (matches the events
+          // detail SELECT pattern).
+          imageFocalX: blogPosts.imageFocalX,
+          imageFocalY: blogPosts.imageFocalY,
           status: blogPosts.status,
           publishDate: blogPosts.publishDate,
           metaTitle: blogPosts.metaTitle,
@@ -179,6 +184,18 @@ export async function POST(request: NextRequest) {
       categories: JSON.stringify(data.categories),
       faqs: JSON.stringify(data.faqs),
       featuredImageUrl: data.featuredImageUrl || null,
+      // F1 (PR #412 deferred-finisher, 2026-06-08) — pass focal-point through
+      // when provided so the MCP create_blog_post tool's image_focal_x/y
+      // args actually persist. The Drizzle column defaults to 0.5/0.5 when
+      // omitted, which matches `gravity` short-circuit semantics: center
+      // → URL identical to pre-F1 (preserves CF derivative cache key).
+      // Mirrors the pattern at src/app/api/admin/events/[id]/route.ts:237-241.
+      ...(typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)
+        ? { imageFocalX: Math.max(0, Math.min(1, data.imageFocalX)) }
+        : {}),
+      ...(typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)
+        ? { imageFocalY: Math.max(0, Math.min(1, data.imageFocalY)) }
+        : {}),
       status: data.status,
       publishDate,
       metaTitle: data.metaTitle || null,
