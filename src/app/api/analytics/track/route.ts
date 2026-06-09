@@ -18,6 +18,11 @@ const ALLOWED_EVENT_NAMES = [
   "outbound_ticket_click",
   "filter_applied",
   "internal_search_performed",
+  // BC2 (2026-06-08) — blog → listing click attribution. Beacon side
+  // captured in D1 immediately; GA4 side surfaces source_slug/target_type/
+  // target_slug as custom dimensions after John registers them per
+  // docs/bc2-ga4-custom-dimensions.md.
+  "blog_outbound_click",
 ] as const;
 
 const trackSchema = z.object({

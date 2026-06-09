@@ -167,6 +167,83 @@ export function trackOutboundTicketClick(eventSlug: string, destinationUrl: stri
   });
 }
 
+/** Recognized internal-link target types for blog body click attribution.
+ *  Mirrors the prefix list in BLOG_OUTBOUND_LINK_REGEX. Exported so the
+ *  helper + the unit tests can share the union. */
+export type BlogOutboundTargetType = "EVENT" | "VENDOR" | "VENUE" | "BLOG";
+
+/** First path segment → target type. Matches the prefix-to-type contract
+ *  the GA4 custom dimensions will be filtered on (see
+ *  docs/bc2-ga4-custom-dimensions.md for the registration steps). */
+const PREFIX_TO_TYPE: Record<string, BlogOutboundTargetType> = {
+  events: "EVENT",
+  vendors: "VENDOR",
+  venues: "VENUE",
+  blog: "BLOG",
+};
+
+/** Pure URL classifier — exported for unit tests. Returns null when the
+ *  href is anything other than an internal `/events|/vendors|/venues|/blog`
+ *  link (external, mail/tel/hash, root, malformed slug). */
+export function classifyBlogOutboundLink(
+  href: string | null | undefined
+): { targetType: BlogOutboundTargetType; targetSlug: string } | null {
+  if (!href) return null;
+  // Quick reject: absolute external URL, mailto:, tel:, #anchor
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith("http")) return null;
+  if (href.startsWith("http")) {
+    // External URL — not an internal click. Allow same-origin absolute
+    // links by checking host, but for simplicity treat any http(s) as
+    // external. The blog-body author convention is path-relative anyway.
+    try {
+      const u = new URL(href);
+      if (u.host !== "meetmeatthefair.com" && u.host !== "www.meetmeatthefair.com") {
+        return null;
+      }
+      return classifyBlogOutboundLink(u.pathname);
+    } catch {
+      return null;
+    }
+  }
+  const m = href.match(/^\/(events|vendors|venues|blog)\/([^/?#]+)/);
+  if (!m) return null;
+  const targetType = PREFIX_TO_TYPE[m[1]];
+  if (!targetType) return null;
+  return { targetType, targetSlug: m[2] };
+}
+
+/** BC2 (Dev-Email-2026-06-08 §D, 2026-06-08) — blog → listing click
+ *  attribution. Fired by the MarkdownContent delegated click handler when
+ *  a reader clicks an internal `/events|/vendors|/venues|/blog` link
+ *  inside the blog post body.
+ *
+ *  Params land in GA4 as custom dimensions after John registers them in
+ *  Admin → Custom Definitions → Custom Dimensions (event-scoped). See
+ *  docs/bc2-ga4-custom-dimensions.md.
+ *
+ *  Until registration, the event itself is captured (visible via Realtime
+ *  / DebugView) but the param columns are empty in standard reports. The
+ *  first-party beacon side is unaffected — those land in D1 immediately
+ *  via /api/analytics/track regardless of GA4 registration. */
+export function trackBlogOutboundClick(
+  sourceSlug: string,
+  targetType: BlogOutboundTargetType,
+  targetSlug: string
+) {
+  trackEvent("blog_outbound_click", {
+    category: "engagement",
+    label: targetSlug,
+    source_slug: sourceSlug,
+    target_type: targetType,
+    target_slug: targetSlug,
+  });
+  sendBeacon("blog_outbound_click", "engagement", {
+    sourceSlug,
+    targetType,
+    targetSlug,
+  });
+}
+
 /** Track a filter change on a listing page (events, venues, vendors). */
 export function trackFilterApplied(filterType: string, filterValue: string, pageType: string) {
   trackEvent("filter_applied", {
