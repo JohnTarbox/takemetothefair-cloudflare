@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatAuthorName } from "@/lib/utils";
 import { formatDateLong } from "@/lib/datetime";
-import { cdnImage } from "@/lib/cdn-image";
+import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
 
 interface BlogPostCardProps {
   post: {
@@ -20,6 +20,12 @@ interface BlogPostCardProps {
     categories: string[];
     status: string;
     publishDate: string | Date | null;
+    // F1 (drizzle/0119, 2026-06-08) — per-image focal point. Optional in
+    // the prop because callers that don't SELECT the columns (legacy
+    // queries) still work; focalPointGravity() short-circuits center →
+    // undefined so omitting it preserves the prior derivative cache key.
+    imageFocalX?: number | null;
+    imageFocalY?: number | null;
   };
   /**
    * Set to true for the SINGLE LCP candidate per page only. Emits
@@ -62,6 +68,11 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
             // schema column needed); follow-up if a blog hero ever needs
             // rescue.
             (() => {
+              // F1 (2026-06-08) — focal-point gravity. Center short-
+              // circuits to undefined, preserving the pre-F1 derivative
+              // cache key. Off-center values emit `gravity=Xx Y` for the
+              // cdn-cgi transform.
+              const gravity = focalPointGravity(post.imageFocalX, post.imageFocalY);
               const cardWidths = [400, 600, 800, 1200];
               const cardSrcSet = cardWidths
                 .map((w) =>
@@ -69,6 +80,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
                     width: w,
                     height: Math.round((w * 9) / 16),
                     fit: "cover",
+                    gravity,
                     format: "auto",
                     quality: 80,
                     onerror: "redirect",
@@ -80,6 +92,7 @@ export function BlogPostCard({ post, priority = false }: BlogPostCardProps) {
                 width: 800,
                 height: 450,
                 fit: "cover",
+                gravity,
                 format: "auto",
                 quality: 80,
                 onerror: "redirect",

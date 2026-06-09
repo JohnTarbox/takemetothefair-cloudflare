@@ -911,6 +911,15 @@ export const eventDays = sqliteTable("event_days", {
   notes: text("notes"),
   closed: integer("closed", { mode: "boolean" }).default(false),
   vendorOnly: integer("vendor_only", { mode: "boolean" }).default(false),
+  // F2 (drizzle/0120, 2026-06-08) — per-occurrence image + focal-point.
+  // A series event can carry distinct art per occurrence (e.g. seasonal
+  // farmers markets with different posters per month). v1 consumers:
+  // admin create_event_day / update_event_day MCP tools accept these
+  // args. Deferred for v1: public per-day image strip, JSON-LD
+  // subEvent.image, series-event grid using per-occurrence art.
+  imageUrl: text("image_url"),
+  imageFocalX: real("image_focal_x").notNull().default(0.5),
+  imageFocalY: real("image_focal_y").notNull().default(0.5),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
@@ -1152,6 +1161,13 @@ export const blogPosts = sqliteTable(
     categories: text("categories").default("[]"),
     faqs: text("faqs").notNull().default("[]"),
     featuredImageUrl: text("featured_image_url"),
+    // F1 (drizzle/0119, 2026-06-08) — focal-point columns. Last entity
+    // type to join the focal-point system (events/venues/vendors/promoters
+    // got them in drizzle/0115). Default 0.5/0.5 = center; BlogPostCard
+    // reads via focalPointGravity() which short-circuits center → undefined
+    // so pre-F1 derivative cache keys are preserved.
+    imageFocalX: real("image_focal_x").notNull().default(0.5),
+    imageFocalY: real("image_focal_y").notNull().default(0.5),
     status: text("status", { enum: ["DRAFT", "PUBLISHED"] })
       .default("DRAFT")
       .notNull(),
