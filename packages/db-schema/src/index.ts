@@ -899,8 +899,15 @@ export const eventDays = sqliteTable("event_days", {
     .notNull()
     .references(() => events.id, { onDelete: "cascade" }),
   date: text("date").notNull(), // "YYYY-MM-DD" format
-  openTime: text("open_time").notNull(), // "HH:MM" 24-hour format
-  closeTime: text("close_time").notNull(), // "HH:MM" 24-hour format
+  // DQ4 (drizzle/0118, 2026-06-08) — openTime / closeTime are nullable.
+  // NULL means "hours not yet confirmed" (no fabricated default). Ingest
+  // paths that previously defaulted to "10:00"/"18:00" or "09:00"/"17:00"
+  // now write NULL and set events.flaggedForReview=1 for operator triage.
+  // Render layer (DailyScheduleDisplay) falls back to "Hours not yet
+  // confirmed" when both are null on a row. See email §C and runbook
+  // docs/runbooks/dq4-9-5-daily-sweep.md.
+  openTime: text("open_time"), // "HH:MM" 24-hour format, or NULL
+  closeTime: text("close_time"), // "HH:MM" 24-hour format, or NULL
   notes: text("notes"),
   closed: integer("closed", { mode: "boolean" }).default(false),
   vendorOnly: integer("vendor_only", { mode: "boolean" }).default(false),

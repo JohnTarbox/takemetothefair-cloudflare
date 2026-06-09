@@ -6,8 +6,11 @@ import type { PrimaryAudience, PublicAccess } from "@takemetothefair/constants";
 
 interface EventDay {
   date: string;
-  openTime: string;
-  closeTime: string;
+  // DQ4 (drizzle/0118, 2026-06-08): openTime/closeTime are nullable.
+  // The subEvent emission below skips rows where either is null —
+  // Schema.org Event without startDate is malformed.
+  openTime: string | null;
+  closeTime: string | null;
   notes?: string | null;
   closed?: boolean | null;
   // Allow additional DB fields
@@ -323,6 +326,16 @@ export function EventSchema({
     eventDays && eventDays.length > 0
       ? eventDays
           .filter((d) => !d.closed)
+          // DQ4 (2026-06-08): drop days where hours weren't captured.
+          // Schema.org Event requires startDate; emitting subEvents with
+          // null startDate would fail Rich Results validation. The render
+          // surface still shows "Hours not yet confirmed" for these days.
+          // Type predicate narrows day.openTime/closeTime to string for
+          // the subsequent .map().
+          .filter(
+            (d): d is EventDay & { openTime: string; closeTime: string } =>
+              d.openTime != null && d.closeTime != null
+          )
           .map((day, i) => {
             // Sub-event open/close times are wall-clock in the venue's zone.
             // Emit them as ISO with the proper offset (`-04:00`/`-05:00` at

@@ -275,35 +275,55 @@ export async function POST(request: NextRequest) {
     // event_days rows pass up to 9 columns (8 explicit + the $defaultFn
     // createdAt), so chunks are capped at 11 rows (11 × 9 = 99). See the
     // admin event-edit PATCH handler for the full incident note.
+    // DQ4 (2026-06-08): both branches below used to default to "10:00"/
+    // "18:00" or echo startTime into closeTime when the AI extractor
+    // didn't surface times. Now we pass through null and flag the parent
+    // event for operator triage. anyHoursUnknown is computed alongside
+    // the insert so the events UPDATE happens before the cascade-OK row
+    // commits.
+    let anyHoursUnknown = false;
     if (hasSpecificDates) {
       // Discontinuous: create eventDays from specificDates
-      const days = event.specificDates!.map((dateStr, idx) => ({
-        id: crypto.randomUUID(),
-        eventId: newEventId,
-        date: dateStr,
-        openTime: event.startTime || "10:00",
-        closeTime: event.endTime || "18:00",
-        notes: idx === 0 && event.hoursNotes ? event.hoursNotes : null,
-        closed: false,
-      }));
+      const days = event.specificDates!.map((dateStr, idx) => {
+        const openTime = event.startTime || null;
+        const closeTime = event.endTime || null;
+        if (openTime == null || closeTime == null) anyHoursUnknown = true;
+        return {
+          id: crypto.randomUUID(),
+          eventId: newEventId,
+          date: dateStr,
+          openTime,
+          closeTime,
+          notes: idx === 0 && event.hoursNotes ? event.hoursNotes : null,
+          closed: false,
+        };
+      });
 
       const BATCH_SIZE = 11;
       for (let i = 0; i < days.length; i += BATCH_SIZE) {
         const batch = days.slice(i, i + BATCH_SIZE);
         await db.insert(eventDays).values(batch);
       }
-    } else if (event.startTime && startDate) {
-      // Contiguous: generate one row per day in the date range
+    } else if (startDate) {
+      // Contiguous: generate one row per day in the date range. DQ4 — the
+      // outer guard used to require `event.startTime && startDate`; now
+      // we always materialize event_days when we have a date span and
+      // fall back to null hours when the extractor didn't get times.
+      // Same flag-for-review wiring as the discontinuous branch above.
       const rangeEnd = endDate || startDate;
       const days: Array<{
         id: string;
         eventId: string;
         date: string;
-        openTime: string;
-        closeTime: string;
+        openTime: string | null;
+        closeTime: string | null;
         notes: string | null;
         closed: boolean;
       }> = [];
+
+      const openTime = event.startTime || null;
+      const closeTime = event.endTime || openTime; // mirror prior shape when only open is known
+      if (openTime == null || closeTime == null) anyHoursUnknown = true;
 
       const current = new Date(startDate);
       const last = new Date(rangeEnd);
@@ -314,8 +334,8 @@ export async function POST(request: NextRequest) {
           id: crypto.randomUUID(),
           eventId: newEventId,
           date: dateStr,
-          openTime: event.startTime,
-          closeTime: event.endTime || event.startTime,
+          openTime,
+          closeTime,
           notes: isFirst && event.hoursNotes ? event.hoursNotes : null,
           closed: false,
         });
@@ -329,6 +349,11 @@ export async function POST(request: NextRequest) {
         const batch = days.slice(i, i + BATCH_SIZE);
         await db.insert(eventDays).values(batch);
       }
+    }
+    if (anyHoursUnknown) {
+      // DQ4: flag the parent event so the operator triage queue
+      // (/admin/events?flagged=1) surfaces it for human follow-up.
+      await db.update(events).set({ flaggedForReview: 1 }).where(eq(events.id, newEventId));
     }
 
     // Store schema.org data if JSON-LD was provided

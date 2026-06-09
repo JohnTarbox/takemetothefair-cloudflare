@@ -3725,12 +3725,20 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── create_event_day ──────────────────────────────────────────
   server.tool(
     "create_event_day",
-    "Add a day to an event's schedule. Admin only.",
+    "Add a day to an event's schedule. Admin only. DQ4 (2026-06-08): open_time and close_time are now optional. When omitted, the row is created with NULL hours and the parent event is flagged for review (events.flagged_for_review=1).",
     {
       event_id: z.string().describe("Event ID"),
       date: z.string().describe("Date (YYYY-MM-DD)"),
-      open_time: z.string().describe("Opening time (HH:MM)"),
-      close_time: z.string().describe("Closing time (HH:MM)"),
+      open_time: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/)
+        .optional()
+        .describe("Opening time (HH:MM). Omit for 'hours not yet confirmed'."),
+      close_time: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/)
+        .optional()
+        .describe("Closing time (HH:MM). Omit for 'hours not yet confirmed'."),
       notes: z.string().optional().describe("Notes for this day"),
       vendor_only: z
         .boolean()
@@ -3750,13 +3758,19 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       }
 
       const dayId = crypto.randomUUID();
+      // DQ4: pass null through when args were omitted; drizzle/0118 made
+      // the columns nullable. Flag the parent event for triage when
+      // either time landed unknown.
+      const openTime = params.open_time ?? null;
+      const closeTime = params.close_time ?? null;
+      const hoursUnknown = openTime == null || closeTime == null;
 
       await db.insert(eventDays).values({
         id: dayId,
         eventId: params.event_id,
         date: params.date,
-        openTime: params.open_time,
-        closeTime: params.close_time,
+        openTime,
+        closeTime,
         notes: params.notes ?? null,
         vendorOnly: params.vendor_only ?? false,
       });
@@ -3769,7 +3783,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       const { publicStartDate, publicEndDate } = computePublicDates(allDays);
       await db
         .update(events)
-        .set({ publicStartDate, publicEndDate, updatedAt: new Date() })
+        .set({
+          publicStartDate,
+          publicEndDate,
+          updatedAt: new Date(),
+          ...(hoursUnknown ? { flaggedForReview: 1 } : {}),
+        })
         .where(eq(events.id, params.event_id));
 
       return {
@@ -3779,9 +3798,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             id: dayId,
             event: eventRows[0].name,
             date: params.date,
-            openTime: params.open_time,
-            closeTime: params.close_time,
+            openTime,
+            closeTime,
             vendorOnly: params.vendor_only ?? false,
+            ...(hoursUnknown ? { flaggedForReview: true } : {}),
           }),
         ],
       };
@@ -3791,12 +3811,22 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // ── update_event_day ──────────────────────────────────────────
   server.tool(
     "update_event_day",
-    "Update an event day's schedule. Admin only.",
+    "Update an event day's schedule. Admin only. DQ4 (2026-06-08): pass open_time=null or close_time=null to clear (renders 'Hours not yet confirmed'); a non-null value confirms hours and (if it was the last unknown row) clears the event's flagged_for_review.",
     {
       day_id: z.string().describe("Event day ID"),
       date: z.string().optional().describe("Date (YYYY-MM-DD)"),
-      open_time: z.string().optional().describe("Opening time (HH:MM)"),
-      close_time: z.string().optional().describe("Closing time (HH:MM)"),
+      open_time: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/)
+        .nullable()
+        .optional()
+        .describe("Opening time (HH:MM), or null to mark as 'hours not yet confirmed'."),
+      close_time: z
+        .string()
+        .regex(/^\d{2}:\d{2}$/)
+        .nullable()
+        .optional()
+        .describe("Closing time (HH:MM), or null to mark as 'hours not yet confirmed'."),
       notes: z.string().optional().describe("Notes for this day"),
       closed: z.boolean().optional().describe("Whether this day is cancelled/closed"),
       vendor_only: z
@@ -3817,6 +3847,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       const updates: Record<string, unknown> = {};
       if (params.date !== undefined) updates.date = params.date;
+      // DQ4: open_time / close_time accept null (clear) AND undefined (skip).
+      // Distinguish them — `?? null` on the union would erase the skip case.
       if (params.open_time !== undefined) updates.openTime = params.open_time;
       if (params.close_time !== undefined) updates.closeTime = params.close_time;
       if (params.notes !== undefined) updates.notes = params.notes;

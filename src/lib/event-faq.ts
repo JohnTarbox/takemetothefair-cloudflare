@@ -41,8 +41,12 @@ export type FaqVenue = {
 
 export type FaqEventDay = {
   date: string;
-  openTime: string;
-  closeTime: string;
+  // DQ4 (drizzle/0118, 2026-06-08): openTime/closeTime are nullable.
+  // The FAQ builder below skips the "What time does it run?" item when
+  // either is null — "Hours not yet confirmed" is honest UX for the
+  // event detail render but a useless FAQ answer.
+  openTime: string | null;
+  closeTime: string | null;
   closed: boolean | null;
   vendorOnly: boolean | null;
 };
@@ -175,15 +179,18 @@ export function buildEventFaqItems(input: EventFaqInput): FaqItem[] {
     });
   }
 
-  // Hours: only render when public days share hours. A vague "varies" answer
-  // doesn't help the FAQ; the daily schedule component handles per-day.
+  // Hours: only render when public days share hours AND both bounds are
+  // known. DQ4 (2026-06-08) — when either openTime or closeTime is null
+  // ("Hours not yet confirmed"), skip the FAQ item entirely: a vague
+  // "varies" answer doesn't help the FAQ, and "Open daily from null to
+  // null" is worse than no answer.
   const publicDays = eventDays.filter((d) => d.vendorOnly !== true && d.closed !== true);
   if (publicDays.length > 0) {
     const first = publicDays[0];
     const allSame = publicDays.every(
       (d) => d.openTime === first.openTime && d.closeTime === first.closeTime
     );
-    if (allSame) {
+    if (allSame && first.openTime != null && first.closeTime != null) {
       const open = formatTime12(first.openTime);
       const close = formatTime12(first.closeTime);
       if (open && close) {

@@ -39,8 +39,19 @@ import { randomUUID } from "node:crypto";
 import { expandCadence } from "../src/lib/url-import/cadence-expander";
 
 const DB_NAME = "takemetothefair-db";
+// DQ4 (2026-06-08): backfill no longer fabricates 9-5 hours when the
+// description didn't expose them. INSERTs land with NULL hours and the
+// parent event already carries flagged_for_review=1 (the script's own
+// flagging path below). Operator-triage queue at /admin/events?flagged=1
+// fills the hours in from the source page. Per email §C2.4 + drizzle/0118.
+//
+// Constants kept exported in case a future caller has external evidence
+// of 9-5 that wasn't in the description, but the backfill path no longer
+// applies them.
 const DEFAULT_OPEN_TIME = "09:00";
 const DEFAULT_CLOSE_TIME = "17:00";
+void DEFAULT_OPEN_TIME;
+void DEFAULT_CLOSE_TIME;
 
 /**
  * Guard against expandCadence's single-weekday capture producing partial
@@ -154,10 +165,20 @@ function main() {
         // One INSERT per day — keeps each statement at 7 bound-equivalent
         // values, well under the D1 100-param cap. Slower than batching but
         // simpler error handling and within tolerance for ~50-200 rows total.
+        // DQ4 (2026-06-08): INSERT rows with NULL open_time/close_time
+        // rather than the prior 9-5 default. ALSO mark the parent event
+        // flagged_for_review so the operator triage queue surfaces it
+        // — without this, a successful cadence expansion would land
+        // event_days without hours AND without the flag, hiding the
+        // gap from operators.
         for (const date of dates) {
           const id = randomUUID();
-          const sql = `INSERT INTO event_days (id, event_id, date, open_time, close_time, notes, closed, vendor_only, created_at) VALUES (${quote(id)}, ${quote(row.id)}, ${quote(date)}, ${quote(DEFAULT_OPEN_TIME)}, ${quote(DEFAULT_CLOSE_TIME)}, ${quote("backfilled from description (UX-R1, 2026-06-01)")}, 0, 0, unixepoch())`;
+          const sql = `INSERT INTO event_days (id, event_id, date, open_time, close_time, notes, closed, vendor_only, created_at) VALUES (${quote(id)}, ${quote(row.id)}, ${quote(date)}, NULL, NULL, ${quote("backfilled from description (UX-R1, 2026-06-01); hours pending operator triage (DQ4)")}, 0, 0, unixepoch())`;
           runD1(sql, remote);
+        }
+        if (apply) {
+          const flagSql = `UPDATE events SET flagged_for_review = 1, updated_at = unixepoch() WHERE id = ${quote(row.id)}`;
+          runD1(flagSql, remote);
         }
       }
     } else {

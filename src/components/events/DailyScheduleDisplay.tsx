@@ -19,13 +19,34 @@ interface DailyScheduleDisplayProps {
 // becomes visually noisy in a sidebar card.
 const COLLAPSE_DATE_THRESHOLD = 6;
 
-function formatTime(time24: string): string {
+/** DQ4 (2026-06-08) — event_days.openTime/closeTime are now nullable.
+ *  NULL means "hours not yet confirmed" — render with a muted fallback
+ *  instead of crashing on .split(":") of null. Returns null when the
+ *  input is missing so callers can decide where to splice the fallback
+ *  copy in. */
+function formatTime(time24: string | null | undefined): string | null {
+  if (!time24) return null;
   const [hours, minutes] = time24.split(":").map(Number);
   const period = hours >= 12 ? "pm" : "am";
   const hour12 = hours % 12 || 12;
   return minutes === 0
     ? `${hour12}${period}`
     : `${hour12}:${minutes.toString().padStart(2, "0")}${period}`;
+}
+
+/** DQ4 — uniform copy for the "no hours captured at ingest" state.
+ *  Lives at module scope so PR 3's print sheet can re-import. */
+const HOURS_UNKNOWN_COPY = "Hours not yet confirmed";
+
+/** DQ4 — format a single day's open–close range for inline rendering.
+ *  Either or both can be null. */
+function formatRange(open: string | null | undefined, close: string | null | undefined): string {
+  const o = formatTime(open);
+  const c = formatTime(close);
+  if (o && c) return `${o} - ${c}`;
+  if (o) return o; // half-known, surface what we have
+  if (c) return c;
+  return HOURS_UNKNOWN_COPY;
 }
 
 function formatDateShort(dateStr: string): string {
@@ -39,7 +60,19 @@ function allSameHours(days: EventDay[]): boolean {
   const openDays = days.filter((d) => !d.closed);
   if (openDays.length === 0) return true;
   const first = openDays[0];
+  // Two NULLs are "the same" (both unknown — render uniform fallback);
+  // a NULL paired with a real time is NOT the same — those events should
+  // surface per-day so the operator sees the gap.
   return openDays.every((d) => d.openTime === first.openTime && d.closeTime === first.closeTime);
+}
+
+/** DQ4 — true when every open day has both NULL openTime AND closeTime.
+ *  When this holds, the simplified-path branch renders one "Hours not
+ *  yet confirmed" line instead of repeating it per row. */
+function allHoursUnknown(days: EventDay[]): boolean {
+  const open = days.filter((d) => !d.closed);
+  if (open.length === 0) return false;
+  return open.every((d) => d.openTime == null && d.closeTime == null);
 }
 
 export function DailyScheduleDisplay({
@@ -71,11 +104,14 @@ export function DailyScheduleDisplay({
     const hasVendorDays = showVendorDays !== "hide" && visibleDays.some((d) => d.vendorOnly);
     if (!hasVendorDays) {
       const first = openDays[0];
+      // DQ4: when all hours are null, render uniform "Hours not yet
+      // confirmed" instead of "Daily: null - null". formatRange already
+      // handles the partial-known case (e.g. open known, close null).
       return (
         <div className={className}>
           <p className="text-sm text-muted-foreground flex items-center gap-1">
             <Clock className="w-4 h-4" />
-            Daily: {formatTime(first.openTime)} - {formatTime(first.closeTime)}
+            Daily: {formatRange(first.openTime, first.closeTime)}
           </p>
         </div>
       );
@@ -123,9 +159,14 @@ function RecurringScheduleView({
   // hydration is consistent.
   const [expanded, setExpanded] = useState(!longList);
 
+  // DQ4: if every open day has unknown hours, surface "Hours not yet
+  // confirmed" instead of "Open null – null". formatRange handles partial
+  // information too (e.g. open known, close not).
   const summaryUniformHoursLabel =
     uniformHours && openDays.length > 0
-      ? `Open ${formatTime(openDays[0].openTime)} – ${formatTime(openDays[0].closeTime)}`
+      ? allHoursUnknown(openDays)
+        ? HOURS_UNKNOWN_COPY
+        : `Open ${formatRange(openDays[0].openTime, openDays[0].closeTime)}`
       : null;
 
   return (
@@ -191,7 +232,11 @@ function RecurringScheduleView({
                           : "text-foreground"
                       }
                     >
-                      {formatTime(day.openTime)} - {formatTime(day.closeTime)}
+                      {/* DQ4: formatRange handles all four cases
+                          (both known / either-known / neither). The "hours
+                          not yet confirmed" fallback lands on the same
+                          baseline so the column alignment is stable. */}
+                      {formatRange(day.openTime, day.closeTime)}
                       {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
                           (text-xs, rounded not rounded-full) to match the inline
                           time-row layout; color pair moves to amber-light +

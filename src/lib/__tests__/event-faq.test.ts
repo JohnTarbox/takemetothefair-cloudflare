@@ -200,6 +200,55 @@ describe("buildEventFaqItems — suppression rules", () => {
     );
   });
 
+  it("suppresses hours question when public days have null openTime/closeTime (DQ4)", () => {
+    // DQ4 (drizzle/0118, 2026-06-08): event_days.open_time and close_time
+    // are nullable. When either is null the canonical render is "Hours not
+    // yet confirmed" on the event page — but a FAQ Q/A "What time does it
+    // run? Open daily from null to null" is worse than no answer, so skip
+    // the item entirely.
+    const unknownHours: FaqEventDay[] = [
+      {
+        date: "2026-08-14",
+        openTime: null,
+        closeTime: null,
+        closed: false,
+        vendorOnly: false,
+      },
+      {
+        date: "2026-08-15",
+        openTime: null,
+        closeTime: null,
+        closed: false,
+        vendorOnly: false,
+      },
+    ];
+    const items = call({ event: emptyEvent(), eventDays: unknownHours });
+    expect(items.find((i) => i.question.includes("What time"))).toBeUndefined();
+  });
+
+  it("suppresses hours question when public days have partial-known hours (DQ4)", () => {
+    // The half-known case: open is known but close isn't. The schedule
+    // display can render "Open 10 AM" but the FAQ wants a complete answer.
+    const partial: FaqEventDay[] = [
+      {
+        date: "2026-08-14",
+        openTime: "10:00",
+        closeTime: null,
+        closed: false,
+        vendorOnly: false,
+      },
+      {
+        date: "2026-08-15",
+        openTime: "10:00",
+        closeTime: null,
+        closed: false,
+        vendorOnly: false,
+      },
+    ];
+    const items = call({ event: emptyEvent(), eventDays: partial });
+    expect(items.find((i) => i.question.includes("What time"))).toBeUndefined();
+  });
+
   it("suppresses hours question when public days have varying hours", () => {
     const variedHours: FaqEventDay[] = [
       {
