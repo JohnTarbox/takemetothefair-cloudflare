@@ -343,12 +343,36 @@ body {
     page: landscape-page;
   }
 
+  /* PRINT1 (Dev-Email-2026-06-08 §B, 2026-06-08) — opt-IN print template.
+     The event detail page wraps its screen JSX in `.screen-only` and
+     mounts a `.print-sheet` PrintEventSheet that is `hidden` on screen
+     (`display:none`) and visible on print (`display:block`). This pair
+     of rules is the print-side enforcement: nuke everything not in the
+     print template, then bring the print template back. The v1 print
+     stylesheet selectively hid pieces of the screen view; the v2 opts
+     OUT entirely and opts INTO the purpose-built layout. */
+  .screen-only {
+    display: none !important;
+  }
+  .print-sheet {
+    display: block !important;
+  }
+
   /* Hide site chrome on every printed page. Components also use
      Tailwind's `print:hidden` for local "this button shouldn't print"
      decisions. */
   nav,
   footer,
   header {
+    display: none !important;
+  }
+
+  /* PRINT1 — additional opt-OUT for elements that aren't easy to wrap
+     with `screen-only` because they're embedded inside print-relevant
+     containers. Each carries an opt-in data attribute on the JSX side. */
+  [data-view-count],
+  [data-admin-controls],
+  [data-hero-backdrop] {
     display: none !important;
   }
 
