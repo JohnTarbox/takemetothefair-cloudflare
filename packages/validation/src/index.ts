@@ -267,13 +267,30 @@ export const vendorDeleteSchema = z.object({
 });
 
 // Event Day schema (per-day schedule)
+//
+// DQ4 (2026-06-08): openTime/closeTime are now optional + nullable. The
+// shape mirrors drizzle/0118's NOT NULL → NULL relaxation. Callers that
+// previously supplied "" or omitted the field hit a Zod failure; now both
+// "" (coerced to null via the transform) and absent are accepted, and the
+// downstream ingest paths treat null as "hours unknown" and set the
+// owning event's flagged_for_review=1 for operator triage.
 export const eventDaySchema = z.object({
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format")
     .refine((s) => parseDateOnly(s) !== null, "Invalid calendar date (e.g. Feb 30, month 13)"),
-  openTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
-  closeTime: z.string().regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format"),
+  openTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format")
+    .optional()
+    .nullable()
+    .transform((v) => (v === "" || v == null ? null : v)),
+  closeTime: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Time must be HH:MM format")
+    .optional()
+    .nullable()
+    .transform((v) => (v === "" || v == null ? null : v)),
   notes: z.string().max(200).optional().nullable(),
   closed: z.boolean().optional().default(false),
   vendorOnly: z.boolean().optional().default(false),

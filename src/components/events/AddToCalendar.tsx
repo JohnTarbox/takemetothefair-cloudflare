@@ -23,8 +23,13 @@ import {
 interface EventDay {
   id?: string;
   date: string;
-  openTime: string;
-  closeTime: string;
+  // DQ4 (drizzle/0118, 2026-06-08): openTime/closeTime are nullable.
+  // The Google/Outlook URL + ICS code below now falls back to the
+  // event-level startDate/endDate when per-day hours aren't captured —
+  // an "Add to Calendar" surface with literal "null" times would land
+  // an invalid event on the user's calendar.
+  openTime: string | null;
+  closeTime: string | null;
   notes?: string | null;
   closed?: boolean | null;
   // Allow vendorOnly because the DB schema includes it (vendor-only days
@@ -78,22 +83,29 @@ export function AddToCalendar({
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Filter to open days only
+  // DQ4 (2026-06-08): filter to open days with known hours. A day with
+  // null openTime/closeTime can't be put on the user's calendar without
+  // fabricating times. Fall back to the event-level startDate/endDate
+  // for those events (same as the no-eventDays branch below).
   const openDays = eventDays.filter((d) => !d.closed);
-  const hasMultiDaySchedule = openDays.length > 0;
+  const openDaysWithHours = openDays.filter(
+    (d): d is EventDay & { openTime: string; closeTime: string } =>
+      d.openTime != null && d.closeTime != null
+  );
+  const hasMultiDaySchedule = openDaysWithHours.length > 0;
 
   // For Google/Outlook, use the first day's hours if we have per-day schedule
   const effectiveStartDate =
-    hasMultiDaySchedule && openDays[0]
-      ? new Date(`${openDays[0].date}T${openDays[0].openTime}:00`)
+    hasMultiDaySchedule && openDaysWithHours[0]
+      ? new Date(`${openDaysWithHours[0].date}T${openDaysWithHours[0].openTime}:00`)
       : startDate
         ? new Date(startDate)
         : new Date();
 
   const effectiveEndDate =
-    hasMultiDaySchedule && openDays[openDays.length - 1]
+    hasMultiDaySchedule && openDaysWithHours[openDaysWithHours.length - 1]
       ? new Date(
-          `${openDays[openDays.length - 1].date}T${openDays[openDays.length - 1].closeTime}:00`
+          `${openDaysWithHours[openDaysWithHours.length - 1].date}T${openDaysWithHours[openDaysWithHours.length - 1].closeTime}:00`
         )
       : endDate
         ? new Date(endDate)
@@ -114,14 +126,18 @@ export function AddToCalendar({
   const googleUrl = generateGoogleCalendarUrl(eventParams);
   const outlookUrl = generateOutlookCalendarUrl(eventParams);
 
-  // Use multi-day ICS if we have per-day schedules, otherwise use standard ICS
+  // Use multi-day ICS if we have per-day schedules with hours, otherwise
+  // use standard ICS. DQ4 (2026-06-08): pass openDaysWithHours (filtered
+  // to rows where both openTime and closeTime are known) so the ICS
+  // generator never sees a null time — calendar import on the user's
+  // device would silently drop or mis-render those entries.
   const icsUrl = hasMultiDaySchedule
     ? generateMultiDayICSDataUrl({
         title,
         description,
         location,
         url,
-        eventDays: openDays,
+        eventDays: openDaysWithHours,
         venueTimezone,
       })
     : generateICSDataUrl(eventParams);

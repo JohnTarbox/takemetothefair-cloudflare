@@ -400,8 +400,11 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
     date TEXT NOT NULL,
-    open_time TEXT NOT NULL,
-    close_time TEXT NOT NULL,
+    -- DQ4 (drizzle/0118, 2026-06-08) — open_time/close_time are now nullable.
+    -- Mirror the prod schema so MCP tool tests can exercise the null path
+    -- (create_event_day without time args, update_event_day clearing).
+    open_time TEXT,
+    close_time TEXT,
     notes TEXT,
     closed INTEGER DEFAULT 0,
     vendor_only INTEGER DEFAULT 0,

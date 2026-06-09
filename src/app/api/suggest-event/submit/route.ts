@@ -254,8 +254,10 @@ export async function POST(request: NextRequest) {
     // construct the eventDays array itself.
     interface NormalizedDay {
       date: string;
-      openTime: string;
-      closeTime: string;
+      // DQ4: null = "hours not yet confirmed." Schema column is also
+      // nullable as of drizzle/0118 — this type now matches.
+      openTime: string | null;
+      closeTime: string | null;
       notes?: string | null;
       closed?: boolean;
       vendorOnly?: boolean;
@@ -264,8 +266,12 @@ export async function POST(request: NextRequest) {
       data.eventDays && data.eventDays.length > 0
         ? data.eventDays.map((d) => ({
             date: d.date,
-            openTime: d.openTime,
-            closeTime: d.closeTime,
+            // DQ4 (2026-06-08): preserve null hours coming up from the
+            // validation layer rather than rewriting them to a fabricated
+            // default. The event-side write below sets flaggedForReview=1
+            // when any per-day row lands without explicit hours.
+            openTime: d.openTime ?? null,
+            closeTime: d.closeTime ?? null,
             notes: d.notes ?? null,
             closed: d.closed ?? false,
             vendorOnly: d.vendorOnly ?? false,
@@ -273,14 +279,26 @@ export async function POST(request: NextRequest) {
         : data.specificDates && data.specificDates.length > 0
           ? data.specificDates.map((date) => ({
               date,
-              openTime: data.startTime || "10:00",
-              closeTime: data.endTime || "18:00",
+              // DQ4: was `data.startTime || "10:00"` / `|| "18:00"` —
+              // fabricating times the source page never exposed. Now
+              // pass through null when the form/extract didn't capture
+              // the value; render layer surfaces "Hours not yet confirmed."
+              openTime: data.startTime || null,
+              closeTime: data.endTime || null,
             }))
           : null;
 
     const finalDiscontinuous =
       data.discontinuousDates === true ||
       (effectiveEventDays !== null && effectiveEventDays.length >= 2);
+
+    // DQ4 (2026-06-08): when any event_day row lands without hours,
+    // flag the parent event for operator triage. The /admin/events?flagged=1
+    // queue is the surface; operators backfill from the source page and
+    // clear the flag once the times are known.
+    const anyHoursUnknown =
+      effectiveEventDays !== null &&
+      effectiveEventDays.some((d) => d.openTime == null || d.closeTime == null);
 
     // When discontinuous, align startDate/endDate with the first and last
     // occurrence so the public range matches the actual schedule.
@@ -351,6 +369,9 @@ export async function POST(request: NextRequest) {
       // Cohort 2 (2026-06-01) — populated when the inbound-email workflow
       // detected a MEDIUM-confidence dedup hit. NULL on every other path.
       possibleDuplicateOf: data.possibleDuplicateOf ?? null,
+      // DQ4: flag for review when any event_day row carries NULL hours.
+      // Operator triage queue at /admin/events?flagged=1.
+      flaggedForReview: anyHoursUnknown ? 1 : 0,
     });
 
     await recomputeEventCompleteness(db, newEventId);
