@@ -1,11 +1,12 @@
 import { vi } from "vitest";
 
-// Mock server-only (required by @cloudflare/next-on-pages)
+// Mock server-only
 vi.mock("server-only", () => ({}));
 
-// Mock @cloudflare/next-on-pages
-vi.mock("@cloudflare/next-on-pages", () => ({
-  getRequestContext: vi.fn(() => ({
+// Mock @opennextjs/cloudflare (the OpenNext binding accessor; replaced
+// next-on-pages' getRequestContext in the 2026-06-10 migration).
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: vi.fn(() => ({
     env: {
       DB: {},
       AI: {},

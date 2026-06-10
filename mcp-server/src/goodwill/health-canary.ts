@@ -46,9 +46,13 @@ interface EmailJobMessage {
 }
 
 /** Minimal Queue-binding shape the canary needs. Avoids depending on
- *  the full Cloudflare Workers types in this helper module. */
+ *  the full Cloudflare Workers types in this helper module. Return is
+ *  `Promise<unknown>` (not `void`) so a real `Queue<unknown>` — whose
+ *  `send` now returns `Promise<QueueSendResponse>` under newer
+ *  @cloudflare/workers-types — remains assignable. The caller awaits and
+ *  ignores the result. */
 interface MinimalEmailQueue {
-  send(message: EmailJobMessage): Promise<void>;
+  send(message: EmailJobMessage): Promise<unknown>;
 }
 
 export interface CanaryOpts {
