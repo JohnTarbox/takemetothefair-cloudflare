@@ -37,67 +37,67 @@ const config: Config = {
         // already references border-input / bg-background /
         // ring-offset-background / text-muted-foreground / ring-ring —
         // wiring those names was the trigger for this PR's existence.
-        background: "var(--background)",
-        foreground: "var(--foreground)",
+        background: "rgb(var(--background) / <alpha-value>)",
+        foreground: "rgb(var(--foreground) / <alpha-value>)",
         card: {
-          DEFAULT: "var(--card)",
-          foreground: "var(--card-foreground)",
+          DEFAULT: "rgb(var(--card) / <alpha-value>)",
+          foreground: "rgb(var(--card-foreground) / <alpha-value>)",
         },
         popover: {
-          DEFAULT: "var(--popover)",
-          foreground: "var(--popover-foreground)",
+          DEFAULT: "rgb(var(--popover) / <alpha-value>)",
+          foreground: "rgb(var(--popover-foreground) / <alpha-value>)",
         },
         muted: {
-          DEFAULT: "var(--muted)",
-          foreground: "var(--muted-foreground)",
+          DEFAULT: "rgb(var(--muted) / <alpha-value>)",
+          foreground: "rgb(var(--muted-foreground) / <alpha-value>)",
         },
-        border: "var(--border)",
-        input: "var(--input)",
-        ring: "var(--ring)",
+        border: "rgb(var(--border) / <alpha-value>)",
+        input: "rgb(var(--input) / <alpha-value>)",
+        ring: "rgb(var(--ring) / <alpha-value>)",
         primary: {
-          DEFAULT: "var(--primary)",
-          foreground: "var(--primary-foreground)",
+          DEFAULT: "rgb(var(--primary) / <alpha-value>)",
+          foreground: "rgb(var(--primary-foreground) / <alpha-value>)",
         },
         secondary: {
-          DEFAULT: "var(--secondary)",
-          foreground: "var(--secondary-foreground)",
+          DEFAULT: "rgb(var(--secondary) / <alpha-value>)",
+          foreground: "rgb(var(--secondary-foreground) / <alpha-value>)",
         },
         accent: {
-          DEFAULT: "var(--accent)",
-          foreground: "var(--accent-foreground)",
+          DEFAULT: "rgb(var(--accent) / <alpha-value>)",
+          foreground: "rgb(var(--accent-foreground) / <alpha-value>)",
         },
         destructive: {
-          DEFAULT: "var(--destructive)",
-          foreground: "var(--destructive-foreground)",
+          DEFAULT: "rgb(var(--destructive) / <alpha-value>)",
+          foreground: "rgb(var(--destructive-foreground) / <alpha-value>)",
         },
         // Status SOFT variants — PR 2 extension. Used by Badge variants
         // for pill-shaped status indicators (success/warning/danger/info).
         // Distinct from solid status colors (--success/--warning/--danger
         // are still available as `bg-success` etc. for icons + accents).
         "success-soft": {
-          DEFAULT: "var(--success-soft)",
-          foreground: "var(--success-soft-foreground)",
+          DEFAULT: "rgb(var(--success-soft) / <alpha-value>)",
+          foreground: "rgb(var(--success-soft-foreground) / <alpha-value>)",
         },
         "warning-soft": {
-          DEFAULT: "var(--warning-soft)",
-          foreground: "var(--warning-soft-foreground)",
+          DEFAULT: "rgb(var(--warning-soft) / <alpha-value>)",
+          foreground: "rgb(var(--warning-soft-foreground) / <alpha-value>)",
         },
         "danger-soft": {
-          DEFAULT: "var(--danger-soft)",
-          foreground: "var(--danger-soft-foreground)",
+          DEFAULT: "rgb(var(--danger-soft) / <alpha-value>)",
+          foreground: "rgb(var(--danger-soft-foreground) / <alpha-value>)",
         },
         "info-soft": {
-          DEFAULT: "var(--info-soft)",
-          foreground: "var(--info-soft-foreground)",
+          DEFAULT: "rgb(var(--info-soft) / <alpha-value>)",
+          foreground: "rgb(var(--info-soft-foreground) / <alpha-value>)",
         },
         // Category accent palette (PR 2 migration target for
         // src/lib/category-colors.ts). Exposed as `bg-accent-gold`,
         // `text-accent-sage`, etc.
-        "accent-gold": "var(--accent-gold)",
-        "accent-terracotta": "var(--accent-terracotta)",
-        "accent-sage": "var(--accent-sage)",
-        "accent-navy-soft": "var(--accent-navy-soft)",
-        "accent-stone": "var(--accent-stone)",
+        "accent-gold": "rgb(var(--accent-gold) / <alpha-value>)",
+        "accent-terracotta": "rgb(var(--accent-terracotta) / <alpha-value>)",
+        "accent-sage": "rgb(var(--accent-sage) / <alpha-value>)",
+        "accent-navy-soft": "rgb(var(--accent-navy-soft) / <alpha-value>)",
+        "accent-stone": "rgb(var(--accent-stone) / <alpha-value>)",
         // ===== Brand palette — CSS-var-backed (keystone follow-up, 2026-06-07)
         //
         // Originally these were hardcoded hex literals (light-only). Per the
@@ -112,38 +112,38 @@ const config: Config = {
         // WCAG contrast notes (Cohort 6 / UX-R3 / Cohort 6 EVE 2026-06-01)
         // are preserved at the CSS-var declaration site in globals.css.
         navy: {
-          DEFAULT: "var(--navy)",
-          dark: "var(--navy-dark)",
+          DEFAULT: "rgb(var(--navy) / <alpha-value>)",
+          dark: "rgb(var(--navy-dark) / <alpha-value>)",
         },
-        royal: "var(--royal)",
+        royal: "rgb(var(--royal) / <alpha-value>)",
         amber: {
-          DEFAULT: "var(--amber)",
-          light: "var(--amber-light)",
-          dark: "var(--amber-dark)",
-          fg: "var(--amber-fg)",
-          "bg-fg": "var(--amber-bg-fg)",
+          DEFAULT: "rgb(var(--amber) / <alpha-value>)",
+          light: "rgb(var(--amber-light) / <alpha-value>)",
+          dark: "rgb(var(--amber-dark) / <alpha-value>)",
+          fg: "rgb(var(--amber-fg) / <alpha-value>)",
+          "bg-fg": "rgb(var(--amber-bg-fg) / <alpha-value>)",
         },
-        cream: "var(--cream)",
+        cream: "rgb(var(--cream) / <alpha-value>)",
         terracotta: {
-          DEFAULT: "var(--terracotta)",
-          light: "var(--terracotta-light)",
+          DEFAULT: "rgb(var(--terracotta) / <alpha-value>)",
+          light: "rgb(var(--terracotta-light) / <alpha-value>)",
         },
         stone: {
-          50: "var(--stone-50)",
-          100: "var(--stone-100)",
-          300: "var(--stone-300)",
-          600: "var(--stone-600)",
-          900: "var(--stone-900)",
+          50: "rgb(var(--stone-50) / <alpha-value>)",
+          100: "rgb(var(--stone-100) / <alpha-value>)",
+          300: "rgb(var(--stone-300) / <alpha-value>)",
+          600: "rgb(var(--stone-600) / <alpha-value>)",
+          900: "rgb(var(--stone-900) / <alpha-value>)",
         },
         sage: {
-          50: "var(--sage-50)",
-          700: "var(--sage-700)",
+          50: "rgb(var(--sage-50) / <alpha-value>)",
+          700: "rgb(var(--sage-700) / <alpha-value>)",
         },
-        success: "var(--success)",
-        warning: "var(--warning)",
-        danger: "var(--danger)",
+        success: "rgb(var(--success) / <alpha-value>)",
+        warning: "rgb(var(--warning) / <alpha-value>)",
+        danger: "rgb(var(--danger) / <alpha-value>)",
         "brand-blue": {
-          light: "var(--brand-blue-light)",
+          light: "rgb(var(--brand-blue-light) / <alpha-value>)",
         },
       },
       fontFamily: {

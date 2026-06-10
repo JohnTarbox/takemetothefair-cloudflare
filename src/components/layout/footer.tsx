@@ -36,14 +36,14 @@ export function Footer() {
   };
 
   return (
-    <footer className="bg-secondary text-secondary-foreground">
+    <footer className="bg-secondary text-secondary-foreground/80">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="col-span-1">
             <Link href="/" className="text-xl font-bold text-secondary-foreground">
               Meet Me at the Fair
             </Link>
-            <p className="mt-4 text-sm text-secondary-foreground">
+            <p className="mt-4 text-sm text-secondary-foreground/70">
               Discover local fairs, festivals, and community events. Connect with vendors and
               promoters in your area.
             </p>
@@ -107,8 +107,8 @@ export function Footer() {
           </div>
         </div>
 
-        <div className="mt-12 pt-8 border-t border-white/20 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-secondary-foreground">
+        <div className="mt-12 pt-8 border-t border-secondary-foreground/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p className="text-sm text-secondary-foreground/70">
             &copy; {currentYear} Meet Me at the Fair. All rights reserved.
           </p>
           <div className="flex items-center gap-2">
@@ -122,7 +122,7 @@ export function Footer() {
               href="https://facebook.com/meetmeatthefair"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-secondary-foreground transition-colors p-3"
+              className="text-secondary-foreground/70 hover:text-secondary-foreground transition-colors p-3"
               aria-label="Follow us on Facebook"
             >
               {/* eslint-disable-next-line no-restricted-syntax */}
@@ -134,7 +134,7 @@ export function Footer() {
               href="https://instagram.com/meetmeatthefair"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-secondary-foreground transition-colors p-3"
+              className="text-secondary-foreground/70 hover:text-secondary-foreground transition-colors p-3"
               aria-label="Follow us on Instagram"
             >
               {/* eslint-disable-next-line no-restricted-syntax */}
