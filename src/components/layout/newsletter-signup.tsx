@@ -39,7 +39,7 @@ export function NewsletterSignup() {
       >
         Weekend fair digest
       </label>
-      <p className="text-xs text-secondary-foreground/70">
+      <p className="text-xs text-secondary-foreground">
         One email a week — events, new vendors, and hidden gems across New England.
       </p>
       {status === "done" ? (
@@ -51,7 +51,7 @@ export function NewsletterSignup() {
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Mail
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary-foreground/70"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500"
               aria-hidden
             />
             <input
@@ -62,7 +62,7 @@ export function NewsletterSignup() {
               placeholder="you@example.com"
               required
               aria-label="Email address"
-              className="w-full pl-9 pr-3 py-2 rounded-md bg-secondary-foreground/10 border border-secondary-foreground/20 text-secondary-foreground placeholder:text-secondary-foreground/60 text-sm focus:bg-secondary-foreground/15 focus:border-amber focus:outline-none"
+              className="w-full pl-9 pr-3 py-2 rounded-md bg-white border border-gray-300 text-gray-900 placeholder:text-gray-500 text-sm focus:border-amber focus:outline-none"
             />
           </div>
           <button
