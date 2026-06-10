@@ -756,6 +756,13 @@ export default async function VendorDetailPage({ params }: Props) {
   // generateMetadata to consolidate SEO equity. The "Part of <brand>" link
   // in the header serves every LOCAL_OFFICE regardless of canonical state.
   const isNationalHub = vendor.role === "NATIONAL";
+  // brand_parent mode = the brand is the SOLE public face; its regional
+  // offices are collapsed everywhere (listing, search, and here). Suppress
+  // the "Local Offices" grid + office-count wording so the hub presents the
+  // national brand only. self/both/operator hubs (RbA, Esler, Goodhue…)
+  // still enumerate their children, which ARE the public surfaces.
+  const hidesOffices = isNationalHub && vendor.defaultChildDisplay === "brand_parent";
+  const showsOfficeList = isNationalHub && !hidesOffices && vendor.children.length > 0;
 
   const products = parseJsonArray(vendor.products);
   const paymentMethods = parseJsonArray(vendor.paymentMethods);
@@ -945,8 +952,16 @@ export default async function VendorDetailPage({ params }: Props) {
                   <p className="mt-2 text-sm text-muted-foreground flex items-center gap-1">
                     <Calendar className="w-4 h-4" />
                     Exhibits at {vendor.aggregatedChildEvents.length} upcoming{" "}
-                    {vendor.aggregatedChildEvents.length === 1 ? "show" : "shows"} across{" "}
-                    {vendor.children.length} {vendor.children.length === 1 ? "office" : "offices"}
+                    {vendor.aggregatedChildEvents.length === 1 ? "show" : "shows"}
+                    {/* brand_parent hubs hide the office breakdown; only
+                        self/operator hubs reveal "across N offices". */}
+                    {!hidesOffices && (
+                      <>
+                        {" "}
+                        across {vendor.children.length}{" "}
+                        {vendor.children.length === 1 ? "office" : "offices"}
+                      </>
+                    )}
                   </p>
                 )}
                 {isEnhanced && (
@@ -989,8 +1004,10 @@ export default async function VendorDetailPage({ params }: Props) {
             {/* EH1 Phase 2 — NATIONAL hub renders a "Local Offices" section
                 instead of events. National parents typically have no event
                 associations (events apply to franchises, not the brand),
-                so swapping the section avoids a sad-empty Events block. */}
-            {isNationalHub && vendor.children.length > 0 && (
+                so swapping the section avoids a sad-empty Events block.
+                Suppressed entirely for brand_parent-mode hubs (showsOfficeList)
+                so the public sees the brand only, not its regional offices. */}
+            {showsOfficeList && (
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-semibold text-foreground">
@@ -1040,8 +1057,11 @@ export default async function VendorDetailPage({ params }: Props) {
               </div>
             )}
             {/* NATIONAL hub with no children yet — render a gentle empty
-                state instead of leaving the main column visually bare. */}
-            {isNationalHub && vendor.children.length === 0 && (
+                state instead of leaving the main column visually bare.
+                Not shown for brand_parent hubs: they intentionally never
+                surface offices, so "No local offices listed yet" would be
+                both wrong-headed and a structure leak. */}
+            {isNationalHub && !hidesOffices && vendor.children.length === 0 && (
               <div className="rounded-md border border-border bg-muted p-4 text-sm text-muted-foreground">
                 No local offices listed yet.
               </div>
