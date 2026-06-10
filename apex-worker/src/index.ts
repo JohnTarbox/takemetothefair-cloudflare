@@ -65,6 +65,7 @@
  */
 
 import { hasErrorMarker } from "./inspect";
+import { rewriteRedirectLocation } from "./redirect";
 
 export interface Env {
   /** Full URL of the Pages project to proxy to.
@@ -83,6 +84,35 @@ export default {
     const upstreamReq = new Request(upstreamUrl.toString(), request);
 
     const response = await fetch(upstreamReq);
+
+    // Redirect Location-host rewrite. The origin builds slug-rename 301s
+    // from its request host (which is the upstream Pages host because we
+    // proxy there), so a Location would otherwise leak
+    // takemetothefair.pages.dev to clients. Rewrite the host back to the
+    // public apex the client actually used. Only fires when the Location
+    // targets the upstream host; offsite redirects pass through. Covers
+    // every redirect source in one place (middleware 301s, next.config
+    // redirects, etc.) — see src/middleware.ts slug-history handlers.
+    if (response.status >= 300 && response.status < 400) {
+      const rewritten = rewriteRedirectLocation(
+        response.headers.get("location"),
+        env.UPSTREAM,
+        { protocol: url.protocol, host: url.host },
+        upstreamUrl.toString()
+      );
+      if (rewritten) {
+        const headers = new Headers(response.headers);
+        headers.set("location", rewritten);
+        // Observability marker, mirroring X-K2-Status-Rewrite.
+        headers.set("X-K2-Location-Rewrite", "1");
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers,
+        });
+      }
+      return response;
+    }
 
     // Only inspect HTML 2xx responses. We deliberately don't second-
     // guess non-200 responses (those are intentional, e.g. 404 from
