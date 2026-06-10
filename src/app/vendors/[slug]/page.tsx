@@ -360,6 +360,16 @@ async function getVendor(slug: string) {
     };
     const aggregatedChildEvents: AggregatedEvent[] = [];
     if (vendor.vendors.role === "NATIONAL") {
+      // EH2.3 follow-up (2026-06-10) — include offices linked via EITHER
+      // brand_parent_vendor_id OR operator_parent_vendor_id. The original
+      // EH2.3 query only matched brand parents, which left operator-parent
+      // hubs (Shape C — Esler Companies operating RbA franchises) with an
+      // empty "Local Offices" section even though the operator_parent FK
+      // is set on the franchise rows. The OR dedups naturally: a Shape A
+      // brand (LeafFilter) where brand_parent == operator_parent matches
+      // the same children once. A Shape C operator-only hub (Esler) gets
+      // its franchises via operator_parent. A pure brand parent
+      // (Renewal by Andersen) keeps matching its franchises via brand_parent.
       children = await db
         .select({
           id: vendors.id,
@@ -374,7 +384,15 @@ async function getVendor(slug: string) {
           logoUrl: vendors.logoUrl,
         })
         .from(vendors)
-        .where(and(eq(vendors.brandParentVendorId, vendor.vendors.id), isNull(vendors.deletedAt)))
+        .where(
+          and(
+            or(
+              eq(vendors.brandParentVendorId, vendor.vendors.id),
+              eq(vendors.operatorParentVendorId, vendor.vendors.id)
+            ),
+            isNull(vendors.deletedAt)
+          )
+        )
         .orderBy(asc(vendors.state), asc(vendors.city), asc(vendors.businessName));
 
       // Aggregated upcoming events across all children. Dedup by event_id
