@@ -23,6 +23,8 @@ function isCloudflarePages(): boolean {
     const { env } = getRequestContext();
     return !!(env as unknown as Record<string, unknown>).CF_PAGES;
   } catch {
+    // getRequestContext() throws outside the Cloudflare runtime (local
+    // `next build` / unit tests) — treat that as "not on Pages".
     return false;
   }
 }
@@ -35,6 +37,7 @@ function getTurnstileSecretKey(): string | null {
     const { env } = getRequestContext();
     return (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY ?? null;
   } catch {
+    // Off-CF runtime: fall back to process.env (local dev / tests).
     return process.env.TURNSTILE_SECRET_KEY ?? null;
   }
 }

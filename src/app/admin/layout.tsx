@@ -56,7 +56,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     const synthetic = new Request("https://internal/", {
       headers: { authorization: authHeader },
     });
-    if (bearerTokenMatches(synthetic)) {
+    if (await bearerTokenMatches(synthetic)) {
       return renderShell(children);
     }
   }

@@ -39,33 +39,41 @@ function reqWith(method: string, headers: Record<string, string>): Request {
 }
 
 describe("bearerTokenMatches", () => {
-  it("returns false when env token is unset", () => {
-    expect(bearerTokenMatches(reqWith("GET", { authorization: `Bearer ${TOKEN}` }))).toBe(false);
+  it("returns false when env token is unset", async () => {
+    expect(await bearerTokenMatches(reqWith("GET", { authorization: `Bearer ${TOKEN}` }))).toBe(
+      false
+    );
   });
 
-  it("returns false when no Authorization header present", () => {
+  it("returns false when no Authorization header present", async () => {
     envState.CLAUDE_READONLY_TOKEN = TOKEN;
-    expect(bearerTokenMatches(reqWith("GET", {}))).toBe(false);
+    expect(await bearerTokenMatches(reqWith("GET", {}))).toBe(false);
   });
 
-  it("returns false when header is not Bearer scheme", () => {
+  it("returns false when header is not Bearer scheme", async () => {
     envState.CLAUDE_READONLY_TOKEN = TOKEN;
-    expect(bearerTokenMatches(reqWith("GET", { authorization: `Basic ${TOKEN}` }))).toBe(false);
+    expect(await bearerTokenMatches(reqWith("GET", { authorization: `Basic ${TOKEN}` }))).toBe(
+      false
+    );
   });
 
-  it("returns false when token does not match", () => {
+  it("returns false when token does not match", async () => {
     envState.CLAUDE_READONLY_TOKEN = TOKEN;
-    expect(bearerTokenMatches(reqWith("GET", { authorization: "Bearer wrong-token" }))).toBe(false);
+    expect(await bearerTokenMatches(reqWith("GET", { authorization: "Bearer wrong-token" }))).toBe(
+      false
+    );
   });
 
-  it("returns false when Bearer token is empty string", () => {
+  it("returns false when Bearer token is empty string", async () => {
     envState.CLAUDE_READONLY_TOKEN = TOKEN;
-    expect(bearerTokenMatches(reqWith("GET", { authorization: "Bearer " }))).toBe(false);
+    expect(await bearerTokenMatches(reqWith("GET", { authorization: "Bearer " }))).toBe(false);
   });
 
-  it("returns true when env and header tokens match", () => {
+  it("returns true when env and header tokens match", async () => {
     envState.CLAUDE_READONLY_TOKEN = TOKEN;
-    expect(bearerTokenMatches(reqWith("GET", { authorization: `Bearer ${TOKEN}` }))).toBe(true);
+    expect(await bearerTokenMatches(reqWith("GET", { authorization: `Bearer ${TOKEN}` }))).toBe(
+      true
+    );
   });
 });
 

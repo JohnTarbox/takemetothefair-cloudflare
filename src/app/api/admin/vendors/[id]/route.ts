@@ -13,6 +13,7 @@ import {
   recommendationItems,
 } from "@/lib/db/schema";
 import { eq, and, ne, inArray, gte, sql } from "drizzle-orm";
+import { timingSafeEqualString } from "@takemetothefair/utils";
 import { createSlug, appendSlugSegment, unsafeSlug, type Slug } from "@/lib/utils";
 import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -477,7 +478,7 @@ async function authorizeAdminOrInternal(
 > {
   const internalKey = request.headers.get("x-internal-key");
   const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+  if (await timingSafeEqualString(internalKey, env.INTERNAL_API_KEY)) {
     return { ok: true, actorUserId: null }; // system-driven; null actor in audit log
   }
   const session = await auth();
