@@ -6,9 +6,12 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertCircle } from "lucide-react";
+import { trackVendorClaim } from "@/lib/analytics";
 
 interface Props {
   claimed: boolean;
+  /** Vendor row id — sent as the `vendor_id` claim-funnel param when known. */
+  vendorId?: string;
   /**
    * The vendor row's listed contact_email. When this matches the
    * signed-in user's verified email, the widget renders a one-click
@@ -49,7 +52,13 @@ function emailMatches(a: string | null | undefined, b: string | null | undefined
  * `?claim_error=<reason>` from the post-redirect URL (set by the
  * /confirm endpoint) and surfaces them, then strips the params.
  */
-export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onClaimed }: Props) {
+export function VendorClaimWidget({
+  claimed,
+  vendorId,
+  vendorContactEmail,
+  vendorSlug,
+  onClaimed,
+}: Props) {
   const { data: session } = useSession();
   const search = useSearchParams();
   const router = useRouter();
@@ -64,6 +73,9 @@ export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onC
   useEffect(() => {
     if (search.get("claimed") === "1") {
       setMessage("Your listing is now claimed. The Claimed badge appears on your public page.");
+      // ENG1.5 (2026-06-10) — the email round-trip resolved (the /confirm
+      // endpoint granted the claim and redirected back with ?claimed=1).
+      if (vendorSlug) trackVendorClaim("approved", "email", vendorSlug, vendorId);
       onClaimed?.();
       router.replace(pathname);
       return;
@@ -74,7 +86,7 @@ export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onC
       setMessage(ERROR_LABELS[err] ?? "Claim failed. Try again or contact support.");
       router.replace(pathname);
     }
-  }, [search, router, pathname, onClaimed]);
+  }, [search, router, pathname, onClaimed, vendorSlug, vendorId]);
 
   async function claimDirect() {
     if (!vendorSlug) {
@@ -84,6 +96,8 @@ export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onC
     }
     setStatus("sending");
     setMessage(null);
+    // ENG1.5 (2026-06-10) — direct claim (email matched): method "register".
+    if (vendorSlug) trackVendorClaim("started", "register", vendorSlug, vendorId);
     try {
       const res = await fetch("/api/vendor/claim/direct", {
         method: "POST",
@@ -95,6 +109,11 @@ export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onC
         setStatus("error");
         setMessage(body.message ?? body.error ?? "Claim failed. Try again or contact support.");
         return;
+      }
+      // Direct claim is granted instantly — submitted + approved on success.
+      if (vendorSlug) {
+        trackVendorClaim("submitted", "register", vendorSlug, vendorId);
+        trackVendorClaim("approved", "register", vendorSlug, vendorId);
       }
       setStatus("claimed");
       setMessage("Listing claimed. Reloading…");
@@ -111,6 +130,9 @@ export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onC
   async function initiateEmailRoundTrip() {
     setStatus("sending");
     setMessage(null);
+    // ENG1.5 (2026-06-10) — email round-trip path: method "email". The
+    // approval leg fires later, when /confirm redirects back with ?claimed=1.
+    if (vendorSlug) trackVendorClaim("started", "email", vendorSlug, vendorId);
     try {
       const res = await fetch("/api/vendor/claim/initiate", { method: "POST" });
       if (!res.ok) {
@@ -119,6 +141,7 @@ export function VendorClaimWidget({ claimed, vendorContactEmail, vendorSlug, onC
         setMessage(body.error ?? "Failed to start claim. Try again.");
         return;
       }
+      if (vendorSlug) trackVendorClaim("submitted", "email", vendorSlug, vendorId);
       setStatus("sent");
       setMessage("Check your email for a confirmation link. It expires in 24 hours.");
     } catch (e) {
