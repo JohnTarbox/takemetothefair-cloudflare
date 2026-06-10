@@ -572,13 +572,24 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const canonicalUrl = canonicalUpSlug
     ? `https://meetmeatthefair.com/vendors/${canonicalUpSlug}`
     : url;
+  // EH2.4 §B3 — self-mode NATIONAL hubs (RbA shape) emit noindex,follow.
+  // The franchise pages (LOCAL_OFFICE children) get the search surface;
+  // the brand hub exists for direct-link discovery (admin paths, claim
+  // flows) but doesn't compete with the franchise pages in Google.
+  // brand_parent-mode hubs stay indexable (they ARE the search surface).
+  // NULL defaultChildDisplay falls through to noindex too — the brand
+  // hasn't picked a policy, so the safer default is "don't compete."
+  const isSelfModeBrandHub =
+    vendor.role === "NATIONAL" &&
+    (vendor.defaultChildDisplay === "self" || vendor.defaultChildDisplay == null);
   // Canonical-up implies noindex on the office page (parent owns the search
   // surface). Falls through to the §6.6 indexable predicate otherwise.
-  const robotsValue = canonicalUpSlug
-    ? { index: false, follow: true }
-    : indexable
-      ? undefined
-      : { index: false, follow: true };
+  const robotsValue =
+    canonicalUpSlug || isSelfModeBrandHub
+      ? { index: false, follow: true }
+      : indexable
+        ? undefined
+        : { index: false, follow: true };
 
   return {
     title,
