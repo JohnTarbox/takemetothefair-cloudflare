@@ -40,6 +40,8 @@ async function getSubmissions(userId: string) {
   }));
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function VendorSubmissionsPage() {
   const session = await auth();
 

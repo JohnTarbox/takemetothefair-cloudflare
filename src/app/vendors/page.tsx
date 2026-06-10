@@ -486,6 +486,8 @@ async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function VendorsPage({
   searchParams,
 }: {

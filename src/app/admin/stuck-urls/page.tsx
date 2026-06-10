@@ -197,6 +197,8 @@ function bucketLabel(b: EntityBucket): string {
   return BUCKET_LABEL[b] ?? b;
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function StuckUrlsPage() {
   const { clusters, totalRows, totalStuckRows } = await loadClusters();
   const indexedRows = totalRows - totalStuckRows;

@@ -241,6 +241,8 @@ async function getRecentBlogPosts() {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function HomePage() {
   const [featuredEvents, upcomingEventsRaw, weekendEvents, counts, recentPosts] = await Promise.all(
     [

@@ -274,6 +274,8 @@ function outcomeBadgeClasses(outcome: string): string {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function VendorClaimLeaderboardPage() {
   const rows = await loadLeaderboard();
   const totalRows = rows.length;

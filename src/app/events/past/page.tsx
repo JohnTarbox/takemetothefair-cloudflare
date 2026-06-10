@@ -142,6 +142,8 @@ async function getPastEvents(searchParams: SearchParams) {
   return { events: eventsWithVendors, total, page, limit };
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function PastEventsPage({
   searchParams,
 }: {

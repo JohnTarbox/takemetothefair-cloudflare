@@ -148,6 +148,8 @@ async function getUpcomingEventsWithVendorCounts() {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminDashboard() {
   const [stats, recentSubmissions, upcomingEvents] = await Promise.all([
     getStats(),

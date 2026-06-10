@@ -56,6 +56,8 @@ interface SearchParams {
 
 const POSTS_PER_PAGE = 12;
 
+export const dynamic = "force-dynamic";
+
 export default async function BlogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
   const session = await auth();

@@ -101,6 +101,8 @@ async function getVendorEvents(userId: string) {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function VendorCalendarPage() {
   const session = await auth();
 

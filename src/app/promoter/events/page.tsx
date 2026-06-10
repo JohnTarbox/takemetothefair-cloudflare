@@ -118,6 +118,8 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function PromoterEventsPage() {
   const session = await auth();
   if (!session) redirect("/login");

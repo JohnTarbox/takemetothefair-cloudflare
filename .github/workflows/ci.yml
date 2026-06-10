@@ -86,8 +86,8 @@ jobs:
       - name: Typecheck (app + packages + mcp-server)
         run: npm run typecheck:all
 
-      - name: Check edge runtime declarations
-        run: npx tsx scripts/check-edge-runtime.ts
+      - name: Guard against edge runtime decls (forbidden under OpenNext)
+        run: npx tsx scripts/check-no-edge-runtime.ts
 
       - name: Check D1 100-column join cap
         run: npx tsx scripts/check-d1-100col-joins.ts

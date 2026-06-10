@@ -135,6 +135,8 @@ interface PageProps {
   searchParams: Promise<{ status?: string; highlight?: string }>;
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function VendorApplicationsPage({ searchParams }: PageProps) {
   const session = await auth();
   if (!session) redirect("/login");

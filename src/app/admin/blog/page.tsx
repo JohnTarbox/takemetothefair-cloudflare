@@ -260,6 +260,8 @@ function SortHeader({ label, k, active, align = "left" }: SortHeaderProps) {
   );
 }
 
+export const dynamic = "force-dynamic";
+
 export default async function BlogCoveragePage({
   searchParams,
 }: {
