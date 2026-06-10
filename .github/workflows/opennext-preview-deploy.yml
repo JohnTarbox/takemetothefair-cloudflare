@@ -11,12 +11,18 @@ name: OpenNext Preview Deploy
 # real secret set.
 
 on:
+  push:
+    branches: [migrate/opennext]
   workflow_dispatch:
 
 jobs:
   preview:
     name: Build + deploy preview Worker
     runs-on: ubuntu-latest
+    # Only deploy when the commit opts in with a [preview] marker (avoids a
+    # workers.dev deploy on every migration commit). Safe: used in an `if`
+    # comparison, never interpolated into a shell command.
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[preview]') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
