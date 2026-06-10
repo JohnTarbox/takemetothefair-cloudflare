@@ -93,8 +93,16 @@ const nextConfig = {
 // development — calling it during a production build (CI, no Cloudflare auth)
 // tries to start a remote proxy session and fails. Mirrors the original
 // next-on-pages `setupDevPlatform()` dev-only guard.
+//
+// In CI use wrangler.ci.toml, which omits the [ai] binding: Workers AI has no
+// local emulation, so its presence forces getPlatformProxy into REMOTE mode,
+// which needs a Cloudflare login the CI runner doesn't have (the e2e `next dev`
+// webserver died with "must be logged in to use wrangler dev in remote mode").
+// Same rationale as the old setupDevPlatform({ configPath: "wrangler.ci.toml" }).
 if (process.env.NODE_ENV === "development") {
-  await initOpenNextCloudflareForDev();
+  await initOpenNextCloudflareForDev(
+    process.env.CI ? { configPath: "wrangler.ci.toml" } : undefined
+  );
 }
 
 export default nextConfig;

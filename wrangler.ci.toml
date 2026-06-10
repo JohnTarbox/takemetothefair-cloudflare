@@ -1,13 +1,14 @@
-name = "takemetothefair"
-compatibility_date = "2025-04-01"
+name = "takemetothefair-ci"
+compatibility_date = "2026-06-10"
 compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = ".vercel/output/static"
 
-# NOTE: This is wrangler.ci.toml — used by next.config.mjs:60 when CI=true.
-# It deliberately omits the [ai] binding (Workers AI requires a Cloudflare
-# remote proxy session, which CI runners aren't logged into). E2E tests don't
-# exercise AI-backed paths, so the missing binding is fine. Local development
-# uses wrangler.toml which keeps [ai].
+# NOTE: This is wrangler.ci.toml — passed to initOpenNextCloudflareForDev as the
+# getPlatformProxy config when CI=true (see next.config.mjs). A binding-only
+# config for the e2e `next dev` webserver: it deliberately omits the [ai]
+# binding (Workers AI has no local emulation → forces remote-proxy mode, which
+# needs a Cloudflare login CI lacks). No `main`/`pages_build_output_dir` — the
+# proxy only emulates bindings locally (D1/KV/R2 via miniflare). Local dev uses
+# the full wrangler.toml which keeps [ai].
 
 [[d1_databases]]
 binding = "DB"
