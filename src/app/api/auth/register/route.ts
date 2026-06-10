@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
         expires,
       });
       const tpl = emailVerificationTemplate({
-        verifyUrl: `${getSiteUrl(request)}/verify-email/${token}`,
+        verifyUrl: `${getSiteUrl()}/verify-email/${token}`,
         name,
       });
       // Enqueue rather than sending synchronously — the queue consumer

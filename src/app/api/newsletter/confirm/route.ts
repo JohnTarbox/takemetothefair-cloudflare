@@ -22,7 +22,7 @@ import { logError } from "@/lib/logger";
 export const runtime = "edge";
 
 function redirectTo(request: NextRequest, query: string) {
-  return NextResponse.redirect(`${getSiteUrl(request)}/newsletter/confirmed${query}`, {
+  return NextResponse.redirect(`${getSiteUrl()}/newsletter/confirmed${query}`, {
     status: 303,
   });
 }

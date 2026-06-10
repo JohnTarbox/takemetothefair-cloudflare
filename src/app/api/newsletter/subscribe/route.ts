@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
     if (shouldSendConfirm) {
       try {
         const { rawToken } = await issueNewsletterConfirmationToken(db, email);
-        const confirmUrl = `${getSiteUrl(request)}/api/newsletter/confirm?token=${rawToken}`;
+        const confirmUrl = `${getSiteUrl()}/api/newsletter/confirm?token=${rawToken}`;
         const tpl = newsletterConfirmTemplate({ confirmUrl });
         await enqueueEmail({
           to: email,
