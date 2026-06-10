@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       expires,
     });
 
-    const resetUrl = `${getSiteUrl(request)}/reset-password/${token}`;
+    const resetUrl = `${getSiteUrl()}/reset-password/${token}`;
     const tpl = passwordResetTemplate({ resetUrl, name: user.name });
 
     // Enqueue rather than direct-send. The queue consumer (MCP worker)

@@ -123,19 +123,21 @@ export async function sendEmail(
 }
 
 /**
- * Resolve the public site URL for constructing absolute links in emails.
- * Priority: NEXT_PUBLIC_SITE_URL env → incoming request origin → production fallback.
+ * Resolve the public site URL for constructing absolute links in emails
+ * (and other origin-emitted content that never transits the apex proxy).
+ * Priority: NEXT_PUBLIC_SITE_URL env override → production apex (SITE_URL).
+ *
+ * Deliberately does NOT derive the host from the incoming request. Behind
+ * the apex proxy Worker (meetmeatthefair.com → takemetothefair.pages.dev,
+ * see apex-worker/), the request host is ALWAYS the Pages origin, so a
+ * request-derived URL leaked `takemetothefair.pages.dev` into verification /
+ * password-reset / newsletter-confirm email links (live regression since K2,
+ * 2026-06-07). Unlike redirect Location headers, email bodies don't pass back
+ * through the proxy, so this must be fixed at the source. Set the env override
+ * for local dev / staging hosts.
  */
-export function getSiteUrl(request?: Request): string {
+export function getSiteUrl(): string {
   const override = getRuntimeEnv("NEXT_PUBLIC_SITE_URL");
   if (override) return override.replace(/\/$/, "");
-  if (request) {
-    try {
-      const url = new URL(request.url);
-      return `${url.protocol}//${url.host}`;
-    } catch {
-      /* fall through */
-    }
-  }
   return SITE_URL;
 }

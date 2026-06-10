@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       expires,
     });
 
-    const verifyUrl = `${getSiteUrl(request)}/verify-email/${token}`;
+    const verifyUrl = `${getSiteUrl()}/verify-email/${token}`;
     const tpl = emailVerificationTemplate({ verifyUrl, name: user.name });
 
     // Enqueue rather than direct-send. The queue consumer (MCP worker)
