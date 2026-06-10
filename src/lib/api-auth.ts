@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
+import { timingSafeEqualString } from "@takemetothefair/utils";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { users } from "@/lib/db/schema";
@@ -33,7 +34,7 @@ function isSafeMethod(method: string): boolean {
  * `<token>` matches the CLAUDE_READONLY_TOKEN env var. Returns false on any
  * mismatch (including missing env, malformed header, wrong scheme).
  */
-export function bearerTokenMatches(request: Request): boolean {
+export async function bearerTokenMatches(request: Request): Promise<boolean> {
   const header = request.headers.get("authorization");
   if (!header || !header.startsWith("Bearer ")) return false;
   const presented = header.slice("Bearer ".length).trim();
@@ -41,7 +42,24 @@ export function bearerTokenMatches(request: Request): boolean {
   const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
   const expected = env.CLAUDE_READONLY_TOKEN;
   if (!expected) return false;
-  return presented === expected;
+  return timingSafeEqualString(presented, expected);
+}
+
+/**
+ * Constant-time check of the inbound `X-Internal-Key` header against the
+ * `INTERNAL_API_KEY` secret — the main-app side of the cross-Worker contract
+ * (MCP server + cron sweeps authenticate this way).
+ *
+ * This is the single source of truth for that check. ~16 route handlers still
+ * inline their own `internalKey === env.INTERNAL_API_KEY` (a timing-unsafe
+ * `===`, copy-pasted); migrating them to this helper is tracked as part of the
+ * auth-centralization sweep (WS3). `Headers.get` is case-insensitive, so this
+ * matches both `X-Internal-Key` and `x-internal-key` spellings.
+ */
+export async function internalKeyMatches(request: Request): Promise<boolean> {
+  const internalKey = request.headers.get("x-internal-key");
+  const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+  return timingSafeEqualString(internalKey, env.INTERNAL_API_KEY);
 }
 
 /**
@@ -55,18 +73,13 @@ export async function isAuthorized(request: Request): Promise<boolean> {
   if (session?.user?.role === "ADMIN") return true;
 
   // X-Internal-Key (for MCP server calls + cron sweeps)
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey) {
-    const env = getCloudflareEnv() as unknown as Record<string, string>;
-    const expectedKey = env.INTERNAL_API_KEY;
-    if (expectedKey && internalKey === expectedKey) return true;
-  }
+  if (await internalKeyMatches(request)) return true;
 
   // Claude read-only Bearer (safe methods only). Mutations with this token
   // are blocked at the edge by src/middleware.ts before reaching the route,
   // but we double-check here so a route can't be tricked into authorizing a
   // POST if the middleware matcher ever drifts out of sync.
-  if (isSafeMethod(request.method) && bearerTokenMatches(request)) return true;
+  if (isSafeMethod(request.method) && (await bearerTokenMatches(request))) return true;
 
   return false;
 }
@@ -84,14 +97,9 @@ export async function getAuthorizedSession(request: Request): Promise<{
     return { authorized: true, userId: session.user.id };
   }
 
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey) {
-    const env = getCloudflareEnv() as unknown as Record<string, string>;
-    const expectedKey = env.INTERNAL_API_KEY;
-    if (expectedKey && internalKey === expectedKey) return { authorized: true };
-  }
+  if (await internalKeyMatches(request)) return { authorized: true };
 
-  if (isSafeMethod(request.method) && bearerTokenMatches(request)) {
+  if (isSafeMethod(request.method) && (await bearerTokenMatches(request))) {
     return { authorized: true };
   }
 
@@ -111,7 +119,7 @@ export async function getAuthorizedSession(request: Request): Promise<{
 export async function getRequestIdentity(request: Request): Promise<string | null> {
   const session = await auth();
   if (session?.user?.role === "ADMIN") return session.user.id;
-  if (isSafeMethod(request.method) && bearerTokenMatches(request)) {
+  if (isSafeMethod(request.method) && (await bearerTokenMatches(request))) {
     return CLAUDE_READONLY_IDENTITY;
   }
   return null;

@@ -24,6 +24,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
+import { timingSafeEqualString } from "@takemetothefair/utils";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, inboundEmails } from "@/lib/db/schema";
@@ -48,7 +49,7 @@ async function authorize(
   env: { INTERNAL_API_KEY?: string }
 ): Promise<AuthResult> {
   const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+  if (await timingSafeEqualString(internalKey, env.INTERNAL_API_KEY)) {
     return { ok: true, actorUserId: null };
   }
   const session = await auth();

@@ -9,6 +9,7 @@ import {
   type ConnectionLike,
   type TransportPrivates,
 } from "./transport-collision-fix.js";
+import { timingSafeEqualString } from "@takemetothefair/utils";
 import { getDb } from "./db.js";
 import { authenticateToken } from "./auth.js";
 import { registerPublicTools } from "./tools/public.js";
@@ -763,7 +764,7 @@ async function handleWorkflowEndpoints(
 ): Promise<Response | null> {
   // X-Internal-Key gate.
   const internalKey = request.headers.get("x-internal-key");
-  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
+  if (!(await timingSafeEqualString(internalKey, env.INTERNAL_API_KEY))) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -939,7 +940,7 @@ async function handleInboundEmailsApi(
   url: URL
 ): Promise<Response | null> {
   const internalKey = request.headers.get("x-internal-key");
-  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
+  if (!(await timingSafeEqualString(internalKey, env.INTERNAL_API_KEY))) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -1036,7 +1037,7 @@ async function handleInboundEmailsApi(
  */
 async function handleInternalApi(request: Request, env: Env, url: URL): Promise<Response | null> {
   const internalKey = request.headers.get("x-internal-key");
-  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
+  if (!(await timingSafeEqualString(internalKey, env.INTERNAL_API_KEY))) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },

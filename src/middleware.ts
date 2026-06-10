@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc, inArray } from "drizzle-orm";
-import { canonicalParentSlugFor } from "@takemetothefair/utils";
+import { canonicalParentSlugFor, timingSafeEqualString } from "@takemetothefair/utils";
 import {
   vendors,
   events,
@@ -124,14 +124,16 @@ function bearerHeaderPresent(request: NextRequest): boolean {
   return !!h && h.startsWith("Bearer ");
 }
 
-function bearerMatchesEnv(request: NextRequest, env: Record<string, unknown>): boolean {
+async function bearerMatchesEnv(
+  request: NextRequest,
+  env: Record<string, unknown>
+): Promise<boolean> {
   const h = request.headers.get("authorization");
   if (!h || !h.startsWith("Bearer ")) return false;
   const presented = h.slice("Bearer ".length).trim();
   if (!presented) return false;
   const expected = (env as { CLAUDE_READONLY_TOKEN?: string }).CLAUDE_READONLY_TOKEN;
-  if (!expected) return false;
-  return presented === expected;
+  return timingSafeEqualString(presented, expected);
 }
 
 export async function middleware(request: NextRequest) {
@@ -151,7 +153,7 @@ export async function middleware(request: NextRequest) {
   // X-Internal-Key auth flows (those don't carry an Authorization: Bearer
   // header). Cheap: header check + one env read; no DB.
   if (pathname.startsWith("/admin/") || pathname.startsWith("/api/admin/")) {
-    if (bearerHeaderPresent(request) && bearerMatchesEnv(request, env)) {
+    if (bearerHeaderPresent(request) && (await bearerMatchesEnv(request, env))) {
       if (!SAFE_METHODS.has(request.method)) {
         return NextResponse.json(
           {

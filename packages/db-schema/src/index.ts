@@ -280,9 +280,12 @@ export const events = sqliteTable(
     // pointer (confirm distinct) or calls merge_events with this row
     // as the duplicate (confirm same).
     //
-    // Behavior wiring is DEFERRED to a follow-up PR — this PR lands
-    // only the column so Part 6's sweep can reference it and a future
-    // workflow PR can set it. Self-FK at SQL level per the
+    // Behavior wiring is DEFERRED to a follow-up PR (tracked as #286, still
+    // open as of 2026-06) — this PR lands only the column so Part 6's sweep
+    // can reference it and a future workflow PR can set it. As of 2026-06
+    // NOTHING writes this column yet; the email pipeline's MEDIUM-confidence
+    // branch is the intended writer. Treat a non-null value as authoritative
+    // only once that wiring exists. Self-FK at SQL level per the
     // parentEmailId convention.
     possibleDuplicateOf: text("possible_duplicate_of"),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
