@@ -54,6 +54,13 @@
   --secondary: 30 39 97; /* navy.DEFAULT */
   --secondary-foreground: 255 255 255; /* on --secondary 13.6:1 AAA */
 
+  /* Footer surface — a dedicated navy SURFACE token. Distinct from
+     --secondary, which is lifted to sky-blue in dark mode for ACCENT/text
+     legibility; reusing it as the footer background turned the footer
+     light-blue in dark mode. --footer stays dark navy in both themes. */
+  --footer: 30 39 97; /* navy.DEFAULT — same as light --secondary */
+  --footer-foreground: 255 255 255; /* white on --footer: 13.6:1 AAA */
+
   /* Brand accent (terracotta) */
   --accent: 217 119 87; /* terracotta.DEFAULT */
   --accent-foreground: 255 255 255; /* on --accent 4.1:1 AA-large only */
@@ -197,6 +204,12 @@
   --primary-foreground: 31 26 10; /* amber-bg-fg unchanged; on amber 9.7:1 AAA */
   --secondary: 122 166 238; /* navy → sky-royal lifted (was #5c8dec, contrast follow-up) */
   --secondary-foreground: 21 23 28; /* dark text on light blue: ~7.6:1 AAA */
+
+  /* Footer surface — stays DARK navy in dark mode (NOT the sky-blue
+     --secondary lift). Deep navy reads as an intentional footer band
+     sitting under the #15171c page bg. */
+  --footer: 19 24 56; /* deep navy (#131838 = navy-dark light value) */
+  --footer-foreground: 255 255 255; /* white on deep navy: ~15:1 AAA */
   --accent: 232 145 117; /* terracotta lifted */
   --accent-foreground: 21 23 28; /* dark text on lift-terracotta: ~5.5:1 AA */
 
