@@ -40,7 +40,10 @@ jobs:
           # Minimal OpenNext Worker config — dry-run bundles locally and prints
           # the authoritative "Total Upload / gzip" the platform measures. No
           # auth or remote calls needed.
-          cat > /tmp/wrangler.sizecheck.toml <<'TOML'
+          echo "--- .open-next layout ---"; ls -la .open-next/ || true
+          # Config MUST live in the repo root: wrangler resolves `main`/`assets`
+          # relative to the config file's directory, not the cwd.
+          cat > ./wrangler.sizecheck.toml <<'TOML'
           name = "takemetothefair-opennext-sizecheck"
           main = ".open-next/worker.js"
           compatibility_date = "2026-06-10"
@@ -49,7 +52,7 @@ jobs:
           directory = ".open-next/assets"
           binding = "ASSETS"
           TOML
-          npx wrangler deploy --dry-run --outdir /tmp/wd -c /tmp/wrangler.sizecheck.toml 2>&1 | tee /tmp/dryrun.log
+          npx wrangler deploy --dry-run --outdir /tmp/wd -c ./wrangler.sizecheck.toml 2>&1 | tee /tmp/dryrun.log
           # Parse "Total Upload: X KiB / gzip: Y KiB"
           LINE=$(grep -iE "Total Upload:" /tmp/dryrun.log | tail -1)
           echo "$LINE"
