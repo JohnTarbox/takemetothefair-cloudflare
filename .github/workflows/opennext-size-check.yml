@@ -1,0 +1,56 @@
+name: OpenNext Size Check
+
+# Phase-0 go/no-go for the OpenNext migration: build with @opennextjs/cloudflare
+# on a real runner (esbuild deadlocks only in constrained dev sandboxes) and
+# report the GZIPPED worker size. Cloudflare Workers (paid) cap = 10 MiB gzipped.
+# Runs only on the migration branch / manual dispatch — does NOT touch prod.
+
+on:
+  push:
+    branches: [migrate/opennext]
+  workflow_dispatch:
+
+jobs:
+  size:
+    name: OpenNext build + gzipped size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+
+      - name: Build with OpenNext adapter
+        run: npx opennextjs-cloudflare build
+
+      - name: Report worker size
+        run: |
+          set -euo pipefail
+          WORKER=.open-next/worker.js
+          if [ ! -f "$WORKER" ]; then echo "::error::no $WORKER produced"; exit 1; fi
+          U=$(wc -c < "$WORKER")
+          G=$(gzip -c "$WORKER" | wc -c)
+          UMIB=$(awk "BEGIN{printf \"%.2f\", $U/1048576}")
+          GMIB=$(awk "BEGIN{printf \"%.2f\", $G/1048576}")
+          echo "worker.js: ${UMIB} MiB uncompressed | ${GMIB} MiB gzipped"
+          echo "### OpenNext worker size" >> "$GITHUB_STEP_SUMMARY"
+          echo "- uncompressed: **${UMIB} MiB**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- gzipped: **${GMIB} MiB**  (Workers paid cap = 10 MiB gzipped)" >> "$GITHUB_STEP_SUMMARY"
+          # Fail if gzipped exceeds a conservative 9 MiB headroom threshold.
+          LIMIT=$(awk "BEGIN{print 9*1048576}")
+          if [ "$G" -gt "$LIMIT" ]; then
+            echo "::error::gzipped worker ${GMIB} MiB exceeds the 9 MiB headroom threshold"
+            exit 1
+          fi
+          echo "✅ under the 9 MiB gzipped headroom threshold"
