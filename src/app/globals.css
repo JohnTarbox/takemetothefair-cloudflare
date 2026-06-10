@@ -26,46 +26,46 @@
    */
 
   /* Surface layer — page bg → elevated → muted */
-  --background: #faf7f2; /* cream — page background */
-  --card: #ffffff; /* card / popover surface */
-  --popover: #ffffff; /* alias of --card for popover semantics */
-  --muted: #f5f1ea; /* stone-50 — subtle surface */
+  --background: 250 247 242; /* cream — page background */
+  --card: 255 255 255; /* card / popover surface */
+  --popover: 255 255 255; /* alias of --card for popover semantics */
+  --muted: 245 241 234; /* stone-50 — subtle surface */
 
   /* Content layer — body → secondary → subtle/placeholder */
-  --foreground: #171717; /* body text on --background: 16.0:1 AAA */
-  --card-foreground: #171717; /* same role on --card */
-  --popover-foreground: #171717; /* same role on --popover */
-  --muted-foreground: #6f6455; /* stone-600 on --background: 5.4:1 AA */
+  --foreground: 23 23 23; /* body text on --background: 16.0:1 AAA */
+  --card-foreground: 23 23 23; /* same role on --card */
+  --popover-foreground: 23 23 23; /* same role on --popover */
+  --muted-foreground: 111 100 85; /* stone-600 on --background: 5.4:1 AA */
 
   /* Border layer — default → emphasized → form-field */
-  --border: #ebe5da; /* stone-100 — default UI borders */
-  --input: #ebe5da; /* form-field borders (matches --border by default) */
+  --border: 235 229 218; /* stone-100 — default UI borders */
+  --input: 235 229 218; /* form-field borders (matches --border by default) */
 
   /* Focus ring — color + offset color */
-  --ring: #3b6fd4; /* royal — focus ring */
-  --ring-offset-background: #faf7f2; /* matches --background */
+  --ring: 59 111 212; /* royal — focus ring */
+  --ring-offset-background: 250 247 242; /* matches --background */
 
   /* Brand primary (amber CTA) — uses the existing amber-bg-fg pair
      (PR #374 / Cohort 6 / UX-R3 work). On --primary 9.7:1 AAA. */
-  --primary: #e8960c; /* amber.DEFAULT */
-  --primary-foreground: #1f1a0a; /* amber-bg-fg — on --primary 9.7:1 AAA */
+  --primary: 232 150 12; /* amber.DEFAULT */
+  --primary-foreground: 31 26 10; /* amber-bg-fg — on --primary 9.7:1 AAA */
 
   /* Brand secondary (navy) */
-  --secondary: #1e2761; /* navy.DEFAULT */
-  --secondary-foreground: #ffffff; /* on --secondary 13.6:1 AAA */
+  --secondary: 30 39 97; /* navy.DEFAULT */
+  --secondary-foreground: 255 255 255; /* on --secondary 13.6:1 AAA */
 
   /* Brand accent (terracotta) */
-  --accent: #d97757; /* terracotta.DEFAULT */
-  --accent-foreground: #ffffff; /* on --accent 4.1:1 AA-large only */
+  --accent: 217 119 87; /* terracotta.DEFAULT */
+  --accent-foreground: 255 255 255; /* on --accent 4.1:1 AA-large only */
 
   /* Status — destructive lives separately from danger semantics so a
      future "DELETE" button can use --destructive while "5 errors found"
      uses --danger. Today they map to the same hex. */
-  --destructive: #a13834;
-  --destructive-foreground: #ffffff;
-  --success: #2f7d4e;
-  --warning: #c47a1f;
-  --danger: #a13834;
+  --destructive: 161 56 52;
+  --destructive-foreground: 255 255 255;
+  --success: 47 125 78;
+  --warning: 196 122 31;
+  --danger: 161 56 52;
 
   /* Status SOFT variants — light bg + dark fg pairs for pills/badges.
      PR 2 extends the PR 1 set: Badge variants (success/danger/info)
@@ -74,25 +74,25 @@
      uses --success-soft + --success-soft-foreground. All pairs
      pre-validated AA on the bg they sit on.
      Naming: shadcn convention is `bg-success-soft text-success-soft-foreground`. */
-  --success-soft: #dcfce7; /* green-100 */
-  --success-soft-foreground: #166534; /* green-800 — on --success-soft: 6.4:1 AAA */
-  --warning-soft: #fff3d6; /* amber.light */
-  --warning-soft-foreground: #1f1a0a; /* amber-bg-fg — on --warning-soft: ~17:1 AAA (matches UX-R3) */
-  --danger-soft: #fee2e2; /* red-100 */
-  --danger-soft-foreground: #991b1b; /* red-800 — on --danger-soft: 7.5:1 AAA */
-  --info-soft: #ebe5da; /* stone-100 — same neutral feel as default-info today */
-  --info-soft-foreground: #1e2761; /* navy — on --info-soft: 11.4:1 AAA */
+  --success-soft: 220 252 231; /* green-100 */
+  --success-soft-foreground: 22 101 52; /* green-800 — on --success-soft: 6.4:1 AAA */
+  --warning-soft: 255 243 214; /* amber.light */
+  --warning-soft-foreground: 31 26 10; /* amber-bg-fg — on --warning-soft: ~17:1 AAA (matches UX-R3) */
+  --danger-soft: 254 226 226; /* red-100 */
+  --danger-soft-foreground: 153 27 27; /* red-800 — on --danger-soft: 7.5:1 AAA */
+  --info-soft: 235 229 218; /* stone-100 — same neutral feel as default-info today */
+  --info-soft-foreground: 30 39 97; /* navy — on --info-soft: 11.4:1 AAA */
 
   /* Category accent palette (5 colors) — the JS-rendered accent bars
      in src/lib/category-colors.ts emit these hex values today as
      literal strings. PR 2 will migrate that file to read these vars
      so dark-mode (PR 4) can theme them. Defining here so the var
      exists at the moment of migration. */
-  --accent-gold: #e8960c; /* matches amber.DEFAULT */
-  --accent-terracotta: #d97757; /* matches terracotta.DEFAULT */
-  --accent-sage: #6b7e5e; /* unique to category palette */
-  --accent-navy-soft: #1e2761; /* matches navy.DEFAULT */
-  --accent-stone: #6f6455; /* matches stone.600 */
+  --accent-gold: 232 150 12; /* matches amber.DEFAULT */
+  --accent-terracotta: 217 119 87; /* matches terracotta.DEFAULT */
+  --accent-sage: 107 126 94; /* unique to category palette */
+  --accent-navy-soft: 30 39 97; /* matches navy.DEFAULT */
+  --accent-stone: 111 100 85; /* matches stone.600 */
 
   /* ===== BRAND palette — keystone follow-up (2026-06-07) =====
    *
@@ -116,25 +116,25 @@
    *     In DARK mode the amber-light bg becomes dark, so amber-bg-fg
    *     INVERTS to light text to maintain the on-amber-surface pair.
    */
-  --navy: #1e2761;
-  --navy-dark: #131838;
-  --royal: #3b6fd4;
-  --amber: #e8960c;
-  --amber-light: #fff3d6;
-  --amber-dark: #b5730a;
-  --amber-fg: #8b5a05;
-  --amber-bg-fg: #1f1a0a;
-  --cream: #faf7f2;
-  --terracotta: #d97757;
-  --terracotta-light: #f5d9cd;
-  --stone-50: #f5f1ea;
-  --stone-100: #ebe5da;
-  --stone-300: #b8af9e;
-  --stone-600: #6f6455;
-  --stone-900: #2a2521;
-  --sage-50: #eef2ea;
-  --sage-700: #4a5b3d;
-  --brand-blue-light: #d6e4f7;
+  --navy: 30 39 97;
+  --navy-dark: 19 24 56;
+  --royal: 59 111 212;
+  --amber: 232 150 12;
+  --amber-light: 255 243 214;
+  --amber-dark: 181 115 10;
+  --amber-fg: 139 90 5;
+  --amber-bg-fg: 31 26 10;
+  --cream: 250 247 242;
+  --terracotta: 217 119 87;
+  --terracotta-light: 245 217 205;
+  --stone-50: 245 241 234;
+  --stone-100: 235 229 218;
+  --stone-300: 184 175 158;
+  --stone-600: 111 100 85;
+  --stone-900: 42 37 33;
+  --sage-50: 238 242 234;
+  --sage-700: 74 91 61;
+  --brand-blue-light: 214 228 247;
 }
 
 /* =====================================================================
@@ -169,60 +169,60 @@
  * ===================================================================== */
 .dark {
   /* Surface layer */
-  --background: #15171c; /* warm near-black */
-  --card: #1e2128; /* card / popover surface, lifted from page bg */
-  --popover: #1e2128;
-  --muted: #23262e; /* subtle surface, between card and border */
+  --background: 21 23 28; /* warm near-black */
+  --card: 30 33 40; /* card / popover surface, lifted from page bg */
+  --popover: 30 33 40;
+  --muted: 35 38 46; /* subtle surface, between card and border */
 
   /* Content layer */
-  --foreground: #f5f1ea; /* on --background: 13.4:1 AAA */
-  --card-foreground: #f5f1ea; /* same on --card: ~12.7:1 AAA */
-  --popover-foreground: #f5f1ea;
-  --muted-foreground: #b8af9e; /* stone-300 on --background: ~7.1:1 AAA */
+  --foreground: 245 241 234; /* on --background: 13.4:1 AAA */
+  --card-foreground: 245 241 234; /* same on --card: ~12.7:1 AAA */
+  --popover-foreground: 245 241 234;
+  --muted-foreground: 184 175 158; /* stone-300 on --background: ~7.1:1 AAA */
 
   /* Border + form-field — contrast follow-up (2026-06-07).
      Was #2a2d35; failed WCAG 1.4.11 (UI 3:1) against --background (1.30)
      and --card (1.17). Lifted to #6b707a per analytical audit so both
      pass: bg=3.62:1, card=3.20:1. Visually a heavier separator than
      before but compliance-correct. */
-  --border: #6b707a;
-  --input: #6b707a;
+  --border: 107 112 122;
+  --input: 107 112 122;
 
   /* Focus ring — lifted royal (#3B6FD4 → #5C8DEC for AA on dark) */
-  --ring: #5c8dec;
-  --ring-offset-background: #15171c; /* matches --background */
+  --ring: 92 141 236;
+  --ring-offset-background: 21 23 28; /* matches --background */
 
   /* Brand — amber stays vibrant; navy + terracotta lifted */
-  --primary: #e8960c; /* amber unchanged — brand identity */
-  --primary-foreground: #1f1a0a; /* amber-bg-fg unchanged; on amber 9.7:1 AAA */
-  --secondary: #7aa6ee; /* navy → sky-royal lifted (was #5c8dec, contrast follow-up) */
-  --secondary-foreground: #15171c; /* dark text on light blue: ~7.6:1 AAA */
-  --accent: #e89175; /* terracotta lifted */
-  --accent-foreground: #15171c; /* dark text on lift-terracotta: ~5.5:1 AA */
+  --primary: 232 150 12; /* amber unchanged — brand identity */
+  --primary-foreground: 31 26 10; /* amber-bg-fg unchanged; on amber 9.7:1 AAA */
+  --secondary: 122 166 238; /* navy → sky-royal lifted (was #5c8dec, contrast follow-up) */
+  --secondary-foreground: 21 23 28; /* dark text on light blue: ~7.6:1 AAA */
+  --accent: 232 145 117; /* terracotta lifted */
+  --accent-foreground: 21 23 28; /* dark text on lift-terracotta: ~5.5:1 AA */
 
   /* Status — lifted for dark bg readability */
-  --destructive: #d26461;
-  --destructive-foreground: #15171c;
-  --success: #4ea877;
-  --warning: #e0974a;
-  --danger: #d26461;
+  --destructive: 210 100 97;
+  --destructive-foreground: 21 23 28;
+  --success: 78 168 119;
+  --warning: 224 151 74;
+  --danger: 210 100 97;
 
   /* Status soft — inverted (dark bg, light fg) */
-  --success-soft: #052e16; /* green-950 */
-  --success-soft-foreground: #a7f3d0; /* green-200 on --success-soft: ~9.2:1 AAA */
-  --warning-soft: #2d2010; /* dark amber-tinted */
-  --warning-soft-foreground: #fff3d6; /* on --warning-soft: ~13:1 AAA (echoes UX-R3 pair) */
-  --danger-soft: #2d1212;
-  --danger-soft-foreground: #fecaca; /* red-200 on --danger-soft: ~9:1 AAA */
-  --info-soft: #2a2d35; /* matches --muted neighbor */
-  --info-soft-foreground: #b8c5e2; /* lifted navy: ~7.2:1 on --info-soft */
+  --success-soft: 5 46 22; /* green-950 */
+  --success-soft-foreground: 167 243 208; /* green-200 on --success-soft: ~9.2:1 AAA */
+  --warning-soft: 45 32 16; /* dark amber-tinted */
+  --warning-soft-foreground: 255 243 214; /* on --warning-soft: ~13:1 AAA (echoes UX-R3 pair) */
+  --danger-soft: 45 18 18;
+  --danger-soft-foreground: 254 202 202; /* red-200 on --danger-soft: ~9:1 AAA */
+  --info-soft: 42 45 53; /* matches --muted neighbor */
+  --info-soft-foreground: 184 197 226; /* lifted navy: ~7.2:1 on --info-soft */
 
   /* Category accents — amber unchanged, others lifted */
-  --accent-gold: #e8960c; /* brand unchanged */
-  --accent-terracotta: #e89175;
-  --accent-sage: #8fa77d;
-  --accent-navy-soft: #5c8dec;
-  --accent-stone: #b8af9e;
+  --accent-gold: 232 150 12; /* brand unchanged */
+  --accent-terracotta: 232 145 117;
+  --accent-sage: 143 167 125;
+  --accent-navy-soft: 92 141 236;
+  --accent-stone: 184 175 158;
 
   /* ===== BRAND palette — dark counterparts (keystone follow-up, 2026-06-07)
    *
@@ -248,25 +248,25 @@
      --navy with --royal at #7aa6ee gives 7.27:1 on --background and
      improves card / stone-100 readability. --navy-dark lifted to the
      previous --navy value as a one-stop-darker hue for emphasis. */
-  --navy: #7aa6ee; /* on --background: 7.27:1 AAA */
-  --navy-dark: #5c8dec; /* on --background: 5.53:1 AAA */
-  --royal: #7aa6ee; /* link/accent on dark — 7.27:1 AAA */
-  --amber: #e8960c; /* unchanged — brand identity */
-  --amber-light: #2d2010; /* warm-dark backdrop for pills/chips */
-  --amber-dark: #f4ae3e; /* amber text on dark bg: 6.9:1 AAA */
-  --amber-fg: #f4ae3e; /* same as --amber-dark on dark — single accessible amber */
-  --amber-bg-fg: #fff3d6; /* on --amber-light (dark in dark theme): 13:1 AAA */
-  --cream: #15171c; /* page-bg role flips with theme — matches --background */
-  --terracotta: #e89175; /* lifted — matches --accent dark */
-  --terracotta-light: #3d2620; /* warm-dark backdrop */
-  --stone-50: #23262e; /* matches --muted dark */
-  --stone-100: #2a2d35; /* matches --border dark */
-  --stone-300: #6f6455; /* roles INVERT — was light surface, now muted */
-  --stone-600: #b8af9e; /* on --background: 7.1:1 AAA — body-ish muted */
-  --stone-900: #f5f1ea; /* body text — matches --foreground dark */
-  --sage-50: #1f2922; /* warm-dark sage backdrop */
-  --sage-700: #8fa77d; /* lifted sage — matches --accent-sage dark */
-  --brand-blue-light: #1a2540; /* dark navy-blue backdrop, was light blue */
+  --navy: 122 166 238; /* on --background: 7.27:1 AAA */
+  --navy-dark: 92 141 236; /* on --background: 5.53:1 AAA */
+  --royal: 122 166 238; /* link/accent on dark — 7.27:1 AAA */
+  --amber: 232 150 12; /* unchanged — brand identity */
+  --amber-light: 45 32 16; /* warm-dark backdrop for pills/chips */
+  --amber-dark: 244 174 62; /* amber text on dark bg: 6.9:1 AAA */
+  --amber-fg: 244 174 62; /* same as --amber-dark on dark — single accessible amber */
+  --amber-bg-fg: 255 243 214; /* on --amber-light (dark in dark theme): 13:1 AAA */
+  --cream: 21 23 28; /* page-bg role flips with theme — matches --background */
+  --terracotta: 232 145 117; /* lifted — matches --accent dark */
+  --terracotta-light: 61 38 32; /* warm-dark backdrop */
+  --stone-50: 35 38 46; /* matches --muted dark */
+  --stone-100: 42 45 53; /* matches --border dark */
+  --stone-300: 111 100 85; /* roles INVERT — was light surface, now muted */
+  --stone-600: 184 175 158; /* on --background: 7.1:1 AAA — body-ish muted */
+  --stone-900: 245 241 234; /* body text — matches --foreground dark */
+  --sage-50: 31 41 34; /* warm-dark sage backdrop */
+  --sage-700: 143 167 125; /* lifted sage — matches --accent-sage dark */
+  --brand-blue-light: 26 37 64; /* dark navy-blue backdrop, was light blue */
 }
 
 h1,
@@ -279,8 +279,10 @@ h6 {
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  /* Tokens are channel triplets ("R G B") so Tailwind's /<alpha> modifiers
+     work; raw var() color consumers must wrap in rgb(). */
+  color: rgb(var(--foreground));
+  background: rgb(var(--background));
   font-family:
     var(--font-sans),
     system-ui,

@@ -29,35 +29,35 @@ const GOLD: CategoryColors = {
   bg: "bg-amber-light",
   icon: "text-amber-fg",
   badge: "bg-amber-light text-amber-bg-fg",
-  accent: "var(--accent-gold)",
+  accent: "rgb(var(--accent-gold))",
 };
 
 const TERRACOTTA: CategoryColors = {
   bg: "bg-terracotta-light",
   icon: "text-terracotta",
   badge: "bg-terracotta-light text-stone-900",
-  accent: "var(--accent-terracotta)",
+  accent: "rgb(var(--accent-terracotta))",
 };
 
 const SAGE: CategoryColors = {
   bg: "bg-sage-50",
   icon: "text-sage-700",
   badge: "bg-sage-50 text-sage-700",
-  accent: "var(--accent-sage)",
+  accent: "rgb(var(--accent-sage))",
 };
 
 const NAVY_SOFT: CategoryColors = {
   bg: "bg-stone-100",
   icon: "text-navy",
   badge: "bg-stone-100 text-navy",
-  accent: "var(--accent-navy-soft)",
+  accent: "rgb(var(--accent-navy-soft))",
 };
 
 const STONE_CRAFT: CategoryColors = {
   bg: "bg-stone-50",
   icon: "text-stone-600",
   badge: "bg-stone-50 text-stone-900",
-  accent: "var(--accent-stone)",
+  accent: "rgb(var(--accent-stone))",
 };
 
 const CATEGORY_COLORS: Record<string, CategoryColors> = {
