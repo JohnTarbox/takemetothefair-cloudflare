@@ -265,7 +265,6 @@ export default function VendorProfilePage() {
       />
       <VendorClaimWidget
         claimed={profile.claimed}
-        vendorId={profile.id}
         vendorContactEmail={profile.contactEmail}
         vendorSlug={profile.slug}
         onClaimed={() => setProfile((p) => (p ? { ...p, claimed: true } : p))}

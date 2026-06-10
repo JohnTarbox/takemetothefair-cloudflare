@@ -143,50 +143,6 @@ Click kebab → **Mark as key event** on each row.
 mark them as key events or the chart-break will affect conversion
 rate twice.)
 
-## Pass 3 (2026-06-10): ENG1.5 / 1.6 / 1.7 additions
-
-Shipped in the ENG1-Med analytics PR (Dev-Email-2026-06-10 §B). Three
-new instrumentation clusters; register the two new params and mark the
-new key events.
-
-### Register 2 more event-scoped custom dimensions
-
-Admin → Custom Definitions → Custom dimensions → Create:
-
-| Dimension name (display) | Scope | Event parameter  | Description                                                                                                |
-| ------------------------ | ----- | ---------------- | ---------------------------------------------------------------------------------------------------------- |
-| Claim method             | Event | `claim_method`   | `register` \| `email` \| `admin_approved` — used by `claim_started` / `claim_submitted` / `claim_approved` |
-| Item list name           | Event | `item_list_name` | `events_listing` \| `vendors_browse` \| `vendors_search_results` \| `venues_browse` — browse-CTR list id   |
-
-(`vendor_id` / `vendor_slug` ride on the claim events too; they reuse
-the existing entity-style params and don't need separate dimensions
-unless you want them broken out.)
-
-### Mark new key events (after they first fire in prod)
-
-- `claim_started`, `claim_submitted`, `claim_approved` (supply-side funnel)
-- `select_item` (browse → detail click-through; the conversion half of CTR)
-- `newsletter_confirm` (double-opt-in completion)
-
-`view_item_list` is a coverage/denominator event — leave it un-keyed.
-
-### Sanity check
-
-- **Browse CTR**: open `/events` → Realtime shows `view_item_list`
-  (`item_list_name=events_listing`); click a card → `select_item`.
-  `view_item_list` / `select_item` are **GA4-only** (not in the D1
-  first-party beacon by design — high volume).
-- **Claim funnel**: trigger a claim (vendor profile or a vendor page
-  you're eligible to claim) → Realtime shows `claim_started` →
-  `claim_submitted` → `claim_approved`. These three DO mirror to D1 —
-  confirm at `/admin/analytics?tab=first-party-events`.
-- **Newsletter**: complete a double-opt-in → `/newsletter/confirmed`
-  fires `newsletter_confirm` (GA4 + D1 beacon).
-
-Note: `claim_approved` with `claim_method=admin_approved` is NOT wired
-yet (the MCP approval tool doesn't emit analytics today) — expect only
-`register` / `email` methods in the funnel for now.
-
 ## Related
 
 - `docs/eng1-audit.md` — dev-side companion (what fires today vs.

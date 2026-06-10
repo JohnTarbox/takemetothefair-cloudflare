@@ -36,7 +36,6 @@ import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { sanitizeLikeInput } from "@/lib/utils";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
-import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
@@ -824,11 +823,6 @@ export default async function EventsPage({
         positionStart={(page - 1) * limit + 1}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/events"
-      />
-      <ItemListTracker
-        listName="events_listing"
-        hrefPrefix="/events"
-        items={eventsList.map((e) => ({ id: e.id, slug: e.slug, name: e.name }))}
       />
       <div className="mb-8 print:hidden">
         <h1 className="text-3xl font-bold text-foreground">Browse Events</h1>

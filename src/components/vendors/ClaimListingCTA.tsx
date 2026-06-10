@@ -8,8 +8,6 @@ import { DirectClaimButton } from "./DirectClaimButton";
 interface Props {
   businessName: string;
   vendorSlug: string;
-  /** Vendor row id — forwarded to the claim-funnel `vendor_id` param. */
-  vendorId?: string;
   /**
    * Set true by the parent page when the signed-in visitor's verified
    * email matches the vendor's contact_email. In that case we render a
@@ -27,12 +25,7 @@ interface Props {
 //    handles the placeholder-takeover at signup time.
 // Renders only when !claimed && !isOwner && !isAdmin (gated in the
 // parent page).
-export function ClaimListingCTA({
-  businessName,
-  vendorSlug,
-  vendorId,
-  eligibleForDirectClaim,
-}: Props) {
+export function ClaimListingCTA({ businessName, vendorSlug, eligibleForDirectClaim }: Props) {
   const decoded = decodeHtmlEntities(businessName);
   const fallbackHref = `/register?role=VENDOR&businessName=${encodeURIComponent(decoded)}&claim=${encodeURIComponent(vendorSlug)}`;
 
@@ -48,7 +41,7 @@ export function ClaimListingCTA({
               : `Claim ${decoded} for free to add a description, photos, and contact info — and help customers find you when they search.`}
           </p>
           {eligibleForDirectClaim ? (
-            <DirectClaimButton vendorSlug={vendorSlug} vendorId={vendorId} />
+            <DirectClaimButton vendorSlug={vendorSlug} />
           ) : (
             <Link href={fallbackHref} className="mt-3 inline-block">
               <Button size="sm">Claim this free listing</Button>

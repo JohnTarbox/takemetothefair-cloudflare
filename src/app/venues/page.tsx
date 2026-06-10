@@ -9,7 +9,6 @@ import { VenuesView } from "@/components/venues/venues-view";
 import { logError } from "@/lib/logger";
 import { sanitizeLikeInput } from "@/lib/utils";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
-import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
@@ -240,11 +239,6 @@ export default async function VenuesPage({
         positionStart={(currentPage - 1) * PAGE_SIZE + 1}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/venues"
-      />
-      <ItemListTracker
-        listName="venues_browse"
-        hrefPrefix="/venues"
-        items={pageVenues.map((v) => ({ id: v.id, slug: v.slug, name: v.name }))}
       />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-foreground">Venues</h1>

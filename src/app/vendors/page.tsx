@@ -16,7 +16,6 @@ import { auth } from "@/lib/auth";
 import { VendorsView } from "@/components/vendors/vendors-view";
 import { logError } from "@/lib/logger";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
-import { ItemListTracker } from "@/components/analytics/ItemListTracker";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { Pagination } from "@/components/ui/pagination";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
@@ -534,15 +533,6 @@ export default async function VendorsPage({
         positionStart={(currentPage - 1) * PAGE_SIZE + 1}
         asCollectionPage
         pageUrl="https://meetmeatthefair.com/vendors"
-      />
-      <ItemListTracker
-        listName={params.q ? "vendors_search_results" : "vendors_browse"}
-        hrefPrefix="/vendors"
-        items={pageVendors.map((v) => ({
-          id: v.id,
-          slug: v.slug,
-          name: v.displayName ?? v.businessName,
-        }))}
       />
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-foreground">Vendor Directory</h1>
