@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRequestContext } from "@cloudflare/next-on-pages";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
+import { canonicalParentSlugFor } from "@takemetothefair/utils";
 import {
   vendors,
   events,
@@ -328,34 +329,100 @@ export async function middleware(request: NextRequest) {
     try {
       const [row] = await db
         .select({
+          id: vendors.id,
           deletedAt: vendors.deletedAt,
           redirectToVendorId: vendors.redirectToVendorId,
+          role: vendors.role,
+          displayMode: vendors.displayMode,
+          displayOverridePermitted: vendors.displayOverridePermitted,
+          brandParentVendorId: vendors.brandParentVendorId,
+          operatorParentVendorId: vendors.operatorParentVendorId,
+          aliasOfVendorId: vendors.aliasOfVendorId,
         })
         .from(vendors)
         .where(eq(vendors.slug, unsafeSlug(slug)))
         .limit(1);
-      if (!row || !row.deletedAt) return NextResponse.next();
+      if (!row) return NextResponse.next();
 
-      // Deleted with redirect target → 301 to target's slug if target is live.
-      if (row.redirectToVendorId) {
-        const [target] = await db
-          .select({ slug: vendors.slug, deletedAt: vendors.deletedAt })
+      // Soft-deleted vendor handling.
+      if (row.deletedAt) {
+        // Deleted with redirect target → 301 to target's slug if target is live.
+        if (row.redirectToVendorId) {
+          const [target] = await db
+            .select({ slug: vendors.slug, deletedAt: vendors.deletedAt })
+            .from(vendors)
+            .where(eq(vendors.id, row.redirectToVendorId))
+            .limit(1);
+          if (target && !target.deletedAt) {
+            const url = request.nextUrl.clone();
+            url.pathname = `/vendors/${target.slug}`;
+            return NextResponse.redirect(url, 301);
+          }
+        }
+
+        // Deleted without (live) redirect target → 410 Gone. Crawlers treat 410
+        // as "intentionally removed, drop from index" — sharper signal than 404.
+        return new NextResponse("Gone", {
+          status: 410,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      }
+
+      // EH2 brand_parent/operator collapse — a live LOCAL_OFFICE that
+      // canonical-ups to a parent (brand_parent or operator_parent mode)
+      // should 301 to that hub, so the public never lands on a regional
+      // office page. The office row still exists and keeps its event
+      // attribution at the data layer; only its public URL redirects.
+      // self/both-mode offices (RbA franchises etc.) return null here and
+      // render their own page normally. Reuses canonicalParentSlugFor so
+      // the 301 target always matches the page's rel=canonical.
+      if (row.role === "LOCAL_OFFICE" && (row.brandParentVendorId || row.operatorParentVendorId)) {
+        const parentIds = [row.brandParentVendorId, row.operatorParentVendorId].filter(
+          (v): v is string => v != null
+        );
+        const parents = await db
+          .select({
+            id: vendors.id,
+            slug: vendors.slug,
+            role: vendors.role,
+            defaultChildDisplay: vendors.defaultChildDisplay,
+            deletedAt: vendors.deletedAt,
+          })
           .from(vendors)
-          .where(eq(vendors.id, row.redirectToVendorId))
-          .limit(1);
-        if (target && !target.deletedAt) {
-          const url = request.nextUrl.clone();
-          url.pathname = `/vendors/${target.slug}`;
-          return NextResponse.redirect(url, 301);
+          .where(inArray(vendors.id, parentIds));
+        const brandParent = parents.find((p) => p.id === row.brandParentVendorId) ?? null;
+        const operatorParent = parents.find((p) => p.id === row.operatorParentVendorId) ?? null;
+        const targetSlug = canonicalParentSlugFor(
+          {
+            role: row.role,
+            brandParentVendorId: row.brandParentVendorId,
+            operatorParentVendorId: row.operatorParentVendorId,
+            aliasOfVendorId: row.aliasOfVendorId,
+            displayOverridePermitted: row.displayOverridePermitted,
+            displayMode: row.displayMode,
+          },
+          brandParent
+            ? {
+                id: brandParent.id,
+                role: brandParent.role,
+                defaultChildDisplay: brandParent.defaultChildDisplay,
+              }
+            : null,
+          brandParent?.slug ?? null,
+          operatorParent?.slug ?? null
+        );
+        if (targetSlug) {
+          // Don't 301 into a deleted parent (would chain into a 410).
+          const targetParent = targetSlug === brandParent?.slug ? brandParent : operatorParent;
+          if (targetParent && !targetParent.deletedAt) {
+            const url = request.nextUrl.clone();
+            url.pathname = `/vendors/${targetSlug}`;
+            return NextResponse.redirect(url, 301);
+          }
         }
       }
 
-      // Deleted without (live) redirect target → 410 Gone. Crawlers treat 410
-      // as "intentionally removed, drop from index" — sharper signal than 404.
-      return new NextResponse("Gone", {
-        status: 410,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
+      return NextResponse.next();
     } catch {
       // DB error — let the page handler take over (it has its own check too).
       return NextResponse.next();

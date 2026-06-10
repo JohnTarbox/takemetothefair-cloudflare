@@ -35,7 +35,8 @@ import {
   blogPosts,
   contentLinks,
 } from "@/lib/db/schema";
-import { eq, and, sql, ne, lt, like, desc, or, isNull } from "drizzle-orm";
+import { eq, and, sql, ne, lt, like, desc, or, isNull, inArray } from "drizzle-orm";
+import { resolveEventVendorTarget, dedupeByResolvedSlug } from "@/lib/event-vendor-display";
 import { isPublicVendorStatus, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
 import { isPublicEventStatus } from "@/lib/event-status";
@@ -225,6 +226,34 @@ async function getEvent(slug: string) {
       )
       .orderBy(sql`${vendors.businessName} COLLATE NOCASE`);
 
+    // EH2 brand_parent collapse — load brand/operator parents for any
+    // LOCAL_OFFICE participants so the lineup can show the brand (LeafFilter)
+    // instead of the regional office. Single batched read; skipped entirely
+    // when no office vendors are present (the common case).
+    const vendorParentIds = Array.from(
+      new Set(
+        eventVendorResults
+          .filter((ev) => ev.vendors?.role === "LOCAL_OFFICE")
+          .flatMap((ev) => [ev.vendors!.brandParentVendorId, ev.vendors!.operatorParentVendorId])
+          .filter((v): v is string => v != null)
+      )
+    );
+    const parentRows =
+      vendorParentIds.length > 0
+        ? await db
+            .select({
+              id: vendors.id,
+              slug: vendors.slug,
+              role: vendors.role,
+              businessName: vendors.businessName,
+              displayName: vendors.displayName,
+              defaultChildDisplay: vendors.defaultChildDisplay,
+            })
+            .from(vendors)
+            .where(inArray(vendors.id, vendorParentIds))
+        : [];
+    const parentById = new Map(parentRows.map((p) => [p.id, p]));
+
     // Get event days (per-day schedule)
     const eventDayResults = await db
       .select()
@@ -253,10 +282,23 @@ async function getEvent(slug: string) {
             user: promoterUser[0] || { name: null, email: null },
           }
         : null,
-      eventVendors: eventVendorResults.map((ev) => ({
-        ...ev.event_vendors,
-        vendor: ev.vendors!,
-      })),
+      eventVendors: eventVendorResults.map((ev) => {
+        const vendor = ev.vendors!;
+        // EH2 — resolved public-facing {name, slug}. For brand_parent /
+        // operator offices this is the brand name + hub slug; otherwise the
+        // vendor's own self-name + slug. Used by every public render surface
+        // (lineup cards, JSON-LD performer, "all vendors" sub-page).
+        const displayTarget = resolveEventVendorTarget(
+          vendor,
+          parentById.get(vendor.brandParentVendorId ?? "") ?? null,
+          parentById.get(vendor.operatorParentVendorId ?? "") ?? null
+        );
+        return {
+          ...ev.event_vendors,
+          vendor,
+          displayTarget,
+        };
+      }),
       eventDays: eventDayResults,
     };
   } catch (e) {
@@ -654,23 +696,27 @@ export default async function EventDetailPage({ params }: Props) {
           previousStartDate={event.previousStartDate}
           previousEndDate={event.previousEndDate}
           eventDays={event.eventDays}
-          vendors={event.eventVendors.slice(0, 10).map((ev) => ({
-            // EH2.1 — honor brand display_name override on JSON-LD too so
-            // the structured-data name matches what the user sees.
-            name: ev.vendor.displayName ?? ev.vendor.businessName,
-            url: `https://meetmeatthefair.com/vendors/${ev.vendor.slug}`,
-            // Drives schema.org performer-vs-sponsor placement (drizzle/0071).
-            participationType: ev.participationType as
-              | "EXHIBITOR"
-              | "SPONSOR_ONLY"
-              | "SPONSOR_AND_EXHIBITOR"
-              | undefined,
-            // K18 Phase 2 (2026-06-06): per-occurrence scoping. NULL = series-
-            // wide -> appears in top-level performer/sponsor arrays. Non-NULL
-            // = scoped to that occurrence -> EventSchema emits the vendor
-            // under the matching subEvent's performer/sponsor array instead.
-            eventDayId: ev.eventDayId ?? null,
-          }))}
+          vendors={dedupeByResolvedSlug(event.eventVendors, (ev) => ev.displayTarget.slug)
+            .slice(0, 10)
+            .map((ev) => ({
+              // EH2 — structured-data name/url use the resolved display target
+              // so brand_parent offices (LeafFilter) surface as the brand hub,
+              // matching the visible lineup. Deduped so two offices of one
+              // brand don't emit duplicate performers.
+              name: ev.displayTarget.name,
+              url: `https://meetmeatthefair.com/vendors/${ev.displayTarget.slug}`,
+              // Drives schema.org performer-vs-sponsor placement (drizzle/0071).
+              participationType: ev.participationType as
+                | "EXHIBITOR"
+                | "SPONSOR_ONLY"
+                | "SPONSOR_AND_EXHIBITOR"
+                | undefined,
+              // K18 Phase 2 (2026-06-06): per-occurrence scoping. NULL = series-
+              // wide -> appears in top-level performer/sponsor arrays. Non-NULL
+              // = scoped to that occurrence -> EventSchema emits the vendor
+              // under the matching subEvent's performer/sponsor array instead.
+              eventDayId: ev.eventDayId ?? null,
+            }))}
           createdAt={event.createdAt}
           // TAX1 Phase 3 (2026-06-02). Audience/access drives the
           // schema.org `audience` block + offers suppression for CLOSED
@@ -1047,14 +1093,14 @@ export default async function EventDetailPage({ params }: Props) {
                 const renderVendorCard = (ev: EvRow, showSponsorBadge: boolean) => (
                   <Link
                     key={ev.vendor.id}
-                    href={`/vendors/${ev.vendor.slug}`}
+                    href={`/vendors/${ev.displayTarget.slug}`}
                     className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted transition-colors"
                   >
                     <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center relative overflow-hidden">
                       {ev.vendor.logoUrl ? (
                         <Image
                           src={ev.vendor.logoUrl}
-                          alt={ev.vendor.displayName ?? ev.vendor.businessName}
+                          alt={ev.displayTarget.name}
                           fill
                           sizes="40px"
                           className="object-cover"
@@ -1066,13 +1112,13 @@ export default async function EventDetailPage({ params }: Props) {
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-foreground flex items-center gap-2">
                         <span className="truncate">
-                          {/* EH2.1 — display_name override surfaces in
-                              event vendor lists. Full brand_parent gate
-                              not applied here: an event's vendor list is
-                              row-level (each office's presence at the
-                              event is a separate event_vendors row) and
-                              should not collapse by brand. */}
-                          {ev.vendor.displayName ?? ev.vendor.businessName}
+                          {/* EH2 — resolved display target. brand_parent /
+                              operator offices (e.g. LeafFilter) collapse to
+                              the brand name + hub link so the public never
+                              sees the regional office; self/both/INDEPENDENT
+                              rows render as themselves. Pairs with the
+                              dedupe-by-slug below and the middleware 301. */}
+                          {ev.displayTarget.name}
                         </span>
                         {/* UX-R3 (2026-06-07) — semantic-token migration. Shape kept
                           custom (text-[10px], rounded not rounded-full) to preserve
@@ -1102,9 +1148,16 @@ export default async function EventDetailPage({ params }: Props) {
                   renderBadge: (ev: EvRow) => boolean,
                   takeLimit: number | null
                 ) => {
-                  const cards = (
-                    takeLimit != null ? group.vendors.slice(0, takeLimit) : group.vendors
-                  ).map((ev) => renderVendorCard(ev, renderBadge(ev)));
+                  // EH2 — dedupe by resolved slug BEFORE the take-limit so two
+                  // offices of one brand_parent brand collapse to a single
+                  // brand card (no-op for the common all-distinct case).
+                  const deduped = dedupeByResolvedSlug(
+                    group.vendors,
+                    (ev) => ev.displayTarget.slug
+                  );
+                  const cards = (takeLimit != null ? deduped.slice(0, takeLimit) : deduped).map(
+                    (ev) => renderVendorCard(ev, renderBadge(ev))
+                  );
                   if (group.heading === "") {
                     return <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{cards}</div>;
                   }
