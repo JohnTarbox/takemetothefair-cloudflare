@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gte, lte, ne, isNotNull, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -6,8 +7,6 @@ import { publicEventWhere } from "@/lib/event-lifecycle";
 import { unsafeSlug } from "@/lib/utils";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
-
-export const runtime = "edge";
 
 const MAX_RESULTS = 30;
 

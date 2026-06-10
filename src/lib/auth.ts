@@ -4,7 +4,7 @@ import type { Session, User, NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import Facebook from "next-auth/providers/facebook";
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareDb } from "./cloudflare";
 import * as schema from "./db/schema";
 import { eq, and } from "drizzle-orm";
@@ -140,7 +140,7 @@ export async function verifyPassword(password: string, storedHash: string): Prom
 // (process.env values are inlined at build time and won't have production secrets)
 function getRuntimeEnv(key: string): string | undefined {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as unknown as Record<string, string>)[key];
   } catch {
     return process.env[key];

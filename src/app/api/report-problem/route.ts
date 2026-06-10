@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * UR1 C3 (2026-06-04) — POST handler for the web problem-report form.
  *
@@ -28,8 +29,6 @@ import { NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { problemReports } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 const SOURCE = "app/api/report-problem/route.ts:POST";
 const MAX_BODY_CHARS = 5000;

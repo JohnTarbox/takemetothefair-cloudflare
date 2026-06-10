@@ -9,8 +9,6 @@ import { getShortErrorMessage } from "@/lib/error-messages";
 import { Copy, Trash2, Plus, Key } from "lucide-react";
 import { formatDateMedium } from "@/lib/datetime";
 
-export const runtime = "edge";
-
 interface ApiToken {
   id: string;
   name: string;

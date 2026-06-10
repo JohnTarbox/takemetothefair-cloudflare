@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Newsletter double opt-in confirmation endpoint. The link in the
  * confirmation email points here as a GET so it works from any mail
@@ -18,8 +19,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { consumeNewsletterConfirmationToken } from "@/lib/email/newsletter-confirm-token";
 import { getSiteUrl } from "@/lib/email/send";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 function redirectTo(request: NextRequest, query: string) {
   return NextResponse.redirect(`${getSiteUrl()}/newsletter/confirmed${query}`, {

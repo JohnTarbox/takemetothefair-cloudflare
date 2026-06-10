@@ -10,8 +10,6 @@ import { logError } from "@/lib/logger";
 import { PrintButton } from "@/components/print/PrintButton";
 import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
-export const runtime = "edge";
-
 async function getVendorEvents(userId: string) {
   const db = getCloudflareDb();
 

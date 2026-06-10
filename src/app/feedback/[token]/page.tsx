@@ -36,8 +36,6 @@ import { isKnownScannerUaServer } from "@/lib/scanner-ua";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 
-export const runtime = "edge";
-
 const VALID_VALUES = new Set(["correct", "wrong_intent", "cancel", "looks_good", "needs_fixing"]);
 
 interface PageProps {

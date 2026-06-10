@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq, or, like } from "drizzle-orm";
@@ -5,8 +6,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { venues } from "@/lib/db/schema";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-
-export const runtime = "edge";
 
 const matchVenueSchema = z.object({
   venueName: z.string().min(1),

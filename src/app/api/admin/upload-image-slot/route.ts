@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * K17 (2026-06-07): mint a one-shot upload slot.
  *
@@ -37,8 +38,6 @@ import {
   type PipelineTargetType,
 } from "@/lib/upload-image-pipeline";
 import { issueUploadSlot } from "@/lib/upload-slot-token";
-
-export const runtime = "edge";
 
 interface SlotRequestBody {
   target_type?: string;

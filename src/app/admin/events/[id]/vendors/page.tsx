@@ -11,8 +11,6 @@ import { Label } from "@/components/ui/label";
 import { EVENT_VENDOR_STATUS } from "@/lib/constants";
 import { STATUS_LABELS, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 
-export const runtime = "edge";
-
 interface Vendor {
   id: string;
   businessName: string;

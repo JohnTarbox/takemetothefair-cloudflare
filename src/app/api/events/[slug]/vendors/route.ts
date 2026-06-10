@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventVendors, vendors } from "@/lib/db/schema";
@@ -7,8 +8,6 @@ import { isPublicEventStatus } from "@/lib/event-status";
 import { logError } from "@/lib/logger";
 import { unsafeSlug } from "@/lib/utils";
 import { resolveEventVendorTarget, dedupeByResolvedSlug } from "@/lib/event-vendor-display";
-
-export const runtime = "edge";
 
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const db = getCloudflareDb();

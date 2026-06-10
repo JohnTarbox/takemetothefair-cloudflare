@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { userFavorites } from "@/lib/db/schema";
@@ -5,8 +6,6 @@ import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { validateRequestBody, favoriteSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 const VALID_TYPES = ["EVENT", "VENUE", "VENDOR", "PROMOTER"] as const;
 type FavoritableType = (typeof VALID_TYPES)[number];
@@ -40,10 +39,7 @@ export async function GET(request: NextRequest) {
         })
         .from(userFavorites)
         .where(
-          and(
-            eq(userFavorites.userId, session.user.id),
-            eq(userFavorites.favoritableType, type)
-          )
+          and(eq(userFavorites.userId, session.user.id), eq(userFavorites.favoritableType, type))
         );
     }
 
@@ -51,11 +47,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ favorites });
   } catch (error) {
-    await logError(db, { message: "Error fetching favorites", error, source: "api/favorites", request });
-    return NextResponse.json(
-      { error: "Failed to fetch favorites" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error fetching favorites",
+      error,
+      source: "api/favorites",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to fetch favorites" }, { status: 500 });
   }
 }
 
@@ -99,11 +97,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ favorited: true, message: "Added to favorites" });
   } catch (error) {
-    await logError(db, { message: "Error adding favorite", error, source: "api/favorites", request });
-    return NextResponse.json(
-      { error: "Failed to add favorite" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error adding favorite",
+      error,
+      source: "api/favorites",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to add favorite" }, { status: 500 });
   }
 }
 
@@ -120,10 +120,7 @@ export async function DELETE(request: NextRequest) {
     const id = searchParams.get("id");
 
     if (!type || !id || !VALID_TYPES.includes(type)) {
-      return NextResponse.json(
-        { error: "Invalid type or id" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid type or id" }, { status: 400 });
     }
 
     await db
@@ -138,10 +135,12 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ favorited: false, message: "Removed from favorites" });
   } catch (error) {
-    await logError(db, { message: "Error removing favorite", error, source: "api/favorites", request });
-    return NextResponse.json(
-      { error: "Failed to remove favorite" },
-      { status: 500 }
-    );
+    await logError(db, {
+      message: "Error removing favorite",
+      error,
+      source: "api/favorites",
+      request,
+    });
+    return NextResponse.json({ error: "Failed to remove favorite" }, { status: 500 });
   }
 }

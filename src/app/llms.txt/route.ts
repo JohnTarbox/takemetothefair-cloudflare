@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { and, count, isNotNull } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, promoters } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { todayIsoUtc } from "@/lib/datetime";
-
-export const runtime = "edge";
 
 const BASE_URL = "https://meetmeatthefair.com";
 

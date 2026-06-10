@@ -14,8 +14,6 @@ import {
   getNextSortDirection,
 } from "@/components/ui/sortable-table";
 
-export const runtime = "edge";
-
 interface Promoter {
   id: string;
   companyName: string;

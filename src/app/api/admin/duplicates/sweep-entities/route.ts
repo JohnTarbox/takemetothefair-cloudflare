@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * DQ1 (2026-06-04) — venue + promoter dedup sweep, server-pollable.
  *
@@ -62,8 +63,6 @@ async function authorize(
   const session = await auth();
   return session?.user?.role === "ADMIN";
 }
-
-export const runtime = "edge";
 
 interface VenueCluster {
   cluster_key: "venue_name_city_state";

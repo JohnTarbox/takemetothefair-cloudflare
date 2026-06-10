@@ -20,7 +20,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
-export const runtime = "edge";
 export const revalidate = 3600;
 
 export const metadata: Metadata = {

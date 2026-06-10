@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { pruneKpiStateHistory, recomputeKpiStates } from "@/lib/kpi-states";
 import type { Ga4Env } from "@/lib/ga4";
 import type { ScEnv } from "@/lib/search-console";
-
-export const runtime = "edge";
 
 /**
  * §6.3 KPI state-machine recompute endpoint.

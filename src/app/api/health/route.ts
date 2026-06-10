@@ -1,8 +1,7 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { sql } from "drizzle-orm";
-
-export const runtime = "edge";
 
 interface HealthCheck {
   status: "ok" | "error" | "degraded";

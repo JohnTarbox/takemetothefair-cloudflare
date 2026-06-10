@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * GET /api/admin/inbound-emails — list recent inbound emails for the
  * /admin/inbound-emails DLQ view.
@@ -21,8 +22,6 @@ import { desc, eq, gte, inArray, and, type SQL } from "drizzle-orm";
  *  to have come from this inbound. Workflow typically completes in <30s
  *  for submit-intent emails; 10 min is generous enough to cover retries. */
 const EVENT_LOOKUP_WINDOW_SECONDS = 600;
-
-export const runtime = "edge";
 
 const ALLOWED_STATUSES = ["received", "processing", "replied", "forwarded", "failed"] as const;
 

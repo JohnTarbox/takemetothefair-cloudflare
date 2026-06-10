@@ -12,8 +12,6 @@ import { WelcomeBanner } from "@/components/onboarding/welcome-banner";
 import { useAutosave, formatSavedAgo } from "@/lib/hooks/use-autosave";
 import { VendorClaimWidget } from "@/components/vendor/claim-widget";
 
-export const runtime = "edge";
-
 interface VendorProfile {
   id: string;
   businessName: string;

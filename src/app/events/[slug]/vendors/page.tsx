@@ -8,8 +8,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
-export const runtime = "edge";
-
 interface Vendor {
   id: string;
   businessName: string;

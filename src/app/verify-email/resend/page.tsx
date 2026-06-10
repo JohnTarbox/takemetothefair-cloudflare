@@ -16,8 +16,6 @@ import { Mail } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ResendVerificationButton } from "@/components/auth/ResendVerificationButton";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "Resend verification email | Meet Me at the Fair",
   description: "Request a fresh email-verification link for your Meet Me at the Fair account.",

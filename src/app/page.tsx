@@ -18,7 +18,6 @@ import { logError } from "@/lib/logger";
 
 import type { Metadata } from "next";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {

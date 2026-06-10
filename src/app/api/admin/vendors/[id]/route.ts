@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -24,8 +25,6 @@ import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 import { markActedAllForTarget } from "@/lib/recommendations/engine";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

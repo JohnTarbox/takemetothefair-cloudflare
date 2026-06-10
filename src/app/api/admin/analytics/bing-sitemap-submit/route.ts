@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Re-submit a sitemap to Bing Webmaster Tools — the Bing equivalent of
  * /api/admin/analytics/sitemap-submit (which targets GSC). Used after
@@ -12,8 +13,6 @@ import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { BingApiError, BingConfigError, submitFeed, type BingEnv } from "@/lib/bing-webmaster";
-
-export const runtime = "edge";
 
 type PostBody = { sitemap_url?: unknown };
 

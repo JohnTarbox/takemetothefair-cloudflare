@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Start a schema-org-sync Workflow.
  *
@@ -24,8 +25,6 @@ import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 const MAX_EVENT_IDS = 1000;
 

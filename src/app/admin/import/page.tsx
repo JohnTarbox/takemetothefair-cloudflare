@@ -17,8 +17,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 
-export const runtime = "edge";
-
 interface PreviewEvent {
   sourceId: string;
   sourceName: string;

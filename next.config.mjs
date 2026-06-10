@@ -1,4 +1,4 @@
-import { setupDevPlatform } from "@cloudflare/next-on-pages/next-dev";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -89,12 +89,7 @@ const nextConfig = {
   },
 };
 
-// Enable Cloudflare bindings in development
-if (process.env.NODE_ENV === "development") {
-  await setupDevPlatform({
-    // In CI, use local-only mode to avoid needing Cloudflare auth for remote bindings (AI)
-    ...(process.env.CI ? { configPath: "wrangler.ci.toml" } : {}),
-  });
-}
+// OpenNext: initialize Cloudflare bindings for `next dev` (no-ops in build).
+initOpenNextCloudflareForDev();
 
 export default nextConfig;

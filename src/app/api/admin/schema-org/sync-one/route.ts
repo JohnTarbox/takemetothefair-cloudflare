@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Single-event schema.org sync.
  *
@@ -26,8 +27,6 @@ import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
 import { dollarsToCents } from "@/lib/utils";
-
-export const runtime = "edge";
 
 const bodySchema = z.object({
   eventId: z.string().min(1),

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/inbound-emails/[id]/salvage — admin manually associates
  * an inbound_email with one or more events created from its content, and
@@ -30,8 +31,6 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, inboundEmails } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { notifySalvageIfNeeded } from "@/lib/salvage-notification";
-
-export const runtime = "edge";
 
 const MAX_EVENTS_PER_SALVAGE = 20;
 

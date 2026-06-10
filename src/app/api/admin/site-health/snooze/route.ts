@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getAuthorizedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { snoozeIssue } from "@/lib/site-health";
-
-export const runtime = "edge";
 
 const bodySchema = z.object({
   fingerprint: z.string().min(8).max(128),

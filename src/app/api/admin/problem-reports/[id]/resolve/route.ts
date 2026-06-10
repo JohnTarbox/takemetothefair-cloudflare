@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * UR1 C4 (2026-06-04) — admin resolve action for a problem report.
  * Sets resolved_at + resolved_by_user_id + notes, then redirects back
@@ -9,8 +10,6 @@ import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { problemReports } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
-
-export const runtime = "edge";
 
 interface Props {
   params: Promise<{ id: string }>;

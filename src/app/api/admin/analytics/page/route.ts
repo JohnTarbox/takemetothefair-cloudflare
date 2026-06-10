@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { Ga4ApiError, Ga4ConfigError, getPageMetrics, type Ga4Env } from "@/lib/ga4";
 import { DateRangeError, parseAnalyticsParams } from "@/lib/analytics-params";
-
-export const runtime = "edge";
 
 /**
  * GET /api/admin/analytics/page?path=/events

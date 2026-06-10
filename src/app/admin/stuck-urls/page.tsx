@@ -37,7 +37,6 @@ import {
 } from "@/lib/gsc-index-state";
 import { unsafeSlug } from "@/lib/utils";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 interface ClusterRow {

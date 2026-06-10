@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Self-service one-click promoter claim, gated on email-match.
  *
@@ -33,8 +34,6 @@ import { adminActions, promoters, userRoles, users } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { unsafeSlug } from "@/lib/utils";
-
-export const runtime = "edge";
 
 const schema = z.object({
   slug: z.string().min(1).max(200),

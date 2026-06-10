@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
@@ -9,8 +10,6 @@ import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/l
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, desc, sql } from "drizzle-orm";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();

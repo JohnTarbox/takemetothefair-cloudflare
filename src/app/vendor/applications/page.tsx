@@ -11,8 +11,6 @@ import { logError } from "@/lib/logger";
 import { VendorApplicationRow } from "@/components/vendor/vendor-application-row";
 import type { VendorApplicationRowData } from "@/components/vendor/vendor-application-row";
 
-export const runtime = "edge";
-
 async function getApplications(userId: string): Promise<VendorApplicationRowData[]> {
   const db = getCloudflareDb();
 

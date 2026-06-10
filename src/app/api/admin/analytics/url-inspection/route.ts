@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { parseAnalyticsParams } from "@/lib/analytics-params";
-
-export const runtime = "edge";
 
 /**
  * GET /api/admin/analytics/url-inspection?path=/events

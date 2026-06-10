@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -5,8 +6,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, vendors } from "@/lib/db/schema";
 import { isValidTransition } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 /**
  * Vendor-initiated withdraw.

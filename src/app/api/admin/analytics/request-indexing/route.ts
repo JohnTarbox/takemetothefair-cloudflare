@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Notify Google's Indexing API that a URL has changed — nudges Google to
  * recrawl the page ahead of its default queue cadence. Used by the
@@ -21,8 +22,6 @@ import {
   type ScEnv,
   type RequestIndexingType,
 } from "@/lib/search-console";
-
-export const runtime = "edge";
 
 type PostBody = { url?: unknown; type?: unknown };
 

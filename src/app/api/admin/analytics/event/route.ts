@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
@@ -14,8 +15,6 @@ import {
 import { DateRangeError, parseAnalyticsParams, resolveDateRange } from "@/lib/analytics-params";
 import { getOutboundClicksForEventSlug } from "@/lib/event-outbound-clicks";
 import { unsafeSlug } from "@/lib/utils";
-
-export const runtime = "edge";
 
 /**
  * GET /api/admin/analytics/event?eventId=X or ?slug=X

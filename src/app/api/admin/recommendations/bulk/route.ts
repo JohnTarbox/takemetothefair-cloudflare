@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Bulk dismiss / mark-acted on all currently-active items for a rule.
  *
@@ -21,8 +22,6 @@ import { auth } from "@/lib/auth";
 import { getAuthorizedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { adminActions, recommendationItems } from "@/lib/db/schema";
-
-export const runtime = "edge";
 
 const bodySchema = z.object({
   ruleId: z.string().min(1).max(64),

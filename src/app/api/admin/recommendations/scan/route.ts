@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getAuthorizedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { scanAll } from "@/lib/recommendations/engine";
 import { ALL_RULES } from "@/lib/recommendations/rules";
-
-export const runtime = "edge";
 
 // Chunked scan to fit inside Cloudflare's 30s per-request budget.
 //

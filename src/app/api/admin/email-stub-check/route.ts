@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Regression sweep for the email-stub silent-failure mode discovered
  * 2026-05-24 (30 days of `email:stub` rows in error_logs, level=info,
@@ -27,8 +28,6 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { errorLogs } from "@/lib/db/schema";
-
-export const runtime = "edge";
 
 const DEFAULT_WINDOW_HOURS = 24;
 const MAX_WINDOW_HOURS = 168; // one week — anything wider should query directly

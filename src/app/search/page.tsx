@@ -12,8 +12,6 @@ import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "Search Results | Meet Me at the Fair",
   robots: { index: false },

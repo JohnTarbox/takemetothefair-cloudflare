@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Manual sweep that fills events.image_url for imageless events by
  * extracting og:image from each event's source_url.
@@ -37,8 +38,6 @@ import {
 } from "@/lib/og-image";
 import { extractDomain, shouldIngestFromSource } from "@/lib/url-classification";
 import { urlDomainClassifications } from "@/lib/db/schema";
-
-export const runtime = "edge";
 
 const DEFAULT_LIMIT = 5;
 const MAX_LIMIT = 10;

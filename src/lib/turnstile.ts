@@ -1,4 +1,4 @@
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { fetchWithTimeout } from "@/lib/fetch-timeout";
 
 export interface TurnstileVerifyResult {
@@ -20,10 +20,10 @@ interface TurnstileResponse {
  */
 function isCloudflarePages(): boolean {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return !!(env as unknown as Record<string, unknown>).CF_PAGES;
   } catch {
-    // getRequestContext() throws outside the Cloudflare runtime (local
+    // getCloudflareContext() throws outside the Cloudflare runtime (local
     // `next build` / unit tests) — treat that as "not on Pages".
     return false;
   }
@@ -34,7 +34,7 @@ function isCloudflarePages(): boolean {
  */
 function getTurnstileSecretKey(): string | null {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as { TURNSTILE_SECRET_KEY?: string }).TURNSTILE_SECRET_KEY ?? null;
   } catch {
     // Off-CF runtime: fall back to process.env (local dev / tests).

@@ -11,8 +11,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 
-export const runtime = "edge";
-
 interface Promoter {
   id: string;
   companyName: string;

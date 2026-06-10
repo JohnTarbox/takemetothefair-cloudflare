@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
@@ -26,8 +27,6 @@ import { normalizeEventDate } from "@/lib/event-dates";
 import { submitEventSchema } from "./schema";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
-
-export const runtime = "edge";
 
 // The stable ID for the Community Suggestions promoter
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";

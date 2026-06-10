@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/inbound-emails/decide — admin resolves a waiting
  * correction/press inbound email. Proxies to the MCP worker's
@@ -17,8 +18,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions } from "@/lib/db/schema";
-
-export const runtime = "edge";
 
 const MCP_URL = "https://mcp.meetmeatthefair.com";
 const VALID_ACTIONS = new Set(["applied", "rejected", "needs-more-info"]);

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -17,8 +18,6 @@ import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { recomputeEventCompleteness } from "@/lib/completeness";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();

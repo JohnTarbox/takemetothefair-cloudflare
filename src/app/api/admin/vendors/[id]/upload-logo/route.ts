@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Server-side R2 upload for vendor logos. Posted as multipart form-data
  * (field name: "file"). Returns the CDN URL on success.
@@ -22,8 +23,6 @@ import { vendors } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

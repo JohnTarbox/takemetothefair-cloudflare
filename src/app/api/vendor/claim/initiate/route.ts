@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -8,8 +9,6 @@ import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { vendorClaimVerificationTemplate } from "@/lib/email/templates";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 /**
  * Mask the local-part of an email for surfacing in API responses.

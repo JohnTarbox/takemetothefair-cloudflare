@@ -2,8 +2,6 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { CheckCircle2, AlertCircle, Clock } from "lucide-react";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "Newsletter Confirmation | Meet Me at the Fair",
   description: "Confirm your subscription to the Meet Me at the Fair weekend digest.",

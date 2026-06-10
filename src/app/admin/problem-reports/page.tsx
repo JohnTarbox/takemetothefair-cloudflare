@@ -18,7 +18,6 @@ import { Badge } from "@/components/ui/badge";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
-export const runtime = "edge";
 // No revalidate — operator workflow is real-time.
 export const dynamic = "force-dynamic";
 

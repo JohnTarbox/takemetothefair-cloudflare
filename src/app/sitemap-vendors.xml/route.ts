@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -15,8 +16,6 @@ import {
   sitemapPriorityFor,
   type VendorTierFields,
 } from "@/lib/vendor-tier";
-
-export const runtime = "edge";
 
 // The SEO gate is applied as raw SQL so we can reference event_vendors →
 // events → venues for the geographic-anchor fallback, which Drizzle's

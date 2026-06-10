@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Schema.org sync coverage stats.
  *
@@ -12,8 +13,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const session = await auth();

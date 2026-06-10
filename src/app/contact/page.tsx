@@ -5,7 +5,6 @@ import { FAQSchema } from "@/components/seo/FAQSchema";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
-export const runtime = "edge";
 export const revalidate = 86400;
 
 export const metadata: Metadata = {

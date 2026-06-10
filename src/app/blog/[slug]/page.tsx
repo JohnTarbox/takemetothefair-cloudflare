@@ -31,7 +31,6 @@ import { getEntitiesLinkedFromPost } from "@/lib/content-links-query";
 import type { Metadata } from "next";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 interface Props {

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -6,8 +7,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { urlDomainClassifications } from "@/lib/db/schema";
 import { extractDomain } from "@/lib/url-classification";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 // Domain types kept loose-stringly here — matches the migration's free-form
 // `domain_type` column. The frontend constrains the choice via radio buttons.

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/inbound-emails/retry — retry a failed/stuck inbound
  * email by resetting its status and asking the MCP worker to create a
@@ -22,8 +23,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { inboundEmails, adminActions } from "@/lib/db/schema";
 import { eq, inArray, and } from "drizzle-orm";
-
-export const runtime = "edge";
 
 const RETRYABLE_STATUSES = ["received", "processing", "failed"] as const;
 const MCP_URL = "https://mcp.meetmeatthefair.com";

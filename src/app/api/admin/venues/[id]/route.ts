@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -8,8 +9,6 @@ import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

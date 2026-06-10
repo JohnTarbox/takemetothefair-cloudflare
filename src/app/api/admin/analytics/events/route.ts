@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { analyticsEvents } from "@/lib/db/schema";
 import { desc, eq, gte, and, sql } from "drizzle-orm";
-
-export const runtime = "edge";
 
 /**
  * GET /api/admin/analytics/events

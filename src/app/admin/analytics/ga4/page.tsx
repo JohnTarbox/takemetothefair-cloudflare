@@ -18,7 +18,6 @@ import {
 } from "@/lib/ga4";
 import { formatTimestampForServer } from "@/lib/datetime";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 type LoadResult =

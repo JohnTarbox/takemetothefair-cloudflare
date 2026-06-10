@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * One-time backfill that populates events.source_domain + events.ingestion_method
  * from the existing sourceName / sourceUrl pair. Idempotent: re-running
@@ -22,8 +23,6 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { classifySource, type IngestionMethod } from "@/lib/source-classification";
-
-export const runtime = "edge";
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;

@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { trackServerEvent } from "@/lib/server-analytics";
-
-export const runtime = "edge";
 
 const MAX_BODY_BYTES = 4_000;
 const MAX_PROPERTY_BYTES = 2_000;

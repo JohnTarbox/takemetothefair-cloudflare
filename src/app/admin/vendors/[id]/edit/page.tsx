@@ -13,8 +13,6 @@ import { VendorEnhancedProfilePanel } from "@/components/admin/VendorEnhancedPro
 import { VendorLogoUpload } from "@/components/admin/VendorLogoUpload";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 
-export const runtime = "edge";
-
 interface Vendor {
   id: string;
   userId: string;

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -6,8 +7,6 @@ import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { trackEventStatusChange } from "@/lib/server-analytics";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

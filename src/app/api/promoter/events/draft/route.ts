@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gt, lt, or } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -15,8 +16,6 @@ import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validation
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
 import { recomputeEventCompleteness } from "@/lib/completeness";
-
-export const runtime = "edge";
 
 interface EventDayInput {
   date: string;

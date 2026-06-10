@@ -11,8 +11,6 @@ import { auth } from "@/lib/auth";
 import { formatDateRange } from "@/lib/utils";
 import { redirect } from "next/navigation";
 
-export const runtime = "edge";
-
 const statusConfig: Record<
   string,
   { label: string; variant: "default" | "success" | "warning" | "danger" | "info" }

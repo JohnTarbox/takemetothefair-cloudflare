@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Server-side R2 upload for event images. Mirrors
  * src/app/api/admin/vendors/[id]/upload-logo/route.ts almost exactly —
@@ -26,8 +27,6 @@ import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

@@ -18,8 +18,6 @@ import { Button } from "@/components/ui/button";
 import { Check, ExternalLink, HelpCircle, RotateCw, X } from "lucide-react";
 import { formatTimestamp, formatDateMedium } from "@/lib/datetime";
 
-export const runtime = "edge";
-
 const CF_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf";
 const WORKFLOWS_DASH = `https://dash.cloudflare.com/${CF_ACCOUNT_ID}/workers/workflows/inbound-email/instance`;
 

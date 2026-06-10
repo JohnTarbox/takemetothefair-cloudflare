@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { getMergePreview } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergePreviewRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
   let db: ReturnType<typeof getCloudflareDb> | null = null;

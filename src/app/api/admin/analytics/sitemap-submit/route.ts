@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Resubmits a sitemap URL to Google Search Console — triggers a recrawl
  * signal ahead of Google's default multi-day cadence. Pairs naturally with
@@ -15,8 +16,6 @@ import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { ScApiError, ScConfigError, submitSitemap, type ScEnv } from "@/lib/search-console";
-
-export const runtime = "edge";
 
 type PostBody = { sitemap_url?: unknown };
 

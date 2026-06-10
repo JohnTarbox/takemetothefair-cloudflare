@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Reconciliation endpoint for the `content_links` index.
  *
@@ -38,8 +39,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, contentLinks } from "@/lib/db/schema";
 import { syncContentLinks } from "@/lib/content-links-sync";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 const BATCH_SIZE = 50;
 const HARD_CAP = 200;

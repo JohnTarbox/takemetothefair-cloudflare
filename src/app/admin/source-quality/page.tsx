@@ -25,7 +25,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { extractDomain } from "@/lib/url-classification";
 
-export const runtime = "edge";
 export const revalidate = 300; // 5-min ISR — these numbers don't churn fast
 
 // Sources with fewer than this many total events are too small to score

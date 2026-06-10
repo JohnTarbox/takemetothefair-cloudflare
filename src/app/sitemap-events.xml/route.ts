@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { and, count, gte, isNotNull } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { SITEMAP_MIN_COMPLETENESS } from "@/lib/completeness";
@@ -11,8 +12,6 @@ import {
   sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
-
-export const runtime = "edge";
 
 // /events listing paginates 30/page. Mirror that here so the sitemap's
 // page-count matches the rendered page-count exactly. If the listing's

@@ -1,9 +1,8 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { getCurrentIssues, type HealthSeverity, type HealthSource } from "@/lib/site-health";
-
-export const runtime = "edge";
 
 export async function GET(request: Request) {
   if (!(await isAuthorized(request))) {

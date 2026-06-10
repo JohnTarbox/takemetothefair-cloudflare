@@ -37,7 +37,6 @@ import { analyticsEvents, eventVendors, vendors, vendorOutreachAttempts } from "
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogOutreachButton } from "@/components/admin/log-outreach-button";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 const WEIGHT_EVENT_COUNT = 0.35;

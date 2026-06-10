@@ -26,7 +26,6 @@ import {
 
 const PAGE_SIZE = 50;
 
-export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
 
 export const metadata: Metadata = {

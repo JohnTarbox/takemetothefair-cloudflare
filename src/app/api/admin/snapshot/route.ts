@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Admin page-snapshot endpoint.
  *
@@ -32,8 +33,6 @@
 import { NextResponse } from "next/server";
 import { getAuthorizedSession } from "@/lib/api-auth";
 import { auth } from "@/lib/auth";
-
-export const runtime = "edge";
 
 const MAX_PATH_LENGTH = 512;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // 2 MB cap on rendered HTML.

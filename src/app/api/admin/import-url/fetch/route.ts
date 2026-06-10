@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 const FETCH_TIMEOUT = 15000; // 15 seconds for the standard fetch path
 const BROWSER_RENDERING_TIMEOUT = 25000; // 25 seconds — managed Chrome is slower

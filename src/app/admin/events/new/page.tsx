@@ -13,8 +13,6 @@ import { DailyScheduleInput, type EventDayInput } from "@/components/events/Dail
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 import { parseDateOnly } from "@/lib/datetime";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;

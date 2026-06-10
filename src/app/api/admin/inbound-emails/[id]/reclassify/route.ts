@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/inbound-emails/[id]/reclassify — admin reclassifies
  * an inbound email's intent. Writes a row to
@@ -17,8 +18,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, inboundEmails, inboundEmailIntentFeedback } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-
-export const runtime = "edge";
 
 const MCP_URL = "https://mcp.meetmeatthefair.com";
 

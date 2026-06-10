@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts } from "@/lib/db/schema";
@@ -8,8 +9,6 @@ import {
   sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
-
-export const runtime = "edge";
 
 // Slug must mirror /blog/tag/[tag]/page.tsx — kept inline rather than
 // imported because that page's helper isn't exported, and dragging in the

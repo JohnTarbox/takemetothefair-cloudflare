@@ -40,7 +40,6 @@ import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { unsafeSlug } from "@/lib/utils";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
-export const runtime = "edge";
 export const revalidate = 300; // 5-minute ISR
 
 interface Props {

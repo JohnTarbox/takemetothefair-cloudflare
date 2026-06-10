@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -5,9 +6,6 @@ import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { validateRequestBody, userProfileUpdateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
-
 
 export async function PATCH(request: NextRequest) {
   const db = getCloudflareDb();
@@ -35,7 +33,12 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json(updatedUser[0]);
   } catch (error) {
-    await logError(db, { message: "Failed to update profile", error, source: "api/user/profile", request });
+    await logError(db, {
+      message: "Failed to update profile",
+      error,
+      source: "api/user/profile",
+      request,
+    });
     return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
   }
 }

@@ -12,7 +12,6 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 export const metadata: Metadata = {

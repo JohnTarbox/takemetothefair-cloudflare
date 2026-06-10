@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/submit-event/<token> — B4 correction-form submit endpoint.
  *
@@ -22,8 +23,6 @@ import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { consumeCorrectionToken, lookupCorrectionToken } from "@/lib/correction-tokens";
-
-export const runtime = "edge";
 
 const correctionSchema = z.object({
   name: z.string().min(1).max(200).optional(),

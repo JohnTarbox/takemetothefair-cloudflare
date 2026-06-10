@@ -69,8 +69,6 @@ interface TurnstileOptions {
   theme?: "light" | "dark" | "auto";
 }
 
-export const runtime = "edge";
-
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();

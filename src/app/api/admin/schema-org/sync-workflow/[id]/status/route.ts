@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Poll the status of a running schema-org-sync Workflow instance.
  *
@@ -8,8 +9,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

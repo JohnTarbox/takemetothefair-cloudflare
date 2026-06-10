@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * K2 part 6 (analyst, 2026-05-31) — dedup sweep + admin canary.
  *
@@ -60,8 +61,6 @@ async function authorize(
   const session = await auth();
   return session?.user?.role === "ADMIN";
 }
-
-export const runtime = "edge";
 
 interface VenueDateCluster {
   cluster_key: "venue_date";

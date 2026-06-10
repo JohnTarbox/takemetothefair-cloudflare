@@ -6,11 +6,11 @@
 // Empty / unset env var = no events in the pilot. Whitespace and case are
 // normalized so the env value is forgiving of formatting drift.
 
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 function readPilotEnv(): string {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as { FAQ_PILOT_EVENT_SLUGS?: string }).FAQ_PILOT_EVENT_SLUGS ?? "";
   } catch {
     return process.env.FAQ_PILOT_EVENT_SLUGS ?? "";
