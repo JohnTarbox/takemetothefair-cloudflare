@@ -89,7 +89,12 @@ const nextConfig = {
   },
 };
 
-// OpenNext: initialize Cloudflare bindings for `next dev` (no-ops in build).
-initOpenNextCloudflareForDev();
+// OpenNext: initialize Cloudflare bindings for `next dev` only. Guarded to
+// development — calling it during a production build (CI, no Cloudflare auth)
+// tries to start a remote proxy session and fails. Mirrors the original
+// next-on-pages `setupDevPlatform()` dev-only guard.
+if (process.env.NODE_ENV === "development") {
+  await initOpenNextCloudflareForDev();
+}
 
 export default nextConfig;
