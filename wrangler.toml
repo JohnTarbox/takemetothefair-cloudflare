@@ -1,26 +1,28 @@
-name = "takemetothefair"
-compatibility_date = "2025-04-01"
+# Main app — Cloudflare WORKER via @opennextjs/cloudflare (migrated off the
+# deprecated @cloudflare/next-on-pages Pages adapter, 2026-06-10). The Pages
+# 25 MiB *uncompressed* Function cap was at the redline; Workers cap on
+# *gzipped* size (~3.85 MiB here vs 10 MiB paid) gives real headroom.
+name = "meetmeatthefair-app"
+main = ".open-next/worker.js"
+compatibility_date = "2026-06-10"
 compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = ".vercel/output/static"
 
-# Smart Placement: lets Cloudflare run the Worker in the region nearest the
-# slow dependencies (D1, in our case) rather than nearest the user. For an
-# app that's mostly DB-bound on every render, this typically improves p50/p95
-# without us needing to think about region. No code change needed.
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[observability]
+enabled = true
+
+# Smart Placement: run near the slow dependency (D1) rather than the user.
 [placement]
 mode = "smart"
 
 [ai]
 binding = "AI"
 
-# Browser Rendering REST API config (A5 — drizzle/0078). The fetch route at
-# src/app/api/admin/import-url/fetch/route.ts escalates 401/403/429/timeout
-# failures to Cloudflare Browser Rendering, which returns rendered HTML from
-# a managed headless Chrome. account_id is non-secret; the API token lives
-# as a Pages secret CLOUDFLARE_BROWSER_RENDERING_TOKEN (must have
-# "Browser Rendering: Edit" permission). If the token isn't set, the
-# escalation logs a warning and falls back to the existing "paste content
-# manually" reply.
+# Browser Rendering account id (non-secret); the token is a Worker secret
+# CLOUDFLARE_BROWSER_RENDERING_TOKEN. Used by import-url/fetch escalation.
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 
@@ -35,20 +37,24 @@ migrations_dir = "drizzle"
 binding = "RATE_LIMIT_KV"
 id = "b7aeca316e7a41108fd375be2e152cff"
 
-# R2 bucket for vendor assets (Enhanced Profile logos and galleries).
-# Public bucket served at cdn.meetmeatthefair.com — see CLAUDE.md.
-# Phase 1 does not write to R2 from code; admin uploads via dashboard or
-# `wrangler r2 object put`. The binding is here for future use.
+# R2 — vendor assets (Enhanced Profile logos/galleries), served at
+# cdn.meetmeatthefair.com.
 [[r2_buckets]]
 binding = "VENDOR_ASSETS"
 bucket_name = "mmatf-vendor-assets"
 
-# Queue producers: writes go from request handlers to a queue, the MCP
-# Worker drains and dispatches asynchronously. Lets us return responses
-# without waiting for IndexNow API or Resend round-trips.
-#
-# Pages projects can produce but not consume — see mcp-server/wrangler.toml
-# for the consumer registration.
+# R2 — OpenNext ISR incremental cache. open-next.config.ts wires
+# r2IncrementalCache, which reads/writes rendered ISR output under the
+# `NEXT_INC_CACHE_R2_BUCKET` binding (default prefix "incremental-cache").
+# Bucket created 2026-06-10.
+[[r2_buckets]]
+binding = "NEXT_INC_CACHE_R2_BUCKET"
+bucket_name = "mmatf-isr-cache"
+
+# Queue producers. On Workers these are FIRST-CLASS (unlike Pages, where they
+# were a no-op and code fell back to the MCP HTTP proxy — see
+# src/lib/queues/producers.ts; that fallback is now dead and can be removed in
+# a follow-up). The MCP Worker remains the consumer (mcp-server/wrangler.toml).
 [[queues.producers]]
 binding = "EMAIL_JOBS"
 queue = "email-jobs"
@@ -57,29 +63,19 @@ queue = "email-jobs"
 binding = "INDEXNOW_PINGS"
 queue = "indexnow-pings"
 
-# GW1.1 (2026-06-03) — ingest_addverify discrepancy capture. Per the
-# Pages runtime quirk noted in src/lib/queues/producers.ts, this binding
-# is a no-op at runtime on Pages — the producer falls through to the
-# HTTP proxy at the MCP Worker's /api/admin/internal/enqueue-discrepancy
-# endpoint. Keeping the [[queues.producers]] block here matches the
-# EMAIL_JOBS / INDEXNOW_PINGS shape and lets a future Workers-on-Pages
-# migration pick up the direct binding without code change.
 [[queues.producers]]
 binding = "EVENT_DISCREPANCIES"
 queue = "event-discrepancies"
 
-# Workflow binding — DISABLED 2026-05-03. Cloudflare Pages projects don't
-# accept [[workflows]] in wrangler.toml ("Configuration file for Pages
-# projects does not support workflows" error from wrangler). Only Workers
-# can bind to Workflow classes.
+# ── CUTOVER (Phase 5) — uncomment to claim the apex route ──────────────────
+# Until then the Worker is reachable only at its *.workers.dev URL (preview).
+# At cutover: deploy WITH this route (it folds in the old apex-worker, whose
+# K1 status-rewrite + Location-rewrite become moot on Workers — real 500s, no
+# pages.dev host). Rollback = re-point this route to the Pages project (kept
+# live through the soak) by removing this block + redeploying the apex-worker.
+# [[routes]]
+# pattern = "meetmeatthefair.com/*"
+# zone_name = "meetmeatthefair.com"
 #
-# The Workflow class is registered correctly in the MCP Worker (see
-# mcp-server/wrangler.toml). To trigger from the main app, fetch the MCP
-# server's /api/admin/workflows/* HTTP endpoints (added by the same hotfix
-# that disabled this binding) using the existing INTERNAL_API_KEY auth.
-# Same Pages-vs-Workers limitation we hit with [[services]] in PR #71.
-# [[workflows]]
-# name = "schema-org-sync"
-# binding = "SCHEMA_ORG_SYNC"
-# class_name = "SchemaOrgSyncWorkflow"
-# script_name = "meetmeatthefair-mcp"
+# Workflows can now be bound directly (Pages couldn't) — optional follow-up
+# cleanup to drop the MCP HTTP-proxy indirection for schema-org-sync etc.
