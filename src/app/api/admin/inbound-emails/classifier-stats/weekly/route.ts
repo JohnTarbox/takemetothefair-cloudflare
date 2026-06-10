@@ -21,8 +21,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { inboundEmails, inboundEmailIntentFeedback } from "@/lib/db/schema";
 import { and, gte, isNotNull, ne, sql } from "drizzle-orm";
 
-export const runtime = "edge";
-
 const DEFAULT_WEEKS = 12;
 const MAX_WEEKS = 52;
 const MS_PER_WEEK = 7 * 86400 * 1000;
