@@ -2,7 +2,17 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Eye, Store, RefreshCw, MapPin, GitMerge } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Eye,
+  Store,
+  RefreshCw,
+  MapPin,
+  GitMerge,
+  Calendar,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { IconButton, IconLink } from "@/components/ui/icon-button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -222,12 +232,21 @@ export default function AdminEventsPage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold text-foreground">Manage Events</h1>
-        <Link href="/admin/events/new">
-          <Button>
-            <Plus className="w-4 h-4 mr-2" />
-            Add Event
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {/* F3 C2 — admin month calendar with click-to-add empty cells. */}
+          <Link href="/admin/events/calendar">
+            <Button variant="outline">
+              <Calendar className="w-4 h-4 mr-2" />
+              Calendar
+            </Button>
+          </Link>
+          <Link href="/admin/events/new">
+            <Button>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Event
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-4">
