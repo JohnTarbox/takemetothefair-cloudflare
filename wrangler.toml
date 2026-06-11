@@ -73,9 +73,12 @@ queue = "event-discrepancies"
 # K1 status-rewrite + Location-rewrite become moot on Workers — real 500s, no
 # pages.dev host). Rollback = re-point this route to the Pages project (kept
 # live through the soak) by removing this block + redeploying the apex-worker.
-# [[routes]]
-# pattern = "meetmeatthefair.com/*"
-# zone_name = "meetmeatthefair.com"
-#
+# CUTOVER 2026-06-10: route CLAIMED. Deploying this Worker reassigns
+# meetmeatthefair.com/* from the apex-worker (meetmeatthefair-edge) to here.
+# Rollback = redeploy the apex-worker (it reclaims the route → Pages).
+[[routes]]
+pattern = "meetmeatthefair.com/*"
+zone_name = "meetmeatthefair.com"
+
 # Workflows can now be bound directly (Pages couldn't) — optional follow-up
 # cleanup to drop the MCP HTTP-proxy indirection for schema-org-sync etc.
