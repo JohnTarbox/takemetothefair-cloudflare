@@ -54,10 +54,24 @@ const ALLOWED_EVENT_NAMES = [
 // ENG1.8 — outbound-click event names mirrored to GA4 server-side via the
 // Measurement Protocol (in addition to the client gtag + D1 beacon). Survives
 // ad-blockers that suppress the client-side gtag hit.
+//
+// The mirror is emitted under a DISTINCT "<name>_server" event name (not the
+// original) so it does not double-count against the client-side gtag hit, which
+// already fires the original name for non-ad-blocked users. GA4 key events are
+// configured per event NAME, so a distinct name lets the analyst mark the
+// server variant as the conversion and get exactly one count per click (the
+// first-party beacon driving this route is not ad-blocked, so the server hit
+// fires for ~100% of clicks). A `transport: "server"` param is also attached
+// for explicit filtering in explorations / BigQuery.
 const GA4_MIRRORED_OUTBOUND_NAMES = new Set([
   "outbound_application_click",
   "outbound_ticket_click",
 ]);
+
+/** Map a client outbound-click name to its distinct server-mirror event name. */
+function serverMirrorName(clientName: string): string {
+  return `${clientName}_server`;
+}
 
 const trackSchema = z.object({
   name: z.enum(ALLOWED_EVENT_NAMES),
@@ -118,8 +132,9 @@ export async function POST(request: Request) {
     const clientId = parseGaClientId(request.headers.get("cookie")) ?? crypto.randomUUID();
     await sendGa4MeasurementProtocol(clientId, [
       {
-        name: parsed.data.name,
+        name: serverMirrorName(parsed.data.name),
         params: {
+          transport: "server",
           target_url: targetUrl,
           target_domain: safeHostname(targetUrl),
           entity_type: "event",
