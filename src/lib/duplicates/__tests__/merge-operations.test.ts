@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { getMergePreview, executeMerge } from "../merge-operations";
+import { getMergePreview, executeMerge, transferFavorites } from "../merge-operations";
 
 // Mock database helper
 function createMockDb() {
@@ -350,7 +350,6 @@ describe("executeMerge", () => {
           if (batchCallCount === 1)
             return Promise.resolve([
               [],
-              [],
               // Keeper: NULL source fields — the gap-fill case.
               [
                 {
@@ -433,7 +432,6 @@ describe("executeMerge", () => {
           if (batchCallCount === 1)
             return Promise.resolve([
               [],
-              [],
               // Keeper: already has source fields — should NOT be overwritten.
               [
                 {
@@ -500,7 +498,6 @@ describe("executeMerge", () => {
           .mockImplementation(() =>
             Promise.resolve([
               [],
-              [],
               [{ slug: "x", viewCount: 0 }],
               [{ slug: "x", viewCount: 0, mergedInto: null }],
             ])
@@ -518,7 +515,6 @@ describe("executeMerge", () => {
           .fn()
           .mockImplementation(() =>
             Promise.resolve([
-              [],
               [],
               [{ slug: "keeper", viewCount: 0 }],
               [{ slug: "dup", viewCount: 0, mergedInto: "some-other-id" }],
@@ -584,7 +580,6 @@ describe("executeMerge", () => {
           batchCallCount++;
           if (batchCallCount === 1)
             return Promise.resolve([
-              [],
               [],
               [
                 {
@@ -665,7 +660,6 @@ describe("executeMerge", () => {
           batchCallCount++;
           if (batchCallCount === 1)
             return Promise.resolve([
-              [],
               [],
               [
                 {
@@ -811,5 +805,80 @@ describe("merge operation edge cases", () => {
 
     expect(result.success).toBe(true);
     expect(result.transferredRelationships.favorites).toBe(0);
+  });
+});
+
+describe("transferFavorites (D1-safe favorites merge)", () => {
+  // db mock: select #1 = keeper favoriters, select #2 = dup favorites; each
+  // update().set().where() bumps the spy so we can assert the chunk count.
+  function mockDb(
+    keeperFavoriters: Array<{ userId: string }>,
+    dupFavorites: Array<{ id: string; userId: string }>
+  ) {
+    let selectCall = 0;
+    const updateSpy = vi.fn();
+    const db = {
+      select: () => ({
+        from: () => ({
+          where: () => {
+            selectCall++;
+            return Promise.resolve(selectCall === 1 ? keeperFavoriters : dupFavorites);
+          },
+        }),
+      }),
+      update: () => ({
+        set: () => ({
+          where: () => {
+            updateSpy();
+            return Promise.resolve({ meta: { changes: 1 } });
+          },
+        }),
+      }),
+    } as never;
+    return { db, updateSpy };
+  }
+
+  it("transfers nothing when every dup favoriter already favorited the keeper", async () => {
+    const { db, updateSpy } = mockDb(
+      [{ userId: "a" }, { userId: "b" }],
+      [
+        { id: "f1", userId: "a" },
+        { id: "f2", userId: "b" },
+      ]
+    );
+    const n = await transferFavorites(db, "EVENT", "keeper", "dup");
+    expect(updateSpy).not.toHaveBeenCalled(); // all collide → 0 transferable
+    expect(n).toBe(0);
+  });
+
+  it("transfers only the non-colliding dup favorites (in-memory exclusion)", async () => {
+    const { db, updateSpy } = mockDb(
+      [{ userId: "a" }], // keeper already has 'a'
+      [
+        { id: "f1", userId: "a" }, // collides → excluded
+        { id: "f2", userId: "b" },
+        { id: "f3", userId: "c" },
+      ]
+    );
+    const n = await transferFavorites(db, "EVENT", "keeper", "dup");
+    expect(updateSpy).toHaveBeenCalledTimes(1); // 2 transferable → one chunk
+    expect(n).toBe(1); // mock meta.changes per chunk
+  });
+
+  it("CHUNKS the transfer to stay under D1's bound-variable limit — the bug fix", async () => {
+    // 200 non-colliding dup favorites must split into ceil(200/90)=3 UPDATEs,
+    // never one 200-param statement (which D1 rejects: "too many SQL variables"
+    // — the crash this whole change exists to prevent).
+    const dup = Array.from({ length: 200 }, (_, i) => ({ id: `f${i}`, userId: `u${i}` }));
+    const { db, updateSpy } = mockDb([], dup);
+    await transferFavorites(db, "VENUE", "keeper", "dup");
+    expect(updateSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("issues zero UPDATEs when the duplicate has no favorites", async () => {
+    const { db, updateSpy } = mockDb([{ userId: "a" }], []);
+    const n = await transferFavorites(db, "PROMOTER", "keeper", "dup");
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(n).toBe(0);
   });
 });
