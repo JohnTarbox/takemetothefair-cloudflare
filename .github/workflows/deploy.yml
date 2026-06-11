@@ -106,10 +106,24 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
 
-      # Production prod-smoke stays in the deploy-apex-worker job (it owns the
-      # apex until cutover Stage 3). Full Worker smoke (incl. write paths) is
-      # the manual Stage 2 step in docs/opennext-cutover-runbook.md, run against
-      # the *.workers.dev URL before the route is claimed.
+      # Post-deploy prod smoke — the OpenNext Worker now serves the apex route
+      # (cutover 2026-06-10). Hardcoded URLs only, no user input into the shell.
+      - name: Wait for prod propagation
+        run: sleep 30
+      - name: Post-deploy smoke test
+        run: |
+          set -eu
+          echo "Smoke: /events renders event links"
+          curl -fsS 'https://meetmeatthefair.com/events' -o /tmp/smoke-events.html
+          if ! grep -qE 'href="/events/[a-z0-9-]+"' /tmp/smoke-events.html; then
+            echo "FAIL: /events rendered no event links"; head -c 2000 /tmp/smoke-events.html; exit 1
+          fi
+          echo "Smoke: known-good venue returns content, not the error UI"
+          curl -fsS 'https://meetmeatthefair.com/venues/abbot-square' -o /tmp/smoke-venue.html
+          if grep -q 'Service temporarily unavailable' /tmp/smoke-venue.html; then
+            echo "FAIL: /venues/abbot-square rendered the error UI"; head -c 2000 /tmp/smoke-venue.html; exit 1
+          fi
+          echo "Smoke passed."
 
   deploy-mcp-server:
     needs: d1-migrate
@@ -156,90 +170,3 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: mcp-server
           command: deploy --var GIT_SHA:${{ steps.vars.outputs.git_sha }} --var BUILD_TIME:${{ steps.vars.outputs.build_time }}
-
-  # K2 Phase B (2026-06-07): the apex Worker that proxies
-  # meetmeatthefair.com to the underlying Pages project and rewrites
-  # response status from 200 to 500 when the rendered HTML carries the
-  # K1 FetchError marker. See docs/k2-spike-status-rewrite.md and
-  # apex-worker/src/index.ts for the architecture.
-  #
-  # Phase B (PR 2): the Worker deploys but does NOT claim the apex
-  # route (wrangler.toml [[routes]] block is commented out). It's
-  # reachable only at meetmeatthefair-edge.<account>.workers.dev for
-  # verification.
-  #
-  # Phase C (PR 3): wrangler.toml claims meetmeatthefair.com/*; the
-  # next deploy of this job moves traffic through the Worker. A
-  # wildcard Worker route beats the Pages custom-domain route on
-  # Cloudflare's tiebreak (precedent: 2026-04-25 sitemap hotfix
-  # Worker, see CLAUDE.md).
-  deploy-apex-worker:
-    needs: d1-migrate
-    name: Build & Deploy Apex Worker
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: "npm"
-          registry-url: "https://npm.pkg.github.com"
-          scope: "@johntarbox"
-
-      - name: Install dependencies (workspace-aware, runs from root)
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Deploy Apex Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apex-worker
-          command: deploy
-
-      # K2 Phase C apex-Worker post-deploy smoke (2026-06-07): after the
-      # cutover (PR 3), the Worker is on the serving path for every apex
-      # request. This smoke verifies known-good URLs continue to return
-      # 200 and that the Worker is NOT falsely rewriting them (no
-      # X-K2-Status-Rewrite header on healthy traffic). Catches catastrophic
-      # cutover regressions before users do. Hardcoded URLs only.
-      - name: Wait for apex Worker propagation
-        run: sleep 30
-      - name: Apex Worker post-deploy smoke
-        run: |
-          set -eu
-          echo "Smoke: apex /events through Worker returns 200 + no rewrite header"
-          curl -fsS -D /tmp/apex-events-headers.txt 'https://meetmeatthefair.com/events' -o /tmp/apex-events.html
-          if grep -qi '^x-k2-status-rewrite' /tmp/apex-events-headers.txt; then
-            echo "FAIL: /events returned X-K2-Status-Rewrite header on healthy traffic"
-            cat /tmp/apex-events-headers.txt
-            exit 1
-          fi
-          if ! grep -qE 'href="/events/[a-z0-9-]+"' /tmp/apex-events.html; then
-            echo "FAIL: /events through Worker rendered no event links"
-            head -c 2000 /tmp/apex-events.html
-            exit 1
-          fi
-          echo "Smoke: apex /venues/abbot-square through Worker returns 200 + no error UI"
-          curl -fsS -D /tmp/apex-venue-headers.txt 'https://meetmeatthefair.com/venues/abbot-square' -o /tmp/apex-venue.html
-          if grep -qi '^x-k2-status-rewrite' /tmp/apex-venue-headers.txt; then
-            echo "FAIL: /venues/abbot-square returned X-K2-Status-Rewrite header on healthy traffic"
-            cat /tmp/apex-venue-headers.txt
-            exit 1
-          fi
-          if grep -q 'Service temporarily unavailable' /tmp/apex-venue.html; then
-            echo "FAIL: /venues/abbot-square through Worker rendered K1 error UI"
-            head -c 2000 /tmp/apex-venue.html
-            exit 1
-          fi
-          echo "Apex Worker smoke passed."
