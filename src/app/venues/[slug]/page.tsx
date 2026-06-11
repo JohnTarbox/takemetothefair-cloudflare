@@ -110,11 +110,18 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const venue = await getVenue(slug);
 
   if (!venue) {
-    // MIG4 — call notFound() HERE (in generateMetadata, which resolves before
-    // the RSC stream begins) so the response status is a real 404. The page
-    // body also calls notFound() (defense-in-depth), but by then the streaming
-    // shell has committed a 200 — yielding a soft-404. getVenue is React-cached
-    // so this is not an extra D1 read.
+    // MIG4 — notFound() here renders the canonical global 404 page
+    // (`app/not-found.tsx`) with Next's framework-injected `<meta robots
+    // noindex>`, which is what keeps bogus slugs out of the index.
+    //
+    // KNOWN LIMITATION: these routes are ISR (`revalidate = 300`), and under
+    // @opennextjs/cloudflare a notFound() on an ISR route is served as a
+    // cacheable HTTP *200* — the 404 *status* does NOT propagate (same class
+    // as the K2 streaming-status wall). So it's a soft-404 by status, hard by
+    // noindex. Accepted: the noindex prevents indexing; a true 404 status would
+    // cost ISR caching or a proxy-worker rewrite. See
+    // docs/mig4-soft-404-opennext-isr.md. getVenue is React-cached (no extra D1
+    // read); the page-body notFound() remains as defense-in-depth.
     notFound();
   }
 
