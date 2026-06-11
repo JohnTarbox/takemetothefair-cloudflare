@@ -109,21 +109,23 @@ export async function POST(request: Request) {
     // this we'd reprocess orphans repeatedly across paged calls.
     let orphansPurged = 0;
     if (!cursor) {
-      const liveIds = await db.select({ id: blogPosts.id }).from(blogPosts);
-      const liveIdSet = liveIds.map((r) => r.id);
-      // notInArray on an empty array is a no-op; guard.
-      if (liveIdSet.length > 0) {
-        const deleted = await db
-          .delete(contentLinks)
-          .where(
-            and(
-              eq(contentLinks.sourceType, "BLOG_POST"),
-              notInArray(contentLinks.sourceId, liveIdSet)
-            )
+      // D1-safe: NOT IN (SELECT id FROM blog_posts) as a SUBQUERY rather than
+      // fetching every blog_posts id and binding them via notInArray(array),
+      // which blows D1's ~100 bound-variable limit once the blog grows (the
+      // /api/admin/users crash class, 2026-06-11). blog_posts.id is the PK
+      // (never null), so no isNotNull filter is needed. If there are zero blog
+      // posts the subquery purges all BLOG_POST links — correct, they're all
+      // orphans then.
+      const deleted = await db
+        .delete(contentLinks)
+        .where(
+          and(
+            eq(contentLinks.sourceType, "BLOG_POST"),
+            notInArray(contentLinks.sourceId, db.select({ id: blogPosts.id }).from(blogPosts))
           )
-          .returning({ id: contentLinks.id });
-        orphansPurged = deleted.length;
-      }
+        )
+        .returning({ id: contentLinks.id });
+      orphansPurged = deleted.length;
     }
 
     // 2. Page through blog posts, syncing each.
