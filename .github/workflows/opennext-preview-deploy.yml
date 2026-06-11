@@ -51,6 +51,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
+          # `set -o pipefail` is REQUIRED: without it, `wrangler … | tee` returns
+          # tee's exit (0) and masks a wrangler failure — the bug that made the
+          # cutover preview falsely report success when the route claim errored.
+          set -euo pipefail
           npx wrangler deploy 2>&1 | tee /tmp/deploy.log
           echo "### Preview deploy" >> "$GITHUB_STEP_SUMMARY"
           grep -iE "https://.*workers\.dev|Deployed|Current Version" /tmp/deploy.log >> "$GITHUB_STEP_SUMMARY" || true

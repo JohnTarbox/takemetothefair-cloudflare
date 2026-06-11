@@ -1,13 +1,19 @@
 name: OpenNext Size Check
 
-# Phase-0 go/no-go for the OpenNext migration: build with @opennextjs/cloudflare
-# on a real runner (esbuild deadlocks only in constrained dev sandboxes) and
-# report the GZIPPED worker size. Cloudflare Workers (paid) cap = 10 MiB gzipped.
-# Runs only on the migration branch / manual dispatch — does NOT touch prod.
+# Permanent bundle-size gate (was the migration's Phase-0 go/no-go). Builds with
+# @opennextjs/cloudflare on a real runner (esbuild deadlocks only in constrained
+# dev sandboxes) and fails the PR if the GZIPPED worker exceeds 9 MiB — the
+# headroom under the Cloudflare Workers (paid) 10 MiB cap. This is the guard that
+# protects the very thing the OpenNext migration bought; without it a PR could
+# silently bloat the bundle back over the cap and only fail at deploy.
+# `wrangler deploy --dry-run` bundles locally + reports the size — NO remote call,
+# does NOT touch prod.
 
 on:
+  pull_request:
+    branches: [main]
   push:
-    branches: [migrate/opennext]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
