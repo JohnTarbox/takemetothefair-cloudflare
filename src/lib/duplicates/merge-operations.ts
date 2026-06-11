@@ -1,4 +1,4 @@
-import { eq, and, inArray, sql, notInArray, or, isNull } from "drizzle-orm";
+import { eq, and, inArray, sql, or, isNull } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import {
   venues,
@@ -122,6 +122,71 @@ async function getVenueMergePreview(
   };
 }
 
+/**
+ * Transfer the duplicate entity's favorites onto the keeper, skipping users who
+ * already favorited the keeper (those collide on user_favorites'
+ * (user_id, favoritable_type, favoritable_id) uniqueness). The colliding
+ * dup-favorites are left in place — each merge's cleanup batch deletes the
+ * duplicate's remaining favorites afterward.
+ *
+ * D1-safe by construction: the keeper's favoriter ids are snapshotted into a JS
+ * Set and the exclusion is done in MEMORY, then the transfer UPDATEs by PRIMARY
+ * KEY in chunks of ≤90 ids. This avoids both failure modes of the old
+ * `notInArray(userFavorites.userId, keeperFavoriterIds)`:
+ *   (a) binding the keeper's favoriter list, which blows D1's ~100 bound-
+ *       variable limit and ABORTS the merge for a >100-favoriter entity; and
+ *   (b) a same-table `NOT IN (SELECT…)` subquery in the UPDATE, which trips
+ *       better-sqlite3's read-during-write lock and is a prod concurrency risk.
+ * Returns the number of favorites transferred.
+ */
+export async function transferFavorites(
+  db: Database,
+  favoritableType: "VENUE" | "PROMOTER" | "VENDOR" | "EVENT",
+  primaryId: string,
+  duplicateId: string
+): Promise<number> {
+  const keeperFavoriters = await db
+    .select({ userId: userFavorites.userId })
+    .from(userFavorites)
+    .where(
+      and(
+        eq(userFavorites.favoritableType, favoritableType),
+        eq(userFavorites.favoritableId, primaryId)
+      )
+    );
+  const keeperUserIds = new Set(keeperFavoriters.map((f) => f.userId));
+
+  const dupFavorites = await db
+    .select({ id: userFavorites.id, userId: userFavorites.userId })
+    .from(userFavorites)
+    .where(
+      and(
+        eq(userFavorites.favoritableType, favoritableType),
+        eq(userFavorites.favoritableId, duplicateId)
+      )
+    );
+  const transferableIds = dupFavorites
+    .filter((f) => !keeperUserIds.has(f.userId))
+    .map((f) => f.id);
+  if (transferableIds.length === 0) return 0;
+
+  // Chunk by PK so each UPDATE stays under D1's ~100 bound-variable cap
+  // (the IN list + the one SET value).
+  const FAVORITE_TRANSFER_CHUNK = 90;
+  let transferred = 0;
+  for (let i = 0; i < transferableIds.length; i += FAVORITE_TRANSFER_CHUNK) {
+    const res = await db
+      .update(userFavorites)
+      .set({ favoritableId: primaryId })
+      .where(inArray(userFavorites.id, transferableIds.slice(i, i + FAVORITE_TRANSFER_CHUNK)));
+    transferred +=
+      (res as { meta?: { changes?: number } }).meta?.changes ??
+      (res as { rowsAffected?: number }).rowsAffected ??
+      0;
+  }
+  return transferred;
+}
+
 async function mergeVenues(
   db: Database,
   primaryId: string,
@@ -129,45 +194,14 @@ async function mergeVenues(
 ): Promise<MergeResponse> {
   const transferred: RelationshipCounts = { events: 0, favorites: 0 };
 
-  // Batch 1: Transfer events and get existing favorites
-  const [eventResult, existingFavorites] = await db.batch([
+  // Transfer events.
+  const [eventResult] = await db.batch([
     db.update(events).set({ venueId: primaryId }).where(eq(events.venueId, duplicateId)),
-    db
-      .select({ userId: userFavorites.userId })
-      .from(userFavorites)
-      .where(
-        and(eq(userFavorites.favoritableType, "VENUE"), eq(userFavorites.favoritableId, primaryId))
-      ),
   ]);
   transferred.events = (eventResult as { rowsAffected?: number }).rowsAffected || 0;
 
-  const existingUserIds = existingFavorites.map((f) => f.userId);
-
-  // Transfer favorites that don't already exist
-  if (existingUserIds.length > 0) {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "VENUE"),
-          eq(userFavorites.favoritableId, duplicateId),
-          notInArray(userFavorites.userId, existingUserIds)
-        )
-      );
-    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
-  } else {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "VENUE"),
-          eq(userFavorites.favoritableId, duplicateId)
-        )
-      );
-    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
-  }
+  // Transfer favorites (D1-safe in-memory exclusion + chunked PK transfer).
+  transferred.favorites = await transferFavorites(db, "VENUE", primaryId, duplicateId);
 
   // Batch 2: Cleanup and final fetch
   await db.batch([
@@ -275,40 +309,8 @@ async function mergePromoters(
     .where(eq(events.promoterId, duplicateId));
   transferred.events = eventResult.meta?.changes ?? 0;
 
-  // Get existing favorites
-  const existingFavorites = await db
-    .select({ userId: userFavorites.userId })
-    .from(userFavorites)
-    .where(
-      and(eq(userFavorites.favoritableType, "PROMOTER"), eq(userFavorites.favoritableId, primaryId))
-    );
-  const existingUserIds = existingFavorites.map((f) => f.userId);
-
-  // Transfer favorites
-  if (existingUserIds.length > 0) {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "PROMOTER"),
-          eq(userFavorites.favoritableId, duplicateId),
-          notInArray(userFavorites.userId, existingUserIds)
-        )
-      );
-    transferred.favorites = favoriteResult.meta?.changes ?? 0;
-  } else {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "PROMOTER"),
-          eq(userFavorites.favoritableId, duplicateId)
-        )
-      );
-    transferred.favorites = favoriteResult.meta?.changes ?? 0;
-  }
+  // Transfer favorites (D1-safe in-memory exclusion + chunked PK transfer).
+  transferred.favorites = await transferFavorites(db, "PROMOTER", primaryId, duplicateId);
 
   // Delete remaining duplicate favorites
   await db
@@ -446,40 +448,8 @@ async function mergeVendors(
     .where(eq(eventVendors.vendorId, duplicateId));
   transferred.eventVendors = eventVendorResult.meta?.changes ?? 0;
 
-  // Get existing favorites
-  const existingFavorites = await db
-    .select({ userId: userFavorites.userId })
-    .from(userFavorites)
-    .where(
-      and(eq(userFavorites.favoritableType, "VENDOR"), eq(userFavorites.favoritableId, primaryId))
-    );
-  const existingUserIds = existingFavorites.map((f) => f.userId);
-
-  // Transfer favorites
-  if (existingUserIds.length > 0) {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "VENDOR"),
-          eq(userFavorites.favoritableId, duplicateId),
-          notInArray(userFavorites.userId, existingUserIds)
-        )
-      );
-    transferred.favorites = favoriteResult.meta?.changes ?? 0;
-  } else {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "VENDOR"),
-          eq(userFavorites.favoritableId, duplicateId)
-        )
-      );
-    transferred.favorites = favoriteResult.meta?.changes ?? 0;
-  }
+  // Transfer favorites (D1-safe in-memory exclusion + chunked PK transfer).
+  transferred.favorites = await transferFavorites(db, "VENDOR", primaryId, duplicateId);
 
   // Delete remaining duplicate favorites
   await db
@@ -658,17 +628,11 @@ async function mergeEvents(
   // in parallel. We need keeper.slug for the slug-history row, dup.slug
   // for the rename + history old_slug, and dup.viewCount for the sum-on-
   // keeper.
-  const [primaryVendors, existingFavorites, primarySnap, duplicateSnap] = await db.batch([
+  const [primaryVendors, primarySnap, duplicateSnap] = await db.batch([
     db
       .select({ vendorId: eventVendors.vendorId })
       .from(eventVendors)
       .where(eq(eventVendors.eventId, primaryId)),
-    db
-      .select({ userId: userFavorites.userId })
-      .from(userFavorites)
-      .where(
-        and(eq(userFavorites.favoritableType, "EVENT"), eq(userFavorites.favoritableId, primaryId))
-      ),
     db
       .select({
         slug: events.slug,
@@ -700,7 +664,6 @@ async function mergeEvents(
   ]);
 
   const primaryVendorIds = primaryVendors.map((v) => v.vendorId);
-  const existingUserIds = existingFavorites.map((f) => f.userId);
   const keeper = primarySnap[0];
   const duplicate = duplicateSnap[0];
 
@@ -870,33 +833,10 @@ async function mergeEvents(
   }
 
   // Transfer favorites with collision-avoidance (a single user can only
-  // favorite the same event once). Move only the dup rows that don't
-  // collide with an existing keeper-favorite for the same user; delete
-  // the rest in the cleanup batch.
-  if (existingUserIds.length > 0) {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "EVENT"),
-          eq(userFavorites.favoritableId, duplicateId),
-          notInArray(userFavorites.userId, existingUserIds)
-        )
-      );
-    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
-  } else {
-    const favoriteResult = await db
-      .update(userFavorites)
-      .set({ favoritableId: primaryId })
-      .where(
-        and(
-          eq(userFavorites.favoritableType, "EVENT"),
-          eq(userFavorites.favoritableId, duplicateId)
-        )
-      );
-    transferred.favorites = (favoriteResult as { rowsAffected?: number }).rowsAffected || 0;
-  }
+  // favorite the same event once). Moves only non-colliding dup rows; the
+  // colliding ones are deleted in the cleanup batch below. D1-safe in-memory
+  // exclusion + chunked PK transfer.
+  transferred.favorites = await transferFavorites(db, "EVENT", primaryId, duplicateId);
 
   // K3 Steps 1-3 + cleanup, in one db.batch so the slug rename + history
   // insert + status update are atomic. Order matters: the rename must
