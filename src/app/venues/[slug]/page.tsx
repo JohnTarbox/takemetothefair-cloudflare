@@ -110,7 +110,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const venue = await getVenue(slug);
 
   if (!venue) {
-    return { title: "Venue Not Found" };
+    // MIG4 — call notFound() HERE (in generateMetadata, which resolves before
+    // the RSC stream begins) so the response status is a real 404. The page
+    // body also calls notFound() (defense-in-depth), but by then the streaming
+    // shell has committed a 200 — yielding a soft-404. getVenue is React-cached
+    // so this is not an extra D1 read.
+    notFound();
   }
 
   // Cohort 8 follow-up (2026-06-01) — wrap stored venue.name in
