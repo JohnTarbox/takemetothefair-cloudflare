@@ -135,10 +135,18 @@ async function sweepExistingStalePathItems(
       acc.set(ruleKey, entry);
     }
     if (staleIds.length === 0) continue;
-    await db
-      .update(recommendationItems)
-      .set({ actedAt: now })
-      .where(inArray(recommendationItems.id, staleIds));
+    // staleIds is a JS-computed subset (path staleness is classified in code,
+    // not SQL), so it can't be a subquery — chunk the UPDATE instead. The 25-id
+    // internal cap was removed (header note), so on GA4-page-heavy rules this
+    // list can exceed D1's ~100 bound-variable limit and crash the
+    // recommendations-scan cron. 90 ids + the SET value stays under the cap.
+    const STALE_UPDATE_CHUNK = 90;
+    for (let i = 0; i < staleIds.length; i += STALE_UPDATE_CHUNK) {
+      await db
+        .update(recommendationItems)
+        .set({ actedAt: now })
+        .where(inArray(recommendationItems.id, staleIds.slice(i, i + STALE_UPDATE_CHUNK)));
+    }
   }
 }
 

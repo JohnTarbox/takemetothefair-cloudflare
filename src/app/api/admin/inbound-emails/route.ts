@@ -104,11 +104,14 @@ export async function GET(request: NextRequest) {
     )
   );
   const eventById = new Map<string, { id: string; slug: string; name: string }>();
-  if (directEventIds.length > 0) {
+  // Chunked: directEventIds can be up to the `limit` param (≤500), which would
+  // blow D1's ~100 bound-variable limit if bound in one inArray. Batch at 50.
+  const EVENT_ID_BATCH = 50;
+  for (let i = 0; i < directEventIds.length; i += EVENT_ID_BATCH) {
     const directEvents = await db
       .select({ id: events.id, slug: events.slug, name: events.name })
       .from(events)
-      .where(inArray(events.id, directEventIds));
+      .where(inArray(events.id, directEventIds.slice(i, i + EVENT_ID_BATCH)));
     for (const e of directEvents) eventById.set(e.id, e);
   }
 
@@ -126,7 +129,10 @@ export async function GET(request: NextRequest) {
     string,
     { id: string; slug: string; name: string; createdAt: Date }[]
   >();
-  if (fallbackUrls.length > 0) {
+  // Chunked at 50 — fallbackUrls can be up to the `limit` param (≤500); one
+  // inArray would exceed D1's ~100 bound-variable limit.
+  const URL_BATCH = 50;
+  for (let i = 0; i < fallbackUrls.length; i += URL_BATCH) {
     const eventRows = await db
       .select({
         id: events.id,
@@ -136,7 +142,7 @@ export async function GET(request: NextRequest) {
         createdAt: events.createdAt,
       })
       .from(events)
-      .where(inArray(events.sourceUrl, fallbackUrls));
+      .where(inArray(events.sourceUrl, fallbackUrls.slice(i, i + URL_BATCH)));
     for (const e of eventRows) {
       if (!e.sourceUrl || !e.createdAt) continue;
       const list = eventsBySourceUrl.get(e.sourceUrl) ?? [];
