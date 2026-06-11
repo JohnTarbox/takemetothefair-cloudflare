@@ -39,6 +39,14 @@ interface VendorProfile {
   paymentMethods: string | null;
   licenseInfo: string | null;
   insuranceInfo: string | null;
+  // A5 vendor hierarchy display controls (read state for gating the UI).
+  // `displayName` is a benign public alias; `displayMode` is editable only by
+  // LOCAL_OFFICE rows and only *honored* publicly when the brand has granted
+  // `displayOverridePermitted` (resolved in displayVendorName at render).
+  displayName: string | null;
+  displayMode: "inherit" | "self" | "brand_parent" | "operator_parent" | "both" | null;
+  role: "NATIONAL" | "LOCAL_OFFICE" | "INDEPENDENT" | null;
+  displayOverridePermitted: boolean | null;
 }
 
 export default function VendorProfilePage() {
@@ -70,6 +78,11 @@ export default function VendorProfilePage() {
     paymentMethods: "",
     licenseInfo: "",
     insuranceInfo: "",
+    // A5 — editable hierarchy display fields. "" means unset; buildPayload
+    // maps displayName "" → null (clear) and omits displayMode when "" so a
+    // non-LOCAL_OFFICE save never trips the route's displayMode role gate.
+    displayName: "",
+    displayMode: "",
   });
 
   useEffect(() => {
@@ -115,6 +128,9 @@ export default function VendorProfilePage() {
           paymentMethods: paymentMethods.join(", "),
           licenseInfo: data.licenseInfo || "",
           insuranceInfo: data.insuranceInfo || "",
+          // A5 — "" sentinel for unset; displayMode "" === "inherit/none".
+          displayName: data.displayName || "",
+          displayMode: data.displayMode || "",
         });
       }
     } catch (error) {
@@ -124,7 +140,9 @@ export default function VendorProfilePage() {
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
@@ -148,18 +166,27 @@ export default function VendorProfilePage() {
     setMessage("Address auto-filled from Google. Review and save changes.");
   };
 
-  const buildPayload = (form: typeof formData) => ({
-    ...form,
-    products: form.products
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean),
-    paymentMethods: form.paymentMethods
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean),
-    yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null,
-  });
+  const buildPayload = (form: typeof formData) => {
+    const { displayMode, displayName, ...rest } = form;
+    return {
+      ...rest,
+      products: form.products
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean),
+      paymentMethods: form.paymentMethods
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean),
+      yearEstablished: form.yearEstablished ? parseInt(form.yearEstablished, 10) : null,
+      // A5 — empty display name clears the alias (→ business_name at render).
+      displayName: displayName.trim() ? displayName.trim() : null,
+      // A5 — only send displayMode when the office actually picked one. Sending
+      // null/"" for a non-LOCAL_OFFICE vendor would trip the route's role gate
+      // (400); `undefined` is dropped by JSON.stringify so the field is omitted.
+      ...(displayMode ? { displayMode } : {}),
+    };
+  };
 
   // Serialize formData to a string for stable comparison — the form has
   // nested primitive fields only, so JSON is fine and cheap.
@@ -317,6 +344,69 @@ export default function VendorProfilePage() {
               onChange={handleChange}
               required
             />
+
+            {/* A5 — public display-name alias (any vendor). Distinct from the
+                legal Business Name; render resolves COALESCE(displayName,
+                businessName). */}
+            <div>
+              <Input
+                label="Public Display Name (optional)"
+                name="displayName"
+                value={formData.displayName}
+                onChange={handleChange}
+                placeholder="Shown publicly instead of your business name"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Appears on your public listing in place of your legal business name. Leave blank to
+                show “{formData.businessName || "your business name"}”.
+              </p>
+            </div>
+
+            {/* A5 — displayMode: editable only by LOCAL_OFFICE rows. The choice
+                is a *preference*; it's only honored publicly once the brand
+                grants display override (displayOverridePermitted), enforced at
+                render in displayVendorName. We surface that gate state here so
+                the office knows whether the setting is live or pending. */}
+            {profile?.role === "LOCAL_OFFICE" && (
+              <div>
+                <label
+                  htmlFor="displayMode"
+                  className="block text-sm font-medium text-foreground mb-1"
+                >
+                  Public Display (local office)
+                </label>
+                <select
+                  id="displayMode"
+                  name="displayMode"
+                  value={formData.displayMode}
+                  onChange={handleChange}
+                  className="block w-full rounded-lg border border-border px-3 py-2 text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">Use brand default</option>
+                  <option value="self">Show this office’s own name</option>
+                  <option value="brand_parent">Show the brand’s name</option>
+                  <option value="operator_parent">Show the operating company’s name</option>
+                  <option value="both">Show both (office — brand)</option>
+                </select>
+                {formData.displayMode && formData.displayMode !== "inherit" ? (
+                  profile?.displayOverridePermitted ? (
+                    <p className="mt-1 text-xs text-green-700">
+                      Active — your brand has granted display override, so this preference shows on
+                      your public listing.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-amber-700">
+                      Saved, but not yet live: your brand hasn’t granted display override, so the
+                      brand’s default is shown publicly until they do.
+                    </p>
+                  )
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Your listing follows the brand’s default display.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Description</label>

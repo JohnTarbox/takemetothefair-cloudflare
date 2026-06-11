@@ -17,6 +17,7 @@ interface Vendor {
   id: string;
   userId: string;
   businessName: string;
+  displayName: string | null;
   slug: string;
   description: string | null;
   vendorType: string | null;
@@ -90,6 +91,7 @@ export default function EditVendorPage() {
   const [imageFocalY, setImageFocalY] = useState<number>(0.5);
   const [formData, setFormData] = useState({
     businessName: "",
+    displayName: "",
     description: "",
     vendorType: "",
     website: "",
@@ -158,6 +160,7 @@ export default function EditVendorPage() {
         setImageFocalY(typeof data.imageFocalY === "number" ? data.imageFocalY : 0.5);
         setFormData({
           businessName: data.businessName,
+          displayName: data.displayName || "",
           description: data.description || "",
           vendorType: data.vendorType || "",
           website: data.website || "",
@@ -216,6 +219,7 @@ export default function EditVendorPage() {
         defaultChildDisplay,
         displayOverridePermitted,
         displayMode,
+        displayName,
         ...restFormData
       } = formData;
       const submitData = {
@@ -233,6 +237,8 @@ export default function EditVendorPage() {
         default_child_display: defaultChildDisplay === "" ? null : defaultChildDisplay,
         display_override_permitted: displayOverridePermitted,
         display_mode: displayMode === "" ? null : displayMode,
+        // A5 — public display-name alias; empty → null (clear → business_name).
+        display_name: displayName.trim() === "" ? null : displayName.trim(),
       };
 
       const res = await fetch(`/api/admin/vendors/${params.id}`, {
@@ -337,6 +343,20 @@ export default function EditVendorPage() {
                   value={formData.businessName}
                   onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
                   required
+                />
+              </div>
+
+              {/* A5 — public display-name alias. COALESCE(displayName,
+                  businessName) at render (displayVendorName). Primary use is a
+                  brand hub presenting a clean public name; leave blank to use
+                  the legal business name. */}
+              <div className="space-y-2">
+                <Label htmlFor="displayName">Public Display Name</Label>
+                <Input
+                  id="displayName"
+                  value={formData.displayName}
+                  onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+                  placeholder="Optional — overrides Business Name on public listings"
                 />
               </div>
 
@@ -671,17 +691,26 @@ export default function EditVendorPage() {
                   </div>
                 )}
 
-                {/* Override gate — only meaningful on LOCAL_OFFICE. Default
-                    OFF: child can REQUEST a mode but the brand parent's
-                    defaultChildDisplay wins. Flip ON to grant the child
-                    its self-selected display. Encodes spec §4.4
-                    "parent's gate always wins". */}
+                {/* A5 — the claim⇄gate grant affordance. Only meaningful on
+                    LOCAL_OFFICE. Default OFF: the office can REQUEST a Display
+                    Mode (via its own profile editor or the field below) but the
+                    brand parent's defaultChildDisplay wins until this is ON.
+                    Flipping it writes a `vendor.gate_change` audit row server-
+                    side. Encodes spec §4.4 "parent's gate always wins".
+                    Promoted from a bare checkbox to a bordered callout so the
+                    grant action — and its current state — is unmissable. */}
                 {formData.role === "LOCAL_OFFICE" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="displayOverridePermitted">
-                      Display Override Permitted (gate)
-                    </Label>
-                    <div className="flex items-center gap-2 pt-2">
+                  <div
+                    className={`rounded-md border p-3 ${
+                      formData.displayOverridePermitted
+                        ? "border-royal/40 bg-royal/5"
+                        : "border-border bg-muted/30"
+                    }`}
+                  >
+                    <label
+                      htmlFor="displayOverridePermitted"
+                      className="flex cursor-pointer items-start gap-2"
+                    >
                       <input
                         type="checkbox"
                         id="displayOverridePermitted"
@@ -692,12 +721,19 @@ export default function EditVendorPage() {
                             displayOverridePermitted: e.target.checked,
                           })
                         }
-                        className="rounded border-border"
+                        className="mt-0.5 rounded border-border"
                       />
-                      <span className="text-sm text-muted-foreground">
-                        Let this office&apos;s preference override the brand&apos;s default
+                      <span className="text-sm">
+                        <span className="font-medium text-foreground">
+                          Grant display override to this office
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {formData.displayOverridePermitted
+                            ? "GRANTED — this office's Display Mode preference below is honored on its public listing."
+                            : "Not granted — the office's Display Mode preference is stored but inert; the brand's default shows publicly until you grant this."}
+                        </span>
                       </span>
-                    </div>
+                    </label>
                   </div>
                 )}
 

@@ -112,6 +112,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         enhancedProfileExpiresAt: vendors.enhancedProfileExpiresAt,
         claimed: vendors.claimed,
         verifiedPro: vendors.verifiedPro,
+        // A5 — prior value for the display-override gate transition audit.
+        displayOverridePermitted: vendors.displayOverridePermitted,
       })
       .from(vendors)
       .where(eq(vendors.id, id))
@@ -335,6 +337,21 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.display_override_permitted !== undefined)
       updateData.displayOverridePermitted = data.display_override_permitted;
     if (data.display_mode !== undefined) updateData.displayMode = data.display_mode;
+    // A5 — admin can set the public display-name alias (snake_case in →
+    // camelCase column).
+    if (data.display_name !== undefined) updateData.displayName = data.display_name;
+
+    // A5 — display-override gate transition (false⇄true). Granting lets the
+    // office's displayMode preference take effect at render; revoking falls the
+    // listing back to the brand's default. Same shape as the claimed /
+    // verified-pro transitions above; audited below as `vendor.gate_change`.
+    let gateTransitioned: "granted" | "revoked" | null = null;
+    if (
+      data.display_override_permitted !== undefined &&
+      data.display_override_permitted !== Boolean(currentVendor.displayOverridePermitted)
+    ) {
+      gateTransitioned = data.display_override_permitted ? "granted" : "revoked";
+    }
 
     await db.update(vendors).set(updateData).where(eq(vendors.id, id));
 
@@ -413,6 +430,26 @@ export async function PATCH(request: NextRequest, { params }: Params) {
           });
         }
       }
+    }
+
+    // Audit log for the display-override gate transition (A5). Admin (or the
+    // brand-parent owner via admin tools) granting/revoking an office's right
+    // to override the brand's default display. Counterpart to the office-side
+    // `vendor.display_preference_change` row written by the vendor self-edit
+    // route (api/vendor/profile/route.ts).
+    if (gateTransitioned) {
+      await db.insert(adminActions).values({
+        action: "vendor.gate_change",
+        actorUserId: session.user.id,
+        targetType: "vendor",
+        targetId: id,
+        payloadJson: JSON.stringify({
+          transition: gateTransitioned,
+          previous_display_override_permitted: Boolean(currentVendor.displayOverridePermitted),
+          new_display_override_permitted: data.display_override_permitted,
+        }),
+        createdAt: now,
+      });
     }
 
     // Audit log for Verified Pro transition. NO email per business decision —

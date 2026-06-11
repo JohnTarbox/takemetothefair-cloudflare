@@ -250,6 +250,16 @@ export const vendorUpdateSchema = vendorCreateSchema
       .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
       .nullable()
       .optional(),
+    // A5 — admin can also set the public display-name alias (snake_case here to
+    // match this schema's admin-PATCH convention; mapped to vendors.displayName
+    // in the route). Send null to clear → revert to business_name.
+    display_name: z
+      .string()
+      .min(VALIDATION.NAME_MIN_LENGTH)
+      .max(VALIDATION.NAME_MAX_LENGTH)
+      .transform(sanitizeProse)
+      .nullable()
+      .optional(),
   });
 
 // delete_vendor (MCP tool / DELETE /api/admin/vendors/[id]) — soft-delete
@@ -588,6 +598,20 @@ export const vendorProfileUpdateSchema = z.object({
   // 400 if they try to set this.
   displayMode: z
     .enum(["inherit", "self", "brand_parent", "operator_parent", "both"])
+    .nullable()
+    .optional(),
+  // A5 (Dev-Email-2026-06-10 §A) — a claimed vendor may set a public display
+  // name distinct from its legal business_name; the render layer resolves
+  // COALESCE(display_name, business_name) (see displayVendorName /
+  // vendorSelfDisplayName in @takemetothefair/utils). Unlike displayMode this
+  // is NOT hierarchy-gated — it's a benign alias on the owner's own row. Send
+  // null to clear and revert to business_name. (.min/.max BEFORE .transform per
+  // CLAUDE.md — decoding only shortens, so the raw cap is a safe upper bound.)
+  displayName: z
+    .string()
+    .min(VALIDATION.NAME_MIN_LENGTH)
+    .max(VALIDATION.NAME_MAX_LENGTH)
+    .transform(sanitizeProse)
     .nullable()
     .optional(),
 });
