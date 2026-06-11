@@ -1333,6 +1333,7 @@ export default async function VendorDetailPage({ params }: Props) {
               <ClaimListingCTA
                 businessName={vendor.businessName}
                 vendorSlug={vendor.slug}
+                vendorId={vendor.id}
                 eligibleForDirectClaim={eligibleForDirectClaim}
               />
             )}
