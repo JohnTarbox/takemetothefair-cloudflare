@@ -943,6 +943,20 @@ describe("vendorUpdateSchema — EH1 hierarchy fields (admin)", () => {
     expect(vendorUpdateSchema.safeParse({ display_mode: "both" }).success).toBe(true);
     expect(vendorUpdateSchema.safeParse({ display_mode: null }).success).toBe(true);
   });
+
+  it("accepts display_name as a string, null (clear), and decodes entities", () => {
+    expect(vendorUpdateSchema.safeParse({ display_name: "LeafFilter" }).success).toBe(true);
+    expect(vendorUpdateSchema.safeParse({ display_name: null }).success).toBe(true);
+    // sanitizeProse decodes HTML entities so dedup/slug/storage see literals.
+    const r = vendorUpdateSchema.safeParse({ display_name: "Earth Expo &amp; Convention" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.display_name).toBe("Earth Expo & Convention");
+  });
+
+  it("rejects display_name that is empty or exceeds the name length cap", () => {
+    expect(vendorUpdateSchema.safeParse({ display_name: "" }).success).toBe(false);
+    expect(vendorUpdateSchema.safeParse({ display_name: "x".repeat(256) }).success).toBe(false);
+  });
 });
 
 describe("vendorProfileUpdateSchema — EH1 self-edit perimeter", () => {
@@ -997,5 +1011,24 @@ describe("vendorProfileUpdateSchema — EH1 self-edit perimeter", () => {
       // displayMode NOT in this payload — confirm it's also not present
       expect("displayMode" in r.data).toBe(false);
     }
+  });
+
+  it("accepts displayName (the one non-hierarchy alias an owner may self-set)", () => {
+    // Unlike displayMode/the hierarchy fields, displayName is a benign render
+    // alias on the owner's own row — allowed on the self-edit perimeter.
+    const r = vendorProfileUpdateSchema.safeParse({ displayName: "Maine Cardworks" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.displayName).toBe("Maine Cardworks");
+  });
+
+  it("accepts displayName = null (owner clearing the alias → business_name)", () => {
+    expect(vendorProfileUpdateSchema.safeParse({ displayName: null }).success).toBe(true);
+  });
+
+  it("rejects an empty or over-long displayName", () => {
+    expect(vendorProfileUpdateSchema.safeParse({ displayName: "" }).success).toBe(false);
+    expect(vendorProfileUpdateSchema.safeParse({ displayName: "x".repeat(256) }).success).toBe(
+      false
+    );
   });
 });

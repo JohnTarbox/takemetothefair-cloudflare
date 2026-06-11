@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { vendors, vendorSlugHistory } from "@/lib/db/schema";
+import { vendors, vendorSlugHistory, adminActions } from "@/lib/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { appendSlugSegment, createSlug, type Slug } from "@/lib/utils";
 import { validateRequestBody, vendorProfileUpdateSchema } from "@/lib/validations";
@@ -80,6 +80,7 @@ export async function PATCH(request: NextRequest) {
       licenseInfo,
       insuranceInfo,
       displayMode,
+      displayName,
     } = validation.data;
 
     // Snapshot current vendor for slug-change detection, slug history,
@@ -98,6 +99,13 @@ export async function PATCH(request: NextRequest) {
         state: vendors.state,
         logoUrl: vendors.logoUrl,
         role: vendors.role,
+        // A5 — prior values for change detection + audit context. The
+        // override flag tells us whether a displayMode preference is actually
+        // honored at render (resolveVendorDisplay), so we record it on the
+        // audit row rather than re-deriving it later.
+        displayMode: vendors.displayMode,
+        displayName: vendors.displayName,
+        displayOverridePermitted: vendors.displayOverridePermitted,
       })
       .from(vendors)
       .where(eq(vendors.userId, gate.userId))
@@ -181,8 +189,40 @@ export async function PATCH(request: NextRequest) {
     // EH1 Phase 1 — pre-validated above (only LOCAL_OFFICE callers reach
     // this assignment). Safe to set unconditionally when present.
     if (displayMode !== undefined) updateData.displayMode = displayMode;
+    // A5 — public display-name alias. Benign self-edit on the owner's own row
+    // (no hierarchy gate); COALESCE(display_name, business_name) at render.
+    if (displayName !== undefined) updateData.displayName = displayName;
+
+    // A5 — detect a real displayMode preference change so we can write a
+    // discrete audit row (mirrors the admin claim/verified-pro audit pattern).
+    // We compare against the snapshot rather than just "key present" so a
+    // no-op resubmit doesn't spam the audit log.
+    const displayModeChanged =
+      displayMode !== undefined && displayMode !== currentVendor.displayMode;
 
     await db.update(vendors).set(updateData).where(eq(vendors.userId, gate.userId));
+
+    if (displayModeChanged) {
+      // vendor.display_preference_change — the office expressing/altering its
+      // requested display mode. `override_currently_granted` records whether
+      // this preference is actually honored publicly right now (the parent's
+      // display_override_permitted gate); false means it's stored-but-inert
+      // until the brand grants override. Counterpart to the admin-side
+      // `vendor.gate_change` row (api/admin/vendors/[id]/route.ts).
+      await db.insert(adminActions).values({
+        action: "vendor.display_preference_change",
+        actorUserId: gate.userId,
+        targetType: "vendor",
+        targetId: currentVendor.id,
+        payloadJson: JSON.stringify({
+          previous_display_mode: currentVendor.displayMode,
+          new_display_mode: displayMode,
+          override_currently_granted: Boolean(currentVendor.displayOverridePermitted),
+          source: "vendor_self",
+        }),
+        createdAt: now,
+      });
+    }
 
     const updatedVendor = await db
       .select()
