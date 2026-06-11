@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
+import { isBlockedSsrfHost } from "@/lib/url-import/ssrf-guard";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 
@@ -230,41 +231,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // SSRF protection: block internal/private hostnames and IPs
-  const hostname = parsedUrl.hostname.toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname === "[::1]" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
-  ) {
-    return NextResponse.json(
-      { success: false, error: "Internal URLs are not allowed" },
-      { status: 400 }
-    );
-  }
-
-  // Block private/reserved IP ranges
-  const ipMatch = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (ipMatch) {
-    const [, a, b] = ipMatch.map(Number);
-    if (
-      a === 127 || // 127.0.0.0/8
-      a === 10 || // 10.0.0.0/8
-      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
-      (a === 192 && b === 168) || // 192.168.0.0/16
-      (a === 169 && b === 254) || // 169.254.0.0/16
-      a === 0 // 0.0.0.0/8
-    ) {
-      return NextResponse.json(
-        { success: false, error: "Internal URLs are not allowed" },
-        { status: 400 }
-      );
-    }
-  }
-
-  // Block IPv6 private ranges
-  if (hostname.startsWith("[fc") || hostname.startsWith("[fd") || hostname.startsWith("[fe80")) {
+  // SSRF protection (WS3c, 2026-06-11) — block internal/private hosts. The
+  // shared, unit-tested guard closes the encoded-IP bypasses the old inline
+  // check missed (decimal/hex/octal integer IPs, IPv4-mapped & expanded IPv6).
+  // DNS-rebinding (public name → internal IP) remains a documented residual —
+  // see src/lib/url-import/ssrf-guard.ts. Defense-in-depth on an admin-only
+  // route on Cloudflare Workers (no metadata service / internal HTTP network).
+  if (isBlockedSsrfHost(parsedUrl.hostname)) {
     return NextResponse.json(
       { success: false, error: "Internal URLs are not allowed" },
       { status: 400 }

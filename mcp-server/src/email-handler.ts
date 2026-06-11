@@ -51,6 +51,7 @@ import {
 } from "./intent-classifier.js";
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
+import { parseEmailAuth } from "./email-auth.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -188,6 +189,27 @@ export async function handleInboundEmail(
     //     lookup error treats the sender as 'unknown'.
     const senderTrust = await lookupSenderTrust(env.DB, fromAddr);
 
+    // 3b-ii. WS3e (2026-06-11) — verify the message actually authenticated
+    //     before the trusted fast-path honors a (spoofable) From address.
+    //     Cloudflare Email Routing attaches an Authentication-Results header;
+    //     parseEmailAuth condenses it to pass/fail/unknown. We only DOWNGRADE
+    //     on a proven "fail" (fail-open on "unknown" so existing trusted
+    //     senders aren't broken if the header is absent). Log trusted senders
+    //     whose mail isn't a clean "pass" so prod can confirm header presence
+    //     before we tighten the gate to require "pass".
+    const emailAuth = parseEmailAuth(message.headers?.get("Authentication-Results"));
+    if (senderTrust === "trusted" && emailAuth !== "pass") {
+      await logError(env.DB, {
+        level: emailAuth === "fail" ? "warn" : "info",
+        message:
+          emailAuth === "fail"
+            ? "trusted sender failed email auth — fast-path downgraded (possible From spoof)"
+            : "trusted sender email auth unverifiable (no/none Authentication-Results)",
+        source: "email-handler:ws3e-auth-gate",
+        context: { from: fromAddr, to: toAddr, emailAuth },
+      });
+    }
+
     // 3c. Compute the routing decision: maybe run the classifier, maybe
     //     short-circuit via the trusted-sender fast-path, always end
     //     with a `routed` array of {intent, ...} for the INSERT loop.
@@ -196,6 +218,7 @@ export async function handleInboundEmail(
       sessionId,
       addressIntent,
       senderTrust,
+      emailAuth,
       toAddr,
       fromAddr,
       subject,
@@ -703,6 +726,8 @@ async function computeRouting(args: {
   sessionId: string;
   addressIntent: EmailIntent;
   senderTrust: SenderTrustTier;
+  /** WS3e — pass/fail/unknown verdict from the Authentication-Results header. */
+  emailAuth: "pass" | "fail" | "unknown";
   toAddr: string;
   fromAddr: string;
   subject: string;
@@ -718,6 +743,7 @@ async function computeRouting(args: {
     sessionId,
     addressIntent,
     senderTrust,
+    emailAuth,
     toAddr,
     fromAddr,
     subject,
@@ -732,8 +758,12 @@ async function computeRouting(args: {
   // Trusted-sender fast-path (spec §C.5): check cheap regex first.
   // Only short-circuit when sender is trusted AND no multi-intent /
   // correction / source-suggestion / claim / reply-chain signals fire.
+  // WS3e — also require that the message didn't DEMONSTRABLY fail email auth
+  // (SPF/DKIM/DMARC). On "fail" we skip the fast-path and fall through to the
+  // full classifier, so a spoofed From of a trusted sender gets normal
+  // scrutiny instead of a free pass. "unknown" still takes the fast-path.
   const replyChainHeader = isReplyToOurThread(inReplyTo, references);
-  if (senderTrust === "trusted" && env.AI) {
+  if (senderTrust === "trusted" && emailAuth !== "fail" && env.AI) {
     const fastpath = hasMultiIntentOrSpecialSignal({
       bodyText,
       bodyHtml,
