@@ -29,10 +29,20 @@ export default function NewPromoterPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users?available=promoter");
-      const data = (await res.json()) as User[];
-      setUsers(data);
+      const data = (await res.json()) as unknown;
+      // Guard: a non-2xx response returns { error } (an object), not an array.
+      // Without this the later users.map() throws "h.map is not a function" and
+      // white-screens the whole page (2026-06-11 incident). Degrade to an empty
+      // list + a visible error instead.
+      if (!res.ok || !Array.isArray(data)) {
+        setError("Couldn't load the user list. Please retry.");
+        setUsers([]);
+        return;
+      }
+      setUsers(data as User[]);
     } catch (err) {
       console.error("Failed to fetch users:", err);
+      setError("Couldn't load the user list. Please retry.");
     }
   };
 

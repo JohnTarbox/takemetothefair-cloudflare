@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, promoters, vendors } from "@/lib/db/schema";
-import { notInArray } from "drizzle-orm";
+import { notInArray, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
@@ -18,49 +18,40 @@ export async function GET(request: NextRequest) {
   const db = getCloudflareDb();
   try {
     if (available === "promoter") {
-      // Get users who don't have a promoter profile
-      const existingPromoterUserIds = await db.select({ userId: promoters.userId }).from(promoters);
-
-      const userIds = existingPromoterUserIds
-        .map((p) => p.userId)
-        .filter((id): id is string => id !== null);
-
-      let userList;
-      if (userIds.length > 0) {
-        userList = await db
-          .select({ id: users.id, email: users.email, name: users.name })
-          .from(users)
-          .where(notInArray(users.id, userIds))
-          .orderBy(users.email);
-      } else {
-        userList = await db
-          .select({ id: users.id, email: users.email, name: users.name })
-          .from(users)
-          .orderBy(users.email);
-      }
+      // Users who don't already have a promoter profile. Uses a NOT IN
+      // (SELECT …) SUBQUERY rather than fetching the ids and binding them via
+      // notInArray(col, idArray): the array form blows D1's ~100 bound-variable
+      // limit once enough promoters exist (D1_ERROR "too many SQL variables" —
+      // the crash that took down /admin/promoters/new on 2026-06-11). The
+      // subquery filters NULL userIds so the NOT IN doesn't go empty on a NULL
+      // (SQL three-valued logic).
+      const userList = await db
+        .select({ id: users.id, email: users.email, name: users.name })
+        .from(users)
+        .where(
+          notInArray(
+            users.id,
+            db.select({ userId: promoters.userId }).from(promoters).where(isNotNull(promoters.userId))
+          )
+        )
+        .orderBy(users.email);
 
       return NextResponse.json(userList);
     }
 
     if (available === "vendor") {
-      // Get users who don't have a vendor profile
-      const existingVendorUserIds = await db.select({ userId: vendors.userId }).from(vendors);
-
-      const userIds = existingVendorUserIds.map((v) => v.userId);
-
-      let userList;
-      if (userIds.length > 0) {
-        userList = await db
-          .select({ id: users.id, email: users.email, name: users.name })
-          .from(users)
-          .where(notInArray(users.id, userIds))
-          .orderBy(users.email);
-      } else {
-        userList = await db
-          .select({ id: users.id, email: users.email, name: users.name })
-          .from(users)
-          .orderBy(users.email);
-      }
+      // Users without a vendor profile — same subquery fix as the promoter
+      // branch (the array form would hit the D1 variable cap as vendors grow).
+      const userList = await db
+        .select({ id: users.id, email: users.email, name: users.name })
+        .from(users)
+        .where(
+          notInArray(
+            users.id,
+            db.select({ userId: vendors.userId }).from(vendors).where(isNotNull(vendors.userId))
+          )
+        )
+        .orderBy(users.email);
 
       return NextResponse.json(userList);
     }
