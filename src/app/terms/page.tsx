@@ -8,6 +8,19 @@ export const metadata: Metadata = {
   description:
     "Terms of service for Meet Me at the Fair - rules and guidelines for using our platform.",
   alternates: { canonical: "https://meetmeatthefair.com/terms" },
+  // MIG4 — page-specific OG so social unfurls don't inherit the homepage
+  // og:url/og:title from the root layout default.
+  openGraph: {
+    title: "Terms of Service | Meet Me at the Fair",
+    description:
+      "Terms of service for Meet Me at the Fair - rules and guidelines for using our platform.",
+    url: "https://meetmeatthefair.com/terms",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    // Next does not deep-merge nested openGraph across segments — re-declare
+    // the default share image so this page keeps an og:image.
+    images: ["https://meetmeatthefair.com/og-default.png"],
+  },
 };
 
 export default function TermsPage() {

@@ -5,6 +5,11 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { trackServerEvent } from "@/lib/server-analytics";
+import {
+  parseGaClientId,
+  safeHostname,
+  sendGa4MeasurementProtocol,
+} from "@/lib/ga4-measurement-protocol";
 
 const MAX_BODY_BYTES = 4_000;
 const MAX_PROPERTY_BYTES = 2_000;
@@ -45,6 +50,14 @@ const ALLOWED_EVENT_NAMES = [
   // intentionally NOT beaconed.)
   "newsletter_confirm",
 ] as const;
+
+// ENG1.8 — outbound-click event names mirrored to GA4 server-side via the
+// Measurement Protocol (in addition to the client gtag + D1 beacon). Survives
+// ad-blockers that suppress the client-side gtag hit.
+const GA4_MIRRORED_OUTBOUND_NAMES = new Set([
+  "outbound_application_click",
+  "outbound_ticket_click",
+]);
 
 const trackSchema = z.object({
   name: z.enum(ALLOWED_EVENT_NAMES),
@@ -94,6 +107,29 @@ export async function POST(request: Request) {
     userId,
     source: "client_beacon",
   });
+
+  // ENG1.8 — mirror outbound application/ticket clicks to GA4 server-side. All
+  // five params are derived from the existing beacon payload (no client change).
+  // sendGa4MeasurementProtocol never throws and is inert until configured.
+  if (GA4_MIRRORED_OUTBOUND_NAMES.has(parsed.data.name)) {
+    const props = parsed.data.properties ?? {};
+    const targetUrl = typeof props.destinationUrl === "string" ? props.destinationUrl : "";
+    const entityId = typeof props.eventSlug === "string" ? props.eventSlug : "";
+    const clientId = parseGaClientId(request.headers.get("cookie")) ?? crypto.randomUUID();
+    await sendGa4MeasurementProtocol(clientId, [
+      {
+        name: parsed.data.name,
+        params: {
+          target_url: targetUrl,
+          target_domain: safeHostname(targetUrl),
+          entity_type: "event",
+          entity_id: entityId,
+          application_or_ticket:
+            parsed.data.name === "outbound_application_click" ? "application" : "ticket",
+        },
+      },
+    ]);
+  }
 
   return new NextResponse(null, { status: 204 });
 }
