@@ -8,6 +8,19 @@ export const metadata: Metadata = {
   description:
     "Privacy policy for Meet Me at the Fair - how we collect, use, and protect your personal information.",
   alternates: { canonical: "https://meetmeatthefair.com/privacy" },
+  // MIG4 — page-specific OG so social unfurls don't inherit the homepage
+  // og:url/og:title from the root layout default.
+  openGraph: {
+    title: "Privacy Policy | Meet Me at the Fair",
+    description:
+      "Privacy policy for Meet Me at the Fair - how we collect, use, and protect your personal information.",
+    url: "https://meetmeatthefair.com/privacy",
+    siteName: "Meet Me at the Fair",
+    type: "website",
+    // Next does not deep-merge nested openGraph across segments — re-declare
+    // the default share image so this page keeps an og:image.
+    images: ["https://meetmeatthefair.com/og-default.png"],
+  },
 };
 
 export default function PrivacyPage() {
