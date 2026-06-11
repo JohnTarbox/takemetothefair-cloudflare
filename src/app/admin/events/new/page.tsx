@@ -42,6 +42,19 @@ export default function NewEventPage() {
   useEffect(() => {
     fetchVenues();
     fetchPromoters();
+    // F3 C2 (2026-06-11) — prefill the date from ?date=YYYY-MM-DD, the deep
+    // link emitted by the admin calendar's "+ Add event" affordance. Read from
+    // window.location (not useSearchParams) so no Suspense boundary is needed.
+    // parseDateOnly validates the param, so a malformed value is ignored rather
+    // than seeding an invalid date. Defaults to a single-day span (start=end);
+    // the admin can widen it.
+    if (typeof window !== "undefined") {
+      const dateParam = new URLSearchParams(window.location.search).get("date");
+      if (dateParam && parseDateOnly(dateParam)) {
+        setStartDate(dateParam);
+        setEndDate(dateParam);
+      }
+    }
   }, []);
 
   const fetchVenues = async () => {

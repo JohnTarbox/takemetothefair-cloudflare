@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Calendar as CalendarIcon, MapPin, X, ChevronRight } from "lucide-react";
+import { Calendar as CalendarIcon, MapPin, X, ChevronRight, CalendarPlus } from "lucide-react";
 import { AddToCalendar } from "./AddToCalendar";
 import { formatDateRange } from "@/lib/utils";
 import { getCategoryBadgeClass, getCategoryImage } from "@/lib/category-colors";
@@ -261,6 +261,10 @@ interface DayEventsPopoverProps {
   onEventClick: (event: PopoverEvent, anchor: { x: number; y: number }) => void;
   onViewDay: (date: Date) => void;
   getEventColor: (eventId: string) => string;
+  // F3 C2 (2026-06-11) — when set (admin calendar only), the footer shows a
+  // "+ Add event" link prefilled to this date. Also lets the popover open on a
+  // day with zero events (admins add to empty days; public never sees this).
+  adminAddEventDate?: Date;
 }
 
 export function DayEventsPopover({
@@ -271,6 +275,7 @@ export function DayEventsPopover({
   onEventClick,
   onViewDay,
   getEventColor,
+  adminAddEventDate,
 }: DayEventsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -334,34 +339,59 @@ export function DayEventsPopover({
 
       {/* Event list */}
       <div ref={listRef} className="max-h-64 overflow-y-auto py-1">
-        {dayEvents.map((event) => (
-          <button
-            key={event.id}
-            data-event-row
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              onEventClick(event, { x: rect.right, y: rect.top });
-            }}
-            className="w-full text-left px-4 py-2 hover:bg-muted flex items-center gap-2.5 transition-colors focus:bg-muted focus:outline-none"
-          >
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getEventColor(event.id)}`} />
-            <span className="text-sm text-foreground truncate flex-1">{event.name}</span>
-            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-          </button>
-        ))}
+        {dayEvents.length === 0 ? (
+          <p className="px-4 py-3 text-sm text-muted-foreground">No events scheduled.</p>
+        ) : (
+          dayEvents.map((event) => (
+            <button
+              key={event.id}
+              data-event-row
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                onEventClick(event, { x: rect.right, y: rect.top });
+              }}
+              className="w-full text-left px-4 py-2 hover:bg-muted flex items-center gap-2.5 transition-colors focus:bg-muted focus:outline-none"
+            >
+              <div
+                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getEventColor(event.id)}`}
+              />
+              <span className="text-sm text-foreground truncate flex-1">{event.name}</span>
+              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+            </button>
+          ))
+        )}
       </div>
 
-      {/* View day link */}
-      <div className="border-t border-border px-4 py-2">
-        <button
-          onClick={() => {
-            onViewDay(date);
-            onClose();
-          }}
-          className="text-sm text-royal hover:text-navy font-medium transition-colors"
-        >
-          View full day
-        </button>
+      {/* Footer actions */}
+      <div className="border-t border-border px-4 py-2 flex items-center justify-between gap-3">
+        {dayEvents.length > 0 ? (
+          <button
+            onClick={() => {
+              onViewDay(date);
+              onClose();
+            }}
+            className="text-sm text-royal hover:text-navy font-medium transition-colors"
+          >
+            View full day
+          </button>
+        ) : (
+          <span />
+        )}
+        {/* F3 C2 — admin-only "+ Add event" prefilled to this date. Local date
+            components (not toISOString) so the YYYY-MM-DD doesn't shift across
+            the UTC boundary for evening edits. */}
+        {adminAddEventDate && (
+          <Link
+            href={`/admin/events/new?date=${adminAddEventDate.getFullYear()}-${String(
+              adminAddEventDate.getMonth() + 1
+            ).padStart(2, "0")}-${String(adminAddEventDate.getDate()).padStart(2, "0")}`}
+            onClick={onClose}
+            className="inline-flex items-center gap-1 text-sm text-royal hover:text-navy font-medium transition-colors"
+          >
+            <CalendarPlus className="w-3.5 h-3.5" />
+            Add event
+          </Link>
+        )}
       </div>
     </div>
   );

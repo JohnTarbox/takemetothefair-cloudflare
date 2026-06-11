@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Printer,
+  Plus,
 } from "lucide-react";
 import { EventCard } from "./event-card";
 import { EventPopover, DayEventsPopover } from "./event-popover";
@@ -68,6 +69,8 @@ interface EventsViewProps {
   basePath?: string;
   /** Vendor home coordinates for distance calculation */
   vendorCoords?: { lat: number; lng: number } | null;
+  /** F3 C2 — admin calendar host: enables empty-cell "+ Add event" affordances. */
+  isAdmin?: boolean;
 }
 
 const SORT_OPTIONS = [
@@ -261,6 +264,10 @@ interface CalendarViewProps {
   // alphabetical sort (no implicit reordering).
   excludedCategories: Set<string>;
   onExcludedCategoriesChange: (next: Set<string>) => void;
+  // F3 C2 (2026-06-11) — admin calendar host. Enables empty-cell "+ Add event"
+  // affordances and the admin add-link inside the day popover. Public calendars
+  // pass false (the default); empty days stay inert for them.
+  isAdmin?: boolean;
 }
 
 // Additional helper functions for calendar views
@@ -333,6 +340,7 @@ function CalendarView({
   onViewTypeChange,
   excludedCategories,
   onExcludedCategoriesChange,
+  isAdmin = false,
 }: CalendarViewProps) {
   const setCurrentDate = onDateChange;
   const setCalendarViewType = onViewTypeChange;
@@ -643,21 +651,43 @@ function CalendarView({
   const renderMonthDayContent = useCallback(
     (day: CalendarDay) => {
       if (!day.inMonth) return null;
-      const dayEvents = getEventsForDate(
-        visibleEvents,
-        new Date(
-          parseInt(day.date.slice(0, 4)),
-          parseInt(day.date.slice(5, 7)) - 1,
-          parseInt(day.date.slice(8, 10))
-        )
-      );
-      if (dayEvents.length === 0) return null;
-
       const parsedDate = new Date(
         parseInt(day.date.slice(0, 4)),
         parseInt(day.date.slice(5, 7)) - 1,
         parseInt(day.date.slice(8, 10))
       );
+      const dayEvents = getEventsForDate(visibleEvents, parsedDate);
+
+      // F3 C2 — open the day popover (event list + admin add-link) anchored at
+      // the click. Used by the empty-space overlay and the admin empty-day cell.
+      const openDay = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setPopoverEvent(null);
+        setDayEventsPopover({
+          date: parsedDate,
+          events: dayEvents,
+          anchor: { x: e.clientX, y: e.clientY },
+        });
+      };
+
+      // Empty day. Public → nothing (cell stays inert). Admin → a focusable
+      // "+ add" button (min-height so it's a tangible target even when the cell
+      // has no chips) that opens the day popover to create an event here.
+      if (dayEvents.length === 0) {
+        if (!isAdmin) return null;
+        return (
+          <button
+            type="button"
+            onClick={openDay}
+            aria-label={`Add an event on ${parsedDate.toLocaleDateString()}`}
+            className="group flex min-h-[3rem] w-full items-start p-1 print:hidden"
+          >
+            <span className="inline-flex items-center gap-0.5 text-[0.65rem] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100">
+              <Plus className="h-3 w-3" /> add
+            </span>
+          </button>
+        );
+      }
 
       return (
         <>
@@ -689,6 +719,19 @@ function CalendarView({
                 +{dayEvents.length - 3} more
               </button>
             )}
+            {/* F3 C2 — admin "+ add event" on populated days too. Opens the day
+                popover (which lists these events + the prefilled add link), so
+                an operator can schedule another event on a day that already has
+                some. Focusable, no invisible overlay → no a11y/height risk. */}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={openDay}
+                className="flex w-full items-center gap-0.5 rounded px-1.5 py-0.5 text-[0.65rem] text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <Plus className="h-3 w-3" /> add event
+              </button>
+            )}
           </div>
           {/* Print: show all events */}
           <div className="hidden print:block space-y-0">
@@ -706,7 +749,7 @@ function CalendarView({
         </>
       );
     },
-    [visibleEvents, openEventPopover, setDayEventsPopover]
+    [visibleEvents, openEventPopover, setDayEventsPopover, isAdmin]
   );
 
   const handleMonthChange = useCallback(
@@ -1032,6 +1075,7 @@ function CalendarView({
             setCalendarViewType("day");
           }}
           getEventColor={getEventColor}
+          adminAddEventDate={isAdmin ? dayEventsPopover.date : undefined}
         />
       )}
 
@@ -1090,6 +1134,7 @@ export function EventsView({
   myEvents = false,
   basePath = "/events",
   vendorCoords = null,
+  isAdmin = false,
 }: EventsViewProps) {
   const currentSearchParams = useSearchParams();
   const viewMode = view;
@@ -1553,6 +1598,7 @@ export function EventsView({
           onViewTypeChange={setCalendarViewType}
           excludedCategories={excludedCategories}
           onExcludedCategoriesChange={setExcludedCategories}
+          isAdmin={isAdmin}
         />
       )}
 
