@@ -1,16 +1,11 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, promoters, eventSchemaOrg, eventDays } from "@/lib/db/schema";
+import { events, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
-import {
-  createSlug,
-  computePublicDates,
-  dollarsToCents,
-  appendSlugSegment,
-  unsafeSlug,
-} from "@/lib/utils";
+import { createSlug, computePublicDates, dollarsToCents, unsafeSlug } from "@/lib/utils";
+import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
@@ -107,24 +102,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Generate event slug
+    // Generate event slug. WS2a — shared prefix-range resolver (was a
+    // per-candidate while-loop; now `base-2` first on collision, not `base-1`).
     const eventSlug = createSlug(data.name);
-    let finalEventSlug = eventSlug;
-    let slugSuffix = 0;
-    while (true) {
-      const existingSlug = await db
-        .select()
-        .from(events)
-        .where(
-          eq(events.slug, unsafeSlug(slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
-        )
-        .limit(1);
-      if (existingSlug.length === 0) break;
-      slugSuffix++;
-    }
-    if (slugSuffix > 0) {
-      finalEventSlug = appendSlugSegment(eventSlug, slugSuffix);
-    }
+    const finalEventSlug = await resolveUniqueEventSlug(db, eventSlug);
 
     // Parse dates. Normalize bare YYYY-MM-DD (and YYYY-MM-DDT00:00:00Z) to
     // noon UTC — midnight-UTC dates render as the PREVIOUS calendar day in
@@ -381,22 +362,8 @@ export async function POST(request: NextRequest) {
     // (8 explicit + the $defaultFn createdAt), so chunks are capped at 11
     // rows (11 × 9 = 99). Recurring events easily exceed the safe count —
     // 582f3156 had 16 — so the loop is required, not optional.
-    if (effectiveEventDays && effectiveEventDays.length > 0) {
-      const rows = effectiveEventDays.map((day) => ({
-        id: crypto.randomUUID(),
-        eventId: newEventId,
-        date: day.date,
-        openTime: day.openTime,
-        closeTime: day.closeTime,
-        notes: day.notes ?? null,
-        closed: day.closed ?? false,
-        vendorOnly: day.vendorOnly ?? false,
-      }));
-      const EVENT_DAYS_CHUNK_SIZE = 11;
-      for (let i = 0; i < rows.length; i += EVENT_DAYS_CHUNK_SIZE) {
-        await db.insert(eventDays).values(rows.slice(i, i + EVENT_DAYS_CHUNK_SIZE));
-      }
-    }
+    // WS2a — shared D1-safe batched insert (was an inline chunk loop).
+    await insertEventDaysBatched(db, newEventId, effectiveEventDays);
 
     // Store schema.org data if JSON-LD was provided
     if (data.jsonLd) {

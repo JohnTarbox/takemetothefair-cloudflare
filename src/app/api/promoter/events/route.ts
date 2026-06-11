@@ -2,17 +2,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { promoters, events, venues, eventDays } from "@/lib/db/schema";
+import { promoters, events, venues } from "@/lib/db/schema";
 import { eventVenueJoinProjection } from "@/lib/db/event-join-projection";
-import { eq, desc, or, gt, lt, and } from "drizzle-orm";
-import {
-  createSlug,
-  getSlugPrefixBounds,
-  findUniqueSlug,
-  computePublicDates,
-  dollarsToCents,
-  unsafeSlug,
-} from "@/lib/utils";
+import { eq, desc } from "drizzle-orm";
+import { createSlug, computePublicDates, dollarsToCents } from "@/lib/utils";
+import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
@@ -151,21 +145,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use string range comparison instead of LIKE to avoid "pattern too complex" errors
-    const [lowerBound, upperBound] = getSlugPrefixBounds(baseSlug);
-    const existingSlugs = await db
-      .select({ slug: events.slug })
-      .from(events)
-      .where(
-        or(
-          eq(events.slug, unsafeSlug(baseSlug)),
-          and(gt(events.slug, unsafeSlug(lowerBound)), lt(events.slug, unsafeSlug(upperBound)))
-        )
-      );
-    const slug = findUniqueSlug(
-      baseSlug,
-      existingSlugs.map((r) => r.slug)
-    );
+    // WS2a — shared helper (prefix-range query + findUniqueSlug). Was inlined.
+    const slug = await resolveUniqueEventSlug(db, baseSlug);
 
     const eventId = crypto.randomUUID();
 
@@ -215,21 +196,10 @@ export async function POST(request: NextRequest) {
 
     await recomputeEventCompleteness(db, eventId);
 
-    // Insert event days if provided
-    if (Array.isArray(eventDaysInput) && eventDaysInput.length > 0) {
-      await db.insert(eventDays).values(
-        eventDaysInput.map((day: any) => ({
-          id: crypto.randomUUID(),
-          eventId,
-          date: day.date,
-          openTime: day.openTime,
-          closeTime: day.closeTime,
-          notes: day.notes || null,
-          closed: day.closed || false,
-          vendorOnly: day.vendorOnly || false,
-        }))
-      );
-    }
+    // WS2a — shared D1-safe batched insert. FIX: this path previously inserted
+    // ALL days in one statement, blowing D1's bound-parameter limit for events
+    // with ≥12 days; the helper chunks at 11.
+    await insertEventDaysBatched(db, eventId, eventDaysInput);
 
     const newEvent = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 

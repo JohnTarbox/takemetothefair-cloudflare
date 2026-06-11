@@ -2,16 +2,10 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, eventDays, contentLinks, blogPosts, venues } from "@/lib/db/schema";
-import { eq, or, gt, lt, and, sql, inArray } from "drizzle-orm";
-import {
-  createSlug,
-  getSlugPrefixBounds,
-  findUniqueSlug,
-  computePublicDates,
-  dollarsToCents,
-  unsafeSlug,
-} from "@/lib/utils";
+import { events, contentLinks, blogPosts, venues } from "@/lib/db/schema";
+import { eq, and, sql, inArray } from "drizzle-orm";
+import { createSlug, computePublicDates, dollarsToCents, unsafeSlug } from "@/lib/utils";
+import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import { getEventsWithRelations } from "@/lib/queries";
 import { eventCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -153,21 +147,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use string range comparison instead of LIKE to avoid "pattern too complex" errors
-    const [lowerBound, upperBound] = getSlugPrefixBounds(baseSlug);
-    const existing = await db
-      .select({ slug: events.slug })
-      .from(events)
-      .where(
-        or(
-          eq(events.slug, baseSlug),
-          and(gt(events.slug, unsafeSlug(lowerBound)), lt(events.slug, unsafeSlug(upperBound)))
-        )
-      );
-    const slug = findUniqueSlug(
-      baseSlug,
-      existing.map((r) => r.slug)
-    );
+    // WS2a — shared helper (prefix-range query + findUniqueSlug). Was inlined.
+    const slug = await resolveUniqueEventSlug(db, baseSlug);
 
     // Auto-compute startDate/endDate from eventDays when discontinuous.
     // A3 (Dev backlog 2026-06-05): route through normalizeEventDate so a
@@ -271,25 +252,8 @@ export async function POST(request: NextRequest) {
     // Insert event days if provided. D1 caps each statement at 100 bound
     // parameters; event_days rows pass 9 columns (8 explicit + the $defaultFn
     // createdAt), so chunks are capped at 11 rows (11 × 9 = 99). The previous
-    // BATCH_SIZE=100 was the bug that wiped event_days on save for any event
-    // with ≥12 day rows — see the PATCH handler for the full incident note.
-    if (data.eventDays && data.eventDays.length > 0) {
-      const days = data.eventDays.map((day) => ({
-        id: crypto.randomUUID(),
-        eventId,
-        date: day.date,
-        openTime: day.openTime,
-        closeTime: day.closeTime,
-        notes: day.notes || null,
-        closed: day.closed || false,
-        vendorOnly: day.vendorOnly || false,
-      }));
-      const BATCH_SIZE = 11;
-      for (let i = 0; i < days.length; i += BATCH_SIZE) {
-        const batch = days.slice(i, i + BATCH_SIZE);
-        await db.insert(eventDays).values(batch);
-      }
-    }
+    // WS2a — shared D1-safe batched insert (was an inline BATCH_SIZE=11 loop).
+    await insertEventDaysBatched(db, eventId, data.eventDays);
 
     const [newEvent] = await db.select().from(events).where(eq(events.id, eventId)).limit(1);
 
