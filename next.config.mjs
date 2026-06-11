@@ -2,6 +2,29 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // MIG1 (2026-06-11) — force metadata to render BLOCKING, in the <head>, for
+  // every client.
+  //
+  // Next 15.5 (which the OpenNext migration bumped us up to from 15.1) made
+  // "streaming metadata" the default: for JS-rendering clients — real browsers
+  // AND Googlebot — the <title>/description/canonical/OG/JSON-LD are streamed
+  // late in the body and hoisted into <head> by the client. Only non-JS bots
+  // (Bing, Twitterbot, facebookexternalhit, Slackbot — Next's default
+  // `htmlLimitedBots` list) get blocking in-head metadata. Functionally correct,
+  // but it makes our primary organic surface (~976 event + ~800 venue pages)
+  // depend on Google's JS-render pass to see title/canonical, where pre-
+  // migration they were always in the raw <head>.
+  //
+  // `htmlLimitedBots` overrides the default list with this regex: any UA that
+  // matches gets blocking metadata. Matching ALL UAs disables streaming
+  // entirely → metadata is always in <head>, restoring pre-15.5 behavior.
+  //
+  // Cost is ~zero: the detail pages are ISR-cached (`revalidate = 300`), so the
+  // resolved metadata is baked into the cached HTML — blocking adds no per-
+  // request latency on cache hits, only on the rare regeneration. The blocking
+  // path is already proven working under OpenNext (Bing/Twitter/Slack bots get
+  // full head metadata today).
+  htmlLimitedBots: /.*/,
   images: {
     // IMG1 (2026-06-07) — wired Cloudflare URL-based Image Resizing as
     // a custom Next/Image loader. Drops `unoptimized: true` (which
