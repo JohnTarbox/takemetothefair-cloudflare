@@ -416,3 +416,89 @@ export function trackPrintSheet(entityType: PrintEntityType, entityId: string, e
     entitySlug,
   });
 }
+
+// ── ENG1.5 (Dev-Email-2026-06-10 §B, 2026-06-10) — supply-side claim funnel ──
+//
+// Mirrors the demand-side vendor_application instrumentation. Three stages:
+// `started` (intent — claim button click), `submitted` (claim request made),
+// `approved` (claim granted). `claim_method` distinguishes the path:
+//   - "register"       one-click direct claim (signed-in email matched the
+//                      listing's contact_email; for the direct path started →
+//                      submitted → approved all fire in quick succession)
+//   - "email"          confirmation-link round-trip (initiate → confirm)
+//   - "admin_approved" operator grant — value reserved; the server-side emit
+//                      from the MCP approval tool is a deferred follow-up
+//                      (the MCP Worker doesn't write analyticsEvents today, and
+//                      manual approvals are the rare escape-hatch path)
+//
+// Dual-emit (GA4 + D1 beacon): claims are low-volume and operators want the
+// signal in /admin/analytics without the GA4 custom-dimension propagation
+// delay. `claim_method` + `vendor_id` surface as GA4 custom dimensions after
+// John registers them — see docs/eng1-ga4-custom-dimensions.md.
+
+export type ClaimStage = "started" | "submitted" | "approved";
+export type ClaimMethod = "email" | "register" | "admin_approved";
+
+export function trackVendorClaim(
+  stage: ClaimStage,
+  claimMethod: ClaimMethod,
+  vendorSlug: string,
+  vendorId?: string
+) {
+  const name = `claim_${stage}`;
+  trackEvent(name, {
+    category: "conversion",
+    label: vendorSlug,
+    vendor_slug: vendorSlug,
+    vendor_id: vendorId,
+    claim_method: claimMethod,
+  });
+  sendBeacon(name, "conversion", { vendorSlug, vendorId, claimMethod });
+}
+
+// ── ENG1.6 (Dev-Email-2026-06-10 §B, 2026-06-10) — browse CTR ──
+//
+// GA4 ecommerce-style item-list events to close the listing→detail CTR gap
+// (we know how many land on /events and how many land on /events/<slug>, but
+// not how many transitioned on the same session). `view_item_list` fires once
+// on listing-page mount; `select_item` fires on click-through to a detail
+// page. GA4-only (no D1 beacon): listing views are high-volume and the CTR
+// question is answered natively in GA4 funnel exploration. `item_list_name`
+// surfaces as a custom dimension — see docs/eng1-ga4-custom-dimensions.md.
+
+export interface ItemListEntry {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export function trackViewItemList(listName: string, items: ItemListEntry[]) {
+  trackEvent("view_item_list", {
+    category: "engagement",
+    label: listName,
+    item_list_name: listName,
+    items: items.map((it, index) => ({ item_id: it.id, item_name: it.name, index })),
+  });
+}
+
+export function trackSelectItem(listName: string, item: ItemListEntry, index: number) {
+  trackEvent("select_item", {
+    category: "engagement",
+    label: listName,
+    item_list_name: listName,
+    items: [{ item_id: item.id, item_name: item.name, index }],
+  });
+}
+
+// ── ENG1.7 (Dev-Email-2026-06-10 §B, 2026-06-10) — newsletter confirm ──
+//
+// Fires when the double-opt-in confirmation link resolves successfully (the
+// /newsletter/confirmed page renders with status=ok). Closes the gap between
+// `newsletter_submit` (intent) and a verified subscriber. Dual-emit so the
+// confirmation rate is visible in /admin/analytics. Open/click tracking is
+// deferred — Cloudflare's native email send exposes no open/click webhooks.
+
+export function trackNewsletterConfirm() {
+  trackEvent("newsletter_confirm", { category: "conversion", label: "newsletter" });
+  sendBeacon("newsletter_confirm", "conversion", {});
+}

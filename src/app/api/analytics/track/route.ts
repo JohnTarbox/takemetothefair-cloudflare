@@ -33,6 +33,17 @@ const ALLOWED_EVENT_NAMES = [
   // + beacon so operators see counts on /admin/analytics without waiting
   // for the 24h GA4 custom-dim propagation.
   "print_sheet",
+  // ENG1.5 (Dev-Email-2026-06-10 §B, 2026-06-10) — supply-side claim funnel.
+  // Low-volume; dual-emitted so the funnel is visible in /admin/analytics
+  // First-party events without the GA4 registration delay. The admin_approved
+  // method's server-side emit is a deferred follow-up (see analytics.ts).
+  "claim_started",
+  "claim_submitted",
+  "claim_approved",
+  // ENG1.7 (Dev-Email-2026-06-10 §B, 2026-06-10) — newsletter double-opt-in
+  // confirmation. (view_item_list / select_item are GA4-only — high volume,
+  // intentionally NOT beaconed.)
+  "newsletter_confirm",
 ] as const;
 
 const trackSchema = z.object({

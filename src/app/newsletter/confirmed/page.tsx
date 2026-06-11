@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { CheckCircle2, AlertCircle, Clock } from "lucide-react";
+import { NewsletterConfirmTracker } from "@/components/analytics/NewsletterConfirmTracker";
 
 export const metadata: Metadata = {
   title: "Newsletter Confirmation | Meet Me at the Fair",
@@ -67,6 +68,7 @@ export default async function NewsletterConfirmedPage({ searchParams }: Props) {
 
   return (
     <div className="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 py-16">
+      <NewsletterConfirmTracker status={status} />
       <div className="rounded-xl border border-border bg-card p-8 text-center">
         <div className="flex justify-center mb-4">
           <Icon className={`w-12 h-12 ${copy.iconClass}`} aria-hidden="true" />
