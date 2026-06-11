@@ -40,7 +40,6 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 import { countPublicFilteredEvents, hasPublicFilters } from "@/lib/events-filter-count";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 const BASE_METADATA: Metadata = {
@@ -763,6 +762,8 @@ function EventsFilter({
     </form>
   );
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function EventsPage({
   searchParams,

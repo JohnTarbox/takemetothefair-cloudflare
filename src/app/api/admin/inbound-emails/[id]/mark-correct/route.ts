@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/inbound-emails/[id]/mark-correct — admin actively
  * labels a low-confidence row as correctly classified. Writes a row to
@@ -14,8 +15,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { inboundEmails, inboundEmailIntentFeedback, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-
-export const runtime = "edge";
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();

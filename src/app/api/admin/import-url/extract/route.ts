@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -8,8 +9,6 @@ import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
 import { expandCadence } from "@/lib/url-import/cadence-expander";
 import { composeDeterministicExtract } from "@/lib/url-import/deterministic/compose";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 const extractRequestSchema = z.object({
   content: z.string().min(1, "Content is required"),

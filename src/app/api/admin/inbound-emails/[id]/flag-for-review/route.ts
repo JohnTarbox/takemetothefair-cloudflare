@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/inbound-emails/[id]/flag-for-review — admin toggles
  * the flagged_for_review boolean on an inbound row. Used during the
@@ -16,8 +17,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { inboundEmails, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-
-export const runtime = "edge";
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth();

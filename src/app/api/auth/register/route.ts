@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -11,8 +12,6 @@ import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile"
 import { getSiteUrl } from "@/lib/email/send";
 import { emailVerificationTemplate } from "@/lib/email/templates";
 import { enqueueEmail } from "@/lib/queues/producers";
-
-export const runtime = "edge";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),

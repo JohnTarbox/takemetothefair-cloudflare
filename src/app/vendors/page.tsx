@@ -26,7 +26,6 @@ import {
 
 const PAGE_SIZE = 50;
 
-export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
 
 export const metadata: Metadata = {
@@ -486,6 +485,8 @@ async function getFeaturedVendors(typeFilter?: string): Promise<FeaturedVendor[]
     throw new FetchError("app/vendors/page.tsx:getFeaturedVendors", e);
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function VendorsPage({
   searchParams,

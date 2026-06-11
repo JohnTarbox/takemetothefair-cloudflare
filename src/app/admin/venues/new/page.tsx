@@ -12,8 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { GooglePlaceSearch } from "@/components/google-place-search";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 
-export const runtime = "edge";
-
 export default function NewVenuePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);

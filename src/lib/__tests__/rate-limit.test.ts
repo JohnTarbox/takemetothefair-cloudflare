@@ -24,8 +24,8 @@ interface FakeEnv {
 
 let fakeEnv: FakeEnv | null = null;
 
-vi.mock("@cloudflare/next-on-pages", () => ({
-  getRequestContext: () => {
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: () => {
     if (fakeEnv === null) throw new Error("no request context");
     return { env: fakeEnv };
   },

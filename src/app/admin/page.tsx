@@ -11,8 +11,6 @@ import { EventVendorsPanel } from "@/components/admin/event-vendors-panel";
 import { SchemaOrgSyncButton } from "@/components/admin/SchemaOrgSyncButton";
 import { logError } from "@/lib/logger";
 
-export const runtime = "edge";
-
 async function getStats() {
   const db = getCloudflareDb();
 
@@ -149,6 +147,8 @@ async function getUpcomingEventsWithVendorCounts() {
     return [];
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function AdminDashboard() {
   const [stats, recentSubmissions, upcomingEvents] = await Promise.all([

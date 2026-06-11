@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { desc } from "drizzle-orm";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions, ga4LivenessLog } from "@/lib/db/schema";
 import { getMaxGa4DateWithUsers, type Ga4Env } from "@/lib/ga4";
-
-export const runtime = "edge";
 
 const DEGRADED_THRESHOLD_SECONDS = 24 * 3600; // 24h → degraded
 const CRITICAL_THRESHOLD_SECONDS = 48 * 3600; // 48h → critical

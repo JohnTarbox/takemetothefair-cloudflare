@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -11,8 +12,6 @@ import { enqueueEmail } from "@/lib/queues/producers";
 import { vendorClaimConfirmationTemplate } from "@/lib/email/templates";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 function redirectTo(path: string) {
   return NextResponse.redirect(`${getSiteUrl()}${path}`, { status: 303 });

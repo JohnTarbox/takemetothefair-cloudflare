@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { eq } from "drizzle-orm";
@@ -12,8 +13,6 @@ import {
 import { eventLifecycleUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

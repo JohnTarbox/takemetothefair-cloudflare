@@ -1,0 +1,62 @@
+name: OpenNext Size Check
+
+# Phase-0 go/no-go for the OpenNext migration: build with @opennextjs/cloudflare
+# on a real runner (esbuild deadlocks only in constrained dev sandboxes) and
+# report the GZIPPED worker size. Cloudflare Workers (paid) cap = 10 MiB gzipped.
+# Runs only on the migration branch / manual dispatch — does NOT touch prod.
+
+on:
+  push:
+    branches: [migrate/opennext]
+  workflow_dispatch:
+
+jobs:
+  size:
+    name: OpenNext build + gzipped size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+
+      - name: Build with OpenNext adapter
+        run: npx opennextjs-cloudflare build
+
+      - name: Measure worker size via wrangler dry-run
+        run: |
+          set -euo pipefail
+          # Minimal OpenNext Worker config — dry-run bundles locally and prints
+          # the authoritative "Total Upload / gzip" the platform measures. No
+          # auth or remote calls needed.
+          echo "--- .open-next layout ---"; ls -la .open-next/ || true
+          # Use the REAL wrangler.toml: --dry-run bundles locally + reports the
+          # authoritative "Total Upload / gzip" without any remote call, and
+          # doubles as a config-validity check.
+          npx wrangler deploy --dry-run --outdir /tmp/wd 2>&1 | tee /tmp/dryrun.log
+          # Parse "Total Upload: X KiB / gzip: Y KiB"
+          LINE=$(grep -iE "Total Upload:" /tmp/dryrun.log | tail -1)
+          echo "$LINE"
+          GZIP_KIB=$(echo "$LINE" | sed -nE 's/.*gzip:\s*([0-9.]+)\s*KiB.*/\1/p')
+          if [ -z "$GZIP_KIB" ]; then echo "::error::could not parse gzip size"; exit 1; fi
+          GZIP_MIB=$(awk "BEGIN{printf \"%.2f\", $GZIP_KIB/1024}")
+          echo "### OpenNext Worker size (wrangler dry-run)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- gzip: **${GZIP_MIB} MiB**  (Workers paid cap = 10 MiB gzipped)" >> "$GITHUB_STEP_SUMMARY"
+          echo "gzip: ${GZIP_MIB} MiB"
+          OVER=$(awk "BEGIN{print ($GZIP_KIB > 9*1024) ? 1 : 0}")
+          if [ "$OVER" = "1" ]; then
+            echo "::error::gzip ${GZIP_MIB} MiB exceeds the 9 MiB headroom threshold"
+            exit 1
+          fi
+          echo "✅ under the 9 MiB gzipped headroom threshold"

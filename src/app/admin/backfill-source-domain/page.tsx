@@ -21,8 +21,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-export const runtime = "edge";
-
 interface ProgressResponse {
   remaining: number;
   total: number;

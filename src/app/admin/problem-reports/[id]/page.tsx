@@ -15,7 +15,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { auth } from "@/lib/auth";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 interface Props {

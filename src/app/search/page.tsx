@@ -12,8 +12,6 @@ import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "Search Results | Meet Me at the Fair",
   robots: { index: false },
@@ -22,6 +20,8 @@ export const metadata: Metadata = {
 interface SearchPageProps {
   searchParams: Promise<{ q?: string }>;
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function SearchPage({ searchParams }: SearchPageProps) {
   const params = await searchParams;

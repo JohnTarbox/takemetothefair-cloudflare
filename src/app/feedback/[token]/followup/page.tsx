@@ -9,8 +9,6 @@ import Link from "next/link";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { verifyTokenForRead } from "@/lib/feedback-tokens";
 
-export const runtime = "edge";
-
 interface PageProps {
   params: Promise<{ token: string }>;
   searchParams: Promise<{ v?: string }>;

@@ -37,7 +37,6 @@ import { analyticsEvents, eventVendors, vendors, vendorOutreachAttempts } from "
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LogOutreachButton } from "@/components/admin/log-outreach-button";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 const WEIGHT_EVENT_COUNT = 0.35;
@@ -274,6 +273,8 @@ function outcomeBadgeClasses(outcome: string): string {
       return "bg-amber-50 text-amber-800 border-amber-200";
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function VendorClaimLeaderboardPage() {
   const rows = await loadLeaderboard();

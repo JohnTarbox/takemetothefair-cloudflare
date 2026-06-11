@@ -1,4 +1,4 @@
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { logError } from "@/lib/logger";
 import { SITE_URL, SUPPORT_EMAIL } from "@takemetothefair/constants";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
@@ -27,7 +27,7 @@ export type SendResult =
 
 function getRuntimeEnv(key: string): string | undefined {
   try {
-    const { env } = getRequestContext();
+    const { env } = getCloudflareContext();
     return (env as unknown as Record<string, string | undefined>)[key];
   } catch {
     return process.env[key];

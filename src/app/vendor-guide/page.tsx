@@ -14,7 +14,6 @@ import { MarkdownContent } from "@/components/blog/markdown-content";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
 
-export const runtime = "edge";
 export const revalidate = 86400;
 
 export const metadata: Metadata = {

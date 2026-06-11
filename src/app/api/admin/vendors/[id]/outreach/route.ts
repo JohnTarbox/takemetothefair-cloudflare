@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/admin/vendors/[id]/outreach — log an outreach attempt.
  *
@@ -24,8 +25,6 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendorOutreachAttempts, vendors } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { eq } from "drizzle-orm";
-
-export const runtime = "edge";
 
 const ChannelEnum = z.enum(["email", "phone", "in_person", "other"]);
 const OutcomeEnum = z.enum([

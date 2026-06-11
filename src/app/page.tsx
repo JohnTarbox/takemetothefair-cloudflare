@@ -18,7 +18,6 @@ import { logError } from "@/lib/logger";
 
 import type { Metadata } from "next";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 export const metadata: Metadata = {
@@ -241,6 +240,8 @@ async function getRecentBlogPosts() {
     throw new FetchError("app/page.tsx:getRecentBlogPosts", e);
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const [featuredEvents, upcomingEventsRaw, weekendEvents, counts, recentPosts] = await Promise.all(

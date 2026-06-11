@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { refreshIssues } from "@/lib/site-health";
 import type { BingEnv } from "@/lib/bing-webmaster";
 import type { ScEnv } from "@/lib/search-console";
-
-export const runtime = "edge";
 
 export async function POST(request: Request) {
   if (!(await isAuthorized(request))) {

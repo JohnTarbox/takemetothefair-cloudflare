@@ -82,7 +82,6 @@ import { PrintBeacon } from "@/components/print/PrintBeacon";
 import { formatDateMedium } from "@/lib/datetime";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 interface Props {

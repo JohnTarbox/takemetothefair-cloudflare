@@ -25,8 +25,6 @@ import { eq } from "drizzle-orm";
 import { lookupCorrectionToken } from "@/lib/correction-tokens";
 import { CorrectionForm } from "./correction-form";
 
-export const runtime = "edge";
-
 interface PageProps {
   params: Promise<{ token: string }>;
 }

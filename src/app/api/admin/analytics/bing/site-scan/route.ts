@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
@@ -7,8 +8,6 @@ import {
   getSiteScanIssues,
   type BingEnv,
 } from "@/lib/bing-webmaster";
-
-export const runtime = "edge";
 
 export async function GET(request: Request) {
   if (!(await isAuthorized(request))) {

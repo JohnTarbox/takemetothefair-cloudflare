@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Daily sweep that processes Enhanced Profile vendors past their 30-day
  * grace period. Cloudflare doesn't have cron triggers configured here
@@ -21,8 +22,6 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, adminActions } from "@/lib/db/schema";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 const GRACE_MS = 30 * 86400000;
 

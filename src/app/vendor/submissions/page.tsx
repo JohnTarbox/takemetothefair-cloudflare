@@ -11,8 +11,6 @@ import { auth } from "@/lib/auth";
 import { formatDateRange } from "@/lib/utils";
 import { redirect } from "next/navigation";
 
-export const runtime = "edge";
-
 const statusConfig: Record<
   string,
   { label: string; variant: "default" | "success" | "warning" | "danger" | "info" }
@@ -41,6 +39,8 @@ async function getSubmissions(userId: string) {
     venue: r.venue,
   }));
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function VendorSubmissionsPage() {
   const session = await auth();

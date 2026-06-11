@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { CategoryEventsPage } from "@/components/events/category-events-page";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 export const metadata: Metadata = {

@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { errorLogs } from "@/lib/db/schema";
 import { desc, eq, like, and, sql, lt } from "drizzle-orm";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const session = await auth();

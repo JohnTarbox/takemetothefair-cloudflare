@@ -7,8 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-export const runtime = "edge";
-
 interface Props {
   params: Promise<{ token: string }>;
 }

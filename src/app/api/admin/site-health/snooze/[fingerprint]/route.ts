@@ -1,9 +1,8 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { unsnoozeIssue } from "@/lib/site-health";
-
-export const runtime = "edge";
 
 export async function DELETE(
   request: Request,

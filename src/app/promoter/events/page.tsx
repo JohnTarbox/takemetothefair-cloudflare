@@ -14,8 +14,6 @@ import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { logError } from "@/lib/logger";
 import { PUBLIC_VENDOR_STATUSES } from "@/lib/constants";
 
-export const runtime = "edge";
-
 const statusColors: Record<string, "default" | "success" | "warning" | "danger" | "info"> = {
   DRAFT: "default",
   PENDING: "warning",
@@ -119,6 +117,8 @@ async function getPromoterEvents(userId: string): Promise<PromoterEvent[]> {
     return [];
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function PromoterEventsPage() {
   const session = await auth();

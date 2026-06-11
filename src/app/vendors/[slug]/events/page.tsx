@@ -10,8 +10,6 @@ import { formatDateRange } from "@/lib/utils";
 import { AddToCalendar } from "@/components/events/AddToCalendar";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 
-export const runtime = "edge";
-
 interface Event {
   id: string;
   name: string;

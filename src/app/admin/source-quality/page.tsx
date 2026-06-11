@@ -25,7 +25,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { extractDomain } from "@/lib/url-classification";
 
-export const runtime = "edge";
 export const revalidate = 300; // 5-min ISR — these numbers don't churn fast
 
 // Sources with fewer than this many total events are too small to score
@@ -218,6 +217,8 @@ const METHOD_OPTIONS: Array<{ value: string | null; label: string }> = [
   { value: "admin_manual", label: "admin_manual" },
   { value: "web_research", label: "web_research" },
 ];
+
+export const dynamic = "force-dynamic";
 
 export default async function SourceQualityPage({
   searchParams,

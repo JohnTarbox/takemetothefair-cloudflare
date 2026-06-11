@@ -1,4 +1,4 @@
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getSiteUrl } from "@/lib/email/send";
@@ -9,17 +9,17 @@ import { getSiteUrl } from "@/lib/email/send";
  * derive the host from the incoming request — behind the apex proxy the request
  * host is takemetothefair.pages.dev, which previously leaked into verification /
  * reset / newsletter email links. getRuntimeEnv reads the Cloudflare binding
- * env (getRequestContext().env), which the global test setup mocks; we drive
+ * env (getCloudflareContext().env), which the global test setup mocks; we drive
  * NEXT_PUBLIC_SITE_URL through that mock here.
  */
 const mockEnv = (env: Record<string, unknown>) =>
   vi
-    .mocked(getRequestContext)
-    .mockReturnValue({ env } as unknown as ReturnType<typeof getRequestContext>);
+    .mocked(getCloudflareContext)
+    .mockReturnValue({ env } as unknown as ReturnType<typeof getCloudflareContext>);
 
 describe("getSiteUrl", () => {
   afterEach(() => {
-    vi.mocked(getRequestContext).mockReset();
+    vi.mocked(getCloudflareContext).mockReset();
   });
 
   it("returns the production apex when no override is set (never pages.dev)", () => {

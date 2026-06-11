@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
@@ -11,8 +12,6 @@ import {
   groupVendorsForListing,
   type GroupableVendor,
 } from "@/lib/vendor-listing-grouping";
-
-export const runtime = "edge";
 
 // SEARCH1 (2026-06-09) — Cap query length at 100 chars. SQLite's LIKE-pattern
 // complexity counter (limit ~50k) trips on long unanchored `%…%` patterns

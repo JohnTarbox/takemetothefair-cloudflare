@@ -1,4 +1,4 @@
-import { setupDevPlatform } from "@cloudflare/next-on-pages/next-dev";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -89,12 +89,20 @@ const nextConfig = {
   },
 };
 
-// Enable Cloudflare bindings in development
+// OpenNext: initialize Cloudflare bindings for `next dev` only. Guarded to
+// development — calling it during a production build (CI, no Cloudflare auth)
+// tries to start a remote proxy session and fails. Mirrors the original
+// next-on-pages `setupDevPlatform()` dev-only guard.
+//
+// In CI use wrangler.ci.toml, which omits the [ai] binding: Workers AI has no
+// local emulation, so its presence forces getPlatformProxy into REMOTE mode,
+// which needs a Cloudflare login the CI runner doesn't have (the e2e `next dev`
+// webserver died with "must be logged in to use wrangler dev in remote mode").
+// Same rationale as the old setupDevPlatform({ configPath: "wrangler.ci.toml" }).
 if (process.env.NODE_ENV === "development") {
-  await setupDevPlatform({
-    // In CI, use local-only mode to avoid needing Cloudflare auth for remote bindings (AI)
-    ...(process.env.CI ? { configPath: "wrangler.ci.toml" } : {}),
-  });
+  await initOpenNextCloudflareForDev(
+    process.env.CI ? { configPath: "wrangler.ci.toml" } : undefined
+  );
 }
 
 export default nextConfig;

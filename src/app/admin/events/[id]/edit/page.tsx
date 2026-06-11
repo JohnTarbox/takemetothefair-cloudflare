@@ -16,8 +16,6 @@ import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import { STATES, STATE_CODES, type StateCode } from "@/lib/states";
 import { parseDateOnly, toIsoDateOnly } from "@/lib/datetime";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;

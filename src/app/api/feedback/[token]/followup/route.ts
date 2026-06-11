@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * POST /api/feedback/[token]/followup — handle the follow-up form
  * submission for `wrong_intent` and `needs_fixing` paths. Consumes the
@@ -23,8 +24,6 @@ import {
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { isKnownScannerUaServer } from "@/lib/scanner-ua";
-
-export const runtime = "edge";
 
 const VALID_VALUES = new Set(["wrong_intent", "needs_fixing"]);
 

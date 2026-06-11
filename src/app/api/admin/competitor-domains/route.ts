@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * §10.2 admin CRUD for the competitor_domains table.
  *
@@ -14,8 +15,6 @@ import { isAuthorized } from "@/lib/api-auth";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { competitorDomains } from "@/lib/db/schema";
-
-export const runtime = "edge";
 
 const addSchema = z.object({
   domain: z

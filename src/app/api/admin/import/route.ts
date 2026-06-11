@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters, eventDays } from "@/lib/db/schema";
@@ -133,8 +134,6 @@ async function findOrCreateVenue(
 
   return { id: newVenueId, newSlug: finalSlug };
 }
-
-export const runtime = "edge";
 
 // GET - Preview events from a source
 export async function GET(request: Request) {

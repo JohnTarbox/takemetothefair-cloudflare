@@ -37,7 +37,6 @@ import { DetailPageTracker } from "@/components/DetailPageTracker";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 interface Props {

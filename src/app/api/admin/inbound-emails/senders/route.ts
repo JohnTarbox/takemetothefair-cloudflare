@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * GET /api/admin/inbound-emails/senders — sender-quality summary.
  *
@@ -23,8 +24,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { inboundEmails, events, inboundEmailSenders } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
-
-export const runtime = "edge";
 
 const NE_STATES = new Set(["ME", "NH", "VT", "MA", "CT", "RI"]);
 

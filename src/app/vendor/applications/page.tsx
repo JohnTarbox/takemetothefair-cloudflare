@@ -11,8 +11,6 @@ import { logError } from "@/lib/logger";
 import { VendorApplicationRow } from "@/components/vendor/vendor-application-row";
 import type { VendorApplicationRowData } from "@/components/vendor/vendor-application-row";
 
-export const runtime = "edge";
-
 async function getApplications(userId: string): Promise<VendorApplicationRowData[]> {
   const db = getCloudflareDb();
 
@@ -136,6 +134,8 @@ const TABS: Array<{ key: string; label: string; match?: (s: string) => boolean }
 interface PageProps {
   searchParams: Promise<{ status?: string; highlight?: string }>;
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function VendorApplicationsPage({ searchParams }: PageProps) {
   const session = await auth();

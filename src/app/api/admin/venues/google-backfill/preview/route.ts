@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -5,8 +6,6 @@ import { venues } from "@/lib/db/schema";
 import { isNull } from "drizzle-orm";
 import { lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -19,10 +18,7 @@ export async function POST(request: NextRequest) {
   const apiKey = env.GOOGLE_MAPS_API_KEY;
 
   try {
-    const missingGoogle = await db
-      .select()
-      .from(venues)
-      .where(isNull(venues.googlePlaceId));
+    const missingGoogle = await db.select().from(venues).where(isNull(venues.googlePlaceId));
 
     const previews: {
       venueId: string;

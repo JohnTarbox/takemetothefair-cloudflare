@@ -58,7 +58,6 @@ import {
 } from "@takemetothefair/utils";
 import { cdnImage, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
-export const runtime = "edge";
 export const revalidate = 300; // Cache for 5 minutes
 
 interface Props {

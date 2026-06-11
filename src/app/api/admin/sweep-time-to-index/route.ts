@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * §10.2 time-to-index reconciler sweep.
  *
@@ -21,8 +22,6 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { timeToIndexLog, gscInspectionState } from "@/lib/db/schema";
-
-export const runtime = "edge";
 
 export async function POST(request: Request) {
   if (!(await isAuthorized(request))) {

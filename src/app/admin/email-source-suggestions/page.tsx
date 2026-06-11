@@ -19,8 +19,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatTimestamp } from "@/lib/datetime";
 
-export const runtime = "edge";
-
 interface SuggestionRow {
   id: string;
   url: string;

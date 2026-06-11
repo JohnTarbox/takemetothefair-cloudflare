@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * K17 (2026-06-07): consume an upload slot by POSTing image bytes here.
  *
@@ -35,8 +36,6 @@ import {
   PIPELINE_MAX_BYTES,
 } from "@/lib/upload-image-pipeline";
 import { consumeUploadSlot } from "@/lib/upload-slot-token";
-
-export const runtime = "edge";
 
 async function readBytesFromRequest(
   request: NextRequest

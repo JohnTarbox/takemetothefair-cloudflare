@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters } from "@/lib/db/schema";
 import {
@@ -7,8 +8,6 @@ import {
   sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
-
-export const runtime = "edge";
 
 // All promoters are public — the table has no status column; `verified`
 // is a trust badge, not a visibility filter.

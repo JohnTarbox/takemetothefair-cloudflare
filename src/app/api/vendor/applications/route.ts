@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireVerifiedSession } from "@/lib/api-auth";
@@ -5,8 +6,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, events, eventVendors } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const db = getCloudflareDb();

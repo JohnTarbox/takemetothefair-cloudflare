@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -18,8 +19,6 @@ import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { evaluateGates } from "@/lib/event-date-gates";
 import { classifySource } from "@/lib/source-classification";
-
-export const runtime = "edge";
 
 interface ImportRequest {
   event: ExtractedEventData & {

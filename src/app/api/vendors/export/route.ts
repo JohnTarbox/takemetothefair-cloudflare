@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, eventVendors, events } from "@/lib/db/schema";
@@ -8,8 +9,6 @@ import { parseJsonArray } from "@/types";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-
-export const runtime = "edge";
 
 export async function GET(request: Request) {
   // Rate limiting check

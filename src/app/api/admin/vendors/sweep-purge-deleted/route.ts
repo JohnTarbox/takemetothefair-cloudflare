@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Daily sweep that hard-purges vendors whose soft-delete grace window
  * (30 days) has elapsed. Mirrors sweep-enhanced pattern (per project memory
@@ -22,8 +23,6 @@ import { isAuthorized } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, adminActions, contentLinks, recommendationItems } from "@/lib/db/schema";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 const GRACE_MS = 30 * 86400000;
 

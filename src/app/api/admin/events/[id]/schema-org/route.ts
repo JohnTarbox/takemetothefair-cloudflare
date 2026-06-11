@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -6,8 +7,6 @@ import { eq } from "drizzle-orm";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
 import { dollarsToCents } from "@/lib/utils";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ id: string }>;

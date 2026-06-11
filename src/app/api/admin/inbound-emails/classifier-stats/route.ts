@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * GET /api/admin/inbound-emails/classifier-stats?days=30
  *
@@ -20,8 +21,6 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { inboundEmails, inboundEmailIntentFeedback } from "@/lib/db/schema";
 import { and, gte, isNotNull, ne, sql } from "drizzle-orm";
-
-export const runtime = "edge";
 
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;

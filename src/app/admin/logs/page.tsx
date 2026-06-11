@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-export const runtime = "edge";
-
 interface ErrorLog {
   id: string;
   timestamp: number;

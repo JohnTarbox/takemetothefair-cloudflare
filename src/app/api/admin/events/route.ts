@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
@@ -23,8 +24,6 @@ import { recomputeEventCompleteness } from "@/lib/completeness";
 import { evaluateGates } from "@/lib/event-date-gates";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const session = await auth();

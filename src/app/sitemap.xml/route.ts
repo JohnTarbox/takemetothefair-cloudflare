@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import {
   SITEMAP_BASE_URL,
   serializeSitemapIndex,
@@ -5,8 +6,6 @@ import {
   type SitemapIndexEntry,
 } from "@/lib/sitemap-xml";
 import { getSitemapTypeLastMod, type SitemapType } from "@/lib/sitemap-lastmod";
-
-export const runtime = "edge";
 
 // Sitemap index. References the six per-content-type child sitemaps. When
 // adding a new content-type, mirror the new (filename, type) entry here.

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
@@ -8,8 +9,6 @@ import { inArray, eq } from "drizzle-orm";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
-
-export const runtime = "edge";
 
 export async function POST(request: Request) {
   const db = getCloudflareDb();

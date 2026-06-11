@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import type { NextRequest } from "next/server";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
@@ -44,7 +45,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
  *
  * Edge-runtime safe (per CLAUDE.md): no Node APIs, only fetch.
  */
-export const runtime = "edge";
 
 const SOURCE = "app/api/static-map/route.ts:GET";
 

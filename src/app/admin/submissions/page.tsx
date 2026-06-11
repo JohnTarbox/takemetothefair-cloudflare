@@ -7,8 +7,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateRange } from "@/lib/utils";
 
-export const runtime = "edge";
-
 interface Event {
   id: string;
   name: string;

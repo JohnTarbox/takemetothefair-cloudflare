@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * GET /api/admin/email-source-suggestions — list pending source-domain
  * suggestions received via inbound email, for admin review.
@@ -19,8 +20,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { adminActions, discoveryCandidates, emailSourceSuggestions } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const session = await auth();

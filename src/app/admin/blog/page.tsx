@@ -27,7 +27,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { blogFaqSource, type BlogFaqSource } from "@takemetothefair/utils";
 import { classifyIndexState, type IndexState } from "@/lib/gsc-index-state";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 interface PostRow {
@@ -260,6 +259,8 @@ function SortHeader({ label, k, active, align = "left" }: SortHeaderProps) {
     </th>
   );
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function BlogCoveragePage({
   searchParams,

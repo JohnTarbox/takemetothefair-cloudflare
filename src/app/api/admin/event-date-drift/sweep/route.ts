@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { and, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import { isAuthorized } from "@/lib/api-auth";
@@ -6,8 +7,6 @@ import { events, eventDateDriftFindings } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { SCRAPER_USER_AGENT } from "@takemetothefair/constants";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 // Periodic re-verification sweep. Hits a slice of APPROVED upcoming events,
 // re-fetches their source_url, compares the canonical date against the

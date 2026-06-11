@@ -1,9 +1,8 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { pingIndexNow } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 // `source` is optional and free-form so callers can label the lifecycle event
 // (e.g. "event-approve", "vendor-create"). Falls back to "internal-api" for

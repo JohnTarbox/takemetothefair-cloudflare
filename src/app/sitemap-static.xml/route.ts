@@ -1,11 +1,10 @@
+export const dynamic = "force-dynamic";
 import {
   SITEMAP_BASE_URL,
   serializeUrlset,
   sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
-
-export const runtime = "edge";
 
 const NOW = () => new Date();
 

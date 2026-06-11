@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getRequestContext } from "@cloudflare/next-on-pages";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { drizzle } from "drizzle-orm/d1";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { canonicalParentSlugFor, timingSafeEqualString } from "@takemetothefair/utils";
@@ -141,7 +141,7 @@ export async function middleware(request: NextRequest) {
 
   let env: Record<string, unknown> | null = null;
   try {
-    env = getRequestContext().env as unknown as Record<string, unknown>;
+    env = getCloudflareContext().env as unknown as Record<string, unknown>;
   } catch {
     // Outside the Cloudflare runtime (local `next build`) — fall through.
     return NextResponse.next();

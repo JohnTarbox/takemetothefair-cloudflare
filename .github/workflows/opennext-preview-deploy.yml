@@ -1,0 +1,56 @@
+name: OpenNext Preview Deploy
+
+# Phase-4 preview: build with OpenNext on a real runner and deploy the
+# `meetmeatthefair-app` Worker to its *.workers.dev URL. The apex route is
+# COMMENTED in wrangler.toml, so this never touches production traffic — it's
+# a parallel preview against the real D1/KV/R2 bindings.
+#
+# Manual only (workflow_dispatch). Runtime secrets (auth/email/etc.) are NOT
+# injected here — they're set out-of-band on the Worker. Core rendering / ISR /
+# middleware / sitemaps validate without them; auth/email features need the
+# real secret set.
+
+on:
+  push:
+    branches: [migrate/opennext]
+  workflow_dispatch:
+
+jobs:
+  preview:
+    name: Build + deploy preview Worker
+    runs-on: ubuntu-latest
+    # Only deploy when the commit opts in with a [preview] marker (avoids a
+    # workers.dev deploy on every migration commit). Safe: used in an `if`
+    # comparison, never interpolated into a shell command.
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[preview]') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@johntarbox"
+
+      - name: Install dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+
+      - name: Build with OpenNext adapter
+        env:
+          NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
+          NEXT_PUBLIC_CF_BEACON_TOKEN: ${{ secrets.NEXT_PUBLIC_CF_BEACON_TOKEN }}
+        run: npx opennextjs-cloudflare build
+
+      - name: Deploy preview Worker (no apex route → workers.dev only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx wrangler deploy 2>&1 | tee /tmp/deploy.log
+          echo "### Preview deploy" >> "$GITHUB_STEP_SUMMARY"
+          grep -iE "https://.*workers\.dev|Deployed|Current Version" /tmp/deploy.log >> "$GITHUB_STEP_SUMMARY" || true

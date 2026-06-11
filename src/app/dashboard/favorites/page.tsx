@@ -12,8 +12,6 @@ import { logError } from "@/lib/logger";
 import { PrintButton } from "@/components/print/PrintButton";
 import { PrintEventSheetFooter } from "@/components/print/PrintEventSheetFooter";
 
-export const runtime = "edge";
-
 async function getFavorites(userId: string) {
   const db = getCloudflareDb();
 
@@ -105,6 +103,8 @@ async function getFavorites(userId: string) {
     return { events: [], venues: [], vendors: [], favorites: [] };
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function FavoritesPage() {
   const session = await auth();

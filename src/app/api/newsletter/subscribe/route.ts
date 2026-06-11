@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -9,8 +10,6 @@ import { issueNewsletterConfirmationToken } from "@/lib/email/newsletter-confirm
 import { newsletterConfirmTemplate } from "@/lib/email/templates";
 import { getSiteUrl } from "@/lib/email/send";
 import { enqueueEmail } from "@/lib/queues/producers";
-
-export const runtime = "edge";
 
 const schema = z.object({
   email: z.string().email(),

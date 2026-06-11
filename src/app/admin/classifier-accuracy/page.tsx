@@ -18,8 +18,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-export const runtime = "edge";
-
 interface WeeklyBucket {
   weekStart: string;
   weekIndex: number;

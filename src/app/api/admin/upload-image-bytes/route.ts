@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Generic image upload endpoint accepting base64 bytes (NOT a URL).
  * Mirrors src/app/api/admin/events/[id]/upload-image/route.ts but works
@@ -40,8 +41,6 @@ import {
   PIPELINE_MAX_BYTES,
   type PipelineTargetType,
 } from "@/lib/upload-image-pipeline";
-
-export const runtime = "edge";
 
 async function authorize(
   request: NextRequest,

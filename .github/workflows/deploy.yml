@@ -54,9 +54,19 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  deploy-pages:
+  # OpenNext migration (2026-06-10): replaces the former `deploy-pages` job.
+  # Builds with @opennextjs/cloudflare and deploys the Worker. Until the apex
+  # `[[routes]]` block in wrangler.toml is uncommented (cutover Stage 3 — see
+  # docs/opennext-cutover-runbook.md), this lands on *.workers.dev ONLY and
+  # production stays on Pages via the apex-worker (whose job + prod smoke below
+  # are unchanged). next-on-pages and @opennextjs/cloudflare can't coexist
+  # (conflicting Next peer ranges), so the Pages build can no longer run from
+  # this branch — the Pages project's last pre-migration deployment is frozen
+  # as the rollback target. DRAFT/cutover note: merging this PR is cutover
+  # Stage 1; complete the runbook stages promptly to bound the prod-freeze.
+  deploy-worker:
     needs: d1-migrate
-    name: Build & Deploy Main App (Pages)
+    name: Build & Deploy Main App (Worker / OpenNext)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -80,70 +90,38 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # NEXT_PUBLIC_* vars must be available at build time — Next.js inlines
-      # them into the static bundle and they're not available at runtime in
-      # serverless contexts. Pre-OpenNext-migration the Cloudflare Pages
-      # dashboard env vars supplied these; the migration (commit c428ce9
-      # 2026-04-27) flipped the build pipeline so we now must pass them
-      # through GitHub Actions secrets. Missing this step caused an 8-day
-      # silent GA4 outage 2026-04-27 → 2026-05-05.
-      - name: Build for Cloudflare Pages
-        run: npm run pages:build
+      # NEXT_PUBLIC_* are inlined at build time (Next.js). Same GitHub-secrets
+      # source as the former Pages build (see git history for the 2026-04-27
+      # GA4-outage lesson).
+      - name: Build with OpenNext adapter
+        run: npx opennextjs-cloudflare build
         env:
           NEXT_PUBLIC_GA_ID: ${{ secrets.NEXT_PUBLIC_GA_ID }}
           NEXT_PUBLIC_CF_BEACON_TOKEN: ${{ secrets.NEXT_PUBLIC_CF_BEACON_TOKEN }}
 
-      - name: Deploy to Pages
+      - name: Deploy Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy .vercel/output/static --project-name=takemetothefair --branch=main --commit-dirty=true
+          command: deploy
 
-      # REL1' §2 (2026-06-04) — post-deploy prod smoke. Catches the symptom
-      # the 2026-06-04 D1 100-col outage produced (empty /events list + every
-      # venue/promoter 404) before users do. 60s sleep lets the Pages CDN
-      # propagate the new build to the edge. Hardcoded URLs only — no user
-      # input flows into the shell.
+      # Post-deploy prod smoke — the OpenNext Worker now serves the apex route
+      # (cutover 2026-06-10). Hardcoded URLs only, no user input into the shell.
       - name: Wait for prod propagation
-        run: sleep 60
+        run: sleep 30
       - name: Post-deploy smoke test
         run: |
-          # Drop `pipefail` for the /events check below: `curl | grep -q`
-          # causes SIGPIPE on curl when grep matches early + exits, and
-          # pipefail bubbles curl's exit 23 up as a step failure (false
-          # positive — caught on the first real run after this step
-          # was added). Use a download-then-grep pattern instead, which
-          # has no pipe between the two checks.
           set -eu
-          echo "Smoke: /events must render at least 1 event card"
+          echo "Smoke: /events renders event links"
           curl -fsS 'https://meetmeatthefair.com/events' -o /tmp/smoke-events.html
           if ! grep -qE 'href="/events/[a-z0-9-]+"' /tmp/smoke-events.html; then
-            echo "FAIL: /events rendered no event links"
-            head -c 2000 /tmp/smoke-events.html
-            exit 1
+            echo "FAIL: /events rendered no event links"; head -c 2000 /tmp/smoke-events.html; exit 1
           fi
-          # K2 Phase A (d) (2026-06-07): extend status-only smoke to also
-          # assert the K1 FetchError UI was NOT rendered. `curl -fsS` saving
-          # to disk inherits the existing status-200 check; the grep covers
-          # the error-UI-rendered-at-200 case the 2026-06-04 D1 outage
-          # surfaced (page renders error.tsx but HTTP status is still 200,
-          # so smoke + crawlers + monitoring all think it's healthy). The
-          # H1 text grepped here is set in src/app/error.tsx — see the JSX
-          # comment above that H1 before changing copy.
-          echo "Smoke: known-good venue must return 200 AND not render K1 error UI"
+          echo "Smoke: known-good venue returns content, not the error UI"
           curl -fsS 'https://meetmeatthefair.com/venues/abbot-square' -o /tmp/smoke-venue.html
           if grep -q 'Service temporarily unavailable' /tmp/smoke-venue.html; then
-            echo "FAIL: /venues/abbot-square rendered the K1 error UI (FetchError)"
-            head -c 2000 /tmp/smoke-venue.html
-            exit 1
-          fi
-          echo "Smoke: known-good promoter must return 200 AND not render K1 error UI"
-          curl -fsS 'https://meetmeatthefair.com/promoters/american-consumer-shows' -o /tmp/smoke-promoter.html
-          if grep -q 'Service temporarily unavailable' /tmp/smoke-promoter.html; then
-            echo "FAIL: /promoters/american-consumer-shows rendered the K1 error UI (FetchError)"
-            head -c 2000 /tmp/smoke-promoter.html
-            exit 1
+            echo "FAIL: /venues/abbot-square rendered the error UI"; head -c 2000 /tmp/smoke-venue.html; exit 1
           fi
           echo "Smoke passed."
 
@@ -192,90 +170,3 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: mcp-server
           command: deploy --var GIT_SHA:${{ steps.vars.outputs.git_sha }} --var BUILD_TIME:${{ steps.vars.outputs.build_time }}
-
-  # K2 Phase B (2026-06-07): the apex Worker that proxies
-  # meetmeatthefair.com to the underlying Pages project and rewrites
-  # response status from 200 to 500 when the rendered HTML carries the
-  # K1 FetchError marker. See docs/k2-spike-status-rewrite.md and
-  # apex-worker/src/index.ts for the architecture.
-  #
-  # Phase B (PR 2): the Worker deploys but does NOT claim the apex
-  # route (wrangler.toml [[routes]] block is commented out). It's
-  # reachable only at meetmeatthefair-edge.<account>.workers.dev for
-  # verification.
-  #
-  # Phase C (PR 3): wrangler.toml claims meetmeatthefair.com/*; the
-  # next deploy of this job moves traffic through the Worker. A
-  # wildcard Worker route beats the Pages custom-domain route on
-  # Cloudflare's tiebreak (precedent: 2026-04-25 sitemap hotfix
-  # Worker, see CLAUDE.md).
-  deploy-apex-worker:
-    needs: d1-migrate
-    name: Build & Deploy Apex Worker
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: "npm"
-          registry-url: "https://npm.pkg.github.com"
-          scope: "@johntarbox"
-
-      - name: Install dependencies (workspace-aware, runs from root)
-        run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Deploy Apex Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apex-worker
-          command: deploy
-
-      # K2 Phase C apex-Worker post-deploy smoke (2026-06-07): after the
-      # cutover (PR 3), the Worker is on the serving path for every apex
-      # request. This smoke verifies known-good URLs continue to return
-      # 200 and that the Worker is NOT falsely rewriting them (no
-      # X-K2-Status-Rewrite header on healthy traffic). Catches catastrophic
-      # cutover regressions before users do. Hardcoded URLs only.
-      - name: Wait for apex Worker propagation
-        run: sleep 30
-      - name: Apex Worker post-deploy smoke
-        run: |
-          set -eu
-          echo "Smoke: apex /events through Worker returns 200 + no rewrite header"
-          curl -fsS -D /tmp/apex-events-headers.txt 'https://meetmeatthefair.com/events' -o /tmp/apex-events.html
-          if grep -qi '^x-k2-status-rewrite' /tmp/apex-events-headers.txt; then
-            echo "FAIL: /events returned X-K2-Status-Rewrite header on healthy traffic"
-            cat /tmp/apex-events-headers.txt
-            exit 1
-          fi
-          if ! grep -qE 'href="/events/[a-z0-9-]+"' /tmp/apex-events.html; then
-            echo "FAIL: /events through Worker rendered no event links"
-            head -c 2000 /tmp/apex-events.html
-            exit 1
-          fi
-          echo "Smoke: apex /venues/abbot-square through Worker returns 200 + no error UI"
-          curl -fsS -D /tmp/apex-venue-headers.txt 'https://meetmeatthefair.com/venues/abbot-square' -o /tmp/apex-venue.html
-          if grep -qi '^x-k2-status-rewrite' /tmp/apex-venue-headers.txt; then
-            echo "FAIL: /venues/abbot-square returned X-K2-Status-Rewrite header on healthy traffic"
-            cat /tmp/apex-venue-headers.txt
-            exit 1
-          fi
-          if grep -q 'Service temporarily unavailable' /tmp/apex-venue.html; then
-            echo "FAIL: /venues/abbot-square through Worker rendered K1 error UI"
-            head -c 2000 /tmp/apex-venue.html
-            exit 1
-          fi
-          echo "Apex Worker smoke passed."

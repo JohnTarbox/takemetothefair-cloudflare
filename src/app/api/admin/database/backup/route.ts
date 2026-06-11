@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { requireAdminAuth } from "@/lib/api-auth";
 import { logError } from "@/lib/logger";
 import { checkAdminGeoRestriction } from "@/lib/geo-security";
-
-export const runtime = "edge";
 
 // GET - Generate and download a database backup
 export async function GET(request: NextRequest) {

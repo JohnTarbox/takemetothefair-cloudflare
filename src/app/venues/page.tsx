@@ -15,7 +15,6 @@ import { MobileFilterDrawer } from "@/components/ui/mobile-filter-drawer";
 
 const PAGE_SIZE = 50;
 
-export const runtime = "edge";
 export const revalidate = 3600; // Cache for 1 hour
 
 export const metadata: Metadata = {
@@ -193,6 +192,8 @@ async function getStates() {
     throw new FetchError("app/venues/page.tsx:getStates", e);
   }
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function VenuesPage({
   searchParams,

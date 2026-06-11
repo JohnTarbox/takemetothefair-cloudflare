@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -9,8 +10,6 @@ import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { indexNowUrlFor } from "@/lib/indexnow";
 import { enqueueIndexNow } from "@/lib/queues/producers";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const session = await auth();

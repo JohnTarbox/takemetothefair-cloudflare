@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * One-shot backfill of contaminated ticket_url / application_url values.
  *
@@ -19,8 +20,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { loadClassifications, gateUrlForField, extractDomain } from "@/lib/url-classification";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 interface AffectedRow {
   id: string;

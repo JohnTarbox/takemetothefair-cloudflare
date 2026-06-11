@@ -63,3 +63,4 @@ ANALYST_REPLY_*.md
 
 # Local-only design discussions held outside committed docs/.
 docs/repo-privacy-tradeoff.md
+.open-next/

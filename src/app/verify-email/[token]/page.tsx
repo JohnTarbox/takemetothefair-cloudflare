@@ -5,7 +5,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { validateAndConsumeVerificationToken } from "@/lib/email/verify-token";
 import { ResendVerificationButton } from "@/components/auth/ResendVerificationButton";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 interface Props {

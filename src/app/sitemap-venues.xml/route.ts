@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
@@ -8,8 +9,6 @@ import {
   sitemapXmlHeaders,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
-
-export const runtime = "edge";
 
 async function buildVenueUrls(): Promise<SitemapUrl[]> {
   const db = getCloudflareDb();

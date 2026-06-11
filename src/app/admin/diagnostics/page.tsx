@@ -17,7 +17,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { loadDiagnosticsSnapshot } from "@/lib/diagnostics";
 import { formatTimestampForServer } from "@/lib/datetime";
 
-export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 function fmt(n: number): string {

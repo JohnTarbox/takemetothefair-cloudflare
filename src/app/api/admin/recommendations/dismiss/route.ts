@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -5,8 +6,6 @@ import { getAuthorizedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { adminActions } from "@/lib/db/schema";
 import { dismissItem, markActed } from "@/lib/recommendations/engine";
-
-export const runtime = "edge";
 
 const bodySchema = z.object({
   itemId: z.string().min(1).max(64),

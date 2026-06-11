@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventVendors, events } from "@/lib/db/schema";
@@ -5,8 +6,6 @@ import { eq, and } from "drizzle-orm";
 import { authenticateVendorToken } from "@/lib/api-token-auth";
 import { isValidTransition } from "@/lib/vendor-status";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const db = getCloudflareDb();

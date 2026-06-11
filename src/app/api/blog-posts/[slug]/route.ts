@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { blogPosts, blogSlugHistory, contentLinks, users } from "@/lib/db/schema";
@@ -9,8 +10,6 @@ import { eq, and, or, gt, lt, ne } from "drizzle-orm";
 import { findBrokenContentLinksInDb, findBrokenLinksInDb } from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 interface Params {
   params: Promise<{ slug: string }>;

@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -15,8 +16,6 @@ import { getFlipMargin } from "@/lib/goodwill/get-flip-margin";
 import { enqueueIngestDiscrepancy } from "@/lib/queues/producers";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
-
-export const runtime = "edge";
 
 // All matching logic lives in @/lib/duplicates/find-duplicate.ts so it
 // can be reused by the email pipeline's enrich-or-flag step (K2 part 5)

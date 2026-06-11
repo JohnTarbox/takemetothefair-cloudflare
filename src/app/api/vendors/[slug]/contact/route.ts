@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Public contact form for Enhanced Profile vendors. The vendor's email
  * never enters the DOM — sender submits a form, server-side this endpoint
@@ -23,8 +24,6 @@ import { targetUserIsVerified } from "@/lib/api-auth";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { logError } from "@/lib/logger";
 import { unsafeSlug } from "@/lib/utils";
-
-export const runtime = "edge";
 
 const bodySchema = z.object({
   senderName: z.string().min(1).max(100),

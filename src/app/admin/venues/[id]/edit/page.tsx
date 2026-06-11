@@ -13,8 +13,6 @@ import { GooglePlaceSearch } from "@/components/google-place-search";
 import { FocalPointPicker } from "@/components/admin/FocalPointPicker";
 import type { PlaceLookupResult } from "@/lib/google-maps";
 
-export const runtime = "edge";
-
 interface Venue {
   id: string;
   name: string;

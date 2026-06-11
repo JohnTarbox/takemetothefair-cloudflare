@@ -1,10 +1,9 @@
+export const dynamic = "force-dynamic";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { stripMarkdown } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
-
-export const runtime = "edge";
 
 function escapeXml(text: string): string {
   return text

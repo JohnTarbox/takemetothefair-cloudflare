@@ -33,8 +33,6 @@ import { logError } from "@/lib/logger";
 import { formatDateRange } from "@/lib/utils";
 import { computeVendorCompleteness } from "@/lib/vendor-completeness";
 
-export const runtime = "edge";
-
 interface DashboardState {
   emailVerified: boolean;
   favoritesCount: number;
@@ -227,6 +225,8 @@ function buildChecklist(
 
   return items;
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const session = await auth();

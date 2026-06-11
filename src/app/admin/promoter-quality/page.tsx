@@ -28,7 +28,6 @@ import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, eventDateDriftFindings, promoters } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 // Promoters with fewer than this many events default to T2 (watch) —
@@ -156,6 +155,8 @@ async function loadPromoterQuality(): Promise<PromoterRow[]> {
 
   return rows;
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function PromoterQualityPage() {
   const rows = await loadPromoterQuality();

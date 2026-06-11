@@ -2,8 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 
-export const runtime = "edge";
-
 export const metadata: Metadata = {
   title: "Thanks for reporting | Meet Me at the Fair",
   robots: { index: false, follow: true },

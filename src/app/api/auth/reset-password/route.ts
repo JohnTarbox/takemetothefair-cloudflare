@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -6,8 +7,6 @@ import { users, passwordResetTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
-
-export const runtime = "edge";
 
 const schema = z.object({
   token: z.string().min(32).max(128),

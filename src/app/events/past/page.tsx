@@ -11,7 +11,6 @@ import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 export const metadata: Metadata = {
@@ -142,6 +141,8 @@ async function getPastEvents(searchParams: SearchParams) {
 
   return { events: eventsWithVendors, total, page, limit };
 }
+
+export const dynamic = "force-dynamic";
 
 export default async function PastEventsPage({
   searchParams,

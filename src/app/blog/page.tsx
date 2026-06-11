@@ -12,7 +12,6 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 
-export const runtime = "edge";
 export const revalidate = 300;
 
 export const metadata: Metadata = {
@@ -56,6 +55,8 @@ interface SearchParams {
 }
 
 const POSTS_PER_PAGE = 12;
+
+export const dynamic = "force-dynamic";
 
 export default async function BlogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;

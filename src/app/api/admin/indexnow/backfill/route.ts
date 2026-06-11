@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { gte, eq, and } from "drizzle-orm";
@@ -6,8 +7,6 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues, blogPosts } from "@/lib/db/schema";
 import { publicEventWhere } from "@/lib/event-lifecycle";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
-
-export const runtime = "edge";
 
 const bodySchema = z.object({
   since: z.string().datetime(),
