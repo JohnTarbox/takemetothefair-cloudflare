@@ -38,10 +38,13 @@ export default function NewVendorPage() {
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users");
-      const data = (await res.json()) as User[];
-      setUsers(data);
+      const data = (await res.json()) as unknown;
+      // Guard: a non-2xx response returns { error } (an object), not an array —
+      // without this, users.map() white-screens the page.
+      setUsers(res.ok && Array.isArray(data) ? (data as User[]) : []);
     } catch (error) {
       console.error("Failed to fetch users:", error);
+      setUsers([]);
     }
   };
 
