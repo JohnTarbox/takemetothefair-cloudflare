@@ -21,7 +21,8 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
+import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendorOutreachAttempts, vendors } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { eq } from "drizzle-orm";
@@ -48,12 +49,10 @@ interface AuthResult {
   actorUserId: string | null;
 }
 
-async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
-): Promise<AuthResult> {
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+async function authorize(request: NextRequest): Promise<AuthResult> {
+  // WS3b — constant-time X-Internal-Key check via the shared helper (was a
+  // timing-unsafe `===`).
+  if (await internalKeyMatches(request)) {
     return { ok: true, actorUserId: null };
   }
   const session = await auth();
@@ -64,8 +63,7 @@ async function authorize(
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const authResult = await authorize(request, env);
+  const authResult = await authorize(request);
   if (!authResult.ok) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

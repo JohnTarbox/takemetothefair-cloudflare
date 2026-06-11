@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
+import { getCloudflareDb } from "@/lib/cloudflare";
 import { getMergePreview } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergePreviewRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
@@ -17,13 +18,9 @@ export async function POST(request: NextRequest) {
     // merge route (src/app/api/admin/duplicates/merge/route.ts:22-37)
     // added in K3. The preview path is read-only, so no actorUserId is
     // needed in the body — both branches converge on the same SELECT.
-    const internalKey = request.headers.get("x-internal-key");
-    const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-    const isInternal = !!(
-      internalKey &&
-      cfEnv.INTERNAL_API_KEY &&
-      internalKey === cfEnv.INTERNAL_API_KEY
-    );
+    // WS3b — constant-time X-Internal-Key check via the shared helper (was a
+    // timing-unsafe `===`).
+    const isInternal = await internalKeyMatches(request);
 
     if (!isInternal) {
       const session = await auth();

@@ -28,7 +28,8 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
+import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { events, vendors, venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
@@ -46,11 +47,11 @@ interface SlotRequestBody {
 }
 
 async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
+  request: NextRequest
 ): Promise<{ ok: true; actorId: string } | { ok: false; status: number }> {
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+  // WS3b — constant-time X-Internal-Key check via the shared helper (was a
+  // timing-unsafe `===`).
+  if (await internalKeyMatches(request)) {
     return { ok: true, actorId: "mcp-server" };
   }
   const session = await auth();
@@ -61,9 +62,7 @@ async function authorize(
 }
 
 export async function POST(request: NextRequest) {
-  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-
-  const authResult = await authorize(request, env);
+  const authResult = await authorize(request);
   if (!authResult.ok) {
     return NextResponse.json({ error: "Unauthorized" }, { status: authResult.status });
   }

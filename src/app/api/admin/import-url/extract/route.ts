@@ -2,7 +2,8 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { getCloudflareAi, getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
+import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
@@ -35,13 +36,9 @@ const extractRequestSchema = z.object({
 export async function POST(request: NextRequest) {
   const db = getCloudflareDb();
   // Accept admin session OR X-Internal-Key (MCP Worker email handler).
-  const internalKey = request.headers.get("x-internal-key");
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
+  // WS3b — constant-time key check via the shared helper (was a timing-unsafe
+  // `===`).
+  const isInternal = await internalKeyMatches(request);
   if (!isInternal) {
     const session = await auth();
     if (!session || session.user.role !== "ADMIN") {
