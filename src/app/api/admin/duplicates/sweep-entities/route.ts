@@ -47,17 +47,16 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { internalKeyMatches } from "@/lib/api-auth";
+import { getCloudflareDb } from "@/lib/cloudflare";
 import { venues, promoters } from "@/lib/db/schema";
 import { sql, and, eq, isNotNull, ne } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
-async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
-): Promise<boolean> {
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+async function authorize(request: NextRequest): Promise<boolean> {
+  // WS3b — constant-time X-Internal-Key check via the shared helper (was a
+  // timing-unsafe `===`).
+  if (await internalKeyMatches(request)) {
     return true;
   }
   const session = await auth();
@@ -87,8 +86,7 @@ type Cluster = VenueCluster | PromoterCluster;
 
 export async function GET(request: NextRequest) {
   try {
-    const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-    if (!(await authorize(request, env))) {
+    if (!(await authorize(request))) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

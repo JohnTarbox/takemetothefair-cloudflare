@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -21,9 +22,9 @@ async function authorizeAdminOrInternal(
 ): Promise<
   { ok: true; actorUserId: string | null } | { ok: false; status: number; error: string }
 > {
-  const internalKey = request.headers.get("x-internal-key");
-  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
+  // WS3b — constant-time X-Internal-Key check via the shared helper (was a
+  // timing-unsafe `===`).
+  if (await internalKeyMatches(request)) {
     return { ok: true, actorUserId: null };
   }
   const session = await auth();
