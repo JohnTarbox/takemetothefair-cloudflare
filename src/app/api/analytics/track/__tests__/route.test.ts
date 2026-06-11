@@ -65,10 +65,13 @@ describe("POST /api/analytics/track — ENG1.8 GA4 mirror", () => {
     expect(sendSpy).toHaveBeenCalledTimes(1);
     const call = sendSpy.mock.calls[0];
     expect(call?.[0]).toBe("111.222");
+    // Mirrored under a DISTINCT "_server" name (so it doesn't double-count the
+    // client gtag hit) with a transport:"server" marker param.
     expect(call?.[1]).toEqual([
       {
-        name: "outbound_application_click",
+        name: "outbound_application_click_server",
         params: {
+          transport: "server",
           target_url: "https://apply.example.com/form?id=9",
           target_domain: "apply.example.com",
           entity_type: "event",
@@ -79,7 +82,7 @@ describe("POST /api/analytics/track — ENG1.8 GA4 mirror", () => {
     ]);
   });
 
-  it("classifies outbound_ticket_click as a ticket handoff", async () => {
+  it("classifies outbound_ticket_click as a ticket handoff under the _server name", async () => {
     await POST(
       makeRequest({
         name: "outbound_ticket_click",
@@ -88,6 +91,7 @@ describe("POST /api/analytics/track — ENG1.8 GA4 mirror", () => {
       })
     );
     expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0]?.[1][0]?.name).toBe("outbound_ticket_click_server");
     expect(sendSpy.mock.calls[0]?.[1][0]?.params.application_or_ticket).toBe("ticket");
   });
 
