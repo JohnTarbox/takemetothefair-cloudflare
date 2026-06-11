@@ -2,10 +2,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, eventDays, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
+import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
 import { createSlug, dollarsToCents, appendSlugSegment, unsafeSlug } from "@/lib/utils";
+import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import type { VenueOption, ExtractedEventData } from "@/lib/url-import/types";
 import { inferCategoriesFromName } from "@/lib/url-import/infer-categories";
 import { logError } from "@/lib/logger";
@@ -137,24 +138,10 @@ export async function POST(request: NextRequest) {
     }
     // For type === "none", venueId remains null
 
-    // Generate event slug
+    // Generate event slug. WS2a — shared prefix-range resolver (was a
+    // per-candidate while-loop; now `base-2` first on collision, not `base-1`).
     const eventSlug = createSlug(event.name);
-    let finalEventSlug = eventSlug;
-    let slugSuffix = 0;
-    while (true) {
-      const existingSlug = await db
-        .select()
-        .from(events)
-        .where(
-          eq(events.slug, unsafeSlug(slugSuffix > 0 ? `${eventSlug}-${slugSuffix}` : eventSlug))
-        )
-        .limit(1);
-      if (existingSlug.length === 0) break;
-      slugSuffix++;
-    }
-    if (slugSuffix > 0) {
-      finalEventSlug = appendSlugSegment(eventSlug, slugSuffix);
-    }
+    const finalEventSlug = await resolveUniqueEventSlug(db, eventSlug);
 
     // Determine if this is a discontinuous (specific dates) event
     const hasSpecificDates = event.specificDates && event.specificDates.length > 0;
@@ -298,11 +285,8 @@ export async function POST(request: NextRequest) {
         };
       });
 
-      const BATCH_SIZE = 11;
-      for (let i = 0; i < days.length; i += BATCH_SIZE) {
-        const batch = days.slice(i, i + BATCH_SIZE);
-        await db.insert(eventDays).values(batch);
-      }
+      // WS2a — shared D1-safe batched insert (was an inline BATCH_SIZE=11 loop).
+      await insertEventDaysBatched(db, newEventId, days);
     } else if (startDate) {
       // Contiguous: generate one row per day in the date range. DQ4 — the
       // outer guard used to require `event.startTime && startDate`; now
@@ -342,12 +326,8 @@ export async function POST(request: NextRequest) {
         current.setDate(current.getDate() + 1);
       }
 
-      // Batch insert. Same 11-row cap as the discontinuous branch above.
-      const BATCH_SIZE = 11;
-      for (let i = 0; i < days.length; i += BATCH_SIZE) {
-        const batch = days.slice(i, i + BATCH_SIZE);
-        await db.insert(eventDays).values(batch);
-      }
+      // WS2a — shared D1-safe batched insert (was an inline BATCH_SIZE=11 loop).
+      await insertEventDaysBatched(db, newEventId, days);
     }
     if (anyHoursUnknown) {
       // DQ4: flag the parent event so the operator triage queue

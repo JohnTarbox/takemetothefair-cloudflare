@@ -1,17 +1,11 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gt, lt, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { promoters, events, eventDays } from "@/lib/db/schema";
-import {
-  createSlug,
-  getSlugPrefixBounds,
-  findUniqueSlug,
-  computePublicDates,
-  dollarsToCents,
-  unsafeSlug,
-} from "@/lib/utils";
+import { createSlug, computePublicDates, dollarsToCents } from "@/lib/utils";
+import { resolveUniqueEventSlug, insertEventDaysBatched } from "@/lib/events/insert-helpers";
 import { validateRequestBody, promoterEventCreateSchema } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/datetime";
@@ -151,22 +145,10 @@ export async function POST(request: NextRequest) {
         })
         .where(eq(events.id, existingId));
 
-      // Replace event days wholesale — simpler than diffing
+      // Replace event days wholesale — simpler than diffing.
+      // WS2a — shared D1-safe batched insert (was an inline unbatched insert).
       await db.delete(eventDays).where(eq(eventDays.eventId, existingId));
-      if (eventDaysInput.length > 0) {
-        await db.insert(eventDays).values(
-          eventDaysInput.map((d) => ({
-            id: crypto.randomUUID(),
-            eventId: existingId,
-            date: d.date,
-            openTime: d.openTime,
-            closeTime: d.closeTime,
-            notes: d.notes ?? null,
-            closed: d.closed ?? false,
-            vendorOnly: d.vendorOnly ?? false,
-          }))
-        );
-      }
+      await insertEventDaysBatched(db, existingId, eventDaysInput);
 
       return NextResponse.json({
         id: existingId,
@@ -184,20 +166,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const [lower, upper] = getSlugPrefixBounds(baseSlug);
-    const existingSlugs = await db
-      .select({ slug: events.slug })
-      .from(events)
-      .where(
-        or(
-          eq(events.slug, unsafeSlug(baseSlug)),
-          and(gt(events.slug, unsafeSlug(lower)), lt(events.slug, unsafeSlug(upper)))
-        )
-      );
-    const slug = findUniqueSlug(
-      baseSlug,
-      existingSlugs.map((r) => r.slug)
-    );
+    // WS2a — shared helper (prefix-range query + findUniqueSlug). Was inlined.
+    const slug = await resolveUniqueEventSlug(db, baseSlug);
 
     const newId = crypto.randomUUID();
     await db.insert(events).values({
@@ -235,20 +205,8 @@ export async function POST(request: NextRequest) {
 
     await recomputeEventCompleteness(db, newId);
 
-    if (eventDaysInput.length > 0) {
-      await db.insert(eventDays).values(
-        eventDaysInput.map((d) => ({
-          id: crypto.randomUUID(),
-          eventId: newId,
-          date: d.date,
-          openTime: d.openTime,
-          closeTime: d.closeTime,
-          notes: d.notes ?? null,
-          closed: d.closed ?? false,
-          vendorOnly: d.vendorOnly ?? false,
-        }))
-      );
-    }
+    // WS2a — shared D1-safe batched insert (was an inline unbatched insert).
+    await insertEventDaysBatched(db, newId, eventDaysInput);
 
     return NextResponse.json({ id: newId, slug, status: finalStatus }, { status: 201 });
   } catch (error) {
