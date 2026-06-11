@@ -57,7 +57,22 @@ export async function getGoogleAccessToken(
   }
 
   const { clientEmail, privateKey } = resolveCredentials(env);
-  const key = await importPKCS8(privateKey, "RS256");
+  // A malformed GA4_SA_PRIVATE_KEY (truncated paste, JSON quotes, wrong PEM)
+  // makes importPKCS8 throw a RAW jose error. Without this wrap it propagates
+  // past ga4.ts's Ga4*Error mapping and past the analytics loaders' catches,
+  // crashing the entire /admin/analytics Server Component. Re-classify it as a
+  // config error so the GA4 cards degrade to "—" instead — a bad secret value
+  // must never take the page down. (2026-06-11)
+  let key: Awaited<ReturnType<typeof importPKCS8>>;
+  try {
+    key = await importPKCS8(privateKey, "RS256");
+  } catch (e) {
+    throw new GoogleAuthConfigError(
+      `GA4_SA_PRIVATE_KEY is not a valid PKCS#8 private key (${
+        e instanceof Error ? e.message : String(e)
+      }). Check it's the service account's full \`private_key\` PEM.`
+    );
+  }
   const now = Math.floor(Date.now() / 1000);
   const jwt = await new SignJWT({ scope })
     .setProtectedHeader({ alg: "RS256", typ: "JWT" })
