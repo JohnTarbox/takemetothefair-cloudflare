@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { HomeSearch } from "@/components/home/HomeSearch";
 import { StubEventCard } from "@/components/home/StubEventCard";
 import { getCategoryColors } from "@/lib/category-colors";
+import { STATES } from "@/lib/states";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
@@ -24,7 +25,7 @@ export const revalidate = 300; // Cache for 5 minutes
 export const metadata: Metadata = {
   title: "Meet Me at the Fair - Discover Local Fairs, Festivals & Events in New England",
   description:
-    "Find fairs, festivals, craft shows, and community events across Maine, Vermont, New Hampshire, and Massachusetts. Browse events, venues, and vendors.",
+    "Find fairs, festivals, craft shows, and community events across all six New England states — Maine, New Hampshire, Vermont, Massachusetts, Connecticut, and Rhode Island. Browse events, venues, and vendors.",
   alternates: { canonical: "https://meetmeatthefair.com" },
   openGraph: {
     title: "Meet Me at the Fair - Discover Local Fairs & Events",
@@ -323,19 +324,16 @@ export default async function HomePage() {
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground mb-6 text-center">
             Browse Events by State
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { name: "Maine", slug: "maine", code: "ME" },
-              { name: "Vermont", slug: "vermont", code: "VT" },
-              { name: "New Hampshire", slug: "new-hampshire", code: "NH" },
-              { name: "Massachusetts", slug: "massachusetts", code: "MA" },
-            ].map((state) => (
+          {/* All six New England states the site covers — sourced from the
+              canonical STATES map so this never drifts from the search dropdown. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {Object.values(STATES).map((state) => (
               <Link
                 key={state.slug}
                 href={`/events/${state.slug}`}
-                className="flex items-center justify-center gap-2 p-4 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all text-center group"
+                className="group flex items-center justify-center gap-2 rounded-lg border border-border bg-card p-4 text-center transition-all hover:border-royal hover:shadow-sm"
               >
-                <MapPin className="w-4 h-4 text-muted-foreground group-hover:text-navy" />
+                <MapPin className="h-4 w-4 text-muted-foreground group-hover:text-navy" />
                 <span className="font-medium text-foreground group-hover:text-navy">
                   {state.name}
                 </span>
