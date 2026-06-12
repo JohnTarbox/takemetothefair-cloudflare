@@ -69,3 +69,9 @@ export type IngestDiscrepancyMessage = {
   /** Short human-readable explanation; `${matchType}: ${fieldClass} differs`. */
   notes: string;
 };
+
+// SYN1 (2026-06-12) — a syndication trigger emitted (best-effort, after the
+// mutation's batch commits) by the five venue/event/event_day write-paths.
+// Canonical definition lives in the shared policy module so the MCP consumer
+// imports the exact same shape; re-exported here for producer-side ergonomics.
+export type { SyndicationChangeMessage } from "@takemetothefair/utils";

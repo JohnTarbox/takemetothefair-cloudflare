@@ -25,6 +25,7 @@ import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
 import { evaluateGates, mirroredFieldsChanged } from "@takemetothefair/utils";
 import { eventSyndicationStatements } from "@/lib/syndication/outbox";
+import { enqueueSyndicationChange } from "@/lib/queues/producers";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -480,6 +481,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         );
       }
       throw err;
+    }
+
+    // SYN1 — trigger the dispatcher only when an outbox row was actually
+    // written (mirrored field changed). Never throws; the durable outbox row
+    // is the source of truth if the enqueue is lost.
+    if (syndicationStmts.length > 0) {
+      await enqueueSyndicationChange({ entityType: "event", entityId: id });
     }
 
     // Run after the batch so completeness reflects the fresh row (the score

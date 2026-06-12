@@ -17,10 +17,28 @@ import {
   buildEventSnapshot,
   buildVenueSnapshot,
   type MirroredVenue,
+  type SyndicationChangeMessage,
 } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 
 type Stmt = unknown;
+
+/**
+ * Enqueue a syndication trigger from an MCP tool, after its batch commits.
+ * Best-effort + never throws — the durable outbox row is the source of truth,
+ * so a dropped enqueue only delays delivery. A syndication failure must never
+ * fail the underlying correction.
+ */
+export async function enqueueSyndicationChange(
+  env: { SYNDICATION_CHANGES?: { send: (m: unknown) => Promise<unknown> } } | undefined,
+  message: SyndicationChangeMessage
+): Promise<void> {
+  try {
+    await env?.SYNDICATION_CHANGES?.send(message);
+  } catch {
+    // Swallow — never propagate into the tool's success path.
+  }
+}
 
 async function venueMirrorFor(db: Db, venueId: string | null): Promise<MirroredVenue | null> {
   if (!venueId) return null;

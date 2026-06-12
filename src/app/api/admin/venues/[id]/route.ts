@@ -10,6 +10,7 @@ import { logError } from "@/lib/logger";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { venueSyndicationStatements } from "@/lib/syndication/outbox";
+import { enqueueSyndicationChange } from "@/lib/queues/producers";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -196,6 +197,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       ...venueSyndicationStmts,
     ] as const;
     await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);
+
+    // SYN1 — trigger the dispatcher only when a mirrored field changed (the
+    // venue fan-out also bumped its events' versions in the batch above).
+    if (venueSyndicationStmts.length > 0) {
+      await enqueueSyndicationChange({ entityType: "venue", entityId: id });
+    }
 
     const [updatedVenue] = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 
