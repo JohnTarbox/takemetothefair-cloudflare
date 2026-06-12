@@ -44,6 +44,19 @@ export function upcomingEndPredicate(now: Date): SQL {
 }
 
 /**
+ * C2 P2 (2026-06-12) — upper bound on `events.start_date` for the homepage
+ * "when" quick-filter chips routed to /events?when=…:
+ *   weekend → events starting within the next 7 days
+ *   month   → events starting within the next 30 days
+ * Returns null for any other/absent value (no date cap). Shared by the
+ * /events query and countPublicFilteredEvents so the two never drift.
+ */
+export function whenWindowEnd(when: string | undefined, from: Date = new Date()): Date | null {
+  const days = when === "weekend" ? 7 : when === "month" ? 30 : null;
+  return days == null ? null : new Date(from.getTime() + days * 86_400_000);
+}
+
+/**
  * Variant for tables joined under an alias (rare). Most callers use the
  * bare `upcomingEndPredicate(now)`. Kept here so any future SQL builder
  * that needs an inline literal can call this without re-deriving the

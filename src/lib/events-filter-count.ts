@@ -1,7 +1,7 @@
-import { and, eq, isNotNull, like, notLike, or, isNull, count, sql } from "drizzle-orm";
+import { and, eq, isNotNull, like, notLike, or, isNull, lte, count, sql } from "drizzle-orm";
 import { events } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { sanitizeLikeInput } from "@/lib/utils";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
@@ -19,6 +19,7 @@ const PUBLIC_FILTER_KEYS = [
   "scale",
   "includePast",
   "includeTBD",
+  "when",
 ] as const;
 
 type FilterableSearchParams = Partial<Record<(typeof PUBLIC_FILTER_KEYS)[number] | "page", string>>;
@@ -64,6 +65,12 @@ export async function countPublicFilteredEvents(
     // A2 (Dev backlog 2026-06-05): 24h end-of-day grace per upcomingEndPredicate
     // — keep this in lockstep with src/app/events/page.tsx (same predicate).
     conditions.push(upcomingEndPredicate(new Date()));
+  }
+
+  // C2 P2 — keep the "when" date window in lockstep with src/app/events/page.tsx.
+  const whenEnd = whenWindowEnd(searchParams.when);
+  if (whenEnd) {
+    conditions.push(lte(events.startDate, whenEnd));
   }
 
   if (searchParams.query) {
