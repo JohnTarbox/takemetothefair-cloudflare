@@ -1143,6 +1143,29 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           notes: "MCP update_event",
         });
 
+        // J2/C1 (2026-06-12) — log the field-level edit to admin_actions so the
+        // admin_actions mining card (docs/j2-admin-actions-mining-card-brief.md)
+        // can surface which fields the operator most often corrects after
+        // auto-ingest (= where the extractor is weakest), joinable to the event's
+        // source/promoter. `requestedFields` is the exact changed-field set used
+        // for the citation insert below. Non-fatal: a logging failure must never
+        // fail the edit itself.
+        try {
+          await db.insert(adminActions).values({
+            action: "event.update",
+            actorUserId: auth.userId,
+            targetType: "event",
+            targetId: event.id,
+            payloadJson: JSON.stringify({ fields: requestedFields, source: "mcp" }),
+            createdAt: new Date(),
+          });
+        } catch (err) {
+          console.error(
+            `[MCP/update_event] failed to write event.update admin_action for ${event.id}:`,
+            err
+          );
+        }
+
         // Record slug rename in event_slug_history so the main app's
         // middleware 301-redirects the old URL. Mirrors the admin route at
         // src/app/api/admin/events/[id]/route.ts (drizzle/0061). Non-fatal
