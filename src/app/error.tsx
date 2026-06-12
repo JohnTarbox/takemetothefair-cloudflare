@@ -32,16 +32,18 @@ export default function Error({
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center px-4">
-      {/* K2 Phase B marker (2026-06-07): the apex Worker (apex-worker/src/index.ts)
-          inspects the rendered HTML for this data attribute and rewrites the
-          response status to 500 when present. Gated on isFetchError so only
-          true data-fetch failures trigger the rewrite — non-fatal client-side
-          errors keep their 200. Test pin: apex-worker/__tests__/inspect.test.ts. */}
-      {isFetchError && (
-        <span data-x-render-error="fetch" hidden>
-          fetch
-        </span>
-      )}
+      {/* B5 (2026-06-12): keep error states out of the index. error.tsx
+          renders at HTTP 200 under @opennextjs/cloudflare — the ISR/stream
+          layer commits the status before this boundary runs, the same wall
+          that makes notFound() a soft-404 (docs/mig4-soft-404-opennext-isr.md).
+          The apex Worker that previously rewrote 200->500 by reading a hidden
+          marker here was retired by the OpenNext cutover and deleted, so the
+          marker is gone. noindex prevents a crawl-during-outage from indexing
+          the "temporarily unavailable" UI on an otherwise-valid URL; the page
+          re-indexes normally once the underlying fetch recovers. Rendered in
+          JSX because client error boundaries can't export metadata — React 19 /
+          Next 15 hoist <meta> to <head> on both server and client render. */}
+      <meta name="robots" content="noindex" />
       <div className="text-center max-w-md">
         <div className="mb-6 flex justify-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
@@ -49,11 +51,11 @@ export default function Error({
           </div>
         </div>
 
-        {/* B5 SMOKE DEPENDENCY (K2 Phase A, 2026-06-07): the post-deploy
-            smoke at .github/workflows/deploy.yml greps for the FetchError
-            H1 text below to fail on error-UI-rendered-at-200. Coordinate
-            any copy change with the smoke step. See
-            docs/k2-spike-status-rewrite.md for the underlying K2 context. */}
+        {/* SMOKE DEPENDENCY: the post-deploy smoke at
+            .github/workflows/deploy.yml asserts a known-good page does NOT
+            contain the "Service temporarily unavailable" H1 below (i.e. the
+            error UI didn't render on a healthy route). Coordinate any copy
+            change to that string with the smoke step. */}
         <h1 className="text-2xl font-bold text-foreground mb-2">
           {isFetchError ? "Service temporarily unavailable" : "Something went wrong"}
         </h1>

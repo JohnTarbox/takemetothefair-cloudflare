@@ -123,18 +123,18 @@ export async function sendEmail(
 }
 
 /**
- * Resolve the public site URL for constructing absolute links in emails
- * (and other origin-emitted content that never transits the apex proxy).
+ * Resolve the public site URL for constructing absolute links in emails.
  * Priority: NEXT_PUBLIC_SITE_URL env override → production apex (SITE_URL).
  *
- * Deliberately does NOT derive the host from the incoming request. Behind
- * the apex proxy Worker (meetmeatthefair.com → takemetothefair.pages.dev,
- * see apex-worker/), the request host is ALWAYS the Pages origin, so a
- * request-derived URL leaked `takemetothefair.pages.dev` into verification /
- * password-reset / newsletter-confirm email links (live regression since K2,
- * 2026-06-07). Unlike redirect Location headers, email bodies don't pass back
- * through the proxy, so this must be fixed at the source. Set the env override
- * for local dev / staging hosts.
+ * Deliberately does NOT derive the host from the incoming request. This guards
+ * against a request-derived host leaking into verification / password-reset /
+ * newsletter-confirm email links — a live regression during the K2 era, when
+ * the apex was fronted by a proxy Worker and the request host was the Pages
+ * origin `takemetothefair.pages.dev` (that proxy was deleted in B5, 2026-06-12;
+ * OpenNext now serves the apex directly). Pinning to SITE_URL stays correct
+ * regardless of topology — and across staging/preview hosts where a
+ * request-derived origin would still be wrong. Set the env override for local
+ * dev / staging hosts.
  */
 export function getSiteUrl(): string {
   const override = getRuntimeEnv("NEXT_PUBLIC_SITE_URL");

@@ -55,15 +55,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   # OpenNext migration (2026-06-10): replaces the former `deploy-pages` job.
-  # Builds with @opennextjs/cloudflare and deploys the Worker. Until the apex
-  # `[[routes]]` block in wrangler.toml is uncommented (cutover Stage 3 — see
-  # docs/opennext-cutover-runbook.md), this lands on *.workers.dev ONLY and
-  # production stays on Pages via the apex-worker (whose job + prod smoke below
-  # are unchanged). next-on-pages and @opennextjs/cloudflare can't coexist
-  # (conflicting Next peer ranges), so the Pages build can no longer run from
-  # this branch — the Pages project's last pre-migration deployment is frozen
-  # as the rollback target. DRAFT/cutover note: merging this PR is cutover
-  # Stage 1; complete the runbook stages promptly to bound the prod-freeze.
+  # Builds with @opennextjs/cloudflare and deploys the Worker, which serves the
+  # apex route directly (wrangler.toml [[routes]]). The old K2 apex-worker that
+  # used to front Pages was retired by the cutover and deleted (B5, 2026-06-12).
+  # Rollback target = the Pages project's last pre-migration deployment
+  # (next-on-pages and @opennextjs/cloudflare can't coexist, so the Pages build
+  # can't run from this branch) — see docs/opennext-cutover-runbook.md.
   deploy-worker:
     needs: d1-migrate
     name: Build & Deploy Main App (Worker / OpenNext)

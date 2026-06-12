@@ -33,24 +33,21 @@
  * unrecoverability — typically 500. Treating that consistently as a
  * 5xx signal to crawlers is the K deliverable.
  *
- * ## Why this is a scoped fix, not a full status-rewrite
+ * ## Status code (B5, 2026-06-12 — apex Worker retired)
  *
- * The Dev backlog plan acknowledged that neither `error.tsx` nor
- * `global-error.tsx` reliably sets HTTP 500 for every Server Component
- * throw on Cloudflare Pages. The durable fix for "every render error
- * returns 5xx" requires moving fetcher-error handling out of the
- * error boundary entirely and into route-handler code that explicitly
- * returns Response objects with the right status. That's larger
- * surgery than K's scope. What this file delivers is:
+ * Neither `error.tsx` nor `global-error.tsx` reliably sets HTTP 500 under
+ * `@opennextjs/cloudflare`: on ISR / cacheable routes the cache/stream
+ * layer commits the response status before/independent of the error
+ * boundary — the same wall that makes `notFound()` a soft-404 (see
+ * docs/mig4-soft-404-opennext-isr.md). The K2 apex Worker that previously
+ * sat in front of the app and rewrote 200->500 by reading a hidden marker
+ * in this HTML was retired by the OpenNext cutover (the OpenNext Worker
+ * claimed the apex route 2026-06-10) and has been deleted. Reviving a
+ * proxy-worker just for the status rewrite isn't justified — outage
+ * detection is covered by error_logs + the page-error Slack canary.
  *
- *   - The Next.js-documented root error catch surface exists, so
- *     layout-level throws (the worst class — they crash the whole
- *     page shell) are at least framed for the user instead of
- *     resolving to a Cloudflare Pages 500 default page with no
- *     branding.
- *   - The class hooks are in place for a follow-up to wire FetchError
- *     into a Worker-level header sentinel that middleware (or the
- *     Pages runtime) reads to override the response status.
+ * What remains is the right user-facing framing (transient-outage copy)
+ * plus a `noindex` so a crawl-during-outage can't index the error UI.
  *
  * Per Next.js requirement, this component must include `<html>` and
  * `<body>` itself — it renders ABOVE the root layout (which is what
@@ -80,18 +77,13 @@ export default function GlobalError({
 
   return (
     <html lang="en">
+      <head>
+        {/* B5 (2026-06-12): an error boundary should never be indexed. The
+            apex Worker that used to rewrite 200->500 by reading a hidden
+            marker here was retired by the OpenNext cutover and deleted. */}
+        <meta name="robots" content="noindex" />
+      </head>
       <body>
-        {/* K2 Phase B marker (2026-06-07): the apex Worker
-            (apex-worker/src/index.ts) inspects the rendered HTML for this
-            data attribute and rewrites the response status to 500 when
-            present. Gated on isFetchError so only true data-fetch
-            failures trigger the rewrite. Test pin:
-            apex-worker/__tests__/inspect.test.ts. */}
-        {isFetchError && (
-          <span data-x-render-error="fetch" hidden>
-            fetch
-          </span>
-        )}
         <div
           style={{
             minHeight: "60vh",
@@ -126,11 +118,10 @@ export default function GlobalError({
               </div>
             </div>
 
-            {/* B5 SMOKE DEPENDENCY (K2 Phase A, 2026-06-07): the post-deploy
-                smoke at .github/workflows/deploy.yml greps for the FetchError
-                H1 text below to fail on error-UI-rendered-at-200. Coordinate
-                any copy change with the smoke step. See
-                docs/k2-spike-status-rewrite.md for the underlying K2 context. */}
+            {/* SMOKE DEPENDENCY: the post-deploy smoke at
+                .github/workflows/deploy.yml asserts a known-good page does NOT
+                contain the "Service temporarily unavailable" H1 below.
+                Coordinate any copy change to that string with the smoke step. */}
             <h1
               style={{
                 fontSize: "1.5rem",
