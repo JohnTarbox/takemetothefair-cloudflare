@@ -301,7 +301,7 @@ export default async function HomePage() {
                     Happening this weekend
                   </div>
                   <Link
-                    href="/events"
+                    href="/events?when=weekend"
                     className="flex items-center whitespace-nowrap text-sm font-semibold text-secondary hover:text-terracotta"
                   >
                     See all <ArrowRight className="ml-1 h-3.5 w-3.5" />
