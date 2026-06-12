@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Search, Filter, Store, Heart } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   events,
@@ -25,6 +25,7 @@ import {
   notLike,
   isNull,
   isNotNull,
+  lte,
   asc,
   desc,
 } from "drizzle-orm";
@@ -112,6 +113,7 @@ interface SearchParams {
   excludeFarmersMarkets?: string;
   includePast?: string;
   includeTBD?: string;
+  when?: string;
   myEvents?: string;
   favorites?: string;
   indoorOutdoor?: string;
@@ -176,6 +178,12 @@ async function getEvents(
       // evening event whose stored end_date sits at noon UTC the same
       // calendar day doesn't drop out of the upcoming feed at 8am EDT.
       conditions.push(upcomingEndPredicate(new Date()));
+    }
+
+    // C2 P2 — "this weekend / this month" date window (homepage chips → ?when=).
+    const whenEnd = whenWindowEnd(searchParams.when);
+    if (whenEnd) {
+      conditions.push(lte(events.startDate, whenEnd));
     }
 
     if (searchParams.query) {

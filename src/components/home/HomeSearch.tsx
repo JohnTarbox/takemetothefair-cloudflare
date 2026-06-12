@@ -116,6 +116,20 @@ export function HomeSearch() {
           <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
           Events near me
         </button>
+        <button
+          type="button"
+          onClick={() => navigate({ when: "weekend" })}
+          className="inline-flex items-center rounded-full border border-amber/40 bg-amber-light px-3.5 py-[7px] text-[13.5px] font-semibold text-secondary hover:bg-amber-light/70"
+        >
+          This weekend
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate({ when: "month" })}
+          className="inline-flex items-center rounded-full border border-amber/40 bg-amber-light px-3.5 py-[7px] text-[13.5px] font-semibold text-secondary hover:bg-amber-light/70"
+        >
+          This month
+        </button>
         {QUICK_CATEGORIES.map((c) => (
           <Link
             key={c.value}
