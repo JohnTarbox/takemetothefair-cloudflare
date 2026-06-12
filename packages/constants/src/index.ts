@@ -200,26 +200,48 @@ export type EventScale = (typeof EVENT_SCALE)[keyof typeof EVENT_SCALE];
 export const EVENT_CATEGORIES = [
   "Agricultural Fair",
   "Antique Show",
+  // K21 (2026-06-12). Reconciled the allow-list against live prod
+  // data: 90 distinct category values were in use on APPROVED events
+  // vs 18 here, so suggest_event was silently coercing common, valid
+  // categories (Fair, Art Show, Gun Show, Parade, …) to ["Event"].
+  // Added the 14 highest-frequency clean values below. Near-duplicate
+  // clusters (Renaissance Fair/Faire, Wedding Show/Expo, Cultural,
+  // Pop Culture Convention, generic "Market") are left for a TAX1
+  // dedupe pass — suggest_event now surfaces them via
+  // warnings.dropped_categories instead of dropping them silently.
+  "Art Fair",
+  "Art Show",
   "Art Walk",
+  "Beer Festival",
+  "Boat Show",
+  "Bridal Show",
   "Car Show",
-  // TAX1 A10 (2026-06-02). Two first-class values for the
-  // charity / community gap. Kept distinct rather than collapsed
-  // (e.g. "Community Event" + charity-as-tag) so category-browse
-  // pages and the picker UI can surface them separately —
-  // charitable events have different vendor / attendee semantics
-  // than general community gatherings.
+  // TAX1 A10 (2026-06-02): "Charity" and "Community Event" are kept as
+  // two first-class values (not collapsed to one + a charity tag) so
+  // category-browse pages and the picker UI surface them separately —
+  // charitable events have different vendor / attendee semantics than
+  // general community gatherings.
   "Charity",
+  "Comic Con",
   "Community Event",
+  "Convention",
   "Craft Fair",
   "Craft Show",
+  "Cultural Festival",
+  "Fair",
   "Farmers Market",
   "Festival",
   "Fiber Arts Festival",
   "Flea Market",
   "Food Festival",
+  "Garden Show",
+  "Gun Show",
+  "Harvest Festival",
   "Holiday Market",
   "Home Show",
+  "Makers Market",
   "Music Festival",
+  "Parade",
   "Trade Show",
   "Other",
 ] as const;
