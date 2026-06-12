@@ -303,54 +303,50 @@ export default async function HomePage() {
               "radial-gradient(circle at center, transparent 0 68%, rgb(var(--accent-gold)/0.10) 68% 69%, transparent 69%)",
           }}
         />
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-14 md:py-20">
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-9 md:py-12">
           <div className="max-w-3xl">
-            <span className="mb-5 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta">
+            <span className="mb-3 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta">
               <span className="h-[1.5px] w-8 bg-terracotta" />
               New England&apos;s fair &amp; festival almanac
             </span>
-            <h1 className="font-display text-[clamp(2.75rem,7vw,5.5rem)] font-semibold leading-[0.98] tracking-tight text-secondary">
+            <h1 className="font-display text-[clamp(2.25rem,5vw,3.75rem)] font-semibold leading-[1.0] tracking-tight text-secondary">
               Find your next <em className="font-medium italic text-terracotta">fair</em>, festival
               &amp; market.
             </h1>
-            <p className="mt-5 max-w-[46ch] text-lg text-muted-foreground">
+            <p className="mt-3 max-w-[52ch] text-base text-muted-foreground">
               Every county fair, craft show, and farmers market across the six New England states —
               one place, always current.
             </p>
 
             <HomeSearch />
 
-            <p className="mt-3 text-sm text-muted-foreground">
-              Organizing an event?{" "}
-              <Link
-                href="/register?role=promoter"
-                className="font-semibold text-secondary underline underline-offset-2 hover:text-terracotta"
-              >
-                List it free
-              </Link>
-            </p>
-
-            {/* Almanac stat strip — real counts, refreshed every 5 min via revalidate */}
-            <dl className="mt-10 flex max-w-[720px] flex-wrap border-y-[1.5px] border-border">
-              {[
-                { num: counts.upcomingEvents.toLocaleString(), lbl: "upcoming events" },
-                { num: counts.activeVenues.toLocaleString(), lbl: "venues" },
-                { num: counts.totalVendors.toLocaleString(), lbl: "vendors listed" },
-                { num: "6", lbl: "states covered" },
-              ].map((s, i) => (
-                <div
-                  key={s.lbl}
-                  className={`flex-1 py-4 ${i > 0 ? "border-l border-border pl-5" : ""}`}
+            {/* Almanac stat strip + promoter CTA on one compact row */}
+            <div className="mt-6 flex max-w-[760px] flex-wrap items-center gap-x-6 gap-y-3 border-y border-border py-3">
+              <dl className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
+                {[
+                  { num: counts.upcomingEvents.toLocaleString(), lbl: "events" },
+                  { num: counts.activeVenues.toLocaleString(), lbl: "venues" },
+                  { num: counts.totalVendors.toLocaleString(), lbl: "vendors" },
+                  { num: "6", lbl: "states" },
+                ].map((s) => (
+                  <div key={s.lbl} className="flex items-baseline gap-1.5">
+                    <dd className="font-display text-xl font-semibold leading-none text-secondary">
+                      {s.num}
+                    </dd>
+                    <dt className="text-[13px] text-muted-foreground">{s.lbl}</dt>
+                  </div>
+                ))}
+              </dl>
+              <p className="text-sm text-muted-foreground">
+                Organizing an event?{" "}
+                <Link
+                  href="/register?role=promoter"
+                  className="font-semibold text-secondary underline underline-offset-2 hover:text-terracotta"
                 >
-                  <dd className="font-display text-3xl font-semibold leading-none text-secondary">
-                    {s.num}
-                  </dd>
-                  <dt className="mt-1 text-[12.5px] tracking-wide text-muted-foreground">
-                    {s.lbl}
-                  </dt>
-                </div>
-              ))}
-            </dl>
+                  List it free
+                </Link>
+              </p>
+            </div>
           </div>
         </div>
       </section>
