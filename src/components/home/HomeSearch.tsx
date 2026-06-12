@@ -58,7 +58,7 @@ export function HomeSearch() {
   }
 
   return (
-    <div className="mt-7 max-w-[660px] text-left">
+    <div className="mt-5 max-w-[660px] text-left">
       {/* "Printed" search bar — navy keyline + hard offset shadow, amber action. */}
       <form
         onSubmit={(e) => {
@@ -77,7 +77,7 @@ export function HomeSearch() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search fairs, festivals, vendors…"
             aria-label="Keyword"
-            className="h-[58px] border-0 bg-transparent px-0 text-base text-foreground shadow-none focus-visible:ring-0"
+            className="h-[52px] border-0 bg-transparent px-0 text-base text-foreground shadow-none focus-visible:ring-0"
           />
         </div>
 
@@ -87,7 +87,7 @@ export function HomeSearch() {
             value={stateCode}
             onChange={(e) => setStateCode(e.target.value)}
             aria-label="State"
-            className="h-12 w-full cursor-pointer bg-transparent pr-2 text-[15px] font-medium text-secondary focus:outline-none sm:h-[58px] sm:w-auto"
+            className="h-12 w-full cursor-pointer bg-transparent pr-2 text-[15px] font-medium text-secondary focus:outline-none sm:h-[52px] sm:w-auto"
           >
             {NE_STATES.map((s) => (
               <option key={s.code || "all"} value={s.code}>
@@ -107,7 +107,7 @@ export function HomeSearch() {
       </form>
 
       {/* Functional quick-filters (ticket-stub chips). */}
-      <div className="mt-4 flex flex-wrap items-center gap-2.5">
+      <div className="mt-3 flex flex-wrap items-center gap-2.5">
         <button
           type="button"
           onClick={() => navigate({ sort: "nearest" })}
