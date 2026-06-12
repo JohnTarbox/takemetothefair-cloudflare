@@ -290,95 +290,85 @@ export default async function HomePage() {
           band). Editorial left-aligned headline in Fraunces, the search as the
           primary action, a ruled almanac stat strip. See
           docs/c2-homepage-redesign-brief.md. */}
-      <section className="relative overflow-hidden">
-        {/* faint concentric contour-rings motif, top-right */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -right-44 -top-28 h-[620px] w-[620px]"
-          style={{
-            background:
-              "radial-gradient(circle at center, transparent 0 38%, rgb(var(--accent-sage)/0.10) 38% 39%, transparent 39%)," +
-              "radial-gradient(circle at center, transparent 0 48%, rgb(var(--accent-sage)/0.09) 48% 49%, transparent 49%)," +
-              "radial-gradient(circle at center, transparent 0 58%, rgb(var(--accent-sage)/0.08) 58% 59%, transparent 59%)," +
-              "radial-gradient(circle at center, transparent 0 68%, rgb(var(--accent-gold)/0.10) 68% 69%, transparent 69%)",
-          }}
-        />
+      <section className="relative overflow-hidden border-b border-border">
         <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-9 md:py-12">
-          <div className="max-w-3xl">
-            <span className="mb-3 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta">
-              <span className="h-[1.5px] w-8 bg-terracotta" />
-              New England&apos;s fair &amp; festival almanac
-            </span>
-            <h1 className="font-display text-[clamp(2.25rem,5vw,3.75rem)] font-semibold leading-[1.0] tracking-tight text-secondary">
-              Find your next <em className="font-medium italic text-terracotta">fair</em>, festival
-              &amp; market.
-            </h1>
-            <p className="mt-3 max-w-[52ch] text-base text-muted-foreground">
-              Every county fair, craft show, and farmers market across the six New England states —
-              one place, always current.
-            </p>
-
-            <HomeSearch />
-
-            {/* Almanac stat strip + promoter CTA on one compact row */}
-            <div className="mt-6 flex max-w-[760px] flex-wrap items-center gap-x-6 gap-y-3 border-y border-border py-3">
-              <dl className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
-                {[
-                  { num: counts.upcomingEvents.toLocaleString(), lbl: "events" },
-                  { num: counts.activeVenues.toLocaleString(), lbl: "venues" },
-                  { num: counts.totalVendors.toLocaleString(), lbl: "vendors" },
-                  { num: "6", lbl: "states" },
-                ].map((s) => (
-                  <div key={s.lbl} className="flex items-baseline gap-1.5">
-                    <dd className="font-display text-xl font-semibold leading-none text-secondary">
-                      {s.num}
-                    </dd>
-                    <dt className="text-[13px] text-muted-foreground">{s.lbl}</dt>
-                  </div>
-                ))}
-              </dl>
-              <p className="text-sm text-muted-foreground">
-                Organizing an event?{" "}
-                <Link
-                  href="/register?role=promoter"
-                  className="font-semibold text-secondary underline underline-offset-2 hover:text-terracotta"
-                >
-                  List it free
-                </Link>
+          <div
+            className={
+              weekendEvents.length > 0
+                ? "grid items-center gap-x-12 gap-y-10 lg:grid-cols-[1.05fr_0.95fr]"
+                : "max-w-3xl"
+            }
+          >
+            <div>
+              <span className="mb-3 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta">
+                <span className="h-[1.5px] w-8 bg-terracotta" />
+                New England&apos;s fair &amp; festival almanac
+              </span>
+              <h1 className="font-display text-[clamp(2.25rem,5vw,3.75rem)] font-semibold leading-[1.0] tracking-tight text-secondary">
+                Find your next <em className="font-medium italic text-terracotta">fair</em>,
+                festival &amp; market.
+              </h1>
+              <p className="mt-3 max-w-[52ch] text-base text-muted-foreground">
+                Every county fair, craft show, and farmers market across the six New England states
+                — one place, always current.
               </p>
+
+              <HomeSearch />
+
+              {/* Almanac stat strip + promoter CTA on one compact row */}
+              <div className="mt-6 flex max-w-[760px] flex-wrap items-center gap-x-6 gap-y-3 border-y border-border py-3">
+                <dl className="flex flex-1 flex-wrap gap-x-6 gap-y-2">
+                  {[
+                    { num: counts.upcomingEvents.toLocaleString(), lbl: "events" },
+                    { num: counts.activeVenues.toLocaleString(), lbl: "venues" },
+                    { num: counts.totalVendors.toLocaleString(), lbl: "vendors" },
+                    { num: "6", lbl: "states" },
+                  ].map((s) => (
+                    <div key={s.lbl} className="flex items-baseline gap-1.5">
+                      <dd className="font-display text-xl font-semibold leading-none text-secondary">
+                        {s.num}
+                      </dd>
+                      <dt className="text-[13px] text-muted-foreground">{s.lbl}</dt>
+                    </div>
+                  ))}
+                </dl>
+                <p className="text-sm text-muted-foreground">
+                  Organizing an event?{" "}
+                  <Link
+                    href="/register?role=promoter"
+                    className="font-semibold text-secondary underline underline-offset-2 hover:text-terracotta"
+                  >
+                    List it free
+                  </Link>
+                </p>
+              </div>
             </div>
+
+            {/* RIGHT — live "This weekend" preview (compact ticket stubs). Fills
+                the hero width with real events + shows the category colour key. */}
+            {weekendEvents.length > 0 && (
+              <div>
+                <div className="mb-3 flex items-end justify-between">
+                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                    Happening this weekend
+                  </div>
+                  <Link
+                    href="/events"
+                    className="flex items-center whitespace-nowrap text-sm font-semibold text-secondary hover:text-terracotta"
+                  >
+                    See all <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                  </Link>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  {weekendEvents.slice(0, 4).map((event) => (
+                    <StubEventCard key={event.id} event={event} compact />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>
-
-      {/* This Weekend — ticket-stub cards (C2 redesign). Shows the next 7 days. */}
-      {weekendEvents.length > 0 && (
-        <section className="border-y border-border bg-muted py-14">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <div className="mb-7 flex items-end justify-between">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
-                  Happening soon
-                </div>
-                <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
-                  This weekend across New England
-                </h2>
-              </div>
-              <Link
-                href="/events"
-                className="flex items-center whitespace-nowrap font-semibold text-secondary hover:text-terracotta"
-              >
-                See all <ArrowRight className="ml-1 h-4 w-4" />
-              </Link>
-            </div>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {weekendEvents.map((event) => (
-                <StubEventCard key={event.id} event={event} />
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
 
       {/* Browse by State */}
       <section className="py-12">

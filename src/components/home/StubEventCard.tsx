@@ -35,7 +35,7 @@ function monthDay(d: Date): { mon: string; day: string } {
   };
 }
 
-export function StubEventCard({ event }: { event: StubEvent }) {
+export function StubEventCard({ event, compact = false }: { event: StubEvent; compact?: boolean }) {
   const categories = parseJsonArray(event.categories ?? "");
   const colors = getCategoryColors(categories);
   const primaryCategory = categories[0] ?? "Event";
@@ -47,45 +47,64 @@ export function StubEventCard({ event }: { event: StubEvent }) {
   return (
     <Link
       href={`/events/${event.slug}`}
-      className="group flex flex-col overflow-hidden rounded-xl border-[1.5px] border-secondary bg-card shadow-[4px_4px_0_rgb(var(--secondary)/0.10)] transition-transform duration-150 hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[7px_7px_0_rgb(var(--accent-terracotta)/0.22)]"
+      className={`group flex flex-col overflow-hidden border-[1.5px] border-secondary bg-card transition-transform duration-150 hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[7px_7px_0_rgb(var(--accent-terracotta)/0.22)] ${
+        compact
+          ? "rounded-[10px] shadow-[3px_3px_0_rgb(var(--secondary)/0.10)]"
+          : "rounded-xl shadow-[4px_4px_0_rgb(var(--secondary)/0.10)]"
+      }`}
     >
-      {/* Stub header — category-coloured, with a perforated bottom edge. */}
+      {/* Stub header — category-coloured, with a perforated bottom edge (full size only). */}
       <div
-        className={`relative px-4 pb-4 pt-4 ${colors.onAccent}`}
+        className={`relative ${colors.onAccent} ${compact ? "px-3 pb-2.5 pt-2.5" : "px-4 pb-4 pt-4"}`}
         style={{ background: colors.accent }}
       >
         {md ? (
           <>
-            <div className="text-xs font-bold uppercase tracking-[0.14em] opacity-90">{md.mon}</div>
-            <div className="font-display text-[40px] font-semibold leading-[0.95]">{md.day}</div>
+            <div
+              className={`font-bold uppercase tracking-[0.14em] opacity-90 ${compact ? "text-[10px]" : "text-xs"}`}
+            >
+              {md.mon}
+            </div>
+            <div
+              className={`font-display font-semibold leading-[0.95] ${compact ? "text-[26px]" : "text-[40px]"}`}
+            >
+              {md.day}
+            </div>
           </>
         ) : (
           <div className="font-display text-2xl font-semibold leading-tight">Date TBA</div>
         )}
-        {/* perforation: a row of background-coloured notches straddling the seam */}
-        <div
-          className="absolute inset-x-0 -bottom-[7px] h-[14px]"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle at 7px 7px, rgb(var(--background)) 6px, transparent 6px)",
-            backgroundSize: "16px 14px",
-            backgroundRepeat: "repeat-x",
-          }}
-          aria-hidden="true"
-        />
+        {!compact && (
+          <div
+            className="absolute inset-x-0 -bottom-[7px] h-[14px]"
+            style={{
+              backgroundImage:
+                "radial-gradient(circle at 7px 7px, rgb(var(--background)) 6px, transparent 6px)",
+              backgroundSize: "16px 14px",
+              backgroundRepeat: "repeat-x",
+            }}
+            aria-hidden="true"
+          />
+        )}
       </div>
 
-      <div className="flex flex-1 flex-col p-4 pt-[18px]">
-        <span
-          className={`mb-2.5 self-start rounded border px-2 py-[3px] text-[11px] font-bold uppercase tracking-wide ${colors.badge}`}
+      <div className={`flex flex-1 flex-col ${compact ? "p-3" : "p-4 pt-[18px]"}`}>
+        {!compact && (
+          <span
+            className={`mb-2.5 self-start rounded border px-2 py-[3px] text-[11px] font-bold uppercase tracking-wide ${colors.badge}`}
+          >
+            {primaryCategory}
+          </span>
+        )}
+        <h3
+          className={`font-display font-semibold leading-[1.12] text-secondary ${compact ? "text-sm" : "text-[19px]"}`}
         >
-          {primaryCategory}
-        </span>
-        <h3 className="font-display text-[19px] font-semibold leading-[1.12] text-secondary">
           {event.name}
         </h3>
         {location && (
-          <div className="mt-auto flex items-center gap-1.5 pt-3 text-[13.5px] text-muted-foreground">
+          <div
+            className={`flex items-center gap-1.5 text-muted-foreground ${compact ? "pt-1.5 text-[11.5px]" : "mt-auto pt-3 text-[13.5px]"}`}
+          >
             <MapPin className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
             {location}
           </div>
