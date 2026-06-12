@@ -51,6 +51,7 @@ import {
   eventOutboxStatements,
   venueOutboxStatements,
   eventDayOutboxStatements,
+  enqueueSyndicationChange,
 } from "../syndication/outbox.js";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
@@ -88,6 +89,9 @@ interface Env {
    *  PENDING/TENTATIVE → APPROVED transitions in update_event_status.
    *  Optional so dev / unconfigured environments degrade gracefully. */
   EMAIL_JOBS?: Queue<unknown>;
+  /** SYN1 (2026-06-12) — syndication trigger producer; the update_* tools
+   *  enqueue after a mirrored-field correction. Optional like EMAIL_JOBS. */
+  SYNDICATION_CHANGES?: Queue<unknown>;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
@@ -1157,6 +1161,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
             db.update(events).set(updates).where(eq(events.id, event.id)),
             ...syndicationStmts,
           ] as unknown as Parameters<typeof db.batch>[0]);
+          await enqueueSyndicationChange(env, { entityType: "event", entityId: event.id });
         } else {
           await db.update(events).set(updates).where(eq(events.id, event.id));
         }
@@ -2455,6 +2460,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           db.update(venues).set(updates).where(eq(venues.id, venue.id)),
           ...venueSyndicationStmts,
         ] as unknown as Parameters<typeof db.batch>[0]);
+        await enqueueSyndicationChange(env, { entityType: "venue", entityId: venue.id });
       } else {
         await db.update(venues).set(updates).where(eq(venues.id, venue.id));
       }
@@ -4018,6 +4024,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id)),
           ...daySyndicationStmts,
         ] as unknown as Parameters<typeof db.batch>[0]);
+        await enqueueSyndicationChange(env, { entityType: "event_day", entityId: params.day_id });
       } else {
         await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
       }

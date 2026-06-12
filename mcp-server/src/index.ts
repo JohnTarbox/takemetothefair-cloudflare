@@ -21,6 +21,7 @@ import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.j
 import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
 import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js";
+import { registerSyndicationTools } from "./tools/admin-syndication.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -68,6 +69,10 @@ interface Env {
   // here is used by the /api/admin/internal/enqueue-discrepancy proxy
   // (Pages → MCP HTTP hop); consumer drains and writes via captureDiscrepancy.
   EVENT_DISCREPANCIES?: Queue;
+  // SYN1 (2026-06-12) — syndication change triggers. Producer (MCP update_*
+  // tools + main-app PATCH routes) and consumer (handleSyndicationBatch) both
+  // bound here.
+  SYNDICATION_CHANGES?: Queue;
   // Cloudflare Email Service outbound binding (public beta). The EMAIL_JOBS
   // consumer uses this to send transactional/auto-reply mail. Bound via
   // `[[send_email]]` in wrangler.toml — no API key needed.
@@ -259,6 +264,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerMergeEntitiesTools(this.server, db, auth);
         // EH1 Phase 1 (2026-06-05) — set_vendor_relationship + set_vendor_display_policy + set_vendor_alias.
         registerVendorHierarchyTools(this.server, db, auth);
+        // SYN1 (2026-06-12) — syndication subscriber registry tools.
+        registerSyndicationTools(this.server, db, auth);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -1236,6 +1243,8 @@ import {
   handleIndexNowBatch,
   handleDiscrepancyBatch,
 } from "./queue-consumers.js";
+import { handleSyndicationBatch } from "./syndication/dispatch.js";
+import type { SyndicationChangeMessage } from "@takemetothefair/utils";
 
 type EmailJobMessage = Parameters<typeof handleEmailBatch>[0]["messages"][number]["body"];
 type IndexNowMessage = Parameters<typeof handleIndexNowBatch>[0]["messages"][number]["body"];
@@ -1265,6 +1274,12 @@ export default {
         >,
         env
       );
+      return;
+    }
+    if (batch.queue === "syndication-changes") {
+      // SYN1 (2026-06-12) — drain syndication triggers, fan out HMAC-signed
+      // webhooks to subscribers. The handler retries/acks per message.
+      await handleSyndicationBatch(batch as MessageBatch<SyndicationChangeMessage>, env);
       return;
     }
     // Unknown queue — log to D1 so it's queryable later (silent acking

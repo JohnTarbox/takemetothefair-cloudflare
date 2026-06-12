@@ -67,6 +67,14 @@ queue = "indexnow-pings"
 binding = "EVENT_DISCREPANCIES"
 queue = "event-discrepancies"
 
+# SYN1 (2026-06-12) — syndication change triggers. Producer here (admin
+# venue/event PATCH routes) + in the MCP Worker (update_* tools); consumer
+# is the MCP Worker. Operator: `wrangler queues create syndication-changes`
+# (+ a `syndication-changes-dlq` dead-letter) before first deploy.
+[[queues.producers]]
+binding = "SYNDICATION_CHANGES"
+queue = "syndication-changes"
+
 # ── Apex route ─────────────────────────────────────────────────────────────
 # This Worker serves meetmeatthefair.com/* directly (cutover 2026-06-10). The
 # old K2 apex-worker (meetmeatthefair-edge) that used to proxy + rewrite status
