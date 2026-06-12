@@ -10,6 +10,7 @@ import {
   vendors,
   eventDays,
   eventSlugHistory,
+  adminActions,
 } from "@/lib/db/schema";
 import { eq, and, ne, sql } from "drizzle-orm";
 import { createSlug, computePublicDates, appendSlugSegment, unsafeSlug } from "@/lib/utils";
@@ -436,6 +437,33 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // Run after the batch so completeness reflects the fresh row (the score
     // depends on dates, venue, etc., which the UPDATE just changed).
     await recomputeEventCompleteness(db, id);
+
+    // J2/C1 (2026-06-12) — log the field-level edit to admin_actions so the
+    // admin_actions mining card (docs/j2-admin-actions-mining-card-brief.md) can
+    // surface which fields the operator most often corrects after auto-ingest
+    // (= where the extractor is weakest). Mirrors the MCP update_event log.
+    // `slug` is derived from `name`, so it's excluded to avoid double-counting.
+    // Non-fatal: a logging failure must never fail the edit itself.
+    const changedFields = Object.keys(updateData).filter((k) => k !== "updatedAt" && k !== "slug");
+    if (changedFields.length > 0) {
+      try {
+        await db.insert(adminActions).values({
+          action: "event.update",
+          actorUserId: session.user.id,
+          targetType: "event",
+          targetId: id,
+          payloadJson: JSON.stringify({ fields: changedFields, source: "admin_ui" }),
+          createdAt: new Date(),
+        });
+      } catch (err) {
+        await logError(db, {
+          message: "Failed to write event.update admin_action",
+          error: err,
+          source: "api/admin/events/[id]",
+          request,
+        });
+      }
+    }
 
     const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
