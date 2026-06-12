@@ -109,15 +109,20 @@ exactly one above-fold primary action (the search).
 Rough effort: P1 ~½–1 day, P2 ~½ day, P3 ~½ day, P4 ~¼ day → ~2 days total, matching the
 email's 2–3 day estimate but front-loading the visible win.
 
-## Open questions (for sign-off before build)
+## Decisions (2026-06-12, signed off)
 
-1. **"Near me" radius** — hard radius (e.g. 50 mi) or just sort-by-nearest with no cutoff?
-2. **Featured dedup** — should editorial picks be allowed to repeat above other modules?
-3. **Replace "Upcoming" with** — Browse-by-category, or Popular-this-month? (Category is
-   simpler + higher scent; Popular needs a popularity signal — view_count exists.)
-4. **Search default** — does Enter with an empty keyword + "this weekend" chip go straight to a
-   filtered `/events`, or stay on the home strip?
-5. **Mobile** — search collapses to a single tap-to-expand bar; confirm that's acceptable.
+1. **"Near me" → no radius cutoff.** Sort by nearest, no distance ceiling.
+2. **Featured → deduped.** Dedup event IDs across all surviving event grids; precedence
+   **This Weekend > Featured > Browse-by-category**; hide any section that empties out. The
+   "editorial picks may repeat" exemption (`page.tsx:266`) is dropped — visible duplication in
+   near-identical grids is the clearest scent-eroder.
+3. **Replace "Upcoming" → Browse by category.** A navigational module (high scent), orthogonal
+   to Browse-by-State (what vs where = faceted directory nav), reusing `EVENT_CATEGORIES` +
+   the category pages. Chosen over Popular-this-month (depends on a thin `view_count` signal).
+4. **Search submit → always navigates to `/events`** with the selected params (incl. a
+   weekend-only submit). The above-fold weekend peek is the preview; the search is a tool that
+   lands in results — no homepage dead-end.
+5. **Mobile → search collapses to a tap-to-expand bar.** Confirmed.
 
 ## Verification (when built)
 
