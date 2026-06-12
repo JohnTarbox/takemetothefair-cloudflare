@@ -23,7 +23,8 @@ import { recomputeEventCompleteness } from "@/lib/completeness";
 import { parseTimestamp } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
 import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
-import { evaluateGates } from "@takemetothefair/utils";
+import { evaluateGates, mirroredFieldsChanged } from "@takemetothefair/utils";
+import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -395,6 +396,52 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       eventDayInsertChunks.push(eventDayRows.slice(i, i + EVENT_DAYS_CHUNK_SIZE));
     }
 
+    // SYN1 — syndication outbox row + per-event version bump, written in the
+    // SAME batch so a correction is never dropped. Gated on a mirrored field
+    // (name / start / end) actually changing; the venue mirror is only fetched
+    // when the gate passes, to keep non-mirrored edits free of extra reads.
+    const syndicationChangedFields = Object.keys(updateData).filter(
+      (k) => k !== "updatedAt" && k !== "slug"
+    );
+    let syndicationStmts: unknown[] = [];
+    if (mirroredFieldsChanged("event", syndicationChangedFields)) {
+      const effectiveVenueId = (
+        updateData.venueId !== undefined ? updateData.venueId : currentEvent.venueId
+      ) as string | null;
+      let venueMirror = null;
+      if (effectiveVenueId) {
+        const [v] = await db
+          .select({
+            name: venues.name,
+            address: venues.address,
+            city: venues.city,
+            state: venues.state,
+            zip: venues.zip,
+          })
+          .from(venues)
+          .where(eq(venues.id, effectiveVenueId))
+          .limit(1);
+        venueMirror = v ?? null;
+      }
+      syndicationStmts = eventSyndicationStatements(db, {
+        eventId: id,
+        changedFields: syndicationChangedFields,
+        event: {
+          name: (updateData.name as string) ?? currentEvent.name,
+          slug: (updateData.slug as string) ?? currentEvent.slug,
+          startDate:
+            updateData.startDate !== undefined
+              ? (updateData.startDate as Date | null)
+              : currentEvent.startDate,
+          endDate:
+            updateData.endDate !== undefined
+              ? (updateData.endDate as Date | null)
+              : currentEvent.endDate,
+        },
+        venue: venueMirror,
+      });
+    }
+
     // db.batch requires a non-empty tuple. The events UPDATE is always present,
     // so cast-spreading the conditional statements is safe.
     const batchStatements = [
@@ -416,6 +463,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
             ...eventDayInsertChunks.map((chunk) => db.insert(eventDays).values(chunk)),
           ]
         : []),
+      ...syndicationStmts,
     ] as const;
 
     try {

@@ -9,6 +9,7 @@ import { venueUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { findVenueByGooglePlaceId } from "@/lib/queries";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { venueSyndicationStatements } from "@/lib/syndication/outbox";
 
 interface Params {
   params: Promise<{ id: string }>;
@@ -83,6 +84,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         address: venues.address,
         city: venues.city,
         state: venues.state,
+        zip: venues.zip,
         description: venues.description,
       })
       .from(venues)
@@ -169,7 +171,31 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (data.parking !== undefined) updateData.parking = data.parking;
     if (data.status) updateData.status = data.status;
 
-    await db.update(venues).set(updateData).where(eq(venues.id, id));
+    // SYN1 — venue correction fans out to every event at this venue. The
+    // outbox row + the events-version bump commit in the SAME batch as the
+    // venue UPDATE (was a bare update; converted to a batch so a correction is
+    // never dropped). `venueSyndicationStatements` returns [] when no mirrored
+    // field (name/address/city/state/zip) changed, leaving a single-statement
+    // batch — which is exactly the old behavior.
+    const venueChangedFields = Object.keys(updateData).filter(
+      (k) => k !== "updatedAt" && k !== "slug"
+    );
+    const venueSyndicationStmts = venueSyndicationStatements(db, {
+      venueId: id,
+      changedFields: venueChangedFields,
+      venue: {
+        name: (updateData.name as string) ?? currentVenue.name,
+        address: (updateData.address as string) ?? currentVenue.address,
+        city: (updateData.city as string) ?? currentVenue.city,
+        state: (updateData.state as string) ?? currentVenue.state,
+        zip: (updateData.zip as string) ?? currentVenue.zip,
+      },
+    });
+    const venueBatch = [
+      db.update(venues).set(updateData).where(eq(venues.id, id)),
+      ...venueSyndicationStmts,
+    ] as const;
+    await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);
 
     const [updatedVenue] = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 

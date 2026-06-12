@@ -47,6 +47,11 @@ import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
 import { evaluateGates, normalizeEventDate } from "@takemetothefair/utils";
+import {
+  eventOutboxStatements,
+  venueOutboxStatements,
+  eventDayOutboxStatements,
+} from "../syndication/outbox.js";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
@@ -1131,7 +1136,30 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
       // Execute event update (skip if only venue fields provided)
       if (requestedFields.length > 0) {
-        await db.update(events).set(updates).where(eq(events.id, event.id));
+        // SYN1 — outbox row + version bump in the SAME batch as the UPDATE so a
+        // correction is never dropped. Gated on a mirrored field (name/start/
+        // end) changing; returns [] otherwise → falls back to a plain UPDATE.
+        const syndicationStmts = await eventOutboxStatements(db, {
+          eventId: event.id,
+          changedFields: Object.keys(updates),
+          event: {
+            name: (updates.name as string) ?? event.name,
+            slug: (updates.slug as string) ?? event.slug,
+            startDate: updates.startDate !== undefined ? updates.startDate : event.startDate,
+            endDate: updates.endDate !== undefined ? updates.endDate : event.endDate,
+          },
+          venueId: (updates.venueId !== undefined
+            ? (updates.venueId as string | null)
+            : event.venueId) as string | null,
+        });
+        if (syndicationStmts.length > 0) {
+          await db.batch([
+            db.update(events).set(updates).where(eq(events.id, event.id)),
+            ...syndicationStmts,
+          ] as unknown as Parameters<typeof db.batch>[0]);
+        } else {
+          await db.update(events).set(updates).where(eq(events.id, event.id));
+        }
         await recomputeEventCompleteness(db, event.id);
         await logEnrichment(db, {
           targetType: "event",
@@ -2409,7 +2437,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
       }
 
-      await db.update(venues).set(updates).where(eq(venues.id, venue.id));
+      // SYN1 — venue correction fans out to every event at the venue (outbox
+      // row + a single events-version bump), committed in the same batch.
+      const venueSyndicationStmts = venueOutboxStatements(db, {
+        venueId: venue.id,
+        changedFields: Object.keys(updates),
+        venue: {
+          name: (updates.name as string) ?? venue.name,
+          address: (updates.address as string) ?? venue.address,
+          city: (updates.city as string) ?? venue.city,
+          state: (updates.state as string) ?? venue.state,
+          zip: (updates.zip as string) ?? venue.zip,
+        },
+      });
+      if (venueSyndicationStmts.length > 0) {
+        await db.batch([
+          db.update(venues).set(updates).where(eq(venues.id, venue.id)),
+          ...venueSyndicationStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
+      } else {
+        await db.update(venues).set(updates).where(eq(venues.id, venue.id));
+      }
 
       // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material
       // edits on already-ACTIVE venues so analytics can attribute pings.
@@ -3940,10 +3988,41 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         };
       }
 
-      await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
+      // SYN1 — a day edit that moves the parent event's PUBLIC date range
+      // (date / vendor_only) fans out to subscribers. Outbox row keyed by the
+      // day id; version bump + snapshot resolve to the parent event. Gated, so
+      // an image/notes-only day edit stays a plain UPDATE.
+      const eventId = dayRows[0].eventId;
+      const [parentEvent] = await db
+        .select({
+          name: events.name,
+          slug: events.slug,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          venueId: events.venueId,
+        })
+        .from(events)
+        .where(eq(events.id, eventId))
+        .limit(1);
+      const daySyndicationStmts = parentEvent
+        ? await eventDayOutboxStatements(db, {
+            dayId: params.day_id,
+            eventId,
+            changedFields: Object.keys(updates),
+            event: parentEvent,
+            venueId: parentEvent.venueId,
+          })
+        : [];
+      if (daySyndicationStmts.length > 0) {
+        await db.batch([
+          db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id)),
+          ...daySyndicationStmts,
+        ] as unknown as Parameters<typeof db.batch>[0]);
+      } else {
+        await db.update(eventDays).set(updates).where(eq(eventDays.id, params.day_id));
+      }
 
       // Recompute public date range on parent event
-      const eventId = dayRows[0].eventId;
       const allDays = await db
         .select({ date: eventDays.date, vendorOnly: eventDays.vendorOnly })
         .from(eventDays)

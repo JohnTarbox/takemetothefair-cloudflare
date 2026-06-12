@@ -378,3 +378,7 @@ export * from "./vendor-display";
 // main app and the MCP Worker so both verify INTERNAL_API_KEY /
 // CLAUDE_READONLY_TOKEN against the same audited implementation.
 export * from "./timing-safe-equal";
+
+// SYN1 (2026-06-12): push-on-change syndication policy — mirrored-field gate +
+// snapshot shape, shared by the five mutation write-paths and SYN2 batch-read.
+export * from "./syndication-outbox";
