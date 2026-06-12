@@ -67,15 +67,16 @@ queue = "indexnow-pings"
 binding = "EVENT_DISCREPANCIES"
 queue = "event-discrepancies"
 
-# ── CUTOVER (Phase 5) — uncomment to claim the apex route ──────────────────
-# Until then the Worker is reachable only at its *.workers.dev URL (preview).
-# At cutover: deploy WITH this route (it folds in the old apex-worker, whose
-# K1 status-rewrite + Location-rewrite become moot on Workers — real 500s, no
-# pages.dev host). Rollback = re-point this route to the Pages project (kept
-# live through the soak) by removing this block + redeploying the apex-worker.
-# CUTOVER 2026-06-10: route CLAIMED. Deploying this Worker reassigns
-# meetmeatthefair.com/* from the apex-worker (meetmeatthefair-edge) to here.
-# Rollback = redeploy the apex-worker (it reclaims the route → Pages).
+# ── Apex route ─────────────────────────────────────────────────────────────
+# This Worker serves meetmeatthefair.com/* directly (cutover 2026-06-10). The
+# old K2 apex-worker (meetmeatthefair-edge) that used to proxy + rewrite status
+# was retired by this cutover and deleted (B5, 2026-06-12).
+# NOTE: error/notFound() responses are soft-200 on ISR routes under
+# @opennextjs/cloudflare — the status-rewrite did NOT become "moot via real
+# 500s" as first assumed; it's an accepted soft-status + noindex tradeoff
+# (docs/mig4-soft-404-opennext-isr.md).
+# Rollback = re-point this hostname at the last pre-migration Pages deployment
+# (see docs/opennext-cutover-runbook.md).
 [[routes]]
 pattern = "meetmeatthefair.com/*"
 zone_name = "meetmeatthefair.com"

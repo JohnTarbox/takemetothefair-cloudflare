@@ -49,8 +49,8 @@ A _true_ 404 status would require one of:
    - venue pages. Net SEO/perf negative.
 2. **Proxy-worker status rewrite** — detect the not-found boundary in a Worker
    in front of the app and rewrite 200→404 (the K2 apex-worker pattern). But
-   that worker was retired by the OpenNext cutover and is slated for deletion;
-   reviving it adds latency to every apex request.
+   that worker was retired by the OpenNext cutover and has since been deleted
+   (B5, 2026-06-12); reviving it adds latency to every apex request.
 
 Neither cost is justified by the marginal benefit over soft-404 + noindex.
 
