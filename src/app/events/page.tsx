@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
-import { Search, Filter, Store, Heart } from "lucide-react";
+import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -465,6 +465,7 @@ async function getEvents(
       searchParams.excludeFarmersMarkets ||
       searchParams.includePast ||
       searchParams.includeTBD ||
+      searchParams.when ||
       searchParams.myEvents ||
       searchParams.favorites
     );
@@ -813,6 +814,20 @@ export default async function EventsPage({
 
   const totalPages = Math.ceil(total / limit);
 
+  // C2 — the `when` date filter (set by the homepage "This weekend/month" chips)
+  // is the one active filter not represented in the EventsFilter sidebar, so
+  // surface it as a dismissible pill. The ✕ clears `when` (and resets to page 1)
+  // while preserving every other active filter.
+  const whenLabel =
+    params.when === "weekend" ? "This weekend" : params.when === "month" ? "This month" : null;
+  const clearWhenParams = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (k !== "when" && k !== "page" && typeof v === "string" && v) clearWhenParams.set(k, v);
+  }
+  const clearWhenHref = clearWhenParams.toString()
+    ? `/events?${clearWhenParams.toString()}`
+    : "/events";
+
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 print:max-w-none print:px-0 print:py-0">
       <BreadcrumbSchema
@@ -844,6 +859,21 @@ export default async function EventsPage({
         <p className="mt-2 text-muted-foreground">
           Discover upcoming fairs, festivals, and community events
         </p>
+        {whenLabel && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">Filtered to:</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber/40 bg-amber-light py-1 pl-3 pr-1.5 text-sm font-semibold text-secondary">
+              {whenLabel}
+              <Link
+                href={clearWhenHref}
+                aria-label={`Clear ${whenLabel} filter`}
+                className="inline-flex items-center justify-center rounded-full p-0.5 text-secondary/70 hover:bg-secondary/10 hover:text-secondary"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Link>
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 print:block">
