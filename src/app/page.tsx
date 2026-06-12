@@ -4,6 +4,7 @@ import { MapPin, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { HomeSearch } from "@/components/home/HomeSearch";
 import { StubEventCard } from "@/components/home/StubEventCard";
+import { getCategoryColors } from "@/lib/category-colors";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
@@ -92,48 +93,6 @@ async function getFeaturedEvents() {
     // bubbles to the edge. Mirrors REL1' §1 pattern in events/page.tsx.
     const { FetchError } = await import("@/lib/errors/fetch-error");
     throw new FetchError("app/page.tsx:getFeaturedEvents", e);
-  }
-}
-
-async function getUpcomingEvents() {
-  const db = getCloudflareDb();
-  try {
-    // Narrow projection — see getFeaturedEvents above.
-    //
-    // Over-fetch (10 instead of 6) so the HomePage render-time dedup
-    // against weekendEvents (limit 4) can still produce a full 6-card
-    // grid even when all 4 weekend events overlap upcoming. Worst case
-    // post-dedup: 10 - 4 = 6 cards. The HomePage component slices to
-    // 6 visible after filtering.
-    const results = await db
-      .select(eventJoinProjection)
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date())))
-      .orderBy(events.startDate)
-      .limit(10);
-
-    // Cast the narrow venue/promoter projection back to full row types so
-    // the EventCard/EventList prop contract compiles unchanged. Sound
-    // because every consumer field is present in the projection (same
-    // pattern as src/app/events/[slug]/page.tsx).
-    type FullVenue = typeof venues.$inferSelect;
-    type FullPromoter = typeof promoters.$inferSelect;
-    const flat = results.map((r) => ({
-      ...r.events,
-      venue: r.venue as FullVenue,
-      promoter: r.promoter as FullPromoter,
-    }));
-    return await attachEventDayDates(db, flat);
-  } catch (e) {
-    await logError(db, {
-      message: "Error fetching upcoming events",
-      error: e,
-      source: "app/page.tsx:getUpcomingEvents",
-    });
-    const { FetchError } = await import("@/lib/errors/fetch-error");
-    throw new FetchError("app/page.tsx:getUpcomingEvents", e);
   }
 }
 
@@ -244,32 +203,20 @@ async function getRecentBlogPosts() {
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [featuredEvents, upcomingEventsRaw, weekendEvents, counts, recentPosts] = await Promise.all(
-    [
-      getFeaturedEvents(),
-      getUpcomingEvents(),
-      getWeekendEvents(),
-      getPlatformCounts(),
-      getRecentBlogPosts(),
-    ]
-  );
+  const [featuredEventsRaw, weekendEvents, counts, recentPosts] = await Promise.all([
+    getFeaturedEvents(),
+    getWeekendEvents(),
+    getPlatformCounts(),
+    getRecentBlogPosts(),
+  ]);
 
-  // Homepage dedup (2026-06-08) — pre-fix, the 4 recurring farmers markets
-  // happening this week appeared in BOTH the "This weekend" grid AND the
-  // "Upcoming events" grid (each query qualified them independently). User
-  // saw "same 4 markets twice" on the homepage.
-  //
-  // Fix: filter Weekend IDs out of the Upcoming list at render-time.
-  // Weekend stays primary (most-relevant). Upcoming then shows the next
-  // distinct events after the weekend window.
-  //
-  // Featured is intentionally NOT deduped — the `featured` flag is
-  // operator-curated and shouldn't be suppressed just because the same
-  // event also happens this weekend; if an operator marked it featured,
-  // we want it visible in both contexts (and most featured events are
-  // multi-day specials, not the recurring markets that drove this bug).
+  // C2 P3 (2026-06-12) — the hero now carries the "This weekend" preview and a
+  // Browse-by-category module replaced the old "Upcoming" grid, so Featured is
+  // the only remaining event grid below. Dedup it against the weekend preview
+  // (precedence This Weekend > Featured) so an event that is both featured AND
+  // happening this weekend isn't shown twice on the page.
   const weekendIds = new Set(weekendEvents.map((e) => e.id));
-  const upcomingEvents = upcomingEventsRaw.filter((e) => !weekendIds.has(e.id)).slice(0, 6);
+  const featuredEvents = featuredEventsRaw.filter((e) => !weekendIds.has(e.id));
 
   return (
     <div>
@@ -395,28 +342,6 @@ export default async function HomePage() {
               </Link>
             ))}
           </div>
-
-          <h3 className="text-lg font-semibold text-foreground mt-8 mb-4 text-center">
-            Browse by Event Type
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-            {[
-              { name: "Fairs", slug: "fairs" },
-              { name: "Festivals", slug: "festivals" },
-              { name: "Craft Shows", slug: "craft-shows" },
-              { name: "Craft Fairs", slug: "craft-fairs" },
-              { name: "Markets", slug: "markets" },
-              { name: "Farmers Markets", slug: "farmers-markets" },
-            ].map((cat) => (
-              <Link
-                key={cat.slug}
-                href={`/events/${cat.slug}`}
-                className="px-3 py-2 bg-card rounded-lg border border-border hover:border-royal hover:shadow-sm transition-all text-center text-sm font-medium text-foreground hover:text-navy"
-              >
-                {cat.name}
-              </Link>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -449,34 +374,88 @@ export default async function HomePage() {
         </section>
       )}
 
-      {/* Upcoming Events — ticket-stub cards (C2 redesign) */}
-      {upcomingEvents.length > 0 && (
-        <section className="border-y border-border bg-muted py-14">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <div className="mb-7 flex items-end justify-between">
-              <div>
-                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
-                  Plan ahead
-                </div>
-                <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
-                  Upcoming events
-                </h2>
+      {/* Browse by category — navigational module (C2 P3, replaces the old
+          "Upcoming" grid). Colour-coded via the shared category palette so it
+          differentiates from the Featured/Weekend event grids by purpose. */}
+      <section className="border-y border-border bg-muted py-14">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="mb-7 flex items-end justify-between">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                By what you love
               </div>
-              <Link
-                href="/events"
-                className="flex items-center whitespace-nowrap font-semibold text-secondary hover:text-terracotta"
-              >
-                View all <ArrowRight className="ml-1 h-4 w-4" />
-              </Link>
+              <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
+                Browse by category
+              </h2>
             </div>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {upcomingEvents.slice(0, 8).map((event) => (
-                <StubEventCard key={event.id} event={event} />
-              ))}
-            </div>
+            <Link
+              href="/events"
+              className="flex items-center whitespace-nowrap font-semibold text-secondary hover:text-terracotta"
+            >
+              All events <ArrowRight className="ml-1 h-4 w-4" />
+            </Link>
           </div>
-        </section>
-      )}
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+            {[
+              {
+                label: "Agricultural Fairs",
+                sub: "County & state fairs",
+                category: "Agricultural Fair",
+                slug: "fairs",
+                emoji: "🎡",
+              },
+              {
+                label: "Festivals",
+                sub: "Music, food & more",
+                category: "Festival",
+                slug: "festivals",
+                emoji: "🎪",
+              },
+              {
+                label: "Craft Fairs",
+                sub: "Makers & artisans",
+                category: "Craft Fair",
+                slug: "craft-fairs",
+                emoji: "🎨",
+              },
+              {
+                label: "Farmers Markets",
+                sub: "Local & seasonal",
+                category: "Farmers Market",
+                slug: "farmers-markets",
+                emoji: "🥕",
+              },
+            ].map((c) => {
+              const colors = getCategoryColors([c.category]);
+              return (
+                <Link
+                  key={c.slug}
+                  href={`/events/${c.slug}`}
+                  className="group overflow-hidden rounded-xl border-[1.5px] border-border bg-card transition-all hover:-translate-y-0.5 hover:border-secondary hover:shadow-[4px_4px_0_rgb(var(--secondary)/0.08)]"
+                >
+                  <div className="h-2" style={{ background: colors.accent }} />
+                  <div className="flex items-center gap-3.5 p-4">
+                    <span
+                      className={`grid h-11 w-11 flex-none place-items-center rounded-[10px] text-xl ${colors.bg}`}
+                      aria-hidden="true"
+                    >
+                      {c.emoji}
+                    </span>
+                    <span>
+                      <span className="block font-display text-[17px] font-semibold leading-tight text-secondary">
+                        {c.label}
+                      </span>
+                      <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
+                        {c.sub}
+                      </span>
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
       {/* Latest from the Blog */}
       {recentPosts.length > 0 && (
