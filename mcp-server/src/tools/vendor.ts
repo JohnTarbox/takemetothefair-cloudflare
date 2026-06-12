@@ -924,13 +924,22 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // TAX1 A11 (2026-06-02) — prefer caller-supplied categories.
       // When omitted, fall back to the legacy ["Event"] placeholder
       // AND log at level:"info" so /admin/source-quality can sample
-      // how often this still happens. Invalid values are quietly
-      // filtered out (EVENT_CATEGORIES is the allow-list); empty
-      // result also falls back. Don't fail the suggestion — agents
-      // pass categories on a best-effort basis and a bad value
-      // shouldn't block ingest.
+      // how often this still happens. Invalid values are filtered out
+      // (EVENT_CATEGORIES is the allow-list); empty result also falls
+      // back. Don't fail the suggestion — agents pass categories on a
+      // best-effort basis and a bad value shouldn't block ingest.
+      //
+      // K21 (2026-06-12) — off-list values used to vanish silently:
+      // the caller got back ["Event"] with no signal, so a steady
+      // stream of mis-categorized community/email submissions leaked
+      // into the uncategorized queue invisibly. We now collect the
+      // dropped values and echo them back in `warnings.dropped_categories`
+      // so the caller (and the operator reading the reply) can see the
+      // coercion happened. Storage behavior is unchanged.
       const validCategorySet = new Set<string>(EVENT_CATEGORIES);
-      const filteredCategories = (params.categories ?? []).filter((c) => validCategorySet.has(c));
+      const providedCategories = params.categories ?? [];
+      const filteredCategories = providedCategories.filter((c) => validCategorySet.has(c));
+      const droppedCategories = providedCategories.filter((c) => !validCategorySet.has(c));
       const categoriesToStore = filteredCategories.length > 0 ? filteredCategories : ["Event"];
       if (categoriesToStore[0] === "Event") {
         await logError(db, {
@@ -1029,6 +1038,14 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             created: true,
             event: { id: eventId, slug: finalSlug, name: params.name, status: "TENTATIVE" },
             venue: venueResult,
+            // K21 — only present when the caller passed categories that
+            // aren't on the canonical EVENT_CATEGORIES list. Lets the
+            // caller detect that those values were dropped (the event
+            // was still created with the valid subset, or ["Event"] if
+            // none survived) instead of the prior silent coercion.
+            ...(droppedCategories.length > 0 && {
+              warnings: { dropped_categories: droppedCategories },
+            }),
           }),
         ],
       };
