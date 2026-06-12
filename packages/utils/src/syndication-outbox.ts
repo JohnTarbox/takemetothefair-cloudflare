@@ -13,6 +13,18 @@
 export type SyndicationEntityType = "venue" | "event" | "event_day";
 
 /**
+ * Queue message that triggers syndication dispatch. Carries only the entity
+ * key — the MCP consumer drains that entity's UNPROCESSED `syndication_outbox`
+ * rows, so a lost/duplicated message is self-healing (the durable outbox is the
+ * source of truth, not the message). Shared by the main-app producer and the
+ * MCP-Worker consumer.
+ */
+export type SyndicationChangeMessage = {
+  entityType: SyndicationEntityType;
+  entityId: string;
+};
+
+/**
  * Event fields whose change is worth mirroring to consumers. Matches the SYN2
  * batch-read projection. A change to a non-mirrored field (description, ticket
  * URL, focal point, …) does NOT write an outbox row or bump a version.

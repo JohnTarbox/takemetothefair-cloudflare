@@ -11,12 +11,18 @@ import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
 import { sendEmail, type SendEmailArgs } from "@/lib/email/send";
 import { pingIndexNow } from "@/lib/indexnow";
 import { logError } from "@/lib/logger";
-import type { EmailJobMessage, IndexNowMessage, IngestDiscrepancyMessage } from "./types";
+import type {
+  EmailJobMessage,
+  IndexNowMessage,
+  IngestDiscrepancyMessage,
+  SyndicationChangeMessage,
+} from "./types";
 
 type QueueEnv = {
   EMAIL_JOBS?: { send: (msg: unknown) => Promise<void> };
   INDEXNOW_PINGS?: { send: (msg: unknown) => Promise<void> };
   EVENT_DISCREPANCIES?: { send: (msg: unknown) => Promise<void> };
+  SYNDICATION_CHANGES?: { send: (msg: unknown) => Promise<void> };
   INTERNAL_API_KEY?: string;
   /** Override for the MCP proxy URL. Defaults to the production custom
    *  domain; useful for staging / local-dev overrides. */
@@ -229,4 +235,47 @@ export async function enqueueIngestDiscrepancy(msg: IngestDiscrepancyMessage): P
     message: "no EVENT_DISCREPANCIES binding and no INTERNAL_API_KEY; dropping",
     context: { eventId: msg.eventId, fieldClass: msg.fieldClass },
   });
+}
+
+/**
+ * SYN1 (2026-06-12) — enqueue a syndication trigger for an entity whose
+ * mirrored fields just changed. Best-effort + NEVER throws: the durable
+ * `syndication_outbox` row was already written in the mutation's batch, so a
+ * dropped enqueue only delays delivery (a future enqueue for the same entity,
+ * or an operator drain, still picks up the unprocessed row). The caller must
+ * NOT let syndication failures fail the underlying correction.
+ *
+ * Post-OpenNext the main app runs on Workers, where `[[queues.producers]]` is
+ * first-class — so the direct binding path is the live one. No MCP HTTP proxy
+ * fallback (unlike enqueueEmail): if the binding is somehow absent we log and
+ * move on rather than add a synchronous cross-Worker hop to the edit latency.
+ */
+export async function enqueueSyndicationChange(msg: SyndicationChangeMessage): Promise<void> {
+  try {
+    const env = getCloudflareEnv() as unknown as QueueEnv;
+    if (env.SYNDICATION_CHANGES) {
+      await env.SYNDICATION_CHANGES.send(msg);
+      return;
+    }
+    const db = getCloudflareDb();
+    await logError(db, {
+      level: "warn",
+      source: "queues:producers:enqueue-syndication",
+      message: "SYNDICATION_CHANGES binding absent; outbox row left for drain backstop",
+      context: { entityType: msg.entityType, entityId: msg.entityId },
+    });
+  } catch (e) {
+    try {
+      const db = getCloudflareDb();
+      await logError(db, {
+        level: "warn",
+        source: "queues:producers:enqueue-syndication",
+        message: "enqueueSyndicationChange threw; swallowed (outbox row durable)",
+        error: e,
+        context: { entityType: msg.entityType, entityId: msg.entityId },
+      });
+    } catch {
+      // Last-resort: never propagate.
+    }
+  }
 }
