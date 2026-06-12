@@ -1,9 +1,10 @@
 import { WebSiteSchema } from "@/components/seo/WebSiteSchema";
 import Link from "next/link";
-import { Search, Calendar, MapPin, Users, ArrowRight } from "lucide-react";
+import { Calendar, MapPin, Users, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventList } from "@/components/events/event-list";
 import { EventCard } from "@/components/events/event-card";
+import { HomeSearch } from "@/components/home/HomeSearch";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
@@ -287,7 +288,7 @@ export default async function HomePage() {
        * a fixed brand color.
        */}
       <section className="bg-secondary text-secondary-foreground">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28 max-h-[600px]">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 md:py-16">
           <div className="text-center max-w-3xl mx-auto">
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight">
               Discover Local Fairs & Events
@@ -296,28 +297,21 @@ export default async function HomePage() {
               Find the best fairs, festivals, and community events across New England. Connect with
               vendors and never miss an experience.
             </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-              <Link href="/events">
-                <Button
-                  size="lg"
-                  className="w-full sm:w-auto bg-amber text-primary-foreground font-semibold hover:bg-amber/90"
-                >
-                  <Search className="w-5 h-5 mr-2" />
-                  Browse Events
-                </Button>
+            {/* C2 P1 — enhanced search is the hero's primary action (replaces the
+                generic Browse/List buttons). The promoter CTA is demoted to a
+                secondary link below it. */}
+            <HomeSearch />
+            <p className="mt-3 text-sm text-secondary-foreground/80">
+              Organizing an event?{" "}
+              <Link
+                href="/register?role=promoter"
+                className="font-medium underline underline-offset-2 hover:text-secondary-foreground"
+              >
+                List it free
               </Link>
-              <Link href="/register?role=promoter">
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="w-full sm:w-auto bg-transparent border-secondary-foreground text-secondary-foreground hover:bg-secondary-foreground/10"
-                >
-                  List Your Event
-                </Button>
-              </Link>
-            </div>
+            </p>
             {/* Stat Callouts — real counts, refreshed every 5 min via revalidate */}
-            <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-8 text-sm">
+            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-8 text-sm">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
                   <Calendar className="w-4 h-4 text-amber-fg" />
