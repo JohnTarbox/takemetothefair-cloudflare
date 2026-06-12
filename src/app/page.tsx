@@ -11,7 +11,7 @@ import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/s
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
-import { upcomingEndPredicate } from "@/lib/event-dates";
+import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -101,7 +101,9 @@ async function getWeekendEvents() {
   const db = getCloudflareDb();
   try {
     const now = new Date();
-    const horizon = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    // Match the /events?when=weekend filter exactly (through the coming Sunday)
+    // so the hero preview and its "See all" agree on what "this weekend" means.
+    const horizon = whenWindowEnd("weekend", now)!;
     // Narrow projection — see getFeaturedEvents above.
     const results = await db
       .select(eventJoinProjection)

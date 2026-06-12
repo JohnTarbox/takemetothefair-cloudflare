@@ -52,8 +52,23 @@ export function upcomingEndPredicate(now: Date): SQL {
  * /events query and countPublicFilteredEvents so the two never drift.
  */
 export function whenWindowEnd(when: string | undefined, from: Date = new Date()): Date | null {
-  const days = when === "weekend" ? 7 : when === "month" ? 30 : null;
-  return days == null ? null : new Date(from.getTime() + days * 86_400_000);
+  if (when === "month") {
+    return new Date(from.getTime() + 30 * 86_400_000);
+  }
+  if (when === "weekend") {
+    // The actual upcoming weekend — through the end of the coming Sunday — NOT
+    // a flat "next 7 days" (which would pull in an event a full week out, e.g.
+    // a Fri–Sat event 7 days away reading as "this weekend"). If today is Sat
+    // or Sun, this covers the current weekend; otherwise the coming Sat–Sun.
+    // UTC day boundaries: events store start_date at noon UTC, so capping at
+    // 00:00 UTC of the Monday after Sunday includes every Sat/Sun event.
+    const dow = from.getUTCDay(); // 0 = Sun … 6 = Sat
+    const daysUntilSunday = (7 - dow) % 7;
+    return new Date(
+      Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate() + daysUntilSunday + 1)
+    );
+  }
+  return null;
 }
 
 /**
