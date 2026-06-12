@@ -157,7 +157,9 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER,
     image_focal_x REAL NOT NULL DEFAULT 0.5,
-    image_focal_y REAL NOT NULL DEFAULT 0.5
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
+    -- SYN1 (drizzle/0122) — per-event syndication delivery version.
+    syndication_version INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE event_date_drift_findings (
@@ -611,6 +613,40 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX idx_submission_correction_tokens_event
     ON submission_correction_tokens (event_id);
+
+  -- SYN1 (drizzle/0122) — syndication outbox + subscriber registry.
+  CREATE TABLE syndication_outbox (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    change_version INTEGER NOT NULL,
+    changed_fields TEXT NOT NULL DEFAULT '[]',
+    snapshot TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    processed_at INTEGER
+  );
+  CREATE INDEX idx_syndication_outbox_entity ON syndication_outbox (entity_type, entity_id);
+  CREATE INDEX idx_syndication_outbox_processed ON syndication_outbox (processed_at);
+
+  CREATE TABLE syndication_subscribers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    callback_url TEXT NOT NULL,
+    signing_secret TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE syndication_subscriptions (
+    id TEXT PRIMARY KEY,
+    subscriber_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX uq_syndication_sub_event
+    ON syndication_subscriptions (subscriber_id, event_id);
+  CREATE INDEX idx_syndication_subscriptions_event
+    ON syndication_subscriptions (event_id);
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
@@ -621,6 +657,20 @@ export function createTestDb(): { db: TestDb; raw: Database.Database } {
   // are identical.
   raw["exec"](SCHEMA_SQL);
   const db = drizzle(raw, { schema });
+  // D1 exposes `db.batch([...])` (atomic, sequential); better-sqlite3 doesn't.
+  // Shim it so code paths that batch — e.g. SYN1's outbox-row + version-bump
+  // written alongside the entity UPDATE — run under test. better-sqlite3 is
+  // synchronous, so sequential execution is effectively atomic per test.
+  (db as unknown as { batch: (stmts: unknown[]) => Promise<unknown[]> }).batch = async (
+    statements
+  ) => {
+    const results: unknown[] = [];
+    for (const stmt of statements) {
+      const s = stmt as { run?: () => unknown };
+      results.push(typeof s.run === "function" ? s.run() : await (stmt as Promise<unknown>));
+    }
+    return results;
+  };
   return { db, raw };
 }
 

@@ -372,6 +372,13 @@ export const events = sqliteTable(
     // render identically until an operator sets a focal point.
     imageFocalX: real("image_focal_x").notNull().default(0.5),
     imageFocalY: real("image_focal_y").notNull().default(0.5),
+    // SYN1 (drizzle/0122) — per-event syndication version. Monotonic counter
+    // bumped in the SAME batch as any mutation that changes a mirrored field
+    // (this event's name/dates, OR — via venue fan-out — its venue's
+    // name/address/city/state/zip). This is the `event_version` consumers
+    // dedup on ("highest version wins"); a venue edit must bump every affected
+    // event, which is why it's a real column, not derivable from the outbox.
+    syndicationVersion: integer("syndication_version").notNull().default(0),
   },
   (table) => [
     index("idx_events_status_startdate").on(table.status, table.startDate),
@@ -2495,3 +2502,132 @@ export const goodwillHealthSnapshots = sqliteTable("goodwill_health_snapshots", 
 });
 
 export type GoodwillHealthSnapshot = typeof goodwillHealthSnapshots.$inferSelect;
+
+// ─── SYN1 — Push-on-change syndication (drizzle/0122) ────────────────────────
+// Generic, vendor-agnostic mirror-correction propagation. Any mutation to a
+// venue/event/event_day writes an outbox row in the SAME db.batch() as the
+// entity UPDATE (so a correction is never dropped), then a queue dispatcher
+// (MCP Worker) fans out signed webhooks to registered subscribers. Emitter
+// holds ZERO subscriber-specific code — adding a subscriber is an INSERT.
+
+// Durable change-log. One row per mirror-affecting mutation. Self-contained:
+// `snapshot` carries the entity's full mirrored payload at change time.
+export const syndicationOutbox = sqliteTable(
+  "syndication_outbox",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // 'venue' | 'event' | 'event_day' — the mutated entity.
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    // Monotonic per (entity_type, entity_id) — audit/ordering within one
+    // entity's stream. Set via a MAX(change_version)+1 subquery inside the
+    // batch. NOTE: this is NOT the delivery version — consumers dedup on the
+    // per-event `events.syndication_version` (see buildEventSnapshot).
+    changeVersion: integer("change_version").notNull(),
+    // JSON array of changed mirrored field names.
+    changedFields: text("changed_fields").notNull().default("[]"),
+    // JSON object — the entity's mirrored payload at the time of change.
+    snapshot: text("snapshot").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    // NULL until the dispatcher acks a successful fan-out. Drives the
+    // "unprocessed backlog" canary + lets a redeploy resume cleanly.
+    processedAt: integer("processed_at", { mode: "timestamp" }),
+  },
+  (t) => ({
+    entityIdx: index("idx_syndication_outbox_entity").on(t.entityType, t.entityId),
+    processedIdx: index("idx_syndication_outbox_processed").on(t.processedAt),
+  })
+);
+
+// Registered consumers. One row per subscriber; the signing secret lives here
+// (once), not per subscription, so onboarding is a single INSERT.
+export const syndicationSubscribers = sqliteTable("syndication_subscribers", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text("name").notNull(), // human label, e.g. "maine-cardworks"
+  callbackUrl: text("callback_url").notNull(),
+  // Per-subscriber HMAC-SHA256 secret. Stored in D1 (not a Worker secret) so
+  // adding/rotating a subscriber needs no deploy.
+  signingSecret: text("signing_secret").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+// Which event IDs a subscriber tracks. Notification grain is per-event because
+// consumers key on event_id, not venue_id.
+export const syndicationSubscriptions = sqliteTable(
+  "syndication_subscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    subscriberId: text("subscriber_id")
+      .notNull()
+      .references(() => syndicationSubscribers.id, { onDelete: "cascade" }),
+    eventId: text("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    uniqueSubEvent: uniqueIndex("uq_syndication_sub_event").on(t.subscriberId, t.eventId),
+    eventIdx: index("idx_syndication_subscriptions_event").on(t.eventId),
+  })
+);
+
+export type SyndicationOutboxRow = typeof syndicationOutbox.$inferSelect;
+export type SyndicationSubscriber = typeof syndicationSubscribers.$inferSelect;
+export type SyndicationSubscription = typeof syndicationSubscriptions.$inferSelect;
+
+// ─── SYN1 — Drizzle statement builders (shared by all 5 write-paths) ─────────
+// These embed into a `db.batch([...])` alongside the entity UPDATE so the
+// outbox row + version bump commit atomically with the correction. The *pure*
+// gate + snapshot policy lives in `@takemetothefair/utils` (syndication-outbox).
+
+/**
+ * SQL expression computing the next monotonic `change_version` for one entity's
+ * outbox stream: `MAX(change_version) + 1` scoped to (entity_type, entity_id),
+ * defaulting to 1 for the first row. Safe inside a `db.batch()` — D1 runs batch
+ * statements sequentially in one implicit transaction.
+ */
+export function syndicationOutboxChangeVersionExpr(entityType: string, entityId: string) {
+  return sql<number>`(SELECT COALESCE(MAX(${syndicationOutbox.changeVersion}), 0) + 1 FROM ${syndicationOutbox} WHERE ${syndicationOutbox.entityType} = ${entityType} AND ${syndicationOutbox.entityId} = ${entityId})`;
+}
+
+/**
+ * Build the `values()` payload for a `syndication_outbox` INSERT. `id` and
+ * `createdAt` use the column `$defaultFn`s; `processedAt` defaults to NULL.
+ * `snapshot`/`changedFields` are JSON-stringified here so call sites pass plain
+ * objects/arrays.
+ */
+export function buildSyndicationOutboxValues(input: {
+  entityType: "venue" | "event" | "event_day";
+  entityId: string;
+  changedFields: readonly string[];
+  snapshot: unknown;
+}) {
+  return {
+    entityType: input.entityType,
+    entityId: input.entityId,
+    changeVersion: syndicationOutboxChangeVersionExpr(input.entityType, input.entityId),
+    changedFields: JSON.stringify(input.changedFields),
+    snapshot: JSON.stringify(input.snapshot),
+  };
+}
+
+/**
+ * SQL expression for `.set({ syndicationVersion: eventSyndicationVersionBumpExpr() })`
+ * — increments the per-event delivery counter in place.
+ */
+export function eventSyndicationVersionBumpExpr() {
+  return sql`${events.syndicationVersion} + 1`;
+}
