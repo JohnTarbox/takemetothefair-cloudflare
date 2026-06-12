@@ -350,6 +350,15 @@ export default async function BlogCoveragePage({
                             DRAFT
                           </span>
                         )}
+                        <div className="mt-0.5">
+                          {/* B4-3 — focal-point picker for the featured image. */}
+                          <Link
+                            href={`/admin/blog/${r.slug}/edit`}
+                            className="text-xs text-muted-foreground hover:text-royal hover:underline"
+                          >
+                            Edit focal point
+                          </Link>
+                        </div>
                       </td>
                       <td className="px-4 py-2 text-foreground tabular-nums">
                         {formatDate(r.publishDate)}
