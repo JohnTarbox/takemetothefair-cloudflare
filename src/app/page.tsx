@@ -1,10 +1,9 @@
 import { WebSiteSchema } from "@/components/seo/WebSiteSchema";
 import Link from "next/link";
-import { Calendar, MapPin, Users, ArrowRight } from "lucide-react";
+import { MapPin, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { EventList } from "@/components/events/event-list";
-import { EventCard } from "@/components/events/event-card";
 import { HomeSearch } from "@/components/home/HomeSearch";
+import { StubEventCard } from "@/components/home/StubEventCard";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
 import { and, gte, eq, desc, count, lte } from "drizzle-orm";
@@ -287,91 +286,98 @@ export default async function HomePage() {
        * intentionally a lifted-band design moment in dark mode, not
        * a fixed brand color.
        */}
-      <section className="bg-secondary text-secondary-foreground">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 md:py-16">
-          <div className="text-center max-w-3xl mx-auto">
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight">
-              Discover Local Fairs & Events
+      {/* C2 redesign (2026-06-12) — "almanac" hero on cream (was a flat navy
+          band). Editorial left-aligned headline in Fraunces, the search as the
+          primary action, a ruled almanac stat strip. See
+          docs/c2-homepage-redesign-brief.md. */}
+      <section className="relative overflow-hidden">
+        {/* faint concentric contour-rings motif, top-right */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-44 -top-28 h-[620px] w-[620px]"
+          style={{
+            background:
+              "radial-gradient(circle at center, transparent 0 38%, rgb(var(--accent-sage)/0.10) 38% 39%, transparent 39%)," +
+              "radial-gradient(circle at center, transparent 0 48%, rgb(var(--accent-sage)/0.09) 48% 49%, transparent 49%)," +
+              "radial-gradient(circle at center, transparent 0 58%, rgb(var(--accent-sage)/0.08) 58% 59%, transparent 59%)," +
+              "radial-gradient(circle at center, transparent 0 68%, rgb(var(--accent-gold)/0.10) 68% 69%, transparent 69%)",
+          }}
+        />
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-14 md:py-20">
+          <div className="max-w-3xl">
+            <span className="mb-5 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta">
+              <span className="h-[1.5px] w-8 bg-terracotta" />
+              New England&apos;s fair &amp; festival almanac
+            </span>
+            <h1 className="font-display text-[clamp(2.75rem,7vw,5.5rem)] font-semibold leading-[0.98] tracking-tight text-secondary">
+              Find your next <em className="font-medium italic text-terracotta">fair</em>, festival
+              &amp; market.
             </h1>
-            <p className="mt-6 text-lg md:text-xl text-secondary-foreground/80">
-              Find the best fairs, festivals, and community events across New England. Connect with
-              vendors and never miss an experience.
+            <p className="mt-5 max-w-[46ch] text-lg text-muted-foreground">
+              Every county fair, craft show, and farmers market across the six New England states —
+              one place, always current.
             </p>
-            {/* C2 P1 — enhanced search is the hero's primary action (replaces the
-                generic Browse/List buttons). The promoter CTA is demoted to a
-                secondary link below it. */}
+
             <HomeSearch />
-            <p className="mt-3 text-sm text-secondary-foreground/80">
+
+            <p className="mt-3 text-sm text-muted-foreground">
               Organizing an event?{" "}
               <Link
                 href="/register?role=promoter"
-                className="font-medium underline underline-offset-2 hover:text-secondary-foreground"
+                className="font-semibold text-secondary underline underline-offset-2 hover:text-terracotta"
               >
                 List it free
               </Link>
             </p>
-            {/* Stat Callouts — real counts, refreshed every 5 min via revalidate */}
-            <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-8 text-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
-                  <Calendar className="w-4 h-4 text-amber-fg" />
+
+            {/* Almanac stat strip — real counts, refreshed every 5 min via revalidate */}
+            <dl className="mt-10 flex max-w-[720px] flex-wrap border-y-[1.5px] border-border">
+              {[
+                { num: counts.upcomingEvents.toLocaleString(), lbl: "upcoming events" },
+                { num: counts.activeVenues.toLocaleString(), lbl: "venues" },
+                { num: counts.totalVendors.toLocaleString(), lbl: "vendors listed" },
+                { num: "6", lbl: "states covered" },
+              ].map((s, i) => (
+                <div
+                  key={s.lbl}
+                  className={`flex-1 py-4 ${i > 0 ? "border-l border-border pl-5" : ""}`}
+                >
+                  <dd className="font-display text-3xl font-semibold leading-none text-secondary">
+                    {s.num}
+                  </dd>
+                  <dt className="mt-1 text-[12.5px] tracking-wide text-muted-foreground">
+                    {s.lbl}
+                  </dt>
                 </div>
-                <span className="font-medium">
-                  {counts.upcomingEvents.toLocaleString()} upcoming event
-                  {counts.upcomingEvents === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
-                  <MapPin className="w-4 h-4 text-amber-fg" />
-                </div>
-                <span className="font-medium">
-                  {counts.activeVenues.toLocaleString()} venue
-                  {counts.activeVenues === 1 ? "" : "s"}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-amber/20 flex items-center justify-center">
-                  <Users className="w-4 h-4 text-amber-fg" />
-                </div>
-                <span className="font-medium">
-                  {counts.totalVendors.toLocaleString()} vendor
-                  {counts.totalVendors === 1 ? "" : "s"} listed
-                </span>
-              </div>
-            </div>
+              ))}
+            </dl>
           </div>
         </div>
       </section>
 
-      {/* This Weekend — replaces the old intent-router cards which just
-          duplicated the top nav. Shows events happening in the next 7 days. */}
+      {/* This Weekend — ticket-stub cards (C2 redesign). Shows the next 7 days. */}
       {weekendEvents.length > 0 && (
-        <section className="py-16 bg-muted">
+        <section className="border-y border-border bg-muted py-14">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <div className="flex items-baseline justify-between mb-8">
+            <div className="mb-7 flex items-end justify-between">
               <div>
-                <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
-                  This weekend
+                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                  Happening soon
+                </div>
+                <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
+                  This weekend across New England
                 </h2>
-                <p className="mt-1 text-muted-foreground">
-                  Events happening in the next 7 days across New England.
-                </p>
               </div>
               <Link
                 href="/events"
-                className="text-navy hover:underline font-medium flex items-center"
+                className="flex items-center whitespace-nowrap font-semibold text-secondary hover:text-terracotta"
               >
-                See all <ArrowRight className="w-4 h-4 ml-1" />
+                See all <ArrowRight className="ml-1 h-4 w-4" />
               </Link>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              {weekendEvents.map((event, i) => (
-                // IMG-followup (2026-06-08) — exactly one preload per page
-                // (i === 0). Cards 1-N use Next/Image's default lazy; the
-                // earlier eagerLoad attempt was reverted because Next.js
-                // 15.x emits a preload link for loading="eager" too.
-                <EventCard key={event.id} event={event} priority={i === 0} />
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              {weekendEvents.map((event) => (
+                <StubEventCard key={event.id} event={event} />
               ))}
             </div>
           </div>
@@ -428,43 +434,63 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Featured Events */}
+      {/* Featured Events — editorial picks, ticket-stub cards (C2 redesign) */}
       {featuredEvents.length > 0 && (
-        <section className="py-16">
+        <section className="py-14">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between mb-8">
-              <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
-                Featured Events
-              </h2>
+            <div className="mb-7 flex items-end justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                  Editor&apos;s picks
+                </div>
+                <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
+                  Featured events
+                </h2>
+              </div>
               <Link
                 href="/events?featured=true"
-                className="text-royal hover:text-navy font-medium flex items-center"
+                className="flex items-center whitespace-nowrap font-semibold text-secondary hover:text-terracotta"
               >
-                View All <ArrowRight className="w-4 h-4 ml-1" />
+                View all <ArrowRight className="ml-1 h-4 w-4" />
               </Link>
             </div>
-            <EventList events={featuredEvents} />
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              {featuredEvents.slice(0, 8).map((event) => (
+                <StubEventCard key={event.id} event={event} />
+              ))}
+            </div>
           </div>
         </section>
       )}
 
-      {/* Upcoming Events */}
-      <section className="py-16 bg-muted">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between mb-8">
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
-              Upcoming Events
-            </h2>
-            <Link
-              href="/events"
-              className="text-royal hover:text-navy font-medium flex items-center"
-            >
-              View All <ArrowRight className="w-4 h-4 ml-1" />
-            </Link>
+      {/* Upcoming Events — ticket-stub cards (C2 redesign) */}
+      {upcomingEvents.length > 0 && (
+        <section className="border-y border-border bg-muted py-14">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="mb-7 flex items-end justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                  Plan ahead
+                </div>
+                <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
+                  Upcoming events
+                </h2>
+              </div>
+              <Link
+                href="/events"
+                className="flex items-center whitespace-nowrap font-semibold text-secondary hover:text-terracotta"
+              >
+                View all <ArrowRight className="ml-1 h-4 w-4" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              {upcomingEvents.slice(0, 8).map((event) => (
+                <StubEventCard key={event.id} event={event} />
+              ))}
+            </div>
           </div>
-          <EventList events={upcomingEvents} emptyMessage="No upcoming events. Check back soon!" />
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Latest from the Blog */}
       {recentPosts.length > 0 && (
