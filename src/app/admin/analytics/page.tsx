@@ -128,6 +128,12 @@ export default async function AdminAnalyticsPage({ searchParams }: PageProps) {
             >
               GA4 dashboard <ArrowRight className="w-3.5 h-3.5" />
             </Link>
+            <Link
+              href="/admin/analytics/automation"
+              className="inline-flex items-center gap-1.5 text-sm text-royal hover:text-navy"
+            >
+              Automation candidates <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
           </div>
         )}
       </div>
