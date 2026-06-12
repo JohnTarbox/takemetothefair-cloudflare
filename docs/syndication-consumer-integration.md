@@ -41,6 +41,13 @@ X-Syndication-Event-Id: <eventId>
 X-Syndication-Event-Version: <integer>
 ```
 
+> ⚠️ **The headers are informational only — they are NOT covered by the HMAC.** Only the request
+> **body** is signed. Use `X-Syndication-Event-Id` / `-Version` (and `Content-Type`) at most for
+> cheap routing/logging _before_ you parse; never make a security or version-gating decision on a
+> header value. **Gate on the `eventId` and `eventVersion` _inside the signed body_** (§3) — those
+> are the authoritative, tamper-evident values. (You can ignore the `X-Syndication-Event-*`
+> headers entirely and lose nothing.)
+
 ### Request body
 
 ```json
@@ -291,6 +298,7 @@ missing ID as "deleted/unknown on MMATF" and handle on your side).
 - [ ] You verify **every** request's HMAC over the **raw** body, with a **constant-time** compare,
       and reject mismatches with `401`.
 - [ ] Your handler is **idempotent** and **version-gated** (`eventVersion >` stored → apply).
+- [ ] You gate on `eventId`/`eventVersion` **from the signed body**, not the (unsigned) headers.
 - [ ] Your endpoint is **HTTPS** only.
 - [ ] You return `2xx` only after you've durably stored the update (so a crash mid-handler leads
       to a retry, not a silent loss).
