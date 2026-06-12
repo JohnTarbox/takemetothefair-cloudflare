@@ -29,6 +29,7 @@ export function Header() {
     { name: "Vendors", href: "/vendors" },
     { name: "Promoters", href: "/promoters" },
     { name: "Blog", href: "/blog" },
+    { name: "Help", href: "/help" },
   ];
 
   const userNavigation = [
