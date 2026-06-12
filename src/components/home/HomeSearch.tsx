@@ -22,7 +22,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Search, MapPin } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+
+// Functional category quick-filters → /events?category=. (Date "when" chips
+// are deferred to C2 P2, which adds a date filter on /events.)
+const QUICK_CATEGORIES: ReadonlyArray<{ label: string; value: string }> = [
+  { label: "Agricultural fairs", value: "Agricultural Fair" },
+  { label: "Craft fairs", value: "Craft Fair" },
+  { label: "Farmers markets", value: "Farmers Market" },
+];
 
 // New England + the 2-letter stateCode /events filters on (events.state_code).
 const NE_STATES: ReadonlyArray<{ code: string; label: string }> = [
@@ -51,38 +58,36 @@ export function HomeSearch() {
   }
 
   return (
-    <div className="mx-auto mt-8 max-w-2xl text-left">
+    <div className="mt-7 max-w-[660px] text-left">
+      {/* "Printed" search bar — navy keyline + hard offset shadow, amber action. */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           navigate();
         }}
-        className="flex flex-col gap-2 rounded-xl bg-card p-2 shadow-lg sm:flex-row sm:items-stretch"
+        className="flex flex-col items-stretch overflow-hidden rounded-[14px] border-[1.5px] border-secondary bg-card shadow-[6px_6px_0_rgb(var(--secondary)/0.12)] sm:flex-row"
         role="search"
         aria-label="Search events"
       >
-        <div className="relative flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
+        <div className="flex flex-1 items-center gap-2.5 px-4">
+          <Search className="h-5 w-5 flex-none text-muted-foreground" aria-hidden="true" />
           <Input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search fairs, festivals, vendors…"
             aria-label="Keyword"
-            className="h-12 border-0 bg-transparent pl-10 text-base text-foreground shadow-none focus-visible:ring-0"
+            className="h-[58px] border-0 bg-transparent px-0 text-base text-foreground shadow-none focus-visible:ring-0"
           />
         </div>
 
-        <div className="flex items-center sm:border-l sm:border-border sm:pl-2">
-          <MapPin className="mr-1 h-5 w-5 text-muted-foreground sm:ml-1" aria-hidden="true" />
+        <div className="flex items-center border-t border-border px-3 sm:border-l sm:border-t-0">
+          <MapPin className="mr-1.5 h-5 w-5 flex-none text-muted-foreground" aria-hidden="true" />
           <select
             value={stateCode}
             onChange={(e) => setStateCode(e.target.value)}
             aria-label="State"
-            className="h-12 w-full rounded-md bg-transparent px-2 text-base text-foreground focus:outline-none sm:w-auto"
+            className="h-12 w-full cursor-pointer bg-transparent pr-2 text-[15px] font-medium text-secondary focus:outline-none sm:h-[58px] sm:w-auto"
           >
             {NE_STATES.map((s) => (
               <option key={s.code || "all"} value={s.code}>
@@ -92,29 +97,34 @@ export function HomeSearch() {
           </select>
         </div>
 
-        <Button
+        <button
           type="submit"
-          size="lg"
-          className="h-12 bg-amber font-semibold text-primary-foreground hover:bg-amber/90"
+          className="flex items-center justify-center gap-2 bg-amber px-7 py-4 text-base font-bold text-navy-dark transition-colors hover:bg-amber/90 sm:py-0"
         >
-          <Search className="mr-2 h-5 w-5" aria-hidden="true" />
+          <Search className="h-[18px] w-[18px]" aria-hidden="true" />
           Search
-        </Button>
+        </button>
       </form>
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 pl-1 text-sm text-secondary-foreground/80">
+      {/* Functional quick-filters (ticket-stub chips). */}
+      <div className="mt-4 flex flex-wrap items-center gap-2.5">
         <button
           type="button"
           onClick={() => navigate({ sort: "nearest" })}
-          className="inline-flex items-center gap-1 font-medium underline-offset-2 hover:underline"
+          className="inline-flex items-center gap-1.5 rounded-full border border-amber/40 bg-amber-light px-3.5 py-[7px] text-[13.5px] font-semibold text-secondary hover:bg-amber-light/70"
         >
-          <MapPin className="h-4 w-4" aria-hidden="true" />
+          <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
           Events near me
         </button>
-        <span aria-hidden="true">·</span>
-        <Link href="/events" className="underline-offset-2 hover:underline">
-          Browse all events
-        </Link>
+        {QUICK_CATEGORIES.map((c) => (
+          <Link
+            key={c.value}
+            href={`/events?category=${encodeURIComponent(c.value)}`}
+            className="inline-flex items-center rounded-full border border-amber/40 bg-amber-light px-3.5 py-[7px] text-[13.5px] font-semibold text-secondary hover:bg-amber-light/70"
+          >
+            {c.label}
+          </Link>
+        ))}
       </div>
     </div>
   );

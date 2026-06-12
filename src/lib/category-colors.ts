@@ -11,6 +11,13 @@ type CategoryColors = {
   icon: string;
   badge: string;
   accent: string;
+  /**
+   * C2 (2026-06-12) — text-colour class to use ON the solid `accent` fill
+   * (e.g. the colour-coded ticket-stub card header). Picked for ≥AA-large
+   * contrast against each accent: dark ink on the warm/light fills (gold,
+   * terracotta, sage), white on the darker ones (navy-soft, stone).
+   */
+  onAccent: string;
 };
 
 // Design System keystone PR 2 (2026-06-07) — migrate raw hex `accent`
@@ -30,6 +37,7 @@ const GOLD: CategoryColors = {
   icon: "text-amber-fg",
   badge: "bg-amber-light text-amber-bg-fg",
   accent: "rgb(var(--accent-gold))",
+  onAccent: "text-navy-dark",
 };
 
 const TERRACOTTA: CategoryColors = {
@@ -37,6 +45,7 @@ const TERRACOTTA: CategoryColors = {
   icon: "text-terracotta",
   badge: "bg-terracotta-light text-stone-900",
   accent: "rgb(var(--accent-terracotta))",
+  onAccent: "text-navy-dark",
 };
 
 const SAGE: CategoryColors = {
@@ -44,6 +53,7 @@ const SAGE: CategoryColors = {
   icon: "text-sage-700",
   badge: "bg-sage-50 text-sage-700",
   accent: "rgb(var(--accent-sage))",
+  onAccent: "text-navy-dark",
 };
 
 const NAVY_SOFT: CategoryColors = {
@@ -51,6 +61,7 @@ const NAVY_SOFT: CategoryColors = {
   icon: "text-navy",
   badge: "bg-stone-100 text-navy",
   accent: "rgb(var(--accent-navy-soft))",
+  onAccent: "text-white",
 };
 
 const STONE_CRAFT: CategoryColors = {
@@ -58,6 +69,7 @@ const STONE_CRAFT: CategoryColors = {
   icon: "text-stone-600",
   badge: "bg-stone-50 text-stone-900",
   accent: "rgb(var(--accent-stone))",
+  onAccent: "text-white",
 };
 
 const CATEGORY_COLORS: Record<string, CategoryColors> = {
