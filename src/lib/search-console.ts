@@ -6,6 +6,8 @@ import {
 } from "./google-auth";
 import { resolveDateRange, type DateRangeInput, type ResolvedDateRange } from "./analytics-params";
 import { parseDateLoose } from "@/lib/datetime";
+import { getCloudflareDb } from "@/lib/cloudflare";
+import { logError } from "@/lib/logger";
 
 // Normalize an external-API date passthrough field into a canonical ISO 8601
 // string (or null if the value is missing/unparseable). Without this, GSC's
@@ -66,6 +68,49 @@ export type SearchQueryRow = {
   position: number;
 };
 
+/**
+ * A8 (Dev-Email-2026-06-13 §C1) — write an `error_logs` row for a GSC API
+ * failure so it's catchable by the nightly error-log sweep / REL1 §0 burst-watch
+ * canary, not just surfaced inline in the /admin/analytics widget.
+ *
+ * Motivated by MIG7: the GSC "User does not have sufficient permission" 403 ran
+ * live for >24h (site_ctr + brand_share KPIs INDETERMINATE) without ever
+ * writing an error_logs row — only John eyeballing the dashboard caught it.
+ *
+ * Pure observability: best-effort, never throws, never changes the happy path
+ * or the error that callers see (the ScApiError is still thrown by the caller).
+ * Mirrors the static-map + cron logging pattern.
+ */
+async function recordScFailure(
+  fn: string,
+  env: ScEnv,
+  status: number | null,
+  detail: string,
+  url?: string
+): Promise<void> {
+  // Refine the source label from the GSC endpoint when we have the response URL
+  // so triage shows WHICH call failed (the spec's `:<fn>` suffix).
+  let op = fn;
+  if (url) {
+    if (url.includes("searchAnalytics")) op = "searchAnalytics";
+    else if (url.includes("/sitemaps")) op = "sitemaps";
+    else if (url.includes("urlInspection")) op = "urlInspection";
+    else if (url.includes("urlNotifications")) op = "indexing";
+  }
+  try {
+    const db = getCloudflareDb();
+    await logError(db, {
+      source: `lib/search-console:${op}`,
+      message: `GSC API failure (${op}, HTTP ${status ?? "?"}): ${detail.slice(0, 300)}`,
+      statusCode: status ?? undefined,
+      level: "error",
+      context: { op, scSiteUrl: env.SC_SITE_URL ?? null, detail: detail.slice(0, 500), url },
+    });
+  } catch {
+    /* observability only — never break the GSC call path on a logging hiccup */
+  }
+}
+
 function resolveSiteUrl(env: ScEnv): string {
   const site = env.SC_SITE_URL?.trim();
   if (!site) {
@@ -84,7 +129,10 @@ async function getAccessToken(env: ScEnv, skipCache: boolean): Promise<string> {
     });
   } catch (error) {
     if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
-    if (error instanceof GoogleAuthError) throw new ScApiError(error.status, error.detail);
+    if (error instanceof GoogleAuthError) {
+      await recordScFailure("token-acquisition", env, error.status, error.detail);
+      throw new ScApiError(error.status, error.detail);
+    }
     throw error;
   }
 }
@@ -97,7 +145,10 @@ async function getWriteAccessToken(env: ScEnv, skipCache: boolean): Promise<stri
     });
   } catch (error) {
     if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
-    if (error instanceof GoogleAuthError) throw new ScApiError(error.status, error.detail);
+    if (error instanceof GoogleAuthError) {
+      await recordScFailure("token-acquisition", env, error.status, error.detail);
+      throw new ScApiError(error.status, error.detail);
+    }
     throw error;
   }
 }
@@ -110,7 +161,10 @@ async function getIndexingAccessToken(env: ScEnv, skipCache: boolean): Promise<s
     });
   } catch (error) {
     if (error instanceof GoogleAuthConfigError) throw new ScConfigError(error.message);
-    if (error instanceof GoogleAuthError) throw new ScApiError(error.status, error.detail);
+    if (error instanceof GoogleAuthError) {
+      await recordScFailure("token-acquisition", env, error.status, error.detail);
+      throw new ScApiError(error.status, error.detail);
+    }
     throw error;
   }
 }
@@ -220,6 +274,7 @@ export async function getSearchQueriesForPage(
     } catch {
       /* keep raw text as detail */
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
@@ -363,6 +418,7 @@ export async function getSiteSearchQueries(
     } catch {
       /* keep raw detail */
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
@@ -525,6 +581,7 @@ export async function getDailyClicks(
 
   if (!res.ok) {
     const text = await res.text();
+    await recordScFailure("gsc-api", env, res.status, text.slice(0, 500), res.url);
     throw new ScApiError(res.status, text.slice(0, 500));
   }
 
@@ -622,6 +679,7 @@ export async function getQueryPages(
     } catch {
       /* keep raw detail */
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
@@ -717,6 +775,7 @@ export async function getSitemapStatus(
     } catch {
       /* keep raw detail */
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
@@ -848,6 +907,7 @@ export async function inspectUrl(
     } catch {
       /* keep raw detail */
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
@@ -1002,6 +1062,7 @@ export async function submitSitemap(env: ScEnv, sitemapUrl: string): Promise<Sub
     } catch {
       detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
@@ -1115,6 +1176,7 @@ export async function requestIndexing(
     } catch {
       detail = `HTTP ${res.status}: ${text.slice(0, 500)}`;
     }
+    await recordScFailure("gsc-api", env, res.status, detail, res.url);
     throw new ScApiError(res.status, detail);
   }
 
