@@ -5,6 +5,7 @@ import { events } from "@/lib/db/schema";
 import { isAuthorized } from "@/lib/api-auth";
 import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
+import { sanitizeScrapedDescription } from "@/lib/scrapers/utils";
 import { inArray, eq } from "drizzle-orm";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
 import { recomputeEventCompleteness } from "@/lib/completeness";
@@ -98,8 +99,12 @@ export async function POST(request: Request) {
         const updates: Record<string, unknown> = {};
         const fieldsUpdated: string[] = [];
 
-        if (details.description && details.description !== event.description) {
-          updates.description = details.description;
+        // K22 — sanitize at the persistence boundary (decode entities + strip
+        // the "… Read more »" truncation tail) so re-scrapes can't refill the
+        // bucket with encoded/truncated previews.
+        const cleanDescription = sanitizeScrapedDescription(details.description);
+        if (cleanDescription && cleanDescription !== event.description) {
+          updates.description = cleanDescription;
           fieldsUpdated.push("description");
         }
         if (

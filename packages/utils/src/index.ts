@@ -38,6 +38,11 @@ const HTML_ENTITIES: Record<string, string> = {
   "&hellip;": "…",
   "&bull;": "•",
   "&middot;": "·",
+  // Angle quotes — K22 (2026-06-13): mainemade.com listing previews end in
+  // "Read more »" encoded as `&raquo;`, which survived the old map and rendered
+  // literally on event pages.
+  "&laquo;": "«",
+  "&raquo;": "»",
   "&ldquo;": "“",
   "&rdquo;": "”",
   "&lsquo;": "‘",
@@ -60,6 +65,33 @@ export function decodeHtmlEntities(text: string): string {
     String.fromCharCode(parseInt(code, 16))
   );
   return decoded;
+}
+
+/**
+ * Clean a scraped/aggregated event description for storage.
+ *
+ * K22 (2026-06-13): mainemade.com — and listing aggregators generally — hand
+ * back a *preview snippet* that is HTML-entity-encoded and truncated with a
+ * "… Read more »" tail. Stored verbatim, users saw literal `&#8217;` /
+ * `&hellip;` and a dangling "Read more »" on the public event page (17 events
+ * found via an encoding sweep). This:
+ *   1. decodes HTML entities (incl. `&raquo;` after the map fix above), and
+ *   2. strips the trailing "… Read more »" truncation tail and its leading
+ *      ellipsis, then collapses whitespace.
+ *
+ * Apply at EVERY ingest path that stores a scraped description — JSON-LD, other
+ * aggregators, future sources (per the brief: generalize, don't fix one
+ * source). Pure + idempotent, so double-application across the scraper and the
+ * persistence boundary is harmless.
+ */
+export function sanitizeScrapedDescription(raw: string | null | undefined): string {
+  if (!raw) return "";
+  let s = decodeHtmlEntities(raw);
+  // Trailing truncation tail: optional leading ellipsis/space (NOT a period —
+  // we keep a legit sentence-ending "." before "Read More"), then "Read more",
+  // then an optional » / >> chevron, anchored to end of string.
+  s = s.replace(/[\s…]*\bread\s+more\b\s*(?:»|>>)?\s*$/i, "");
+  return s.replace(/\s+/g, " ").trim();
 }
 
 /**

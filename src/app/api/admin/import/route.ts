@@ -5,7 +5,7 @@ import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
-import { decodeHtmlEntities } from "@/lib/scrapers/utils";
+import { decodeHtmlEntities, sanitizeScrapedDescription } from "@/lib/scrapers/utils";
 import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@/lib/utils";
 import { normalizeEventDate } from "@/lib/event-dates";
@@ -424,7 +424,7 @@ export async function POST(request: Request) {
             // Decode HTML entities in event name
             const decodedEventName = decodeHtmlEntities(eventData.name);
             const decodedDescription = eventData.description
-              ? decodeHtmlEntities(eventData.description)
+              ? sanitizeScrapedDescription(eventData.description)
               : existing[0].description;
             const updateData: Record<string, unknown> = {
               name: decodedEventName,
@@ -493,7 +493,7 @@ export async function POST(request: Request) {
         // takes over in that case. Previously we wrote `${name} - imported
         // from ${source}` which polluted SEO metadata across 43 events.
         const decodedNewDescription = eventData.description
-          ? decodeHtmlEntities(eventData.description)
+          ? sanitizeScrapedDescription(eventData.description)
           : null;
 
         // Pre-ingest date-quality gates. Bulk-import is Tier 2 by default
@@ -687,8 +687,12 @@ export async function PATCH(request: Request) {
             updatedAt: new Date(),
           };
 
-          if (details.description && details.description !== event.description) {
-            updates.description = details.description;
+          // K22 — sanitize at the persistence boundary so ANY source's
+          // details scraper (not just mainemade) lands a decoded, de-truncated
+          // description. Idempotent with the scraper-level sanitize.
+          const cleanDetailsDescription = sanitizeScrapedDescription(details.description);
+          if (cleanDetailsDescription && cleanDetailsDescription !== event.description) {
+            updates.description = cleanDetailsDescription;
           }
           if (
             details.startDate &&
