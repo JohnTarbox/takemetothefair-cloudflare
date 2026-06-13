@@ -57,6 +57,7 @@ import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
+import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
@@ -108,6 +109,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Combined dedup + create + link tool — separate file to keep this one
   // manageable.
   registerCreateOrLinkVendorTool(server, db, auth, env);
+
+  // I1 (2026-06-13) — review surface for staged vendor-enrichment proposals:
+  // list_enrichment_candidates + review_enrichment_candidate.
+  registerEnrichmentReviewTools(server, db, auth, env);
 
   // Outbox drainer for the defer_search_ping flag — fires one batched
   // IndexNow call instead of N inline pings after a bulk ingestion run.
