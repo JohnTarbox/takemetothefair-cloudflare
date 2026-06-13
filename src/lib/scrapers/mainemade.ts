@@ -4,6 +4,7 @@
 import type { ScrapedEvent, ScrapeResult } from "./types";
 import {
   decodeHtmlEntities,
+  sanitizeScrapedDescription,
   monthNameToMidnightUtc,
   parseTimeRange,
   expandDateRange,
@@ -263,11 +264,11 @@ export async function scrapeMaineMadeEventDetails(
                 }
               }
               if (item.description && !details.description) {
-                details.description = String(item.description)
-                  .replace(/<[^>]+>/g, " ")
-                  .replace(/\s+/g, " ")
-                  .trim()
-                  .slice(0, 5000);
+                // K22 — strip tags, then decode entities + drop the
+                // "… Read more »" truncation tail before storing.
+                details.description = sanitizeScrapedDescription(
+                  String(item.description).replace(/<[^>]+>/g, " ")
+                ).slice(0, 5000);
               }
               if (item.image && !details.imageUrl) {
                 details.imageUrl = typeof item.image === "string" ? item.image : item.image?.url;
@@ -329,11 +330,11 @@ export async function scrapeMaineMadeEventDetails(
       for (const pattern of descPatterns) {
         const match = html.match(pattern);
         if (match) {
-          details.description = match[1]
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s+/g, " ")
-            .trim()
-            .slice(0, 2000);
+          // K22 — sanitize (decode + de-truncate) after tag-stripping.
+          details.description = sanitizeScrapedDescription(match[1].replace(/<[^>]+>/g, " ")).slice(
+            0,
+            2000
+          );
           if (details.description.length > 50) break;
         }
       }
@@ -353,10 +354,9 @@ export async function scrapeMaineMadeEventDetails(
         /<meta[^>]*property="og:description"[^>]*content="([^"]+)"[^>]*>/i
       );
       if (ogDescMatch) {
-        details.description = ogDescMatch[1]
-          .replace(/&quot;/g, '"')
-          .replace(/&amp;/g, "&")
-          .replace(/&#8217;/g, "'");
+        // K22 — replaces the ad-hoc 3-entity decode with the shared
+        // sanitizer (full entity set + "Read more »" tail strip).
+        details.description = sanitizeScrapedDescription(ogDescMatch[1]);
       }
     }
 

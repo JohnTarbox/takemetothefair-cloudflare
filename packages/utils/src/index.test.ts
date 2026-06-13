@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   decodeHtmlEntities,
+  sanitizeScrapedDescription,
   stripToolCallMarkup,
   createSlug,
   createSlugFromName,
@@ -41,6 +42,50 @@ describe("decodeHtmlEntities", () => {
 
   it("returns plain text unchanged", () => {
     expect(decodeHtmlEntities("plain text no entities")).toBe("plain text no entities");
+  });
+
+  // K22 (2026-06-13) — the &raquo; gap that let "Read more »" render literally.
+  it("decodes angle quotes (&raquo; / &laquo;)", () => {
+    expect(decodeHtmlEntities("Read more &raquo;")).toBe("Read more »");
+    expect(decodeHtmlEntities("&laquo;back")).toBe("«back");
+  });
+});
+
+describe("sanitizeScrapedDescription (K22)", () => {
+  it("decodes entities and strips the '… Read more »' truncation tail", () => {
+    // &#8217; is the curly right single quote (U+2019) — decodeHtmlEntities
+    // maps to proper Unicode, not an ASCII apostrophe.
+    const raw = "Join us for Maine&#8217;s biggest craft fair &amp; more&hellip; Read more &raquo;";
+    expect(sanitizeScrapedDescription(raw)).toBe("Join us for Maine’s biggest craft fair & more");
+  });
+
+  it("strips the decoded chevron form too", () => {
+    expect(sanitizeScrapedDescription("Great event… Read more »")).toBe("Great event");
+  });
+
+  it("handles 'Read More' without a chevron", () => {
+    expect(sanitizeScrapedDescription("Some text. Read More")).toBe("Some text.");
+  });
+
+  it("collapses whitespace and decodes &nbsp;", () => {
+    expect(sanitizeScrapedDescription("a&nbsp;b   c\n\nd")).toBe("a b c d");
+  });
+
+  it("leaves a clean description untouched (idempotent)", () => {
+    const clean = "A wonderful fair with crafts, food, and music.";
+    expect(sanitizeScrapedDescription(clean)).toBe(clean);
+    expect(sanitizeScrapedDescription(sanitizeScrapedDescription(clean))).toBe(clean);
+  });
+
+  it("does NOT strip a mid-text 'read more' that isn't the trailing tail", () => {
+    const s = "Read more books at our literacy booth this weekend.";
+    expect(sanitizeScrapedDescription(s)).toBe(s);
+  });
+
+  it("returns empty string for null/undefined/empty", () => {
+    expect(sanitizeScrapedDescription(null)).toBe("");
+    expect(sanitizeScrapedDescription(undefined)).toBe("");
+    expect(sanitizeScrapedDescription("")).toBe("");
   });
 });
 

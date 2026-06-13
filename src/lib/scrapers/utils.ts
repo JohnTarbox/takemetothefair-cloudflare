@@ -1,6 +1,10 @@
 // Shared utilities for scrapers — thin re-exports of the canonical helpers
 // in @takemetothefair/utils. Existing scraper imports keep working unchanged.
-export { decodeHtmlEntities, createSlugFromName } from "@takemetothefair/utils";
+export {
+  decodeHtmlEntities,
+  sanitizeScrapedDescription,
+  createSlugFromName,
+} from "@takemetothefair/utils";
 
 // Month-name → 0-based index for Date.UTC(). Lowercase keys; pass any case.
 const SCRAPER_MONTH_INDEX: Record<string, number> = {
