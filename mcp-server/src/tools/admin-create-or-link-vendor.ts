@@ -223,9 +223,9 @@ export function registerCreateOrLinkVendorTool(
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
+        .default(true)
         .describe(
-          "If true, queue the IndexNow ping in pending_search_pings instead of firing inline. Drain with flush_pending_search_pings at end of batch. Default false."
+          "REL4: defaults TRUE — queue the IndexNow ping in pending_search_pings (drained by the hourly cron / flush_pending_search_pings) instead of firing inline, to avoid Bing's per-host 429 storm. Pass false only when this single write needs immediate indexing."
         ),
       event_day_id: z
         .string()
@@ -254,7 +254,7 @@ export function registerCreateOrLinkVendorTool(
         "EXHIBITOR") as (typeof PARTICIPATION_TYPE_ENUM)[number];
       const dedupStrategy =
         (params.dedup_strategy as (typeof DEDUP_STRATEGY_VALUES)[number] | undefined) ?? "fuzzy";
-      const deferSearchPing = params.defer_search_ping ?? false;
+      const deferSearchPing = params.defer_search_ping ?? true;
 
       if (businessName.length === 0) {
         return {

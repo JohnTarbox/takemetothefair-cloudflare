@@ -20,6 +20,12 @@ import { indexnowSubmissions, pendingSearchPings, timeToIndexLog } from "@/lib/d
 import { lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
+import { getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import {
+  armIndexNowCooldown,
+  checkIndexNowBreaker,
+  clearIndexNowCooldown,
+} from "@/lib/indexnow-breaker";
 
 const HOST = SITE_HOSTNAME;
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -86,7 +92,7 @@ interface IndexNowEnv {
 
 type Db = DrizzleD1Database<Record<string, unknown>> | null;
 
-type SubmissionStatus = "success" | "failure" | "no_key" | "no_eligible_urls";
+type SubmissionStatus = "success" | "failure" | "no_key" | "no_eligible_urls" | "skipped";
 
 async function recordSubmission(
   db: Db,
@@ -271,11 +277,40 @@ export async function pingIndexNow(
     };
   }
 
+  // REL4 circuit breaker — the single choke point where Bing is actually
+  // contacted. If an operator paused IndexNow, or a prior 429 armed a cooldown,
+  // skip the submission entirely (no Bing contact) and surface ok:false so the
+  // flush leaves its rows pending for a later cron instead of dropping them.
+  // Deferred enqueues happen ABOVE this guard, so create paths still queue
+  // normally while we wait out Bing's penalty. Fails open if KV is unavailable.
+  const kv = getCloudflareRateLimitKv();
+  const breaker = await checkIndexNowBreaker(kv);
+  if (breaker.blocked) {
+    const reason =
+      breaker.reason === "paused"
+        ? "breaker_paused"
+        : `breaker_cooldown_until_${breaker.until ? new Date(breaker.until).toISOString() : "?"}`;
+    console.warn(
+      `[IndexNow] circuit breaker open (${reason}) — skipping ${filtered.length} URL(s)`
+    );
+    await recordSubmission(db, source, filtered, "skipped", null, reason);
+    return {
+      ok: false,
+      deferred: false,
+      attempted: filtered.length,
+      succeeded: 0,
+      failed: filtered.length,
+      httpStatus: null,
+      failureReason: reason,
+    };
+  }
+
   const submittedAt = new Date();
   let succeeded = 0;
   let failed = 0;
   let lastHttpStatus: number | null = null;
   let lastFailureReason: string | null = null;
+  let lastRetryAfterMs: number | null = null;
 
   try {
     if (filtered.length === 1) {
@@ -304,6 +339,9 @@ export async function pingIndexNow(
         failed = 1;
         lastHttpStatus = response.status;
         lastFailureReason = body || `HTTP ${response.status}`;
+        if (response.status === 429) {
+          lastRetryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+        }
       }
     } else {
       // Batch up to MAX_BATCH_SIZE per request
@@ -338,6 +376,9 @@ export async function pingIndexNow(
           failed += chunk.length;
           lastHttpStatus = response.status;
           lastFailureReason = body || `HTTP ${response.status}`;
+          if (response.status === 429) {
+            lastRetryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+          }
         }
       }
     }
@@ -354,6 +395,16 @@ export async function pingIndexNow(
       httpStatus: null,
       failureReason: message,
     };
+  }
+
+  // REL4 breaker bookkeeping — a 429 (re)arms the escalating cooldown so every
+  // path stops contacting a throttled host; a clean batch clears it so normal
+  // service resumes immediately. Network errors (caught above) deliberately
+  // leave the cooldown untouched: a transient fetch failure isn't a throttle.
+  if (lastHttpStatus === 429) {
+    await armIndexNowCooldown(kv, lastRetryAfterMs);
+  } else if (failed === 0) {
+    await clearIndexNowCooldown(kv);
   }
 
   return {

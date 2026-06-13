@@ -147,11 +147,14 @@ describe("new vendor + new link", () => {
 
   it("fires both vendor-create-or-link AND event-vendor-link IndexNow pings", async () => {
     const eid = seedEvent();
+    // REL4: create_or_link_vendor now defers by default; pass false to assert the
+    // inline source-label wiring (the deferred pending row carries no source label).
     await invoke({
       event_id: eid,
       business_name: "Roger's Photography",
       type: "Photography",
       status: "CONFIRMED",
+      defer_search_ping: false,
     });
     const sources = mock.calls.map((c) => c.source).sort();
     expect(sources).toEqual(["event-vendor-link", "vendor-create-or-link"]);

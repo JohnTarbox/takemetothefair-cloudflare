@@ -630,8 +630,10 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline (unbatched single-URL create pings tripped Bing's per-host 429 storm). Pass false only when a single create needs immediate indexing."
+        ),
     },
     async (params) => {
       // Validate promoter FK if provided
@@ -1007,7 +1009,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       // /promoters/[slug] page exists.
       if (env) {
         await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-create", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           entity: { type: "event", id: eventId, slug: finalSlug, action: "create" },
         });
@@ -1019,7 +1021,7 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
             .limit(1);
           if (newVenue[0]?.slug) {
             await triggerIndexNow(publicUrlFor("venues", newVenue[0].slug), env, "venue-create", {
-              defer: params.defer_search_ping ?? false,
+              defer: params.defer_search_ping ?? true,
               db,
               entity: {
                 type: "venue",
