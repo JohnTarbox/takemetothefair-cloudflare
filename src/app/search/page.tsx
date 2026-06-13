@@ -12,10 +12,11 @@ import {
   type GroupableVendor,
 } from "@/lib/vendor-listing-grouping";
 import { upcomingEndPredicate } from "@/lib/event-dates";
-import { formatDateRange } from "@/lib/utils";
+import { formatDateRange, sanitizeLikeInput } from "@/lib/utils";
 import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
+import { logError } from "@/lib/logger";
 
 export const metadata: Metadata = {
   title: "Search Results | Meet Me at the Fair",
@@ -43,9 +44,16 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   }
 
   const db = getCloudflareDb();
-  const searchTerm = `%${q}%`;
+  // SEARCH1-class hardening (mirror of /api/search, 2026-06-13): cap the query
+  // length and escape LIKE metacharacters before building the pattern. An
+  // unanchored `%…%` over very long input trips SQLite's pattern-complexity
+  // limit — especially against large text columns — and 500s the whole page.
+  const MAX_QUERY_LENGTH = 100;
+  const searchTerm = `%${sanitizeLikeInput(q.slice(0, MAX_QUERY_LENGTH))}%`;
 
-  const [eventResults, venueResults, vendorMatches, blogResults] = await Promise.all([
+  // Promise.allSettled (not Promise.all) so one failing section degrades to
+  // empty for that section instead of 500-ing the entire page.
+  const [eventsSettled, venuesSettled, vendorsSettled, blogSettled] = await Promise.allSettled([
     db
       .select({
         name: events.name,
@@ -131,12 +139,44 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       .where(
         and(
           eq(blogPosts.status, "PUBLISHED"),
-          sql`(LOWER(${blogPosts.title}) LIKE LOWER(${searchTerm}) OR LOWER(${blogPosts.body}) LIKE LOWER(${searchTerm}))`
+          // SEARCH1: match title + excerpt, NOT the full-markdown body — the
+          // body LIKE was the pattern-complexity trigger. body is still
+          // SELECTed above for the card thumbnail (extractFirstImage), just
+          // no longer matched against. COALESCE because some posts have NULL excerpt.
+          sql`(LOWER(${blogPosts.title}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${blogPosts.excerpt}, '')) LIKE LOWER(${searchTerm}))`
         )
       )
       .orderBy(desc(blogPosts.publishDate))
       .limit(12),
   ]);
+
+  // Log any per-section failure as `warn` (the page still rendered), then fall
+  // back to empty for that section — mirrors /api/search's degradation.
+  await Promise.all(
+    (
+      [
+        [eventsSettled, "events"],
+        [venuesSettled, "venues"],
+        [vendorsSettled, "vendors"],
+        [blogSettled, "blogPosts"],
+      ] as const
+    ).map(async ([settled, section]) => {
+      if (settled.status === "rejected") {
+        await logError(db, {
+          message: `Search page section "${section}" failed`,
+          error: settled.reason,
+          source: "app/search/page",
+          context: { section, q },
+          level: "warn",
+        });
+      }
+    })
+  );
+
+  const eventResults = eventsSettled.status === "fulfilled" ? eventsSettled.value : [];
+  const venueResults = venuesSettled.status === "fulfilled" ? venuesSettled.value : [];
+  const vendorMatches = vendorsSettled.status === "fulfilled" ? vendorsSettled.value : [];
+  const blogResults = blogSettled.status === "fulfilled" ? blogSettled.value : [];
 
   // EH2-A6 (2026-06-13) — dedup the vendor results by brand-parent group, the
   // same way /api/search and the /vendors listing do, so `/search?q=leaf`
