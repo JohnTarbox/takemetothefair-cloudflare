@@ -363,7 +363,18 @@ export function registerEnrichmentReviewTools(
       });
       await recomputeVendorCompleteness(db, vendor.id);
       if (env) {
-        await triggerIndexNow(publicUrlFor("vendors", vendor.slug), env, "vendor-enrich-review");
+        // REL4 (2026-06-13) — defer to the pending_search_pings outbox instead
+        // of firing inline. Approving candidates is inherently a sweep (the
+        // operator drains the review queue one candidate at a time, ~5s apart),
+        // and a stream of single-URL pings tripped Bing's per-host rate limit
+        // into a 429 storm. Deferring coalesces the session's approvals into one
+        // batched IndexNow call drained by flush_pending_search_pings or the
+        // hourly cron. Bake the batching into the path, not the caller.
+        await triggerIndexNow(publicUrlFor("vendors", vendor.slug), env, "vendor-enrich-review", {
+          defer: true,
+          db,
+          entity: { type: "vendor", id: vendor.id, slug: vendor.slug, action: "update" },
+        });
       }
       await writeAudit(db, auth, cand, {
         action: "approve",

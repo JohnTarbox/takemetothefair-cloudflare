@@ -78,7 +78,7 @@ describe("pingIndexNow", () => {
     it("does not throw when db is null and INDEXNOW_KEY is missing", async () => {
       await expect(
         pingIndexNow(null, [`https://${SITE_HOSTNAME}/events/x`], {}, "test")
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ ok: false, failureReason: "no_key" });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
@@ -236,6 +236,7 @@ describe("pingIndexNow", () => {
     it("never throws even when fetch rejects with a non-Error value", async () => {
       const db = makeDb();
       fetchSpy.mockRejectedValueOnce("string error");
+      // REL4: returns a failure PingResult (no longer void) and still never throws.
       await expect(
         pingIndexNow(
           db as never,
@@ -243,7 +244,7 @@ describe("pingIndexNow", () => {
           { INDEXNOW_KEY: "k" },
           "test"
         )
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ ok: false, failed: 1 });
     });
   });
 
@@ -252,8 +253,61 @@ describe("pingIndexNow", () => {
       fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
       await expect(
         pingIndexNow(null, `https://${SITE_HOSTNAME}/events/x`, { INDEXNOW_KEY: "k" }, "test")
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ ok: true, succeeded: 1 });
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // REL4 (2026-06-13) — pingIndexNow now reports the TRUE Bing outcome so the
+  // internal endpoint and the MCP flush can leave throttled rows pending
+  // instead of silently marking them flushed.
+  describe("PingResult return value", () => {
+    it("reports ok:false + the 429 status when Bing throttles a single URL", async () => {
+      const db = makeDb();
+      // No retry-after header → 4 fetches, all 429, then give up.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      fetchSpy.mockResolvedValue(new Response("rate limited", { status: 429 }));
+      const result = await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+      vi.useRealTimers();
+      expect(result.ok).toBe(false);
+      expect(result.httpStatus).toBe(429);
+      expect(result.failed).toBe(1);
+      expect(result.succeeded).toBe(0);
+    });
+
+    it("reports ok:true + counts on success", async () => {
+      const db = makeDb();
+      fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
+      const result = await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        deferred: false,
+        attempted: 1,
+        succeeded: 1,
+        failed: 0,
+      });
+    });
+
+    it("reports ok:false + no_key when the key is missing (so flush rows stay pending)", async () => {
+      const db = makeDb();
+      const result = await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        {},
+        "test"
+      );
+      expect(result).toMatchObject({ ok: false, failureReason: "no_key" });
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -331,6 +385,44 @@ describe("pingIndexNow", () => {
       const row = db.values.mock.calls[0][0];
       expect(row.status).toBe("failure");
       expect(row.httpStatus).toBe(422);
+    });
+
+    // REL4 §2 — honor Retry-After.
+    it("honors a short Retry-After header (within budget) then retries", async () => {
+      const db = makeDb();
+      fetchSpy.mockResolvedValueOnce(
+        new Response("Too Many Requests", { status: 429, headers: { "Retry-After": "2" } })
+      );
+      fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
+
+      const result = await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(result.ok).toBe(true);
+    });
+
+    it("gives up immediately when Retry-After exceeds the in-request budget", async () => {
+      const db = makeDb();
+      // 900s cooldown ≫ MAX_RETRY_AFTER_MS (5s) → no retry, surface the 429.
+      fetchSpy.mockResolvedValueOnce(
+        new Response("Too Many Requests", { status: 429, headers: { "Retry-After": "900" } })
+      );
+
+      const result = await pingIndexNow(
+        db as never,
+        `https://${SITE_HOSTNAME}/events/x`,
+        { INDEXNOW_KEY: "k" },
+        "test"
+      );
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // no retry burst
+      expect(result.ok).toBe(false);
+      expect(result.httpStatus).toBe(429);
     });
   });
 });

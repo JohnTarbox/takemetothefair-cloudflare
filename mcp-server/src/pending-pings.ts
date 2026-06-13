@@ -238,10 +238,33 @@ export async function claimAndFlush(
   };
 }
 
-interface SubmitResult {
+/** Structured fields the REL4-updated /api/internal/indexnow endpoint returns
+ *  in its JSON body so callers can surface the TRUE Bing outcome. */
+export interface IndexNowEndpointBody {
+  success?: boolean;
+  count?: number;
+  attempted?: number;
+  succeeded?: number;
+  failed?: number;
+  /** The real Bing HTTP status (e.g. 429) when the submission failed. */
+  indexnow_http_status?: number | null;
+  error?: string;
+}
+
+export interface SubmitResult {
   ok: boolean;
   status: number;
   error?: string;
+  /** Parsed endpoint body (REL4) — carries the true Bing status + counts. */
+  body?: IndexNowEndpointBody;
+}
+
+async function parseBody(response: Response): Promise<IndexNowEndpointBody | undefined> {
+  try {
+    return (await response.clone().json()) as IndexNowEndpointBody;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -253,8 +276,12 @@ interface SubmitResult {
  * Prefers the MAIN_APP service binding (zero-latency); falls back to public
  * HTTPS via MAIN_APP_URL + INTERNAL_API_KEY when unbound (typical in local
  * dev or until the binding is enabled per wrangler.toml comment).
+ *
+ * Exported so the K23 resubmit tool can reuse the same transport (and inherit
+ * REL4's true-status reporting) rather than re-implementing the binding/public
+ * branching.
  */
-async function submitIndexNowBatch(
+export async function submitIndexNowBatch(
   env: FlushEnv,
   urls: string[],
   source: string
@@ -275,11 +302,17 @@ async function submitIndexNowBatch(
         body,
       })
     );
+    const parsed = await parseBody(response);
     if (!response.ok) {
       const text = (await response.text()).slice(0, 200);
-      return { ok: false, status: response.status, error: text || `HTTP ${response.status}` };
+      return {
+        ok: false,
+        status: response.status,
+        error: text || `HTTP ${response.status}`,
+        body: parsed,
+      };
     }
-    return { ok: true, status: response.status };
+    return { ok: true, status: response.status, body: parsed };
   }
 
   if (!env.MAIN_APP_URL || !env.INTERNAL_API_KEY) {
@@ -291,9 +324,15 @@ async function submitIndexNowBatch(
     headers,
     body,
   });
+  const parsed = await parseBody(response);
   if (!response.ok) {
     const text = (await response.text()).slice(0, 200);
-    return { ok: false, status: response.status, error: text || `HTTP ${response.status}` };
+    return {
+      ok: false,
+      status: response.status,
+      error: text || `HTTP ${response.status}`,
+      body: parsed,
+    };
   }
-  return { ok: true, status: response.status };
+  return { ok: true, status: response.status, body: parsed };
 }

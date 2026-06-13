@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { CapturingMcpServer, createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { registerAdminTools } from "../src/tools/admin.js";
-import { users, vendors, vendorEnrichmentCandidates } from "../src/schema.js";
+import { users, vendors, vendorEnrichmentCandidates, pendingSearchPings } from "../src/schema.js";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 const ENV = { MAIN_APP_URL: "https://meetmeatthefair.com", INTERNAL_API_KEY: "test-key" };
@@ -171,7 +171,7 @@ describe("list_enrichment_candidates", () => {
 // review_enrichment_candidate ----------------------------------------------
 
 describe("review_enrichment_candidate — approve", () => {
-  it("applies a clean fill into an empty field and pings IndexNow", async () => {
+  it("applies a clean fill into an empty field and enqueues a deferred IndexNow ping", async () => {
     seedVendor({ id: "v1", slug: "fillme", contactPhone: null });
     const id = seedCandidate({
       vendorId: "v1",
@@ -194,7 +194,17 @@ describe("review_enrichment_candidate — approve", () => {
       .all();
     expect(c.decision).toBe("approved");
     expect(c.reviewedBy).toBe("u-admin");
-    expect(mock.calls.map((x) => x.source)).toContain("vendor-enrich-review");
+    // REL4 (2026-06-13) — the ping is deferred to the outbox (batched + drained
+    // by flush/cron) instead of fired inline, so the review sweep can't trip
+    // Bing's per-host rate limit. No inline call; one pending row for the vendor.
+    expect(mock.calls).toHaveLength(0);
+    const pending = db
+      .select()
+      .from(pendingSearchPings)
+      .where(eq(pendingSearchPings.entityId, "v1"))
+      .all();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].entityType).toBe("vendor");
   });
 
   it("allows a human to approve a FLAGGED candidate (manual override)", async () => {
