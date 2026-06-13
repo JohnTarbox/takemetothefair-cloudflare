@@ -41,6 +41,13 @@ X-Syndication-Event-Id: <eventId>
 X-Syndication-Event-Version: <integer>
 ```
 
+> ⚠️ **The headers are informational only — they are NOT covered by the HMAC.** Only the request
+> **body** is signed. Use `X-Syndication-Event-Id` / `-Version` (and `Content-Type`) at most for
+> cheap routing/logging _before_ you parse; never make a security or version-gating decision on a
+> header value. **Gate on the `eventId` and `eventVersion` _inside the signed body_** (§3) — those
+> are the authoritative, tamper-evident values. (You can ignore the `X-Syndication-Event-*`
+> headers entirely and lose nothing.)
+
 ### Request body
 
 ```json
@@ -273,14 +280,34 @@ missing ID as "deleted/unknown on MMATF" and handle on your side).
 
 ## 6. Testing before go-live
 
-1. Stand up your callback endpoint (even returning `204` and logging is enough to start).
-2. Ask John to register a **throwaway test subscriber** pointing at your endpoint (or a
-   [webhook.site](https://webhook.site) URL) and subscribe it to one event.
-3. John edits that event's name (or its venue's city) in MMATF → you should receive a signed
-   `POST` within a couple of minutes.
-4. Confirm your signature check passes against the raw body, and that a **second** identical
+### 6a. Self-test (no MMATF account needed) — start here
+
+Use the included **`syndication-consumer-test.mjs`** script (Node 18+, no dependencies). It POSTs
+webhooks **byte-compatible with production** — same body shape, same HMAC header — so if your
+endpoint passes this, it passes the real thing. Pick any test secret and configure it on your
+endpoint, then:
+
+```
+node syndication-consumer-test.mjs https://your-site.example/mmatf/webhook <your-test-secret>
+```
+
+It runs three deliveries and tells you what to expect:
+
+1. a **valid** signed webhook → your endpoint returns `2xx`, mirror row applied at version 2;
+2. a **tampered** signature → your endpoint returns `401` (proves you verify the HMAC);
+3. a **stale replay** (version 1) → `2xx` but **no change** (proves your version gate).
+
+Iterate here until all three behave. Then swap in the real `signing_secret` at go-live.
+
+### 6b. End-to-end smoke test (real MMATF delivery)
+
+1. Ask John to register a **throwaway test subscriber** pointing at your endpoint and subscribe it
+   to one event.
+2. John edits that event's name (or its venue's city) in MMATF → you receive a signed `POST`
+   within a couple of minutes.
+3. Confirm your signature check passes against the raw body, and that a **second** identical
    delivery is correctly **ignored** by your version gate.
-5. Point it at your real endpoint and go live.
+4. Point it at your real endpoint and go live.
 
 ---
 
@@ -291,6 +318,7 @@ missing ID as "deleted/unknown on MMATF" and handle on your side).
 - [ ] You verify **every** request's HMAC over the **raw** body, with a **constant-time** compare,
       and reject mismatches with `401`.
 - [ ] Your handler is **idempotent** and **version-gated** (`eventVersion >` stored → apply).
+- [ ] You gate on `eventId`/`eventVersion` **from the signed body**, not the (unsigned) headers.
 - [ ] Your endpoint is **HTTPS** only.
 - [ ] You return `2xx` only after you've durably stored the update (so a crash mid-handler leads
       to a retry, not a silent loss).
