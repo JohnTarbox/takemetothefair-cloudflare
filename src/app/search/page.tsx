@@ -4,8 +4,13 @@ import Image from "next/image";
 import { Calendar, MapPin, Store, FileText, Search } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts, users } from "@/lib/db/schema";
-import { and, eq, sql, desc } from "drizzle-orm";
+import { and, eq, sql, desc, inArray, isNull } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
+import {
+  collectBrandParentIdsToLoad,
+  groupVendorsForListing,
+  type GroupableVendor,
+} from "@/lib/vendor-listing-grouping";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { formatDateRange } from "@/lib/utils";
 import { formatDateMedium } from "@/lib/datetime";
@@ -40,7 +45,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
   const db = getCloudflareDb();
   const searchTerm = `%${q}%`;
 
-  const [eventResults, venueResults, vendorResults, blogResults] = await Promise.all([
+  const [eventResults, venueResults, vendorMatches, blogResults] = await Promise.all([
     db
       .select({
         name: events.name,
@@ -82,6 +87,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
     db
       .select({
+        id: vendors.id,
         businessName: vendors.businessName,
         // EH2.1 — surface display_name so the result card can render the
         // brand surface (e.g. "LeafFilter" not "LeafFilter North LLC").
@@ -89,6 +95,16 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         slug: vendors.slug,
         vendorType: vendors.vendorType,
         logoUrl: vendors.logoUrl,
+        // EH2-A6 (2026-06-13) — hierarchy fields for the brand-parent dedup
+        // applied below, mirroring /api/search. Over-fetch (15) so the dedup
+        // leaves room for ~12 distinct cards.
+        role: vendors.role,
+        brandParentVendorId: vendors.brandParentVendorId,
+        operatorParentVendorId: vendors.operatorParentVendorId,
+        aliasOfVendorId: vendors.aliasOfVendorId,
+        displayOverridePermitted: vendors.displayOverridePermitted,
+        displayMode: vendors.displayMode,
+        defaultChildDisplay: vendors.defaultChildDisplay,
       })
       .from(vendors)
       .where(
@@ -98,7 +114,7 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
         sql`(LOWER(${vendors.businessName}) LIKE LOWER(${searchTerm}) OR LOWER(COALESCE(${vendors.displayName}, '')) LIKE LOWER(${searchTerm}) OR LOWER(${vendors.description}) LIKE LOWER(${searchTerm}))`
       )
       .orderBy(vendors.businessName)
-      .limit(12),
+      .limit(15),
 
     db
       .select({
@@ -121,6 +137,100 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
       .orderBy(desc(blogPosts.publishDate))
       .limit(12),
   ]);
+
+  // EH2-A6 (2026-06-13) — dedup the vendor results by brand-parent group, the
+  // same way /api/search and the /vendors listing do, so `/search?q=leaf`
+  // returns ONE LeafFilter card (the brand hub) instead of the hub plus each
+  // of its offices. The grouper also drops self-mode brand hubs (noindex,
+  // follow surfaces — irrelevant in search). Reuses the shared pure helper so
+  // all three surfaces stay in lock-step.
+  const matchedById = new Map(vendorMatches.map((v) => [v.id, v]));
+  const matchedAsGroupable: GroupableVendor[] = vendorMatches.map((v) => ({
+    id: v.id,
+    role: v.role,
+    brandParentVendorId: v.brandParentVendorId,
+    operatorParentVendorId: v.operatorParentVendorId,
+    aliasOfVendorId: v.aliasOfVendorId,
+    displayOverridePermitted: v.displayOverridePermitted,
+    displayMode: v.displayMode,
+    defaultChildDisplay: v.defaultChildDisplay,
+  }));
+  // Batch-fetch brand parents referenced by office matches but not in the match
+  // set (caller searched only the office). Only paid when an office matched.
+  const brandIdsToLoad = collectBrandParentIdsToLoad(matchedAsGroupable);
+  const missingBrandIds = brandIdsToLoad.filter((id) => !matchedById.has(id));
+  const extraBrandRows =
+    missingBrandIds.length > 0
+      ? await db
+          .select({
+            id: vendors.id,
+            businessName: vendors.businessName,
+            displayName: vendors.displayName,
+            slug: vendors.slug,
+            vendorType: vendors.vendorType,
+            logoUrl: vendors.logoUrl,
+            role: vendors.role,
+            brandParentVendorId: vendors.brandParentVendorId,
+            operatorParentVendorId: vendors.operatorParentVendorId,
+            aliasOfVendorId: vendors.aliasOfVendorId,
+            displayOverridePermitted: vendors.displayOverridePermitted,
+            displayMode: vendors.displayMode,
+            defaultChildDisplay: vendors.defaultChildDisplay,
+          })
+          .from(vendors)
+          .where(and(inArray(vendors.id, missingBrandIds), isNull(vendors.deletedAt)))
+      : [];
+  for (const r of extraBrandRows) matchedById.set(r.id, r);
+  const brandParentsForGrouping = new Map<string, GroupableVendor>();
+  for (const id of brandIdsToLoad) {
+    const row = matchedById.get(id);
+    if (!row) continue;
+    brandParentsForGrouping.set(id, {
+      id: row.id,
+      role: row.role,
+      brandParentVendorId: row.brandParentVendorId,
+      operatorParentVendorId: row.operatorParentVendorId,
+      aliasOfVendorId: row.aliasOfVendorId,
+      displayOverridePermitted: row.displayOverridePermitted,
+      displayMode: row.displayMode,
+      defaultChildDisplay: row.defaultChildDisplay,
+    });
+  }
+  // Register any NATIONAL row directly in the match set so the grouper can
+  // decide whether to promote it to a collapsed brand card.
+  for (const v of vendorMatches) {
+    if (v.role === "NATIONAL") {
+      brandParentsForGrouping.set(v.id, {
+        id: v.id,
+        role: v.role,
+        brandParentVendorId: v.brandParentVendorId,
+        operatorParentVendorId: v.operatorParentVendorId,
+        aliasOfVendorId: v.aliasOfVendorId,
+        displayOverridePermitted: v.displayOverridePermitted,
+        displayMode: v.displayMode,
+        defaultChildDisplay: v.defaultChildDisplay,
+      });
+    }
+  }
+  const vendorCards = groupVendorsForListing({
+    matchedVendors: matchedAsGroupable,
+    brandParentsById: brandParentsForGrouping,
+    officesByBrandId: new Map(),
+  });
+  const vendorResults = vendorCards
+    .slice(0, 12)
+    .map((card) => {
+      const row = matchedById.get(card.vendorId);
+      if (!row) return null;
+      return {
+        businessName: row.businessName,
+        displayName: row.displayName,
+        slug: row.slug,
+        vendorType: row.vendorType,
+        logoUrl: row.logoUrl,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 
   const totalResults =
     eventResults.length + venueResults.length + vendorResults.length + blogResults.length;
