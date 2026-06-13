@@ -69,7 +69,8 @@ export type EnrichmentSource =
   | "scraper"
   | "manual_admin"
   | "vendor_self"
-  | "mcp_create";
+  | "mcp_create"
+  | "browser_enrich";
 export type EnrichmentStatus = "success" | "failure" | "skipped";
 
 export async function logEnrichment(

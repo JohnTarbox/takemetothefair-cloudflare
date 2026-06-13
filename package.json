@@ -66,6 +66,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
+    "@takemetothefair/site-fetch": "*",
     "@takemetothefair/utils": "*",
     "@takemetothefair/validation": "*",
     "@types/qrcode": "^1.5.6",

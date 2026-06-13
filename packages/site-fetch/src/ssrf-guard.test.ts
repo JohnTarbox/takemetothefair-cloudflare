@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isBlockedSsrfHost } from "../ssrf-guard";
+import { isBlockedSsrfHost } from "./ssrf-guard";
 
 describe("isBlockedSsrfHost", () => {
   describe("blocks internal/loopback names", () => {
@@ -31,8 +31,7 @@ describe("isBlockedSsrfHost", () => {
       expect(isBlockedSsrfHost("0x7f000001")).toBe(true));
     it("blocks octal-dotted 127.0.0.1 (0177.0.0.1)", () =>
       expect(isBlockedSsrfHost("0177.0.0.1")).toBe(true));
-    it("blocks hex-dotted (0x7f.0.0.1)", () =>
-      expect(isBlockedSsrfHost("0x7f.0.0.1")).toBe(true));
+    it("blocks hex-dotted (0x7f.0.0.1)", () => expect(isBlockedSsrfHost("0x7f.0.0.1")).toBe(true));
     it("blocks decimal-integer 169.254.169.254 (2852039166)", () =>
       expect(isBlockedSsrfHost("2852039166")).toBe(true));
   });

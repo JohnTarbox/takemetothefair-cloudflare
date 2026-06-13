@@ -100,9 +100,7 @@ export function isBlockedSsrfHost(hostnameRaw: string): boolean {
     const isLoopback =
       inner === "::1" ||
       (nonEmpty.length > 0 &&
-        nonEmpty.every((g, i) =>
-          i === nonEmpty.length - 1 ? /^0*1$/.test(g) : /^0+$/.test(g)
-        ));
+        nonEmpty.every((g, i) => (i === nonEmpty.length - 1 ? /^0*1$/.test(g) : /^0+$/.test(g))));
     if (
       inner === "::" ||
       isLoopback ||

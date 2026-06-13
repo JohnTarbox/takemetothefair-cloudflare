@@ -22,6 +22,14 @@ database_id = "d449e416-3814-48a6-b9e8-b676333b2cdc"
 
 [vars]
 MAIN_APP_URL = "https://meetmeatthefair.com"
+# I1 vendor-enrichment Worker (2026-06-13). Account id is non-secret; the
+# Browser-Rendering token is a Worker secret set via
+# `wrangler secret put CLOUDFLARE_BROWSER_RENDERING_TOKEN` (same value the main
+# app holds). ENRICHMENT_DRY_RUN gates the auto-merge: unset/anything-but-
+# "false" stages to vendor_enrichment_candidates only (the Phase-1 default).
+# Set ENRICHMENT_DRY_RUN = "false" to enable Phase-2 auto-merge of un-flagged fills.
+CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
+ENRICHMENT_DRY_RUN = "true"
 # INTERNAL_API_KEY is set via `wrangler secret put INTERNAL_API_KEY`
 # Inbound-email failures (parse / extract / submit) get forwarded here.
 # Must be a verified destination address in Cloudflare Email Routing —
@@ -74,7 +82,10 @@ new_sqlite_classes = ["MeetMeAtTheFairMCP"]
 # "*/10 * * * *"  → §6.3 KPI state-machine recompute (light, ~5 INSERTs per fire)
 # "0 * * * *"     → hourly: drain pending_search_pings older than 1 hour
 #                   (safety net for forgotten flushes after deferred-ingest runs)
-crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *"]
+# "0 7 * * *"     → I1 vendor-enrichment nightly sweep (≤100 vendors). Fires
+#                   after the 06:00/06:10 heavy batch so Browser-Rendering
+#                   fetches don't contend with the recommendations/GSC work.
+crons = ["0 6 * * *", "10 6 * * *", "*/10 * * * *", "0 * * * *", "0 7 * * *"]
 
 # Cloudflare Email Service — outbound sending binding (public beta).
 # Replaced Resend HTTP integration in the EMAIL_JOBS consumer. Without
@@ -123,6 +134,13 @@ queue = "event-discrepancies"
 [[queues.producers]]
 binding = "SYNDICATION_CHANGES"
 queue = "syndication-changes"
+
+# I1 (2026-06-13) — vendor-enrichment jobs. Producer here so the nightly cron
+# selector + the enrich_vendor MCP tool (one-off) + the future post-create hook
+# can all enqueue. Consumer below renders the vendor site and stages proposals.
+[[queues.producers]]
+binding = "VENDOR_ENRICHMENT"
+queue = "vendor-enrichment"
 
 # Queue consumers — only Workers can consume (Pages projects cannot), so
 # all queue dispatch logic lives in this Worker.
@@ -173,6 +191,18 @@ max_batch_size = 10
 max_batch_timeout = 10
 max_retries = 5
 dead_letter_queue = "syndication-changes-dlq"
+
+# I1 vendor-enrichment (2026-06-13). Each message is one vendor → one Browser-
+# Rendering fetch + extract + stage. Small batch because each message is its
+# own (rate-limited) browser fetch — Cloudflare caps new browsers at 1/sec, so
+# big batches just lengthen a single invocation. A fetch miss is acked (a dead
+# site is a signal, not a retry); only unexpected DB errors retry → DLQ.
+[[queues.consumers]]
+queue = "vendor-enrichment"
+max_batch_size = 5
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "vendor-enrichment-dlq"
 
 # Cloudflare Workflows — durable multi-step jobs that survive Worker
 # restarts. WorkflowEntrypoint subclasses live in src/workflows/ and
