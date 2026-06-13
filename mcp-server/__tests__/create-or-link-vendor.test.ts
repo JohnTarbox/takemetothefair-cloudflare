@@ -664,3 +664,131 @@ describe("K18 Phase 1 — event_day_id scoping", () => {
     expect(rows.every((r) => r.eventDayId === dayId)).toBe(true);
   });
 });
+
+// I1 Trigger 1 — post-create enrichment enqueue --------------------------------
+//
+// When create_or_link_vendor CREATES a new vendor that has a website, it
+// fire-and-forget enqueues a fill-empty enrichment job so the contact fields
+// get populated without waiting for the nightly cron. Matched (existing)
+// vendors and websiteless new vendors must NOT enqueue. dryRun mirrors the
+// ENRICHMENT_DRY_RUN operator switch. A queue hiccup must never fail the create.
+
+type EnrichMsg = { vendorId: string; jobRunId: string; dryRun: boolean };
+
+/** Build a fresh server bound to an env carrying a capturing enrichment queue. */
+function makeServerWithQueue(opts: { dryRunVar?: string; throwOnSend?: boolean } = {}) {
+  const sent: EnrichMsg[] = [];
+  const queue = {
+    send: async (msg: EnrichMsg) => {
+      if (opts.throwOnSend) throw new Error("queue unavailable");
+      sent.push(msg);
+    },
+  };
+  const env = {
+    MAIN_APP_URL: "https://meetmeatthefair.com",
+    INTERNAL_API_KEY: "test-key",
+    VENDOR_ENRICHMENT: queue,
+    ...(opts.dryRunVar !== undefined ? { ENRICHMENT_DRY_RUN: opts.dryRunVar } : {}),
+  };
+  const srv = new CapturingMcpServer();
+  registerAdminTools(srv as never, db, ADMIN_AUTH, env as never);
+  return { srv, sent };
+}
+
+async function invokeOn(srv: CapturingMcpServer, args: Record<string, unknown>) {
+  const result = (await srv.invoke("create_or_link_vendor", args)) as {
+    content: Array<{ text: string }>;
+    isError?: boolean;
+  };
+  return {
+    isError: !!result.isError,
+    payload: result.isError ? null : (JSON.parse(result.content[0].text) as CreateOrLinkPayload),
+  };
+}
+
+describe("I1 Trigger 1 — post-create enrichment enqueue", () => {
+  it("enqueues a postcreate job when a NEW vendor has a website (dryRun defaults true)", async () => {
+    const eid = seedEvent();
+    const { srv, sent } = makeServerWithQueue();
+    const { payload } = await invokeOn(srv, {
+      event_id: eid,
+      business_name: "Fresh Site Vendor",
+      website: "https://freshsite.example.com",
+    });
+    expect(payload?.was_created).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].vendorId).toBe(payload!.vendor_id);
+    expect(sent[0].jobRunId).toBe(`postcreate-${payload!.vendor_id}`);
+    expect(sent[0].dryRun).toBe(true);
+  });
+
+  it("does NOT enqueue when an existing vendor is matched (was_created=false)", async () => {
+    const eid = seedEvent();
+    seedVendor({
+      id: "existing",
+      businessName: "Matched Vendor",
+      slug: "matched-vendor",
+      website: "https://matched.example.com",
+    });
+    const { srv, sent } = makeServerWithQueue();
+    const { payload } = await invokeOn(srv, {
+      event_id: eid,
+      business_name: "Matched Vendor",
+      dedup_strategy: "strict",
+      website: "https://matched.example.com",
+    });
+    expect(payload?.was_created).toBe(false);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("does NOT enqueue when the new vendor has no website", async () => {
+    const eid = seedEvent();
+    const { srv, sent } = makeServerWithQueue();
+    const { payload } = await invokeOn(srv, {
+      event_id: eid,
+      business_name: "No Website Vendor",
+    });
+    expect(payload?.was_created).toBe(true);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("does NOT enqueue when website is whitespace-only", async () => {
+    const eid = seedEvent();
+    const { srv, sent } = makeServerWithQueue();
+    const { payload } = await invokeOn(srv, {
+      event_id: eid,
+      business_name: "Blank Website Vendor",
+      website: "   ",
+    });
+    expect(payload?.was_created).toBe(true);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("propagates dryRun=false when ENRICHMENT_DRY_RUN is 'false'", async () => {
+    const eid = seedEvent();
+    const { srv, sent } = makeServerWithQueue({ dryRunVar: "false" });
+    await invokeOn(srv, {
+      event_id: eid,
+      business_name: "Live Merge Vendor",
+      website: "https://livemerge.example.com",
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].dryRun).toBe(false);
+  });
+
+  it("a queue send failure does NOT fail the create (best-effort)", async () => {
+    const eid = seedEvent();
+    const { srv } = makeServerWithQueue({ throwOnSend: true });
+    const { isError, payload } = await invokeOn(srv, {
+      event_id: eid,
+      business_name: "Resilient Vendor",
+      website: "https://resilient.example.com",
+    });
+    expect(isError).toBe(false);
+    expect(payload?.was_created).toBe(true);
+    expect(payload?.was_linked).toBe(true);
+    // Vendor + link still persisted despite the queue throwing.
+    const v = db.select().from(vendors).where(eq(vendors.id, payload!.vendor_id)).all();
+    expect(v).toHaveLength(1);
+  });
+});
