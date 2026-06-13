@@ -59,6 +59,7 @@ import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
+import { registerResubmitIndexNowTool } from "./admin-resubmit-indexnow.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
@@ -117,6 +118,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // Outbox drainer for the defer_search_ping flag — fires one batched
   // IndexNow call instead of N inline pings after a bulk ingestion run.
   registerFlushPendingSearchPingsTool(server, db, auth, env);
+
+  // K23 (2026-06-13) — re-submit arbitrary / recently-failed URLs to Bing
+  // IndexNow in one batched call, riding on the REL4-fixed internal endpoint.
+  registerResubmitIndexNowTool(server, db, auth, env);
 
   // Google Search Console sitemap resubmit. Pairs with the post-bulk-
   // ingest workflow — nudges Google to recrawl a sitemap ahead of its
@@ -634,8 +639,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4 (2026-06-13): defaults TRUE — the IndexNow ping is queued to the pending_search_pings outbox and drained in one batched call by flush_pending_search_pings or the hourly cron, rather than fired inline. Repeated single-URL event-update pings (e.g. an operator editing many events in a session) tripped Bing's per-host rate limit into a 429 storm; batching is now baked into the path. Pass false only when a single edit needs immediate indexing."
+        ),
       acknowledge_possible_duplicates: z
         .boolean()
         .optional()
@@ -1328,7 +1335,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         if (requestedFields.some((f) => materialFields.includes(f))) {
           const finalSlug = (updates.slug as string | undefined) ?? event.slug;
           await triggerIndexNow(publicUrlFor("events", finalSlug), env, "event-update", {
-            defer: params.defer_search_ping ?? false,
+            // REL4 — defaults to deferred (see the defer_search_ping param).
+            defer: params.defer_search_ping ?? true,
             db,
             entity: { type: "event", id: event.id, slug: finalSlug, action: "update" },
           });

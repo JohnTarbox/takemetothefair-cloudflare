@@ -215,6 +215,42 @@ describe("claimAndFlush — error rollback", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  // REL4 §3 (2026-06-13) — the silent-data-loss regression: pre-fix, the
+  // internal endpoint returned HTTP 200 even when Bing 429'd, so the flush
+  // marked every row flushed and the URLs were dropped forever. Post-fix the
+  // endpoint returns 502 with the real Bing status; the flush must leave the
+  // rows pending and surface the true status, not "ok".
+  it("leaves rows pending and reports the real status when Bing 429s (502 from endpoint)", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ success: false, indexnow_http_status: 429, error: "HTTP 429" }),
+        {
+          status: 502,
+        }
+      )) as typeof fetch;
+
+    try {
+      await enqueuePendingPing(db, {
+        entityType: "vendor",
+        entityId: "v-throttled",
+        entitySlug: "throttled-vendor",
+        action: "update",
+      });
+      const result = await claimAndFlush(db, ENV);
+
+      // The flush must NOT report success on a throttled batch.
+      expect(result.indexnowResponse).not.toBe("ok");
+
+      // The URL must survive for the next flush/cron — not silently consumed.
+      const rows = db.select().from(pendingSearchPings).all();
+      expect(rows[0].flushedAt).toBeNull();
+      expect(rows[0].flushedBatchId).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 describe("claimAndFlush — concurrent disjoint claims", () => {

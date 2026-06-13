@@ -25,6 +25,7 @@ import {
   vendorSlugHistory,
   eventSlugHistory,
   adminActions,
+  pendingSearchPings,
 } from "../src/schema.js";
 import { eq } from "drizzle-orm";
 
@@ -153,22 +154,47 @@ describe("update_event_status", () => {
 // update_event (material change) --------------------------------------------
 
 describe("update_event material-change", () => {
-  it("editing description on APPROVED event fires event-update", async () => {
+  // REL4 (2026-06-13) — update_event now defers the IndexNow ping by default
+  // (defer_search_ping=true) to batch operator edit sessions and avoid the Bing
+  // 429 storm. A material edit on a public event enqueues a pending_search_pings
+  // row rather than firing inline; the hourly cron / flush drains it.
+  it("editing description on APPROVED event enqueues a deferred event-update ping", async () => {
     const id = seedEvent({ status: "APPROVED", description: "old" });
     await adminServer.invoke("update_event", { event_id: id, description: "new and better" });
+    // Deferred: no inline call…
+    expect(mock.calls).toHaveLength(0);
+    // …but a pending row queued for the event.
+    const pending = db
+      .select()
+      .from(pendingSearchPings)
+      .where(eq(pendingSearchPings.entityId, id))
+      .all();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].entityType).toBe("event");
+  });
+
+  it("defer_search_ping:false still fires the inline event-update ping (escape hatch)", async () => {
+    const id = seedEvent({ status: "APPROVED", description: "old" });
+    await adminServer.invoke("update_event", {
+      event_id: id,
+      description: "now please index immediately",
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["event-update"]);
   });
 
-  it("editing only featured (non-material) does NOT ping", async () => {
+  it("editing only featured (non-material) does NOT ping or enqueue", async () => {
     const id = seedEvent({ status: "APPROVED" });
     await adminServer.invoke("update_event", { event_id: id, featured: true });
     expect(mock.calls).toHaveLength(0);
+    expect(db.select().from(pendingSearchPings).all()).toHaveLength(0);
   });
 
-  it("editing description on DRAFT event does NOT ping (event isn't public yet)", async () => {
+  it("editing description on DRAFT event does NOT ping or enqueue (event isn't public yet)", async () => {
     const id = seedEvent({ status: "DRAFT" });
     await adminServer.invoke("update_event", { event_id: id, description: "anything" });
     expect(mock.calls).toHaveLength(0);
+    expect(db.select().from(pendingSearchPings).all()).toHaveLength(0);
   });
 
   // Slug param (mirrors update_vendor) — added with the analyst's

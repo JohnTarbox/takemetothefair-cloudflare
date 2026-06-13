@@ -17,8 +17,13 @@ const bodySchema = z.object({
  * Internal endpoint for the MCP server (and other Workers) to trigger an
  * IndexNow ping. Auth: X-Internal-Key header.
  *
- * Fire-and-forget — does not wait for the IndexNow response. The caller can
- * return its own success even if the ping fails (errors are logged).
+ * REL4 (2026-06-13): this endpoint now propagates the TRUE Bing outcome. It
+ * used to always return `{ success: true }` 200 even when Bing 429'd, which let
+ * the MCP `flush_pending_search_pings` mark its outbox rows flushed on a
+ * throttled batch — silently dropping every URL. We now return a non-2xx (502)
+ * with the real Bing HTTP status when the submission failed, so the flush
+ * treats it as a failure and leaves the rows pending for a later cron. Inline
+ * fire-and-forget callers (`triggerIndexNow`) ignore the body as before.
  */
 export async function POST(request: Request) {
   const env = getCloudflareEnv() as unknown as {
@@ -44,6 +49,25 @@ export async function POST(request: Request) {
   }
 
   const db = getCloudflareDb();
-  await pingIndexNow(db, parsed.data.urls, env, parsed.data.source ?? "internal-api");
-  return NextResponse.json({ success: true, count: parsed.data.urls.length });
+  const result = await pingIndexNow(
+    db,
+    parsed.data.urls,
+    env,
+    parsed.data.source ?? "internal-api"
+  );
+  return NextResponse.json(
+    {
+      success: result.ok,
+      count: parsed.data.urls.length,
+      attempted: result.attempted,
+      succeeded: result.succeeded,
+      failed: result.failed,
+      indexnow_http_status: result.httpStatus,
+      error: result.ok ? undefined : (result.failureReason ?? "indexnow_submission_failed"),
+    },
+    // 502 Bad Gateway: the endpoint itself worked, but the upstream (Bing)
+    // rejected the submission. The MCP flush keys off response.ok, so any
+    // non-2xx leaves its outbox rows pending instead of silently flushed.
+    { status: result.ok ? 200 : 502 }
+  );
 }
