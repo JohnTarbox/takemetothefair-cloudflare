@@ -451,6 +451,27 @@ const SCHEMA_SQL = `
     actor_user_id TEXT
   );
 
+  CREATE TABLE vendor_enrichment_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vendor_id TEXT NOT NULL,
+    job_run_id TEXT NOT NULL,
+    proposed_field TEXT NOT NULL,
+    current_value TEXT,
+    proposed_value TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    extraction_method TEXT NOT NULL,
+    fetch_method TEXT,
+    confidence REAL NOT NULL DEFAULT 0,
+    flags TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    reviewed_at INTEGER,
+    reviewed_by TEXT,
+    decision TEXT NOT NULL DEFAULT 'pending'
+  );
+  CREATE UNIQUE INDEX idx_vec_pending_field
+    ON vendor_enrichment_candidates (vendor_id, proposed_field)
+    WHERE decision = 'pending';
+
   CREATE TABLE url_domain_classifications (
     domain TEXT PRIMARY KEY,
     use_as_ticket_url INTEGER NOT NULL DEFAULT 0,

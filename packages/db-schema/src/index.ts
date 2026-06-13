@@ -1642,6 +1642,55 @@ export const enrichmentLog = sqliteTable(
   ]
 );
 
+// I1 vendor-enrichment Worker (Dev-Brief-I1, 2026-06-13). Dry-run staging for
+// fill-empty-only contact fields extracted from a vendor's own website via
+// Browser Rendering. Proposals land here; the live `vendors` row is untouched
+// until an operator (Phase 1) or the auto-merge gate (Phase 2) approves. See
+// drizzle/0123. A non-empty `flags` array marks a conflict and NEVER
+// auto-merges. §6.2 domain problems reuse vendors.domain_hijacked, not a row
+// here.
+export const vendorEnrichmentCandidates = sqliteTable(
+  "vendor_enrichment_candidates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    vendorId: text("vendor_id").notNull(),
+    // Groups one cron run's proposals for batch review. Synchronous
+    // enrich_vendor calls use a 'manual-<uuid>' run id.
+    jobRunId: text("job_run_id").notNull(),
+    // contact_phone | contact_email | social_links | address | city | state | description
+    proposedField: text("proposed_field").notNull(),
+    // Vendor's value at proposal time — NULL under fill-empty-only, kept for audit.
+    currentValue: text("current_value"),
+    proposedValue: text("proposed_value").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    // 'jsonld' | 'mailto' | 'tel' | 'social-link' | 'regex'
+    extractionMethod: text("extraction_method").notNull(),
+    // 'standard' | 'browser-rendering'
+    fetchMethod: text("fetch_method"),
+    confidence: real("confidence").notNull().default(0),
+    // JSON array of safety-rule flag strings, e.g. ['city_mismatch'].
+    flags: text("flags").notNull().default("[]"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
+    // pending | approved | rejected | auto_merged
+    decision: text("decision", {
+      enum: ["pending", "approved", "rejected", "auto_merged"],
+    })
+      .notNull()
+      .default("pending"),
+  },
+  (t) => [
+    index("idx_vec_vendor").on(t.vendorId),
+    index("idx_vec_decision").on(t.decision),
+    index("idx_vec_job_run").on(t.jobRunId),
+    // Partial unique: at most one OPEN proposal per (vendor, field).
+    uniqueIndex("idx_vec_pending_field")
+      .on(t.vendorId, t.proposedField)
+      .where(sql`${t.decision} = 'pending'`),
+  ]
+);
+
 // Vendor outreach attempts (analyst J1, 2026-05-29 PM). Log substrate for
 // the /admin/vendor-claim-leaderboard (PR #268) outreach workflow. Once
 // outcomes accumulate, the leaderboard's composite score can incorporate
@@ -2074,6 +2123,8 @@ export type RecommendationItem = typeof recommendationItems.$inferSelect;
 export type RecommendationScanState = typeof recommendationScanState.$inferSelect;
 export type StandingFailureState = typeof standingFailureState.$inferSelect;
 export type EnrichmentLog = typeof enrichmentLog.$inferSelect;
+export type VendorEnrichmentCandidate = typeof vendorEnrichmentCandidates.$inferSelect;
+export type NewVendorEnrichmentCandidate = typeof vendorEnrichmentCandidates.$inferInsert;
 export type TimeToIndexLog = typeof timeToIndexLog.$inferSelect;
 export type CompetitorDomain = typeof competitorDomains.$inferSelect;
 export type InboundEmail = typeof inboundEmails.$inferSelect;

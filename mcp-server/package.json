@@ -16,6 +16,7 @@
     "@takemetothefair/constants": "*",
     "@takemetothefair/datetime": "*",
     "@takemetothefair/db-schema": "*",
+    "@takemetothefair/site-fetch": "*",
     "@takemetothefair/utils": "*",
     "@takemetothefair/validation": "*",
     "agents": "^0.8.7",

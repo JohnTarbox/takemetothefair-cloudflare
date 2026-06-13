@@ -20,6 +20,7 @@ export const ENRICHMENT_SOURCES = [
   "manual_admin", // admin-edited via UI/MCP update_*
   "vendor_self", // vendor edited via /vendor/* portal or claim flow
   "mcp_create", // MCP create_vendor / create_event
+  "browser_enrich", // I1 vendor-enrichment Worker — Browser-Rendering site scrape
 ] as const;
 export type EnrichmentSource = (typeof ENRICHMENT_SOURCES)[number];
 
