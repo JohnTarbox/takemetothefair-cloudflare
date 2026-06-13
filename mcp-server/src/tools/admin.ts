@@ -384,8 +384,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       const eventRows = await db
@@ -451,7 +453,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         }
         if (source) {
           await triggerIndexNow(publicUrlFor("events", event.slug), env, source, {
-            defer: params.defer_search_ping ?? false,
+            defer: params.defer_search_ping ?? true,
             db,
             entity: { type: "event", id: event.id, slug: event.slug, action: "status_change" },
           });
@@ -1869,9 +1871,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
+        .default(true)
         .describe(
-          "If true, queue the IndexNow ping for batched flush via flush_pending_search_pings. Bulk-ingestion workflows should set this true."
+          "REL4: defaults TRUE — queue the IndexNow ping to pending_search_pings (drained in one batched call by the hourly cron / flush_pending_search_pings) instead of firing inline. Pass false only when this single write needs immediate indexing."
         ),
     },
     async (params) => {
@@ -2003,7 +2005,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // IndexNow: vendors have no status field — they're public on creation.
       if (env) {
         await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-create", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           entity: { type: "vendor", id: vendorId, slug: finalSlug, action: "create" },
         });
@@ -2040,9 +2042,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
+        .default(true)
         .describe(
-          "If true, queue the IndexNow ping for batched flush via flush_pending_search_pings."
+          "REL4: defaults TRUE — queue the IndexNow ping to pending_search_pings (drained in one batched call by the hourly cron / flush_pending_search_pings) instead of firing inline. Pass false only when this single write needs immediate indexing."
         ),
     },
     async (params) => {
@@ -2136,7 +2138,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
         if (env && PUBLIC_VENDOR_SET.has(newStatus) && eventSlug) {
           await triggerIndexNow(publicUrlFor("events", eventSlug), env, "event-vendor-link", {
-            defer: params.defer_search_ping ?? false,
+            defer: params.defer_search_ping ?? true,
             db,
             entity: { type: "event", id: params.event_id, slug: eventSlug, action: "update" },
           });
@@ -2228,7 +2230,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         eventSlug
       ) {
         await triggerIndexNow(publicUrlFor("events", eventSlug), env, "event-vendor-link", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           entity: { type: "event", id: params.event_id, slug: eventSlug, action: "status_change" },
         });
@@ -2341,8 +2343,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -2503,7 +2507,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         if (venueSource) {
           const finalSlug = (updates.slug as string | undefined) ?? venue.slug;
           await triggerIndexNow(publicUrlFor("venues", finalSlug), env, venueSource, {
-            defer: params.defer_search_ping ?? false,
+            defer: params.defer_search_ping ?? true,
             db,
             entity: {
               type: "venue",
@@ -2571,8 +2575,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       // DQ2 (2026-06-04): coerce address-as-name BEFORE dedup. When
@@ -2681,7 +2687,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // immediately, so ping right away.
       if (env) {
         await triggerIndexNow(publicUrlFor("venues", finalSlug), env, "venue-create", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           entity: { type: "venue", id: venueId, slug: finalSlug, action: "create" },
         });
@@ -3043,8 +3049,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -3248,7 +3256,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         if (requestedFields.some((f) => materialFields.includes(f))) {
           const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
           await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update", {
-            defer: params.defer_search_ping ?? false,
+            defer: params.defer_search_ping ?? true,
             db,
             entity: { type: "vendor", id: vendor.id, slug: finalSlug, action: "update" },
           });
@@ -3306,8 +3314,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       const vendorRows = await db
@@ -3413,7 +3423,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       if (env) {
         const finalSlug = (updates.slug as string | undefined) ?? vendor.slug;
         await triggerIndexNow(publicUrlFor("vendors", finalSlug), env, "vendor-update", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           entity: { type: "vendor", id: vendor.id, slug: finalSlug, action: "status_change" },
         });
@@ -3473,8 +3483,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       // Check for duplicate company name (exact match)
@@ -3567,7 +3579,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // 404. Mirrors the main-app POST /api/admin/promoters hook.
       if (env) {
         await triggerIndexNow(publicUrlFor("promoters", finalSlug), env, "promoter-create", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           entity: { type: "promoter", id: promoterId, slug: finalSlug, action: "create" },
         });
@@ -3622,8 +3634,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       defer_search_ping: z
         .boolean()
         .optional()
-        .default(false)
-        .describe("If true, queue the IndexNow ping for batched flush."),
+        .default(true)
+        .describe(
+          "REL4: defaults TRUE — the IndexNow ping is queued to pending_search_pings and drained in one batched call by the hourly cron, not fired inline. Pass false only when this single write needs immediate indexing."
+        ),
     },
     async (params) => {
       const fieldMap: Array<{
@@ -3760,7 +3774,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           indexNowUrls.push(publicUrlFor("promoters", promoter.slug));
         }
         await triggerIndexNow(indexNowUrls, env, "promoter-update", {
-          defer: params.defer_search_ping ?? false,
+          defer: params.defer_search_ping ?? true,
           db,
           // Defer only enqueues the new-slug URL; the old-slug 301-redirect
           // ping is rarely meaningful in the deferred case (it's typically

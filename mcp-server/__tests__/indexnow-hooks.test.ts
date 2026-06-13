@@ -122,9 +122,18 @@ function seedVendor(overrides: Partial<typeof vendors.$inferInsert> = {}) {
 // update_event_status -------------------------------------------------------
 
 describe("update_event_status", () => {
+  // REL4: every write path now defers the IndexNow ping by default. These tests
+  // assert the SOURCE-LABEL wiring (the round-2 regression contract), which only
+  // exists on the inline path — the deferred pending row carries entity metadata,
+  // not a source label. So they pass defer_search_ping:false to exercise inline.
+  // The default-defers-to-pending behavior is covered in the REL4 block below.
   it("DRAFT → APPROVED fires event-create", async () => {
     const id = seedEvent({ status: "DRAFT" });
-    await adminServer.invoke("update_event_status", { event_id: id, status: "APPROVED" });
+    await adminServer.invoke("update_event_status", {
+      event_id: id,
+      status: "APPROVED",
+      defer_search_ping: false,
+    });
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].source).toBe("event-create");
     expect(mock.calls[0].urls[0]).toContain("/events/test-event");
@@ -132,13 +141,21 @@ describe("update_event_status", () => {
 
   it("DRAFT → TENTATIVE fires event-create (TENTATIVE is publicly visible)", async () => {
     const id = seedEvent({ status: "DRAFT" });
-    await adminServer.invoke("update_event_status", { event_id: id, status: "TENTATIVE" });
+    await adminServer.invoke("update_event_status", {
+      event_id: id,
+      status: "TENTATIVE",
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["event-create"]);
   });
 
   it("TENTATIVE → APPROVED fires event-approve (the round-2 bug)", async () => {
     const id = seedEvent({ status: "TENTATIVE", slug: "fiddlehead-festival" });
-    await adminServer.invoke("update_event_status", { event_id: id, status: "APPROVED" });
+    await adminServer.invoke("update_event_status", {
+      event_id: id,
+      status: "APPROVED",
+      defer_search_ping: false,
+    });
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].source).toBe("event-approve");
     expect(mock.calls[0].urls[0]).toContain("/events/fiddlehead-festival");
@@ -260,6 +277,7 @@ describe("create_venue", () => {
       city: "Portland",
       state: "ME",
       zip: "04101",
+      defer_search_ping: false,
     })) as { content: Array<{ text: string }> };
     expect(mock.calls).toHaveLength(1);
     expect(mock.calls[0].source).toBe("venue-create");
@@ -273,13 +291,21 @@ describe("create_venue", () => {
 describe("update_venue", () => {
   it("INACTIVE → ACTIVE fires venue-activate", async () => {
     const id = seedVenue({ status: "INACTIVE" });
-    await adminServer.invoke("update_venue", { venue_id: id, status: "ACTIVE" });
+    await adminServer.invoke("update_venue", {
+      venue_id: id,
+      status: "ACTIVE",
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["venue-activate"]);
   });
 
   it("editing address on ACTIVE venue fires venue-update", async () => {
     const id = seedVenue({ status: "ACTIVE" });
-    await adminServer.invoke("update_venue", { venue_id: id, address: "200 New Rd" });
+    await adminServer.invoke("update_venue", {
+      venue_id: id,
+      address: "200 New Rd",
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["venue-update"]);
   });
 
@@ -299,6 +325,7 @@ describe("create_vendor", () => {
       type: "Food & Beverage",
       products: ["marshmallows"],
       location: "Dublin, NH",
+      defer_search_ping: false,
     });
     expect(mock.calls.map((c) => c.source)).toEqual(["vendor-create"]);
   });
@@ -307,7 +334,11 @@ describe("create_vendor", () => {
 describe("update_vendor", () => {
   it("editing vendor_type fires vendor-update", async () => {
     const id = seedVendor();
-    await adminServer.invoke("update_vendor", { vendor_id: id, vendor_type: "Crafts" });
+    await adminServer.invoke("update_vendor", {
+      vendor_id: id,
+      vendor_type: "Crafts",
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
   });
 
@@ -330,13 +361,18 @@ describe("update_vendor", () => {
     await adminServer.invoke("update_vendor", {
       vendor_id: id,
       gallery_images: [{ url: "https://cdn.meetmeatthefair.com/x.jpg", alt: "alt" }],
+      defer_search_ping: false,
     });
     expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
   });
 
   it("editing slug fires vendor-update AND writes slug history", async () => {
     const id = seedVendor({ slug: "old-slug" });
-    await adminServer.invoke("update_vendor", { vendor_id: id, slug: "new-branded-slug" });
+    await adminServer.invoke("update_vendor", {
+      vendor_id: id,
+      slug: "new-branded-slug",
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
 
     const history = db
@@ -353,7 +389,11 @@ describe("update_vendor", () => {
 describe("set_enhanced_profile", () => {
   it("active=true fires vendor-update AND sets flag/verified/timestamps", async () => {
     const id = seedVendor();
-    await adminServer.invoke("set_enhanced_profile", { vendor_id: id, active: true });
+    await adminServer.invoke("set_enhanced_profile", {
+      vendor_id: id,
+      active: true,
+      defer_search_ping: false,
+    });
     expect(mock.calls.map((c) => c.source)).toEqual(["vendor-update"]);
 
     const v = db.select().from(vendors).where(eq(vendors.id, id)).all()[0];
@@ -405,6 +445,62 @@ describe("set_enhanced_profile", () => {
   });
 });
 
+// REL4 defer-by-default --------------------------------------------------------
+// The reopen fix: every MCP write path defaults defer_search_ping=true so bursty
+// create flows (the daily discovery cron) enqueue to pending_search_pings and the
+// hourly cron coalesces them into ONE batched call, instead of firing a storm of
+// single-URL inline pings that re-armed Bing's per-host 429 penalty.
+
+describe("REL4 defer-by-default (no defer_search_ping passed)", () => {
+  it("create_venue enqueues a pending row instead of pinging inline", async () => {
+    await adminServer.invoke("create_venue", {
+      name: "Deferred Hall",
+      address: "5 Quiet Way",
+      city: "Bangor",
+      state: "ME",
+      zip: "04401",
+    });
+    expect(mock.calls).toHaveLength(0);
+    const pending = db
+      .select()
+      .from(pendingSearchPings)
+      .where(eq(pendingSearchPings.entityType, "venue"))
+      .all();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].action).toBe("create");
+  });
+
+  it("create_vendor enqueues a pending row instead of pinging inline", async () => {
+    await adminServer.invoke("create_vendor", {
+      business_name: "Quiet Crafts Co",
+      type: "Crafts",
+      products: ["candles"],
+      location: "Augusta, ME",
+    });
+    expect(mock.calls).toHaveLength(0);
+    const pending = db
+      .select()
+      .from(pendingSearchPings)
+      .where(eq(pendingSearchPings.entityType, "vendor"))
+      .all();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].action).toBe("create");
+  });
+
+  it("update_event_status DRAFT → APPROVED enqueues instead of pinging inline", async () => {
+    const id = seedEvent({ status: "DRAFT" });
+    await adminServer.invoke("update_event_status", { event_id: id, status: "APPROVED" });
+    expect(mock.calls).toHaveLength(0);
+    const pending = db
+      .select()
+      .from(pendingSearchPings)
+      .where(eq(pendingSearchPings.entityId, id))
+      .all();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].entityType).toBe("event");
+  });
+});
+
 // suggest_event (vendor.ts) ------------------------------------------------
 
 describe("suggest_event", () => {
@@ -425,6 +521,7 @@ describe("suggest_event", () => {
       // round-trip Date objects through better-sqlite3's binder. Production
       // D1 handles this fine — it's a test-environment-only quirk.
       force_create: true,
+      defer_search_ping: false,
     });
     const sources = mock.calls.map((c) => c.source).sort();
     expect(sources).toEqual(["event-create", "venue-create"]);
@@ -435,6 +532,7 @@ describe("suggest_event", () => {
       name: "Open-air Festival",
       start_date: "2026-07-04",
       force_create: true,
+      defer_search_ping: false,
     });
     expect(mock.calls.map((c) => c.source)).toEqual(["event-create"]);
   });
@@ -458,6 +556,7 @@ describe("suggest_event", () => {
       venue_state: "NH",
       start_date: "2026-12-15",
       force_create: true,
+      defer_search_ping: false,
     });
     const sources = mock.calls.map((c) => c.source).sort();
     // venue-create MUST NOT fire — the existing row should match.
@@ -491,6 +590,7 @@ describe("suggest_event", () => {
       venue_state: "CT",
       start_date: "2026-09-12",
       force_create: true,
+      defer_search_ping: false,
     });
     expect(mock.calls.map((c) => c.source).sort()).toEqual(["event-create"]);
     const rows = db
@@ -529,6 +629,7 @@ describe("suggest_event", () => {
       venue_state: "CT",
       start_date: "2026-12-05",
       force_create: true,
+      defer_search_ping: false,
     });
     // venue-create MUST NOT fire — the legacy-slug row should be matched
     // by the name-equality fallback in the resolver.
