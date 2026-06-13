@@ -23,6 +23,7 @@ import {
 import { combinedSimilarity, getVendorComparisonString } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
+import type { VendorEnrichmentMessage } from "../enrichment/dispatch.js";
 
 const PUBLIC_VENDOR_SET = new Set<string>(PUBLIC_VENDOR_STATUSES);
 
@@ -30,6 +31,15 @@ interface Env {
   MAIN_APP?: { fetch: typeof fetch };
   MAIN_APP_URL?: string;
   INTERNAL_API_KEY?: string;
+  /** I1 Trigger 1 (2026-06-13) — post-create enrichment enqueue. Optional so
+   *  dev / unconfigured environments degrade gracefully; the nightly cron is
+   *  the safety net (a freshly-created never-attempted vendor with a website
+   *  is already in the cron's selection pool), so this is a latency
+   *  optimization, not a correctness dependency. */
+  VENDOR_ENRICHMENT?: { send: (msg: VendorEnrichmentMessage) => Promise<unknown> };
+  /** Operator dry-run switch, mirrored from the cron/queue path. "false"
+   *  flips off the Phase-1 dry-run default. */
+  ENRICHMENT_DRY_RUN?: string;
 }
 
 const DEDUP_STRATEGY_VALUES = ["strict", "fuzzy", "skip"] as const;
@@ -529,6 +539,25 @@ export function registerCreateOrLinkVendorTool(
             db,
             entity: { type: "vendor", id: vendorId, slug: vendorSlug, action: "create" },
           });
+
+          // I1 Trigger 1 (2026-06-13) — kick a fill-empty enrichment pass for
+          // the freshly-created vendor so its contact fields get populated
+          // without waiting for the nightly cron. Fire-and-forget: a queue
+          // hiccup must never fail the create, and it doesn't need to — the
+          // cron is the safety net (a never-attempted vendor with a website is
+          // in its pool). dryRun mirrors the cron/queue convention exactly.
+          const website = params.website?.trim();
+          if (website && env.VENDOR_ENRICHMENT) {
+            try {
+              await env.VENDOR_ENRICHMENT.send({
+                vendorId,
+                jobRunId: `postcreate-${vendorId}`,
+                dryRun: env.ENRICHMENT_DRY_RUN !== "false",
+              });
+            } catch {
+              /* best-effort — the nightly cron will pick this vendor up */
+            }
+          }
         }
         if ((was_linked || status_changed) && PUBLIC_VENDOR_SET.has(status)) {
           await triggerIndexNow(publicUrlFor("events", event.slug), env, "event-vendor-link", {

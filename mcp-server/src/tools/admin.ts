@@ -92,6 +92,13 @@ interface Env {
   /** SYN1 (2026-06-12) — syndication trigger producer; the update_* tools
    *  enqueue after a mirrored-field correction. Optional like EMAIL_JOBS. */
   SYNDICATION_CHANGES?: Queue<unknown>;
+  /** I1 Trigger 1 (2026-06-13) — vendor-enrichment queue producer; the
+   *  create_or_link_vendor post-create hook enqueues a fill-empty pass for a
+   *  newly-created vendor. Optional like EMAIL_JOBS. */
+  VENDOR_ENRICHMENT?: Queue<unknown>;
+  /** I1 dry-run switch, passed through to the post-create hook so it mirrors
+   *  the cron/queue path. "false" flips off the Phase-1 dry-run default. */
+  ENRICHMENT_DRY_RUN?: string;
 }
 
 export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext, env?: Env) {
