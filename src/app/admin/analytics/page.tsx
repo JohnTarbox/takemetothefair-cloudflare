@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { IndexNowKillSwitchToggle } from "@/components/admin/indexnow-kill-switch-toggle";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
 import {
@@ -2535,7 +2536,7 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
     <div
       role="tablist"
       aria-label="Analytics sections"
-      className="mb-6 flex flex-wrap gap-2 border-b border-border pb-2"
+      className="mb-6 flex flex-wrap items-center gap-2 border-b border-border pb-2"
     >
       {TABS.map((tab) => {
         const isActive = currentTab === tab.key;
@@ -2557,6 +2558,9 @@ function TabBar({ currentTab }: { currentTab: TabKey }) {
           </Link>
         );
       })}
+      {/* REL4 kill-switch — sits to the right of the IndexNow tab (the last tab)
+          and only on the IndexNow view, where it's contextually relevant. */}
+      {currentTab === "indexnow" && <IndexNowKillSwitchToggle />}
     </div>
   );
 }

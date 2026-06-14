@@ -138,3 +138,43 @@ export async function clearIndexNowCooldown(kv: BreakerKv | null): Promise<void>
     /* best-effort */
   }
 }
+
+/** Current operator kill-switch state, for the admin UI toggle. `note` is the
+ *  free-text value stored alongside the flag (e.g. who paused it / why). */
+export interface IndexNowPauseState {
+  paused: boolean;
+  note: string | null;
+}
+
+export async function getIndexNowPauseState(kv: BreakerKv | null): Promise<IndexNowPauseState> {
+  if (!kv) return { paused: false, note: null };
+  try {
+    const v = await kv.get(PAUSE_KEY);
+    return { paused: Boolean(v), note: v ?? null };
+  } catch {
+    return { paused: false, note: null };
+  }
+}
+
+/**
+ * Set or clear the operator kill-switch. `paused: true` writes PAUSE_KEY (with
+ * an optional note); `false` deletes it. No TTL — a pause stays until explicitly
+ * cleared. Never throws; returns true on success so the API can report failure.
+ */
+export async function setIndexNowPaused(
+  kv: BreakerKv | null,
+  paused: boolean,
+  note?: string
+): Promise<boolean> {
+  if (!kv) return false;
+  try {
+    if (paused) {
+      await kv.put(PAUSE_KEY, note && note.trim() ? note.trim() : "paused");
+    } else {
+      await kv.delete(PAUSE_KEY);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}

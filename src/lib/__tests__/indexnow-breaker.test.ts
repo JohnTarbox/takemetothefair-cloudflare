@@ -4,6 +4,8 @@ import {
   computeCooldownMs,
   armIndexNowCooldown,
   clearIndexNowCooldown,
+  getIndexNowPauseState,
+  setIndexNowPaused,
   BASE_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
   type BreakerKv,
@@ -132,5 +134,41 @@ describe("armIndexNowCooldown / clearIndexNowCooldown", () => {
   it("is a no-op with a null KV", async () => {
     expect(await armIndexNowCooldown(null, null)).toBeNull();
     await expect(clearIndexNowCooldown(null)).resolves.toBeUndefined();
+  });
+});
+
+describe("operator pause state (admin toggle)", () => {
+  let kv: ReturnType<typeof makeKv>;
+  beforeEach(() => {
+    kv = makeKv();
+  });
+
+  it("reports unpaused on an empty KV", async () => {
+    expect(await getIndexNowPauseState(kv)).toEqual({ paused: false, note: null });
+  });
+
+  it("setIndexNowPaused(true, note) pauses and round-trips the note", async () => {
+    const ok = await setIndexNowPaused(kv, true, "stop now");
+    expect(ok).toBe(true);
+    expect(await getIndexNowPauseState(kv)).toEqual({ paused: true, note: "stop now" });
+    // and the breaker now blocks with reason 'paused'
+    expect((await checkIndexNowBreaker(kv)).reason).toBe("paused");
+  });
+
+  it("setIndexNowPaused(false) clears the flag", async () => {
+    await setIndexNowPaused(kv, true, "x");
+    await setIndexNowPaused(kv, false);
+    expect(await getIndexNowPauseState(kv)).toEqual({ paused: false, note: null });
+    expect((await checkIndexNowBreaker(kv)).blocked).toBe(false);
+  });
+
+  it("defaults an empty note to 'paused'", async () => {
+    await setIndexNowPaused(kv, true, "   ");
+    expect((await getIndexNowPauseState(kv)).note).toBe("paused");
+  });
+
+  it("fails closed (returns false) with a null KV so the API can surface it", async () => {
+    expect(await setIndexNowPaused(null, true)).toBe(false);
+    expect(await getIndexNowPauseState(null)).toEqual({ paused: false, note: null });
   });
 });
