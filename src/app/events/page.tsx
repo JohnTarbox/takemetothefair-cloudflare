@@ -3,6 +3,8 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
+import { CalendarMonthSSR } from "@/components/events/calendar-month-ssr";
+import { isCal1SsrMonthEnabled } from "@/lib/flags";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -121,6 +123,8 @@ interface SearchParams {
   page?: string;
   view?: string;
   sort?: string;
+  /** CAL1 — visible month for the SSR calendar ("YYYY-MM"). */
+  cal?: string;
 }
 
 type ViewMode = "cards" | "table" | "calendar";
@@ -806,6 +810,9 @@ export default async function EventsPage({
   const favoriteUserId = isLoggedIn && params.favorites === "true" ? session.user.id : undefined;
 
   const viewMode = parseView(params.view);
+  // CAL1 — when the flag is ON, the calendar view renders the new SSR Month module
+  // (Month-only) instead of the legacy client calendar. Default OFF → no change.
+  const useSsrMonth = viewMode === "calendar" && isCal1SsrMonthEnabled();
   const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
     getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
     getCategories(),
@@ -892,21 +899,29 @@ export default async function EventsPage({
         </aside>
 
         <main className="lg:col-span-3">
-          <EventsView
-            events={eventsList}
-            view={viewMode}
-            emptyMessage={
-              params.myEvents === "true"
-                ? "You are not participating in any events yet. Apply to events to see them here."
-                : "No events match your filters. Try adjusting your search."
-            }
-            currentPage={page}
-            totalPages={totalPages}
-            searchParams={params as Record<string, string>}
-            total={total}
-            myEvents={params.myEvents === "true"}
-            vendorCoords={vendorCoords}
-          />
+          {useSsrMonth ? (
+            <CalendarMonthSSR
+              events={eventsList}
+              cal={params.cal}
+              searchParams={params as Record<string, string | undefined>}
+            />
+          ) : (
+            <EventsView
+              events={eventsList}
+              view={viewMode}
+              emptyMessage={
+                params.myEvents === "true"
+                  ? "You are not participating in any events yet. Apply to events to see them here."
+                  : "No events match your filters. Try adjusting your search."
+              }
+              currentPage={page}
+              totalPages={totalPages}
+              searchParams={params as Record<string, string>}
+              total={total}
+              myEvents={params.myEvents === "true"}
+              vendorCoords={vendorCoords}
+            />
+          )}
           <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border print:hidden">
             <h3 className="text-lg font-semibold text-foreground mb-2">Looking for past events?</h3>
             <p className="text-sm text-muted-foreground mb-3">
