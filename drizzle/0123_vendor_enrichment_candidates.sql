@@ -6,7 +6,13 @@
 --
 -- §6.2 domain-problem flagging reuses the EXISTING vendors.domain_hijacked
 -- column (drizzle/0054) — no new column. §6.1 is this table.
-CREATE TABLE vendor_enrichment_candidates (
+--
+-- IF NOT EXISTS (2026-06-15): the I1 worker (PR #478) created this table in prod
+-- out-of-band, so `wrangler d1 migrations apply --remote` kept failing on
+-- "table already exists" (SQLITE_ERROR 7500) and blocked every deploy since 0123.
+-- Guarding all CREATEs makes the re-apply a no-op that records the migration as
+-- applied; harmless on fresh DBs.
+CREATE TABLE IF NOT EXISTS vendor_enrichment_candidates (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   vendor_id         TEXT NOT NULL,
   -- Groups one cron run's proposals so a whole night can be approved/rejected
@@ -34,14 +40,14 @@ CREATE TABLE vendor_enrichment_candidates (
   decision          TEXT NOT NULL DEFAULT 'pending'
 );
 
-CREATE INDEX idx_vec_vendor ON vendor_enrichment_candidates (vendor_id);
-CREATE INDEX idx_vec_decision ON vendor_enrichment_candidates (decision);
-CREATE INDEX idx_vec_job_run ON vendor_enrichment_candidates (job_run_id);
+CREATE INDEX IF NOT EXISTS idx_vec_vendor ON vendor_enrichment_candidates (vendor_id);
+CREATE INDEX IF NOT EXISTS idx_vec_decision ON vendor_enrichment_candidates (decision);
+CREATE INDEX IF NOT EXISTS idx_vec_job_run ON vendor_enrichment_candidates (job_run_id);
 
 -- Idempotence: re-enriching a vendor before its prior proposals are reviewed
 -- must not pile up duplicate pending rows for the same field. Partial unique
 -- index — only one OPEN proposal per (vendor, field); reviewed rows are exempt
 -- so history accumulates.
-CREATE UNIQUE INDEX idx_vec_pending_field
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vec_pending_field
   ON vendor_enrichment_candidates (vendor_id, proposed_field)
   WHERE decision = 'pending';
