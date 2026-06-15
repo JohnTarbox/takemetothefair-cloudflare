@@ -36,6 +36,7 @@ import { runScheduledCompletenessRecompute } from "./completeness-recompute-cana
 import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
+import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
@@ -1475,6 +1476,13 @@ export default {
         // by construction (the helper catches its own errors and only
         // logs).
         runScheduledStandingFailureCanary(env),
+        // K27 (2026-06-15) — daily OCCURRED auto-transition + recurring-event
+        // rollover. Pass 1 flips past-end APPROVED events SCHEDULED→OCCURRED
+        // (the transition that had no cron before K27) and rolls FREQ=YEARLY
+        // events into next year's TENTATIVE edition; Pass 2 backfills rolls for
+        // already-OCCURRED recurring events. Cosmetic-failsoft by construction
+        // (each row + each pass catches its own errors and logs to error_logs).
+        runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
       ]).then(() => undefined)
     );
   },

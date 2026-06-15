@@ -2,43 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, desc, or } from "drizzle-orm";
 import { events, adminActions, eventSlugHistory } from "../schema.js";
-import {
-  EVENT_LIFECYCLE_VALUES,
-  PUBLIC_LIFECYCLE_STATUSES,
-  type EventLifecycle,
-} from "@takemetothefair/constants";
+import { EVENT_LIFECYCLE_VALUES, type EventLifecycle } from "@takemetothefair/constants";
 import { decodeHtmlEntities } from "@takemetothefair/utils";
 import { jsonContent, publicUrlFor, triggerIndexNow } from "../helpers.js";
+import { LIFECYCLE_TRANSITIONS, isPublicLifecycle } from "../lifecycle.js";
+import { rolloverEventIfRecurring } from "../event-rollover.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
-
-// Mirror src/lib/event-lifecycle.ts:LIFECYCLE_TRANSITIONS. Kept in sync by
-// hand because moving the map to @takemetothefair/constants would also
-// pull in the Drizzle-dependent publicEventWhere() helper. If a transition
-// is added to the main app, mirror it here too. CI doesn't catch drift, so
-// the comment on the main-app definition reminds maintainers.
-const LIFECYCLE_TRANSITIONS: Record<EventLifecycle, EventLifecycle[]> = {
-  SCHEDULED: [
-    "TENTATIVE",
-    "POSTPONED",
-    "RESCHEDULED",
-    "CANCELLED",
-    "MOVED_ONLINE",
-    "OCCURRED",
-    "NO_SHOW",
-  ],
-  TENTATIVE: ["SCHEDULED", "POSTPONED", "CANCELLED", "MOVED_ONLINE"],
-  POSTPONED: ["SCHEDULED", "RESCHEDULED", "CANCELLED"],
-  RESCHEDULED: ["SCHEDULED", "POSTPONED", "CANCELLED", "OCCURRED", "NO_SHOW"],
-  CANCELLED: ["SCHEDULED", "RESCHEDULED"],
-  MOVED_ONLINE: ["CANCELLED", "OCCURRED", "NO_SHOW"],
-  OCCURRED: ["NO_SHOW"],
-  NO_SHOW: ["OCCURRED"],
-};
-
-function isPublicLifecycle(lifecycle: EventLifecycle): boolean {
-  return (PUBLIC_LIFECYCLE_STATUSES as readonly string[]).includes(lifecycle);
-}
 
 interface Env {
   MAIN_APP?: { fetch: typeof fetch };
@@ -226,6 +196,24 @@ export function registerEventLifecycleTools(
         indexNowFired = true;
       }
 
+      // K27 — when an admin marks an event OCCURRED, roll a recurring event
+      // forward to its next-occurrence TENTATIVE edition (idempotent + gated;
+      // a non-recurring event is a no-op). Best-effort: a rollover failure must
+      // not fail the lifecycle transition the operator just performed.
+      let rolledOverEventId: string | null = null;
+      if (to === "OCCURRED") {
+        try {
+          const roll = await rolloverEventIfRecurring(db, event_id, {
+            via: "manual",
+            actorUserId: auth.userId,
+          });
+          if (roll.created) rolledOverEventId = roll.newEventId ?? null;
+        } catch {
+          // swallow — the transition already committed; the daily sweep's
+          // Pass-2 backfill will retry the roll idempotently.
+        }
+      }
+
       return {
         content: [
           jsonContent({
@@ -239,6 +227,7 @@ export function registerEventLifecycleTools(
             previous_start_date: dateUpdate.previousStartDate?.toISOString() ?? null,
             previous_end_date: dateUpdate.previousEndDate?.toISOString() ?? null,
             indexnow_fired: indexNowFired,
+            rolled_over_event_id: rolledOverEventId,
           }),
         ],
       };
