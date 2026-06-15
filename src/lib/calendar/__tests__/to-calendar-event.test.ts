@@ -121,6 +121,58 @@ describe("toCalendarEvent — scalar fields", () => {
   });
 });
 
+describe("past-events rule (Step 5) — toCalendarEvents filtering", () => {
+  const TODAY = "2026-07-10";
+
+  it("drops past dates of a recurring event by default, keeps them with includePast", () => {
+    const r = row({
+      id: "weekly",
+      discontinuousDates: true,
+      eventDayDates: ["2026-07-03", "2026-07-10", "2026-07-17"], // past, today, future
+    });
+    const def = toCalendarEvents([r], { todayIso: TODAY })[0]!;
+    expect(def.occurrences.map((o) => o.start)).toEqual(["2026-07-10", "2026-07-17"]); // 07-03 dropped
+
+    const withPast = toCalendarEvents([r], { includePast: true, todayIso: TODAY })[0]!;
+    expect(withPast.occurrences.map((o) => o.start)).toEqual([
+      "2026-07-03",
+      "2026-07-10",
+      "2026-07-17",
+    ]);
+  });
+
+  it("drops an event whose every occurrence is past", () => {
+    const r = row({
+      id: "gone",
+      startDate: new Date(Date.UTC(2026, 6, 1)),
+      endDate: new Date(Date.UTC(2026, 6, 3)),
+    });
+    expect(toCalendarEvents([r], { todayIso: TODAY })).toHaveLength(0);
+    expect(toCalendarEvents([r], { includePast: true, todayIso: TODAY })).toHaveLength(1);
+  });
+
+  it("keeps an ongoing multi-day event that spans into the future", () => {
+    // starts before today, ends after — still current, not 'past'.
+    const r = row({
+      id: "ongoing",
+      startDate: new Date(Date.UTC(2026, 6, 5)),
+      endDate: new Date(Date.UTC(2026, 6, 15)),
+    });
+    const out = toCalendarEvents([r], { todayIso: TODAY });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.occurrences[0]!.start).toBe("2026-07-05"); // span kept intact
+  });
+
+  it("no filtering when todayIso is omitted (back-compat)", () => {
+    const r = row({
+      id: "x",
+      discontinuousDates: true,
+      eventDayDates: ["2020-01-01", "2030-01-01"],
+    });
+    expect(toCalendarEvents([r])[0]!.occurrences).toHaveLength(2);
+  });
+});
+
 describe("adapter output passes the contract's validateWindow", () => {
   it("a mixed window is valid (unique ids, occurrences sorted ascending)", () => {
     const out = toCalendarEvents([
