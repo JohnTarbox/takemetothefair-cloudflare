@@ -151,16 +151,29 @@ describe("past-events rule (Step 5) — toCalendarEvents filtering", () => {
     expect(toCalendarEvents([r], { includePast: true, todayIso: TODAY })).toHaveLength(1);
   });
 
-  it("keeps an ongoing multi-day event that spans into the future", () => {
-    // starts before today, ends after — still current, not 'past'.
+  it("clips a non-ongoing multi-day event that started in the past to today", () => {
+    // 11-day event 07-05…07-15, today 07-10 → ribbon starts today; past days empty.
     const r = row({
-      id: "ongoing",
+      id: "multiday",
       startDate: new Date(Date.UTC(2026, 6, 5)),
       endDate: new Date(Date.UTC(2026, 6, 15)),
     });
     const out = toCalendarEvents([r], { todayIso: TODAY });
     expect(out).toHaveLength(1);
-    expect(out[0]!.occurrences[0]!.start).toBe("2026-07-05"); // span kept intact
+    expect(out[0]!.occurrences[0]!.start).toBe(TODAY); // clipped from 07-05
+    expect(out[0]!.occurrences[0]!.end).toBe("2026-07-16"); // end untouched
+  });
+
+  it("keeps an ongoing (>14d) band event's full span (never clipped)", () => {
+    // 26-day span 06-25…07-20 → ongoing band; must keep original start.
+    const r = row({
+      id: "band",
+      startDate: new Date(Date.UTC(2026, 5, 25)),
+      endDate: new Date(Date.UTC(2026, 6, 20)),
+    });
+    const out = toCalendarEvents([r], { todayIso: TODAY });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.occurrences[0]!.start).toBe("2026-06-25"); // intact
   });
 
   it("no filtering when todayIso is omitted (back-compat)", () => {

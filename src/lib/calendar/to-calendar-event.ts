@@ -121,11 +121,28 @@ function occurrenceLastDay(occ: Occurrence): string {
   return occ.end ? addDaysIso(occ.end, -1) : occ.start;
 }
 
+const isoToUtcMs = (iso: string): number =>
+  Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+
+/**
+ * Engine's "ongoing" rule for an all-day occurrence: span (exclusive end − start)
+ * strictly greater than 14 days. These render in the band above the grid, never in
+ * cells, so we must NOT clip them (clipping shrinks the span and would demote them
+ * into day cells). Matches @jonnyboats/calendar-core's isEventOngoing.
+ */
+function occurrenceSpanExceeds14d(occ: Occurrence): boolean {
+  if (!occ.end) return false;
+  return (isoToUtcMs(occ.end) - isoToUtcMs(occ.start)) / 86_400_000 > 14;
+}
+
 /**
  * Map a window of rows, dropping un-placeable ones (null start). When
- * `opts.includePast` is falsy and `opts.todayIso` is given, also drop occurrences
- * that ended before today (and any event left with zero occurrences). An ongoing
- * multi-day event that spans into the future is kept intact — it isn't "past".
+ * `opts.includePast` is falsy and `opts.todayIso` is given, apply the Step-5
+ * past-events rule so past day cells stay empty:
+ *  - drop occurrences that ended before today (and events left with none);
+ *  - clip a multi-day occurrence that STARTED before today (but runs into
+ *    today/future) so it begins at today — UNLESS it's an ongoing (>14d) band
+ *    event, which is excluded from cells and must keep its full span.
  */
 export function toCalendarEvents(
   rows: ReadonlyArray<CalendarEventInput>,
@@ -138,8 +155,16 @@ export function toCalendarEvents(
 
   const out: CalendarEvent[] = [];
   for (const e of events) {
-    const upcoming = e.occurrences.filter((o) => occurrenceLastDay(o) >= today);
-    if (upcoming.length > 0) out.push({ ...e, occurrences: upcoming });
+    const occurrences: Occurrence[] = [];
+    for (const o of e.occurrences) {
+      if (occurrenceLastDay(o) < today) continue; // fully past → drop
+      if (o.start < today && o.end && !occurrenceSpanExceeds14d(o)) {
+        occurrences.push({ ...o, start: today }); // clip in-cell ribbon to today
+      } else {
+        occurrences.push(o); // future, or ongoing band event → keep intact
+      }
+    }
+    if (occurrences.length > 0) out.push({ ...e, occurrences });
   }
   return out;
 }
