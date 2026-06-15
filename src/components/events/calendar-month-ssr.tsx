@@ -8,6 +8,7 @@
 import { toCalendarEvents, type CalendarEventInput } from "@/lib/calendar/to-calendar-event";
 import { categoryColorsForEvents } from "@/lib/calendar/colors";
 import { parseCalMonth, monthAnchorIso } from "@/lib/calendar/window";
+import { todayIsoUtc } from "@takemetothefair/datetime";
 import { CalendarMonthClient } from "./calendar-month-client";
 import { ViewToggle } from "./view-toggle";
 
@@ -25,7 +26,11 @@ interface Props {
 }
 
 export function CalendarMonthSSR({ events, cal, searchParams }: Props) {
-  const calendarEvents = toCalendarEvents(events);
+  // Step 5 — default hides past events; the "Include past events" filter shows them.
+  // The query keeps a recurring event whenever ANY date is upcoming, so we must drop
+  // its already-past occurrences here (else past days show chips).
+  const includePast = searchParams.includePast === "true";
+  const calendarEvents = toCalendarEvents(events, { includePast, todayIso: todayIsoUtc() });
   const initialAnchor = monthAnchorIso(parseCalMonth(cal));
   const now = new Date().toISOString(); // host-pinned per request
 

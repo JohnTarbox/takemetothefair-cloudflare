@@ -103,7 +103,43 @@ export function toCalendarEvent(input: CalendarEventInput): CalendarEvent | null
   };
 }
 
-/** Map a window of rows, dropping un-placeable ones (null start). */
-export function toCalendarEvents(rows: ReadonlyArray<CalendarEventInput>): CalendarEvent[] {
-  return rows.map(toCalendarEvent).filter((e): e is CalendarEvent => e !== null);
+export interface ToCalendarOptions {
+  /**
+   * When false (default), occurrences whose inclusive last day is before
+   * `todayIso` are dropped (Step 5: "past days render as empty cells, past
+   * events hidden"). Critical for discontinuous/recurring events, whose row is
+   * kept by the query as long as ANY date is upcoming — without this the past
+   * dates of a weekly series would still render chips on past days.
+   */
+  includePast?: boolean;
+  /** UTC "YYYY-MM-DD" cutoff; required to filter past when includePast is false. */
+  todayIso?: string;
+}
+
+/** Inclusive last day of an occurrence (all-day `end` is exclusive; single-day has none). */
+function occurrenceLastDay(occ: Occurrence): string {
+  return occ.end ? addDaysIso(occ.end, -1) : occ.start;
+}
+
+/**
+ * Map a window of rows, dropping un-placeable ones (null start). When
+ * `opts.includePast` is falsy and `opts.todayIso` is given, also drop occurrences
+ * that ended before today (and any event left with zero occurrences). An ongoing
+ * multi-day event that spans into the future is kept intact — it isn't "past".
+ */
+export function toCalendarEvents(
+  rows: ReadonlyArray<CalendarEventInput>,
+  opts: ToCalendarOptions = {}
+): CalendarEvent[] {
+  const events = rows.map(toCalendarEvent).filter((e): e is CalendarEvent => e !== null);
+
+  if (opts.includePast || !opts.todayIso) return events;
+  const today = opts.todayIso;
+
+  const out: CalendarEvent[] = [];
+  for (const e of events) {
+    const upcoming = e.occurrences.filter((o) => occurrenceLastDay(o) >= today);
+    if (upcoming.length > 0) out.push({ ...e, occurrences: upcoming });
+  }
+  return out;
 }
