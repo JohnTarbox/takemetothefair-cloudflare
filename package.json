@@ -62,6 +62,8 @@
     "@auth/drizzle-adapter": "^1.7.4",
     "@hookform/resolvers": "^5.2.2",
     "@johntarbox/calendar-grid": "^0.1.0",
+    "@jonnyboats/calendar-contract": "^1.0.0",
+    "@jonnyboats/calendar-react": "^1.0.1",
     "@next/third-parties": "^15.1.0",
     "@tailwindcss/typography": "^0.5.19",
     "@takemetothefair/constants": "*",

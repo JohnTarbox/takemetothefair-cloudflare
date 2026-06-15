@@ -25,6 +25,9 @@ binding = "AI"
 # CLOUDFLARE_BROWSER_RENDERING_TOKEN. Used by import-url/fetch escalation.
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
+# CAL1 — flip to "true" to serve the SSR Month calendar at /events?view=calendar
+# (Month-only @jonnyboats/calendar-react). Default OFF = legacy client calendar.
+CAL1_SSR_MONTH = "false"
 
 [[d1_databases]]
 binding = "DB"
