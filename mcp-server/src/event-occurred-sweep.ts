@@ -40,6 +40,10 @@ export interface OccurredSweepResult {
   rolledFromTransition: number;
   rolledFromBackfill: number;
   errors: number;
+  /** True when a pass returned a full page (== LIMIT) — more rows remain and
+   *  will be handled on the next daily run. Surfaces the otherwise-silent cap. */
+  transitionLimitHit: boolean;
+  backfillLimitHit: boolean;
 }
 
 export async function runOccurredTransitionSweep(
@@ -52,6 +56,8 @@ export async function runOccurredTransitionSweep(
     rolledFromTransition: 0,
     rolledFromBackfill: 0,
     errors: 0,
+    transitionLimitHit: false,
+    backfillLimitHit: false,
   };
 
   // --- Pass 1: transition past-end APPROVED events to OCCURRED, then roll ----
@@ -74,6 +80,15 @@ export async function runOccurredTransitionSweep(
   } catch (error) {
     result.errors++;
     await logError(db, { message: "[occurred-sweep] pass-1 select failed", error, source: SOURCE });
+  }
+
+  if (pass1.length === TRANSITION_LIMIT) {
+    result.transitionLimitHit = true;
+    await logError(db, {
+      level: "warn",
+      message: `[occurred-sweep] pass-1 hit transition cap (${TRANSITION_LIMIT}); remainder deferred to next run`,
+      source: SOURCE,
+    }).catch(() => {});
   }
 
   for (const ev of pass1) {
@@ -156,6 +171,15 @@ export async function runOccurredTransitionSweep(
     await logError(db, { message: "[occurred-sweep] pass-2 select failed", error, source: SOURCE });
   }
 
+  if (pass2.length === BACKFILL_LIMIT) {
+    result.backfillLimitHit = true;
+    await logError(db, {
+      level: "warn",
+      message: `[occurred-sweep] pass-2 hit backfill cap (${BACKFILL_LIMIT}); remainder deferred to next run`,
+      source: SOURCE,
+    }).catch(() => {});
+  }
+
   for (const ev of pass2) {
     try {
       const roll = await rolloverEventIfRecurring(db, ev.id, {
@@ -173,6 +197,29 @@ export async function runOccurredTransitionSweep(
       });
     }
   }
+
+  // Heartbeat: one info-level row per run so a healthy sweep is distinguishable
+  // from a silently-broken one (a sweep that never runs also writes nothing).
+  // Mirrors the inbound-email stale-sweep heartbeat.
+  console.log(
+    `[occurred-sweep] transitioned=${result.transitioned} ` +
+      `rolledFromTransition=${result.rolledFromTransition} ` +
+      `rolledFromBackfill=${result.rolledFromBackfill} errors=${result.errors} ` +
+      `transitionLimitHit=${result.transitionLimitHit} backfillLimitHit=${result.backfillLimitHit}`
+  );
+  await logError(db, {
+    level: "info",
+    source: SOURCE,
+    message: "occurred-sweep run completed",
+    context: {
+      transitioned: result.transitioned,
+      rolledFromTransition: result.rolledFromTransition,
+      rolledFromBackfill: result.rolledFromBackfill,
+      errors: result.errors,
+      transitionLimitHit: result.transitionLimitHit,
+      backfillLimitHit: result.backfillLimitHit,
+    },
+  }).catch(() => {});
 
   return result;
 }
