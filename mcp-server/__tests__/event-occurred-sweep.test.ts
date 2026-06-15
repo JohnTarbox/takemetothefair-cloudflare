@@ -3,9 +3,10 @@
  * Pass 2 (backfill historical OCCURRED), eligibility exclusions, same-run
  * Pass-1↔Pass-2 idempotency, and cross-run idempotency.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createTestDb, mockIndexNowFetch, type TestDb } from "./setup-db.js";
 import { runOccurredTransitionSweep } from "../src/event-occurred-sweep.js";
+import * as logger from "../src/logger.js";
 import { events, adminActions, promoters } from "../src/schema.js";
 import { and, eq } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
@@ -140,6 +141,48 @@ describe("runOccurredTransitionSweep — Pass 2 backfill", () => {
     expect(
       db.select().from(events).where(eq(events.rolledFromEventId, "recurring")).all()
     ).toHaveLength(1);
+  });
+});
+
+describe("runOccurredTransitionSweep — observability", () => {
+  // error_logs isn't a table in the test harness (logError no-ops its D1 write),
+  // so we assert on the result struct + spy the logger to verify the heartbeat.
+  it("emits an info heartbeat carrying the run counts", async () => {
+    const spy = vi.spyOn(logger, "logError").mockResolvedValue(undefined);
+    seed({
+      id: "recurring",
+      slug: "fryeburg-fair-2026",
+      name: "Fryeburg Fair 2026",
+      recurrenceRule: "FREQ=YEARLY;INTERVAL=1",
+    });
+
+    await runOccurredTransitionSweep(db, { now: NOW });
+
+    const beat = spy.mock.calls.find(
+      ([, o]) => o?.level === "info" && o?.message === "occurred-sweep run completed"
+    );
+    expect(beat).toBeTruthy();
+    expect(beat![1].context).toMatchObject({ transitioned: 1, rolledFromTransition: 1 });
+    spy.mockRestore();
+  });
+
+  it("flags + warns when a pass hits the row cap", async () => {
+    const spy = vi.spyOn(logger, "logError").mockResolvedValue(undefined);
+    // Seed exactly the transition cap (200) of eligible rows; a 201st would be
+    // deferred. Coupled to TRANSITION_LIMIT in event-occurred-sweep.ts.
+    for (let i = 0; i < 200; i++) {
+      seed({ id: `bulk-${i}`, slug: `bulk-${i}-2026`, name: `Bulk ${i} 2026` });
+    }
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(res.transitioned).toBe(200);
+    expect(res.transitionLimitHit).toBe(true);
+    const warned = spy.mock.calls.some(
+      ([, o]) => o?.level === "warn" && /transition cap/.test(o?.message ?? "")
+    );
+    expect(warned).toBe(true);
+    spy.mockRestore();
   });
 });
 
