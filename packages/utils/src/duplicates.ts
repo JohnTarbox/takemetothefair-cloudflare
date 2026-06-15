@@ -19,6 +19,37 @@ export function normalizeString(str: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Normalize an event NAME for similarity-based duplicate matching. Stronger
+ * than `normalizeString`: it also strips the edition-distinguishing affixes so
+ * different years/ordinals of the same series collapse to one key.
+ *
+ * Strip rules, in order:
+ *   1. Lower-case
+ *   2. Leading ordinal: "38th " / "1st " / "2nd " / "3rd "
+ *   3. Leading "Annual "
+ *   4. Trailing 4-digit year: " 2026"
+ *   5. Non-alphanumeric (whitespace kept)
+ *   6. Collapse whitespace + trim
+ *
+ * Locked in by the Winthrop Arts Festival case (K2, 2026-05-31): "38th Annual
+ * Winthrop Arts Festival" and "Winthrop Arts Festival 2026" must both reduce to
+ * "winthrop arts festival". Promoted here from src/lib/duplicates/normalize-
+ * name.ts (which is now a re-export shim) so the MCP server — a separate
+ * workspace that cannot import from src/ — can key K27's rollover idempotency
+ * on the same normalization.
+ */
+export function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/^\s*\d+(st|nd|rd|th)\s+/, "")
+    .replace(/^\s*annual\s+/i, "")
+    .replace(/\s+\d{4}\s*$/, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function levenshteinDistance(a: string, b: string): number {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;

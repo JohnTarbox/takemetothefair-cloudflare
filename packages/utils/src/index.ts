@@ -414,3 +414,7 @@ export * from "./timing-safe-equal";
 // SYN1 (2026-06-12): push-on-change syndication policy — mirrored-field gate +
 // snapshot shape, shared by the five mutation write-paths and SYN2 batch-read.
 export * from "./syndication-outbox";
+
+// K27 (2026-06-15): recurrence-rule parser + next-occurrence date math, shared
+// by the MCP auto-rollover sweep (and available to the main app for display).
+export * from "./recurrence";

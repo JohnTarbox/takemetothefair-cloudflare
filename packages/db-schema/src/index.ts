@@ -288,6 +288,13 @@ export const events = sqliteTable(
     // only once that wiring exists. Self-FK at SQL level per the
     // parentEmailId convention.
     possibleDuplicateOf: text("possible_duplicate_of"),
+    // K27 (drizzle/0124, 2026-06-15) — auto-rollover provenance pointer. Set on
+    // a TENTATIVE next-occurrence edition created by rolloverEventIfRecurring()
+    // when its source event transitions to OCCURRED. Points at the source (the
+    // edition that just passed). Forensic link + lets the operator reconcile
+    // (§7) cheaply find auto-rolled rows. Self-FK ON DELETE SET NULL per the
+    // mergedInto/possibleDuplicateOf convention — defined at the SQL level.
+    rolledFromEventId: text("rolled_from_event_id"),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
@@ -399,6 +406,12 @@ export const events = sqliteTable(
     index("idx_events_possible_duplicate_of")
       .on(table.possibleDuplicateOf)
       .where(sql`${table.possibleDuplicateOf} IS NOT NULL`),
+    // K27 (drizzle/0124) — partial index for "what was rolled from event X"
+    // reverse lookups + the reconcile pass. Most events are not auto-rolled,
+    // so the partial keeps it small.
+    index("idx_events_rolled_from_event_id")
+      .on(table.rolledFromEventId)
+      .where(sql`${table.rolledFromEventId} IS NOT NULL`),
     // UX-R1 / C1 (drizzle/0098) — partial index supporting the
     // /admin/events?flagged=1 operator review queue. Only the "1" rows
     // are indexed, mirroring the inbound_emails.flagged_for_review pattern.
