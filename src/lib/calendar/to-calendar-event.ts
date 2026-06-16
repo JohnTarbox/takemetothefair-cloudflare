@@ -17,9 +17,26 @@
 //     span > 14d). We only emit occurrences; the band is the engine's job.
 
 import type { CalendarEvent, Occurrence } from "@jonnyboats/calendar-contract";
-import { toIsoDateOnly, addDaysIso } from "@takemetothefair/datetime";
+import {
+  toIsoDateOnly,
+  addDaysIso,
+  parseWallClockInVenueZone,
+  VENUE_TZ,
+} from "@takemetothefair/datetime";
 import { parseJsonArray } from "@/types";
 import type { events as eventsTable, venues as venuesTable } from "@/lib/db/schema";
+
+/** "YYYY-MM-DD" of an ISO instant in the given IANA zone (en-CA formats as ISO date). */
+function localDayOfInstant(iso: string, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(iso));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
 
 type EventRow = typeof eventsTable.$inferSelect;
 type VenueRow = typeof venuesTable.$inferSelect;
@@ -34,6 +51,12 @@ export type CalendarEventInput = EventRow & {
   venue?: Pick<VenueRow, "name" | "city" | "googleMapsUrl"> | null;
   /** "YYYY-MM-DD" dates for discontinuous events (vendorOnly already filtered by the caller). */
   eventDayDates?: string[];
+  /**
+   * Per-day hours for discontinuous events (DQ4 `event_days.open_time/close_time`,
+   * "HH:MM" or null). When present this supersedes `eventDayDates`: a day with both
+   * hours yields a TIMED occurrence, otherwise all-day. Caller filters vendorOnly.
+   */
+  eventDayHours?: Array<{ date: string; openTime: string | null; closeTime: string | null }>;
 };
 
 function venueBits(input: CalendarEventInput): Pick<Occurrence, "location" | "mapUrl"> {
@@ -66,17 +89,59 @@ function continuousOccurrence(input: CalendarEventInput): Occurrence {
   };
 }
 
-/** Discontinuous event → one all-day occurrence per event_days date, sorted ascending. */
+/**
+ * One occurrence per event_days date, sorted ascending. A day with BOTH
+ * `openTime` and `closeTime` (DQ4 hours) becomes a TIMED occurrence so it lands
+ * in the Week/Day hour grid; a day with no/partial hours stays all-day (renders
+ * in the all-day strip). Sorting by date keeps `start` ascending across the
+ * mixed all-day/timed set (the day prefix dominates the string compare), which
+ * validateWindow requires.
+ */
 function discontinuousOccurrences(input: CalendarEventInput): Occurrence[] {
   const bits = venueBits(input);
-  // Dedupe + sort ascending; "YYYY-MM-DD" sorts chronologically as a string.
+
+  // Prefer the richer hours-bearing shape when present; else legacy dates-only.
+  if (input.eventDayHours && input.eventDayHours.length > 0) {
+    const seen = new Set<string>();
+    return [...input.eventDayHours]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .filter((h) => (seen.has(h.date) ? false : (seen.add(h.date), true)))
+      .map((h) => dayOccurrence(input, h.date, h.openTime, h.closeTime, bits));
+  }
+
   const dates = Array.from(new Set(input.eventDayDates)).sort();
-  return dates.map((date) => ({
-    id: `${input.id}:${date}`,
-    start: date,
-    allDay: true,
-    ...bits,
-  }));
+  return dates.map((date) => dayOccurrence(input, date, null, null, bits));
+}
+
+/**
+ * A single event-day occurrence: TIMED when both hours are present and the close
+ * is after the open (DST-safe via parseWallClockInVenueZone → UTC instant +
+ * `timezone`); otherwise an all-day occurrence. A bad/zero/negative span falls
+ * back to all-day rather than emitting an unplaceable block.
+ */
+function dayOccurrence(
+  input: CalendarEventInput,
+  date: string,
+  openTime: string | null,
+  closeTime: string | null,
+  bits: Pick<Occurrence, "location" | "mapUrl">
+): Occurrence {
+  const id = `${input.id}:${date}`;
+  if (openTime && closeTime) {
+    const startD = parseWallClockInVenueZone(date, openTime, VENUE_TZ);
+    const endD = parseWallClockInVenueZone(date, closeTime, VENUE_TZ);
+    if (startD && endD && endD.getTime() > startD.getTime()) {
+      return {
+        id,
+        start: startD.toISOString(),
+        end: endD.toISOString(),
+        allDay: false,
+        timezone: VENUE_TZ,
+        ...bits,
+      };
+    }
+  }
+  return { id, start: date, allDay: true, ...bits };
 }
 
 /**
@@ -87,8 +152,12 @@ function discontinuousOccurrences(input: CalendarEventInput): Occurrence[] {
 export function toCalendarEvent(input: CalendarEventInput): CalendarEvent | null {
   if (!input.startDate) return null;
 
+  // Discontinuous when the row is flagged AND we have per-day data — either the
+  // legacy dates list or the richer hours-bearing shape (DQ4).
+  const hasDayData =
+    (input.eventDayDates?.length ?? 0) > 0 || (input.eventDayHours?.length ?? 0) > 0;
   const occurrences =
-    input.discontinuousDates && input.eventDayDates && input.eventDayDates.length > 0
+    input.discontinuousDates && hasDayData
       ? discontinuousOccurrences(input)
       : [continuousOccurrence(input)];
 
@@ -116,9 +185,19 @@ export interface ToCalendarOptions {
   todayIso?: string;
 }
 
-/** Inclusive last day of an occurrence (all-day `end` is exclusive; single-day has none). */
-function occurrenceLastDay(occ: Occurrence): string {
-  return occ.end ? addDaysIso(occ.end, -1) : occ.start;
+/**
+ * Inclusive first/last calendar day of an occurrence. All-day: date-only, `end`
+ * exclusive (subtract a day). Timed: the local day of the start/end instant in
+ * the occurrence's zone — NOT the UTC date prefix, which would be off by a day
+ * for evening events that cross UTC midnight.
+ */
+function occurrenceDayBounds(occ: Occurrence): { first: string; last: string } {
+  if (occ.allDay) {
+    return { first: occ.start, last: occ.end ? addDaysIso(occ.end, -1) : occ.start };
+  }
+  const tz = occ.timezone ?? VENUE_TZ;
+  const first = localDayOfInstant(occ.start, tz);
+  return { first, last: occ.end ? localDayOfInstant(occ.end, tz) : first };
 }
 
 const isoToUtcMs = (iso: string): number =>
@@ -157,11 +236,15 @@ export function toCalendarEvents(
   for (const e of events) {
     const occurrences: Occurrence[] = [];
     for (const o of e.occurrences) {
-      if (occurrenceLastDay(o) < today) continue; // fully past → drop
-      if (o.start < today && o.end && !occurrenceSpanExceeds14d(o)) {
-        occurrences.push({ ...o, start: today }); // clip in-cell ribbon to today
+      const { first, last } = occurrenceDayBounds(o);
+      if (last < today) continue; // fully past → drop
+      // Clip only the all-day in-cell ribbon (a date-only span) that started in
+      // the past but runs into today/future — never timed blocks or ongoing
+      // (>14d) band events. Timed occurrences keep their exact start/end.
+      if (o.allDay && first < today && o.end && !occurrenceSpanExceeds14d(o)) {
+        occurrences.push({ ...o, start: today });
       } else {
-        occurrences.push(o); // future, or ongoing band event → keep intact
+        occurrences.push(o); // future, timed, or ongoing band event → keep intact
       }
     }
     if (occurrences.length > 0) out.push({ ...e, occurrences });

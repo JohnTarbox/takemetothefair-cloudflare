@@ -14,10 +14,17 @@
 
 import { toCalendarEvents, type CalendarEventInput } from "@/lib/calendar/to-calendar-event";
 import { categoryColorsForEvents } from "@/lib/calendar/colors";
-import { parseCalMonth, monthAnchorIso, parseCalYear } from "@/lib/calendar/window";
+import {
+  parseCalMonth,
+  monthAnchorIso,
+  parseCalYear,
+  parseCalDate,
+  parseCalDays,
+} from "@/lib/calendar/window";
 import { todayIsoUtc } from "@takemetothefair/datetime";
 import { CalendarMonthClient } from "./calendar-month-client";
 import { CalendarAgendaClient } from "./calendar-agenda-client";
+import { CalendarTimeGridClient } from "./calendar-timegrid-client";
 import { CalendarYearSSR } from "./calendar-year-ssr";
 import { ViewToggle } from "./view-toggle";
 import { CalendarSubViewToggle, parseCalSubView } from "./calendar-subview-toggle";
@@ -61,6 +68,18 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
     );
   } else if (subView === "year") {
     body = <CalendarYearSSR year={parseCalYear(searchParams.cal_year)} />;
+  } else if (subView === "week" || subView === "day" || subView === "custom") {
+    body = (
+      <CalendarTimeGridClient
+        events={calendarEvents}
+        now={now}
+        displayTimeZone={DISPLAY_TIME_ZONE}
+        theme={theme}
+        view={subView}
+        anchor={parseCalDate(searchParams.cal_date)}
+        {...(subView === "custom" ? { customViewDays: parseCalDays(searchParams.cal_days) } : {})}
+      />
+    );
   } else {
     const initialAnchor = monthAnchorIso(parseCalMonth(searchParams.cal));
     body = (

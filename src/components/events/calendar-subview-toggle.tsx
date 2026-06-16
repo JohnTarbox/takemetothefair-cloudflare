@@ -6,17 +6,29 @@
 // and no sub-toggle renders. Styling mirrors ViewToggle's segmented control.
 
 import Link from "next/link";
-import { CalendarDays, List, CalendarRange } from "lucide-react";
+import { CalendarDays, List, CalendarRange, Columns3, Square, LayoutGrid } from "lucide-react";
 
-export type CalendarSubView = "month" | "agenda" | "year";
+export type CalendarSubView = "month" | "agenda" | "year" | "week" | "day" | "custom";
+
+const SUB_VIEWS: ReadonlySet<string> = new Set([
+  "month",
+  "agenda",
+  "year",
+  "week",
+  "day",
+  "custom",
+]);
 
 /** Parse the `cal_view` param; anything unrecognized → "month". */
 export function parseCalSubView(calView: string | undefined): CalendarSubView {
-  return calView === "agenda" || calView === "year" ? calView : "month";
+  return calView && SUB_VIEWS.has(calView) ? (calView as CalendarSubView) : "month";
 }
 
 const ITEMS: ReadonlyArray<readonly [CalendarSubView, string, typeof CalendarDays]> = [
   ["month", "Month", CalendarDays],
+  ["week", "Week", Columns3],
+  ["day", "Day", Square],
+  ["custom", "Multi-day", LayoutGrid],
   ["agenda", "Agenda", List],
   ["year", "Year", CalendarRange],
 ];
