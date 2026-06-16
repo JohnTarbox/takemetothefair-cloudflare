@@ -153,18 +153,35 @@ queue = "vendor-enrichment"
 # - max_batch_timeout: how long to wait for a batch to fill before draining
 #   what we have. Longer = better batching, but delays delivery.
 # - max_retries: queue-level retry count before message goes to DLQ.
-#   Defaults to 3. Beyond that, Cloudflare drops to DLQ if configured.
+#   Defaults to 3. Beyond that, Cloudflare drops the message ENTIRELY unless a
+#   dead_letter_queue is set — so every consumer below names one. The DLQs are
+#   parking lots for operator review (no consumer), same as the syndication /
+#   vendor-enrichment DLQs. Operator must create each one before deploy:
+#     wrangler queues create email-jobs-dlq
+#     wrangler queues create indexnow-pings-dlq
+#     wrangler queues create event-discrepancies-dlq
+#   (a referenced dead_letter_queue must already exist or `wrangler deploy` fails).
 [[queues.consumers]]
 queue = "email-jobs"
 max_batch_size = 10
 max_batch_timeout = 5     # seconds — emails should feel near-real-time
 max_retries = 3
+# Without this, a CF-Email outage outlasting 3 retries silently DROPPED
+# user-facing mail (approval/notification). Now it parks for replay instead.
+dead_letter_queue = "email-jobs-dlq"
 
 [[queues.consumers]]
 queue = "indexnow-pings"
 max_batch_size = 100      # batch many URLs into one Bing submit
 max_batch_timeout = 30    # tolerable; IndexNow doesn't need to be instant
 max_retries = 3
+# Serialize delivery: one batch at a time. Without this, the consumer
+# autoscales concurrency on backlog and fires parallel Bing submits — the exact
+# 429 storm the REL4/REL6 app-level circuit breaker fights. =1 is a structural
+# rate guard (IndexNow is low-volume and coalesces 100 URLs/call, so throughput
+# is a non-issue).
+max_concurrency = 1
+dead_letter_queue = "indexnow-pings-dlq"
 
 # GW1.1 ingest_addverify discrepancy capture (2026-06-03). Same risk
 # profile as IndexNow — non-user-facing async write, can tolerate a
@@ -177,6 +194,7 @@ queue = "event-discrepancies"
 max_batch_size = 25
 max_batch_timeout = 15
 max_retries = 3
+dead_letter_queue = "event-discrepancies-dlq"
 
 # SYN1 syndication dispatch (2026-06-12). Each message is one entity whose
 # mirrored fields changed; the consumer drains that entity's unprocessed

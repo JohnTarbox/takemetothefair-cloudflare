@@ -20,6 +20,26 @@ import { captureDiscrepancy, type FieldClass, type DetectedBy } from "./goodwill
 const HOST = "meetmeatthefair.com";
 const REPORT_API_BASE = "https://api.indexnow.org/IndexNow";
 
+/**
+ * Exponential backoff (seconds) for a queue retry, keyed off the message's
+ * delivery `attempts` (1 on first delivery). Bare `m.retry()` re-delivers on the
+ * queue's default schedule and can hot-loop a transient failure; an explicit
+ * `delaySeconds` spaces retries out. Capped so a message still reaches the DLQ
+ * within the retry budget rather than crawling.
+ */
+function backoffSeconds(attempts: number, baseSeconds: number, capSeconds: number): number {
+  const a = Math.max(1, attempts);
+  return Math.min(capSeconds, baseSeconds * 2 ** (a - 1));
+}
+
+/** Parse a `Retry-After` header (delta-seconds form) into a clamped delay, or null. */
+function retryAfterSeconds(res: Response, capSeconds: number): number | null {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, capSeconds) : null;
+}
+
 // Mirror types from main app's src/lib/queues/types.ts. Kept inline (not
 // imported) because mcp-server is its own workspace package.
 type EmailJobMessage = {
@@ -117,20 +137,24 @@ export async function handleEmailBatch(
       m.ack();
       console.log(`[queue:email] sent ${m.body.source} → ${m.body.to} (id=${result.messageId})`);
     } else {
-      // Retry: queue config has max_retries=3, then DLQ. Don't ack.
+      // Retry with a modest backoff; after max_retries=3 the message parks in
+      // email-jobs-dlq (no longer dropped). Cap low so transactional mail stays
+      // near-real-time on a transient blip.
+      const delaySeconds = backoffSeconds(m.attempts, 10, 60); // 10, 20, 40 → cap 60
       await logError(env.DB, {
         source: "mcp:email-queue",
-        message: "env.EMAIL.send failed; will retry via queue (max_retries=3)",
+        message: "env.EMAIL.send failed; will retry via queue (max_retries=3, then DLQ)",
         sessionId,
         context: {
           to: m.body.to,
           subject: m.body.subject,
           messageSource: m.body.source,
           attempts: m.attempts,
+          delaySeconds,
           error: result.error,
         },
       });
-      m.retry();
+      m.retry({ delaySeconds });
     }
   }
 }
@@ -199,20 +223,25 @@ export async function handleIndexNowBatch(
         `[queue:indexnow] submitted ${urlList.length} URLs across ${messages.length} messages`
       );
     } else {
-      // Bing returned non-2xx — retry the whole batch (Cloudflare will
-      // re-deliver). 4xx errors will burn through retries → DLQ.
+      // Bing returned non-2xx — retry the whole batch with backoff. Honor a
+      // Retry-After on 429 (Bing throttling); otherwise exponential backoff
+      // keyed off attempts. With max_concurrency=1 this serializes + spaces
+      // retries instead of hammering Bing. 4xx burns through retries → DLQ.
       const bodyExcerpt = await res.text().catch(() => "<unreadable>");
+      const maxAttempts = Math.max(...messages.map((m) => m.attempts), 1);
+      const delaySeconds = retryAfterSeconds(res, 600) ?? backoffSeconds(maxAttempts, 30, 600); // 30,60,120…→cap 600
       await logError(env.DB, {
         source: "mcp:indexnow-queue",
-        message: "Bing IndexNow API returned non-2xx; will retry batch",
+        message: "Bing IndexNow API returned non-2xx; will retry batch (then DLQ)",
         statusCode: res.status,
         context: {
           batchSize: messages.length,
           urlCount: urlList.length,
+          delaySeconds,
           bodyExcerpt: bodyExcerpt.slice(0, 500),
         },
       });
-      for (const m of messages) m.retry();
+      for (const m of messages) m.retry({ delaySeconds });
     }
   } catch (error) {
     const errStr = error instanceof Error ? error.message : String(error);
@@ -223,7 +252,9 @@ export async function handleIndexNowBatch(
       context: { batchSize: messages.length, urlCount: allUrls.size },
     });
     await recordAudit(env.DB, sources, "failure", null, errStr);
-    for (const m of messages) m.retry();
+    const maxAttempts = Math.max(...messages.map((m) => m.attempts), 1);
+    const delaySeconds = backoffSeconds(maxAttempts, 30, 600);
+    for (const m of messages) m.retry({ delaySeconds });
   }
 }
 
