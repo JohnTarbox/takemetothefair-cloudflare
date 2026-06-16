@@ -80,19 +80,24 @@ export function CalendarYearClient({ presence, year, now, displayTimeZone, theme
     }
   }, []);
 
+  // `cal-legend-left` moves the category legend into a left sidebar on >=768px
+  // (CSS in src/app/globals.css) — same treatment as Month, so the year grid
+  // isn't pushed down by the full-width legend.
   return (
-    <YearCalendar
-      presence={presence}
-      year={year}
-      now={now}
-      displayTimeZone={displayTimeZone}
-      theme={theme}
-      weekStartsOn={0}
-      locale="en-US"
-      hydrateDay={hydrateDay}
-      onNavigateYear={onNavigateYear}
-      onNavigateToMonth={onNavigateToMonth}
-      onNavigateToDay={onNavigateToDay}
-    />
+    <div className="cal-legend-left">
+      <YearCalendar
+        presence={presence}
+        year={year}
+        now={now}
+        displayTimeZone={displayTimeZone}
+        theme={theme}
+        weekStartsOn={0}
+        locale="en-US"
+        hydrateDay={hydrateDay}
+        onNavigateYear={onNavigateYear}
+        onNavigateToMonth={onNavigateToMonth}
+        onNavigateToDay={onNavigateToDay}
+      />
+    </div>
   );
 }
