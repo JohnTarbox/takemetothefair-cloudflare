@@ -7,6 +7,7 @@
 
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { getYearPresence } from "@/lib/calendar/presence-query";
+import { buildCalendarTheme } from "@/lib/calendar/theme";
 import { CalendarYearClient } from "./calendar-year-client";
 
 const DISPLAY_TIME_ZONE = "America/New_York";
@@ -22,7 +23,7 @@ export async function CalendarYearSSR({ year }: { year: number }) {
       year={year}
       now={now}
       displayTimeZone={DISPLAY_TIME_ZONE}
-      theme={{ categoryColors }}
+      theme={buildCalendarTheme(categoryColors)}
     />
   );
 }
