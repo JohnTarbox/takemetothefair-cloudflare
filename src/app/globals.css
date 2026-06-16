@@ -442,3 +442,38 @@ body {
     print-color-adjust: exact;
   }
 }
+
+/* CAL2 — Month calendar "legend on the left" layout.
+   The @jonnyboats month renderer lays .cm-root out as a vertical stack:
+   [.cm-toolbar] [.cm-legend] [.cm-grid]. We promote .cm-root to a two-column
+   grid on wider screens, pinning the category legend to a left sidebar (column 1,
+   spanning every row) while the nav toolbar + grid (and any future child such as
+   an "ongoing" band) flow down column 2. Targeting `:not(.cm-legend)` keeps it
+   robust if the module adds another child. Scoped to the `.cal-legend-left` host
+   wrapper so Agenda/Year (which share .cm-root) are untouched, and gated to
+   >=768px so phones keep the natural stacked layout. */
+@media (min-width: 768px) {
+  .cal-legend-left .cm-root {
+    display: grid;
+    grid-template-columns: minmax(11rem, max-content) 1fr;
+    column-gap: 1.5rem;
+    align-items: start;
+  }
+  .cal-legend-left .cm-root > .cm-legend {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-content: start;
+    align-self: start;
+    /* Keep a long category list tidy: cap height and scroll rather than
+       dangling far below the grid. */
+    max-height: 32rem;
+    overflow-y: auto;
+  }
+  .cal-legend-left .cm-root > :not(.cm-legend) {
+    grid-column: 2;
+    /* Let the 7-column grid shrink within the track instead of overflowing. */
+    min-width: 0;
+  }
+}
