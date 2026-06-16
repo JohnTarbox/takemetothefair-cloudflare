@@ -3895,27 +3895,68 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         return { content: [{ type: "text", text: "Event not found." }], isError: true };
       }
 
-      const dayId = crypto.randomUUID();
-      // DQ4: pass null through when args were omitted; drizzle/0118 made
-      // the columns nullable. Flag the parent event for triage when
-      // either time landed unknown.
+      // ── Idempotency (K25, invariant 2) ──────────────────────────────
+      // Repeated creates of the same (event_id, date) must NOT fork
+      // duplicate occurrence rows — the calendar v2 click-to-create write
+      // surface will retry/double-fire, and the daily-discovery + recurrence
+      // backfill paths can re-run over an event that already has its days.
+      // Two layers: (a) the natural key (event_id, date) is checked first
+      // so a repeat short-circuits to an idempotent no-op regardless of how
+      // the prior row's id was minted; (b) the row id is derived
+      // deterministically from (event_id, date) and the insert is guarded
+      // with ON CONFLICT DO NOTHING, so two concurrent first-time creates
+      // collapse to one row at the DB layer rather than racing past the
+      // check. (Pre-existing duplicate rows from before this guard are a
+      // separate one-time cleanup; idempotency is a forward guarantee.)
+      const existingDay = await db
+        .select({ id: eventDays.id })
+        .from(eventDays)
+        .where(and(eq(eventDays.eventId, params.event_id), eq(eventDays.date, params.date)))
+        .limit(1);
+
       const openTime = params.open_time ?? null;
       const closeTime = params.close_time ?? null;
       const hoursUnknown = openTime == null || closeTime == null;
 
-      await db.insert(eventDays).values({
-        id: dayId,
-        eventId: params.event_id,
-        date: params.date,
-        openTime,
-        closeTime,
-        notes: params.notes ?? null,
-        vendorOnly: params.vendor_only ?? false,
-        // F2: per-day image; DB defaults take over when omitted.
-        ...(params.image_url !== undefined && { imageUrl: params.image_url }),
-        ...(params.image_focal_x !== undefined && { imageFocalX: params.image_focal_x }),
-        ...(params.image_focal_y !== undefined && { imageFocalY: params.image_focal_y }),
-      });
+      if (existingDay.length > 0) {
+        // Idempotent no-op: the day already exists. Editing it is
+        // update_event_day's job, not a second create.
+        return {
+          content: [
+            jsonContent({
+              created: false,
+              already_exists: true,
+              id: existingDay[0].id,
+              event: eventRows[0].name,
+              date: params.date,
+            }),
+          ],
+        };
+      }
+
+      // Deterministic id keyed on the natural (event_id, date) pair so a
+      // racing duplicate insert hits the PK and ON CONFLICT DO NOTHING.
+      const dayId = `evd_${params.event_id}_${params.date}`;
+      // DQ4: pass null through when args were omitted; drizzle/0118 made
+      // the columns nullable. Flag the parent event for triage when
+      // either time landed unknown.
+
+      await db
+        .insert(eventDays)
+        .values({
+          id: dayId,
+          eventId: params.event_id,
+          date: params.date,
+          openTime,
+          closeTime,
+          notes: params.notes ?? null,
+          vendorOnly: params.vendor_only ?? false,
+          // F2: per-day image; DB defaults take over when omitted.
+          ...(params.image_url !== undefined && { imageUrl: params.image_url }),
+          ...(params.image_focal_x !== undefined && { imageFocalX: params.image_focal_x }),
+          ...(params.image_focal_y !== undefined && { imageFocalY: params.image_focal_y }),
+        })
+        .onConflictDoNothing();
 
       // Recompute public date range on parent event
       const allDays = await db
