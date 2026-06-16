@@ -461,7 +461,11 @@ body {
   }
   .cal-legend-left .cm-root > .cm-legend {
     grid-column: 1;
-    grid-row: 1 / -1;
+    /* Span every content row. NB: `1 / -1` does NOT work here — `-1` counts only
+       EXPLICIT grid lines, and these rows are implicit, so it collapses to row 1
+       (which then inflates to the legend's height and pushes the grid down). A
+       large `span` reliably covers all implicit rows; extra empty tracks are 0px. */
+    grid-row: 1 / span 99;
     flex-direction: column;
     flex-wrap: nowrap;
     align-content: start;
