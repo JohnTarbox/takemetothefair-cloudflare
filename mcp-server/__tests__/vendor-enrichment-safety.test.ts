@@ -195,6 +195,88 @@ describe("I1 safety rules — 12 known 6/3 catches reproduce as flags", () => {
     expect(allFlags(r)).toContain("area_code_mismatch");
   });
 
+  // --- I3 (2026-06-16): 5 enrichment safety-rule gaps before the auto-merge flip ---
+
+  it("I3.1 role-account placeholder emails (webmaster@ / admin@) are dropped", () => {
+    const r = run(
+      jsonLd({
+        "@type": "LocalBusiness",
+        email: "webmaster@acme.com",
+        telephone: "(207) 555-1212",
+      }),
+      vendor({ businessName: "Acme Co", state: "ME" }),
+      "https://acme.com"
+    );
+    expect(r.candidates.some((c) => c.field === "contact_email")).toBe(false); // dropped
+    expect(r.candidates.some((c) => c.field === "contact_phone")).toBe(true); // real fill survives
+
+    const r2 = run(
+      jsonLd({ "@type": "LocalBusiness", email: "admin@acme.com" }),
+      vendor({ businessName: "Acme Co" }),
+      "https://acme.com"
+    );
+    expect(r2.candidates.some((c) => c.field === "contact_email")).toBe(false);
+  });
+
+  it("I3.2 email at a domain unrelated to the site → staged WITH email_domain_mismatch", () => {
+    const r = run(
+      jsonLd({ "@type": "LocalBusiness", email: "someoneelse@gmail.com" }),
+      vendor({ businessName: "Acme Co" }),
+      "https://acme.com"
+    );
+    const email = r.candidates.find((c) => c.field === "contact_email");
+    expect(email).toBeTruthy(); // staged, NOT dropped
+    expect(email!.flags).toContain("email_domain_mismatch"); // flagged → won't auto-merge
+  });
+
+  it("I3.2 email on the vendor's own (sub)domain → no mismatch flag", () => {
+    const r = run(
+      jsonLd({ "@type": "LocalBusiness", email: "info@mail.acme.com" }),
+      vendor({ businessName: "Acme Co" }),
+      "https://acme.com"
+    );
+    const email = r.candidates.find((c) => c.field === "contact_email");
+    expect(email).toBeTruthy();
+    expect(email!.flags).not.toContain("email_domain_mismatch");
+  });
+
+  it("I3.4 tracking params (utm_*, fbclid) are stripped from social URLs before staging", () => {
+    const r = run(
+      jsonLd({
+        "@type": "LocalBusiness",
+        sameAs: ["https://www.facebook.com/acmeco?utm_source=newsletter&fbclid=abc123"],
+      }),
+      vendor({ businessName: "Acme Co" }),
+      "https://acme.com"
+    );
+    const social = r.candidates.find((c) => c.field === "social_links");
+    expect(social).toBeTruthy();
+    const stored = JSON.parse(social!.proposedValue) as Record<string, string>;
+    expect(stored.facebook).toBe("https://www.facebook.com/acmeco");
+  });
+
+  it("I3.5 extracted description is decoded + de-truncated via the shared K22 sanitizer", () => {
+    // Drive buildEnrichmentResult directly with an entity the extractor's basic
+    // decoder leaves alone, to prove the SAFETY layer runs sanitizeScrapedDescription.
+    const r = buildEnrichmentResult(
+      vendor({ businessName: "Acme Co" }),
+      {
+        description: {
+          value: "Handmade goods &amp; crafts &raquo; from Maine. Read more »",
+          method: "regex",
+          confidence: 0.5,
+        },
+      },
+      { sourceUrl: "https://example-vendor.com" }
+    );
+    const desc = r.candidates.find((c) => c.field === "description");
+    expect(desc).toBeTruthy();
+    expect(desc!.proposedValue).toContain("&"); // &amp; decoded
+    expect(desc!.proposedValue).not.toContain("&amp;");
+    expect(desc!.proposedValue).not.toContain("&raquo;"); // full entity set decoded
+    expect(desc!.proposedValue).not.toMatch(/read more/i); // truncation tail stripped
+  });
+
   it("POSITIVE CONTROL: clean LocalBusiness → fields proposed with NO flags", () => {
     const html = jsonLd({
       "@type": "LocalBusiness",

@@ -58,7 +58,12 @@ export type CandidateFlag =
   | "social_name_mismatch"
   | "business_closed"
   | "non_business_website"
-  | "placeholder_email";
+  | "placeholder_email"
+  // I3 (2026-06-16): extracted email's domain doesn't match the vendor's own
+  // website domain — stage it but flag for review (it may be the real contact,
+  // or a scraped third-party address; a human decides). Distinct from
+  // placeholder_email, which is dropped outright.
+  | "email_domain_mismatch";
 
 export interface ProposedCandidate {
   field: EnrichField;

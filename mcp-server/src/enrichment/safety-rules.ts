@@ -11,6 +11,7 @@
  * Everything ambiguous becomes a FLAG, never a silent value. A non-empty
  * flag set blocks Phase-2 auto-merge by construction.
  */
+import { sanitizeScrapedDescription } from "@takemetothefair/utils";
 import type {
   CandidateFlag,
   DomainProblem,
@@ -130,10 +131,60 @@ function isPlaceholderEmail(email: string): boolean {
     e.startsWith("noreply@") ||
     e.startsWith("no-reply@") ||
     e.startsWith("donotreply@") ||
+    // I3 (2026-06-16): role-account placeholders. webmaster@/admin@/postmaster@
+    // are mailbox aliases, not a real business contact — drop like noreply@.
+    e.startsWith("webmaster@") ||
+    e.startsWith("admin@") ||
+    e.startsWith("postmaster@") ||
     e === "info@info.com" ||
     e.endsWith("@email.com") ||
     e.endsWith("@sentry.io")
   );
+}
+
+/** Registrable-domain-ish comparison: same host, or one is a subdomain of the
+ *  other (mail.acme.com ↔ acme.com count as a match). Lenient on purpose — the
+ *  goal is to catch an email at a clearly UNRELATED domain, not to nitpick
+ *  subdomains. Returns true when they relate (no flag), false on a real
+ *  mismatch. Either side missing → true (can't compare, don't flag). */
+function emailDomainMatchesSite(emailDomain: string | null, siteHost: string | null): boolean {
+  if (!emailDomain || !siteHost) return true;
+  const a = emailDomain.toLowerCase().replace(/^www\./, "");
+  const b = siteHost.toLowerCase().replace(/^www\./, "");
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+}
+
+/** Strip tracking/analytics query params (utm_*, fbclid, gclid, …) from an
+ *  extracted URL before storing (I3). Keeps the rest of the query intact and
+ *  drops a now-empty `?`. Returns the input unchanged if it doesn't parse. */
+const TRACKING_PARAM_EXACT = new Set([
+  "fbclid",
+  "gclid",
+  "gclsrc",
+  "dclid",
+  "msclkid",
+  "mc_eid",
+  "mc_cid",
+  "igshid",
+  "yclid",
+  "_ga",
+  "ref",
+  "ref_src",
+]);
+function stripTrackingParams(url: string): string {
+  try {
+    const u = new URL(url);
+    for (const key of [...u.searchParams.keys()]) {
+      const k = key.toLowerCase();
+      if (k.startsWith("utm_") || TRACKING_PARAM_EXACT.has(k)) u.searchParams.delete(key);
+    }
+    // Normalize away a trailing "?" left when every param was stripped.
+    let out = u.toString();
+    if (out.endsWith("?")) out = out.slice(0, -1);
+    return out;
+  } catch {
+    return url;
+  }
 }
 
 // Generic words that are NOT distinctive enough to confirm a social link
@@ -293,18 +344,31 @@ export function buildEnrichmentResult(
     push("contact_phone", ex.phone.value, null, ex.phone.method, ex.phone.confidence, flags);
   }
 
-  // --- contact_email (fill-empty-only + junk drop) ---
+  // --- contact_email (fill-empty-only + junk drop + cross-domain flag) ---
   if (ex.email && isEmpty(vendor.contactEmail)) {
     if (!isPlaceholderEmail(ex.email.value)) {
-      push("contact_email", ex.email.value, null, ex.email.method, ex.email.confidence);
+      // I3: flag (don't drop) an email whose domain is unrelated to the
+      // vendor's own website — it may be the real contact or a scraped third
+      // party (a webmaster's address, a directory's relay). A human decides.
+      const emailDomain = ex.email.value.split("@")[1]?.trim().toLowerCase() ?? null;
+      const flags: CandidateFlag[] = emailDomainMatchesSite(emailDomain, hostOf(opts.sourceUrl))
+        ? []
+        : ["email_domain_mismatch"];
+      push("contact_email", ex.email.value, null, ex.email.method, ex.email.confidence, flags);
     }
     // placeholder → dropped entirely (no candidate), per §5 "drop junk".
   }
 
   // --- social_links (fill-empty-only) ---
   if (ex.social && isEmpty(vendor.socialLinks)) {
+    // I3: strip tracking params (utm_*, fbclid, gclid, …) from each social URL
+    // before staging so we never store a campaign-tagged link.
+    const cleanedSocial: Record<string, string> = {};
+    for (const [platform, url] of Object.entries(ex.social.value)) {
+      cleanedSocial[platform] = stripTrackingParams(url);
+    }
     const flags: CandidateFlag[] = [];
-    for (const url of Object.values(ex.social.value)) {
+    for (const url of Object.values(cleanedSocial)) {
       if (!socialHandleMatchesName(url, vendor.businessName)) {
         flags.push("social_name_mismatch");
         break;
@@ -312,7 +376,7 @@ export function buildEnrichmentResult(
     }
     push(
       "social_links",
-      JSON.stringify(ex.social.value),
+      JSON.stringify(cleanedSocial),
       null,
       ex.social.method,
       ex.social.confidence,
@@ -350,9 +414,12 @@ export function buildEnrichmentResult(
 
   // --- description (staged for review ONLY; never auto-published) ---
   if (ex.description && isEmpty(vendor.description)) {
+    // I3: decode HTML entities + de-truncate via the shared K22 sanitizer
+    // (sanitizeScrapedDescription) so staged prose matches what the other
+    // ingest paths store — no raw "&amp;"/"&raquo;" leaking into a profile.
     push(
       "description",
-      ex.description.value,
+      sanitizeScrapedDescription(ex.description.value),
       null,
       ex.description.method,
       ex.description.confidence
