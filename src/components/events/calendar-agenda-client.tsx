@@ -43,16 +43,20 @@ export function CalendarAgendaClient({ events, now, displayTimeZone, theme, incl
     [router]
   );
 
+  // `cal-legend-left` moves the category legend into a left sidebar on >=768px
+  // (CSS in src/app/globals.css), consistent with Month and Year.
   return (
-    <ScheduleCalendar
-      events={events}
-      now={now}
-      displayTimeZone={displayTimeZone}
-      theme={theme}
-      locale="en-US"
-      includePast={includePast}
-      scheduleRowAction="responsive"
-      onNavigateToEventPage={onNavigateToEventPage}
-    />
+    <div className="cal-legend-left">
+      <ScheduleCalendar
+        events={events}
+        now={now}
+        displayTimeZone={displayTimeZone}
+        theme={theme}
+        locale="en-US"
+        includePast={includePast}
+        scheduleRowAction="responsive"
+        onNavigateToEventPage={onNavigateToEventPage}
+      />
+    </div>
   );
 }
