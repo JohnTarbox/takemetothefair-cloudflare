@@ -3,8 +3,8 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
-import { CalendarMonthSSR } from "@/components/events/calendar-month-ssr";
-import { isCal1SsrMonthEnabled } from "@/lib/flags";
+import { CalendarSSR } from "@/components/events/calendar-ssr";
+import { isCal1SsrMonthEnabled, isCal2ViewsEnabled } from "@/lib/flags";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
@@ -125,6 +125,10 @@ interface SearchParams {
   sort?: string;
   /** CAL1 — visible month for the SSR calendar ("YYYY-MM"). */
   cal?: string;
+  /** CAL2 — SSR calendar sub-view ("month" | "agenda" | "year"); default "month". */
+  cal_view?: string;
+  /** CAL2 — visible year for the Year sub-view ("YYYY"); default current year. */
+  cal_year?: string;
 }
 
 type ViewMode = "cards" | "table" | "calendar";
@@ -812,7 +816,8 @@ export default async function EventsPage({
   const viewMode = parseView(params.view);
   // CAL1 — when the flag is ON, the calendar view renders the new SSR Month module
   // (Month-only) instead of the legacy client calendar. Default OFF → no change.
-  const useSsrMonth = viewMode === "calendar" && isCal1SsrMonthEnabled();
+  const useSsrCalendar = viewMode === "calendar" && isCal1SsrMonthEnabled();
+  const cal2Enabled = isCal2ViewsEnabled();
   const [{ events: eventsList, total, page, limit }, categories, states] = await Promise.all([
     getEvents(params, vendorId, favoriteUserId, isVendor || session?.user?.role === "ADMIN"),
     getCategories(),
@@ -899,11 +904,11 @@ export default async function EventsPage({
         </aside>
 
         <main className="lg:col-span-3">
-          {useSsrMonth ? (
-            <CalendarMonthSSR
+          {useSsrCalendar ? (
+            <CalendarSSR
               events={eventsList}
-              cal={params.cal}
               searchParams={params as Record<string, string | undefined>}
+              cal2Enabled={cal2Enabled}
             />
           ) : (
             <EventsView

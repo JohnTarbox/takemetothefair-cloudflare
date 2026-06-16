@@ -29,6 +29,10 @@ CLOUDFLARE_ACCOUNT_ID = "e6011e48b7014ef83c77e3c767dac6cf"
 # (Month-only @jonnyboats/calendar-react). Default OFF = legacy client calendar.
 # Temporarily ON for live prod verification (Step 7) — flip back to "false" after.
 CAL1_SSR_MONTH = "true"
+# CAL2 — flip to "true" to add the Agenda + Year sub-views to the SSR calendar
+# (?cal_view=agenda|year). Requires CAL1_SSR_MONTH = "true". Default OFF = Month only.
+# Temporarily ON for live prod verification — flip back to "false" after.
+CAL2_VIEWS = "true"
 
 [[d1_databases]]
 binding = "DB"

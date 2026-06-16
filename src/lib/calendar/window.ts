@@ -31,3 +31,20 @@ export function monthAnchorIso({ year, month }: CalMonth): string {
 export function calMonthParam({ year, month }: CalMonth): string {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
+
+const YEAR_RE = /^\d{4}$/;
+/** Sane bounds so a hostile `cal_year` can't drive an absurd year of presence work. */
+const MIN_CAL_YEAR = 2000;
+const MAX_CAL_YEAR = 2100;
+
+/**
+ * CAL2 — parse the `cal_year` param ("YYYY") for the Year view; default = current
+ * UTC year. Out-of-range or malformed values fall back to the current year (never
+ * throw), mirroring how `parseCalMonth` degrades.
+ */
+export function parseCalYear(calYear: string | undefined): number {
+  const current = Number(todayIsoUtc().slice(0, 4));
+  if (!calYear || !YEAR_RE.test(calYear)) return current;
+  const y = Number(calYear);
+  return y >= MIN_CAL_YEAR && y <= MAX_CAL_YEAR ? y : current;
+}
