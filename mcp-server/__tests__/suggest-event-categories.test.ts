@@ -125,3 +125,36 @@ describe("suggest_event categories (K21)", () => {
     expect(payload?.warnings).toBeUndefined();
   });
 });
+
+// K26 (2026-06-16) — source_label provenance override.
+describe("suggest_event source_label (K26)", () => {
+  async function storedProvenance(eventId: string) {
+    const rows = await db
+      .select({ sourceName: events.sourceName, ingestionMethod: events.ingestionMethod })
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1);
+    return rows[0];
+  }
+
+  it("defaults to vendor-submission provenance when source_label is omitted", async () => {
+    const { payload } = await suggest({
+      name: "Default Provenance Fair",
+      start_date: "2026-09-15",
+    });
+    const p = await storedProvenance(payload!.event.id);
+    expect(p.sourceName).toBe("vendor-submission");
+    expect(p.ingestionMethod).toBe("vendor_submission");
+  });
+
+  it("tags discovery-harvested events as ingestion_method='discovery'", async () => {
+    const { payload } = await suggest({
+      name: "Discovered Town Festival",
+      start_date: "2026-09-20",
+      source_label: "daily-discovery",
+    });
+    const p = await storedProvenance(payload!.event.id);
+    expect(p.sourceName).toBe("daily-discovery");
+    expect(p.ingestionMethod).toBe("discovery");
+  });
+});

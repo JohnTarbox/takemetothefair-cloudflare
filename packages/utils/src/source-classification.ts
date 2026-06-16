@@ -22,7 +22,12 @@ export type IngestionMethod =
   | "community_suggestion"
   | "web_research"
   | "admin_manual"
-  | "aggregator_import";
+  | "aggregator_import"
+  // K26 (2026-06-16): events created by the daily NE event-discovery harvest
+  // skill. Previously these landed as 'vendor_submission' because the skill
+  // calls suggest_event (which hard-coded that label); suggest_event now
+  // accepts a source_label so the skill can tag 'daily-discovery' → this.
+  | "discovery";
 
 /** All values the ingestion_method column may take. Useful for Zod enums. */
 export const INGESTION_METHODS: readonly IngestionMethod[] = [
@@ -33,6 +38,7 @@ export const INGESTION_METHODS: readonly IngestionMethod[] = [
   "web_research",
   "admin_manual",
   "aggregator_import",
+  "discovery",
 ] as const;
 
 export interface SourceClassification {
@@ -56,6 +62,10 @@ const METHOD_BY_NAME: Record<string, IngestionMethod> = {
   "organizer-website": "admin_manual",
   "aggregator-listing": "aggregator_import",
   facebook: "community_suggestion",
+  // K26 — the daily NE event-discovery harvest skill's provenance labels.
+  discovery: "discovery",
+  "daily-discovery": "discovery",
+  "daily-ne-event-discovery": "discovery",
 };
 
 // Hostnames that, when seen as sourceDomain, force ingestion_method to

@@ -46,6 +46,18 @@ describe("classifySource — analyst backlog Item 1 (2026-05-26)", () => {
     expect(r.ingestionMethod).toBe("vendor_submission");
   });
 
+  // K26 (2026-06-16): daily-discovery harvest labels → 'discovery', so
+  // discovery events created via suggest_event aren't mis-bucketed as
+  // vendor_submission.
+  it("maps daily-discovery label to discovery method", () => {
+    expect(classifySource("daily-discovery", null).ingestionMethod).toBe("discovery");
+    expect(classifySource("discovery", null).ingestionMethod).toBe("discovery");
+    expect(
+      classifySource("daily-ne-event-discovery", "https://towncalendar.example/events")
+        .ingestionMethod
+    ).toBe("discovery");
+  });
+
   it("maps community-suggestion label to community_suggestion method", () => {
     const r = classifySource("community-suggestion", null);
     expect(r.ingestionMethod).toBe("community_suggestion");
