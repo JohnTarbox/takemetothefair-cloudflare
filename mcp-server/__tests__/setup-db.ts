@@ -495,6 +495,14 @@ const SCHEMA_SQL = `
     error_message TEXT
   );
 
+  CREATE TABLE email_send_ledger (
+    message_id TEXT PRIMARY KEY,
+    sent_at INTEGER NOT NULL,
+    recipient TEXT,
+    source TEXT,
+    provider_message_id TEXT
+  );
+
   CREATE TABLE pending_search_pings (
     id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,
