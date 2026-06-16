@@ -490,3 +490,10 @@ body {
 .cm-root .cm-ribbon {
   border-radius: 6px;
 }
+
+/* The calendar's range title (`<h1 class="cm-range-title">`) inherits the site's
+   serif heading font (Fraunces) from the global h1/h2 rule. Google Calendar uses
+   a sans title — force the calendar to inherit the sans body stack from .cm-root. */
+.cm-root .cm-range-title {
+  font-family: inherit;
+}
