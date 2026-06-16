@@ -1464,6 +1464,25 @@ export const indexnowSubmissions = sqliteTable(
   (table) => [index("idx_indexnow_submissions_timestamp").on(table.timestamp)]
 );
 
+// Email send ledger — idempotency guard for the email-jobs queue consumer.
+// Cloudflare Queues are at-least-once: a message redelivers (same `id`, higher
+// `attempts`) until acked, so a send that succeeded at the provider but crashed
+// before ack would re-send. The consumer records each queue message `id` here
+// AFTER a successful send and skips any id already present on redelivery. Bounded
+// by a per-batch prune of rows older than a few days (retries exhaust in hours).
+export const emailSendLedger = sqliteTable(
+  "email_send_ledger",
+  {
+    // The Cloudflare Queue message id — stable across redeliveries of the same message.
+    messageId: text("message_id").primaryKey(),
+    sentAt: integer("sent_at", { mode: "timestamp" }).notNull(),
+    recipient: text("recipient"),
+    source: text("source"),
+    providerMessageId: text("provider_message_id"),
+  },
+  (table) => [index("idx_email_send_ledger_sent_at").on(table.sentAt)]
+);
+
 // Pending Search Pings — outbox for deferred IndexNow + schema.org regen
 // requests. Bulk ingestion workflows set `defer_search_ping: true` on each
 // write, which routes the lifecycle hook into this table instead of firing
