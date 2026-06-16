@@ -497,3 +497,12 @@ body {
 .cm-root .cm-range-title {
   font-family: inherit;
 }
+
+/* The "Ongoing through <date>: <title>" band lists long-running (>14-day) events
+   above the grid. With many season-long farmers markets it balloons to ~8 lines
+   and dominates the view. Cap it to a few rows + scroll so it stays informative
+   without pushing the actual calendar down (Google has no such banner). */
+.cm-root .cm-ongoing-band {
+  max-height: 4.5rem;
+  overflow-y: auto;
+}
