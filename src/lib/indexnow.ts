@@ -20,12 +20,15 @@ import { indexnowSubmissions, pendingSearchPings, timeToIndexLog } from "@/lib/d
 import { lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
-import { getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { getCloudflareRateLimitKv, getCloudflareEnv } from "@/lib/cloudflare";
 import {
   armIndexNowCooldown,
   checkIndexNowBreaker,
   clearIndexNowCooldown,
+  AUTO_PAUSE_AFTER_MS,
 } from "@/lib/indexnow-breaker";
+import { sendEmail } from "@/lib/email/send";
+import { logError } from "@/lib/logger";
 
 const HOST = SITE_HOSTNAME;
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -218,6 +221,60 @@ export interface PingResult {
   failureReason: string | null;
 }
 
+/** REL6: read a runtime env var via CF bindings; falls back to process.env for
+ *  local/dev. Mirrors the kpi-alerts pattern. */
+function getRuntimeEnv(key: string): string | undefined {
+  try {
+    const env = getCloudflareEnv() as unknown as Record<string, string | undefined>;
+    return env[key];
+  } catch {
+    return process.env[key];
+  }
+}
+
+/**
+ * REL6: fire the operator alert when the breaker auto-pauses IndexNow. Sends to
+ * ALERT_EMAIL_TECHNICAL (the same technical channel the KPI alerts use). If
+ * that's unset, logs a warning instead of silently dropping the signal —
+ * either way the pause is already engaged in KV. Never throws.
+ */
+async function sendIndexNowAutoPauseAlert(db: Db, consec: number): Promise<void> {
+  const hours = Math.round(AUTO_PAUSE_AFTER_MS / 3_600_000);
+  const text = [
+    `IndexNow has been AUTO-PAUSED after ${consec} consecutive 429 responses from Bing`,
+    `spanning at least ~${hours}h with no successful (2xx) submission in between.`,
+    ``,
+    `The kill-switch "indexnow:paused" is now set in RATE_LIMIT_KV. No IndexNow`,
+    `pings will be sent (create paths still queue deferred rows) until an operator`,
+    `clears it — this latch does NOT self-heal by design, because auto-resuming`,
+    `just re-arms Bing's sticky per-host penalty.`,
+    ``,
+    `Before clearing, confirm Bing's penalty has decayed (a quiet window of`,
+    `≥24–48h is typical). To resume:`,
+    ``,
+    `  wrangler kv key delete --namespace-id b7aeca316e7a41108fd375be2e152cff indexnow:paused --remote`,
+    ``,
+    `Then backfill any queued URLs via the resubmit_indexnow MCP tool.`,
+  ].join("\n");
+
+  const to = getRuntimeEnv("ALERT_EMAIL_TECHNICAL");
+  if (!to) {
+    await logError(db, {
+      level: "warn",
+      source: "indexnow:auto-pause",
+      message: `IndexNow auto-paused (consec=${consec}) but ALERT_EMAIL_TECHNICAL is unset — no email sent`,
+    });
+    return;
+  }
+  await sendEmail(db, {
+    to,
+    subject: "🚨 IndexNow auto-paused after a sustained Bing 429 streak",
+    text,
+    html: `<p>${text.replace(/\n/g, "<br>")}</p>`,
+    source: "indexnow:auto-pause",
+  });
+}
+
 export async function pingIndexNow(
   db: Db,
   urls: string | string[],
@@ -402,7 +459,13 @@ export async function pingIndexNow(
   // service resumes immediately. Network errors (caught above) deliberately
   // leave the cooldown untouched: a transient fetch failure isn't a throttle.
   if (lastHttpStatus === 429) {
-    await armIndexNowCooldown(kv, lastRetryAfterMs);
+    const arm = await armIndexNowCooldown(kv, lastRetryAfterMs);
+    // REL6: the breaker just auto-engaged the operator kill-switch after a
+    // sustained 429 streak. Email a human exactly once (autoPaused is true on
+    // only the transitioning call). NO self-heal — the operator un-pauses.
+    if (arm.autoPaused) {
+      await sendIndexNowAutoPauseAlert(db, arm.consec);
+    }
   } else if (failed === 0) {
     await clearIndexNowCooldown(kv);
   }

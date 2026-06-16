@@ -8,6 +8,7 @@ import {
   setIndexNowPaused,
   BASE_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
+  AUTO_PAUSE_AFTER_MS,
   type BreakerKv,
 } from "../indexnow-breaker";
 
@@ -106,10 +107,10 @@ describe("armIndexNowCooldown / clearIndexNowCooldown", () => {
   it("arms a base cooldown on the first 429 and escalates on the next", async () => {
     const now = 1_000_000_000_000;
     const first = await armIndexNowCooldown(kv, null, now);
-    expect(first).toBe(now + BASE_COOLDOWN_MS);
+    expect(first.until).toBe(now + BASE_COOLDOWN_MS);
 
     const second = await armIndexNowCooldown(kv, null, now);
-    expect(second).toBe(now + BASE_COOLDOWN_MS * 2);
+    expect(second.until).toBe(now + BASE_COOLDOWN_MS * 2);
   });
 
   it("a cleared cooldown resets the escalation back to base", async () => {
@@ -121,7 +122,7 @@ describe("armIndexNowCooldown / clearIndexNowCooldown", () => {
     expect(kv.store.has("indexnow:consec_429")).toBe(false);
 
     const afterClear = await armIndexNowCooldown(kv, null, now);
-    expect(afterClear).toBe(now + BASE_COOLDOWN_MS); // back to step 1
+    expect(afterClear.until).toBe(now + BASE_COOLDOWN_MS); // back to step 1
   });
 
   it("clear does NOT touch the operator pause key", async () => {
@@ -132,8 +133,65 @@ describe("armIndexNowCooldown / clearIndexNowCooldown", () => {
   });
 
   it("is a no-op with a null KV", async () => {
-    expect(await armIndexNowCooldown(null, null)).toBeNull();
+    const r = await armIndexNowCooldown(null, null);
+    expect(r.until).toBeNull();
+    expect(r.autoPaused).toBe(false);
     await expect(clearIndexNowCooldown(null)).resolves.toBeUndefined();
+  });
+});
+
+describe("REL6 — auto-pause latch on a sustained 429 streak", () => {
+  let kv: ReturnType<typeof makeKv>;
+  beforeEach(() => {
+    kv = makeKv();
+  });
+
+  it("does NOT auto-pause while the streak is younger than the threshold", async () => {
+    const t0 = 1_000_000_000_000;
+    // Several 429s, but all within the first hour — well under AUTO_PAUSE_AFTER_MS.
+    const a = await armIndexNowCooldown(kv, null, t0);
+    expect(a.autoPaused).toBe(false);
+    const b = await armIndexNowCooldown(kv, null, t0 + 30 * 60_000);
+    expect(b.autoPaused).toBe(false);
+    expect(kv.store.has("indexnow:paused")).toBe(false);
+  });
+
+  it("auto-pauses exactly once after the streak crosses AUTO_PAUSE_AFTER_MS", async () => {
+    const t0 = 1_000_000_000_000;
+    await armIndexNowCooldown(kv, null, t0); // streak anchored at t0
+    const past = t0 + AUTO_PAUSE_AFTER_MS + 1;
+    const tripped = await armIndexNowCooldown(kv, null, past);
+    expect(tripped.autoPaused).toBe(true);
+    expect(kv.store.get("indexnow:paused")).toContain("auto-paused");
+
+    // A subsequent arm (still paused) must NOT re-trip the latch.
+    const again = await armIndexNowCooldown(kv, null, past + 60_000);
+    expect(again.autoPaused).toBe(false);
+  });
+
+  it("a 2xx in between resets the streak so the clock restarts", async () => {
+    const t0 = 1_000_000_000_000;
+    await armIndexNowCooldown(kv, null, t0);
+    await clearIndexNowCooldown(kv); // 2xx — streak wiped
+    expect(kv.store.has("indexnow:streak_started_at")).toBe(false);
+
+    // New streak anchored at t0 + 5h; +2h later (=7h since t0, but only 2h of
+    // CONSECUTIVE 429s) must NOT auto-pause.
+    const restart = t0 + 5 * 3_600_000;
+    const a = await armIndexNowCooldown(kv, null, restart);
+    expect(a.autoPaused).toBe(false);
+    const b = await armIndexNowCooldown(kv, null, restart + 2 * 3_600_000);
+    expect(b.autoPaused).toBe(false);
+    expect(kv.store.has("indexnow:paused")).toBe(false);
+  });
+
+  it("does not overwrite an existing operator pause note", async () => {
+    const t0 = 1_000_000_000_000;
+    await kv.put("indexnow:paused", "manual: paused by operator");
+    await armIndexNowCooldown(kv, null, t0);
+    const tripped = await armIndexNowCooldown(kv, null, t0 + AUTO_PAUSE_AFTER_MS + 1);
+    expect(tripped.autoPaused).toBe(false); // already paused → no transition
+    expect(kv.store.get("indexnow:paused")).toBe("manual: paused by operator");
   });
 });
 
