@@ -4,7 +4,7 @@
 //
 // <MonthCalendar> is a client component and takes interactive callbacks
 // (onNavigate, etc.) that cannot cross the RSC boundary as props. So the server
-// component (calendar-month-ssr.tsx) does the D1 query + adapter and passes only
+// component (calendar-ssr.tsx) does the D1 query + adapter and passes only
 // SERIALIZABLE data in (events/now/anchor/theme); this wrapper owns the callbacks.
 // `now` is host-pinned on the server and passed through unchanged, so server HTML
 // and first client paint agree (no hydration mismatch).

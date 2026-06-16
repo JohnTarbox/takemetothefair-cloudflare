@@ -25,3 +25,14 @@ function isOn(name: string): boolean {
 export function isCal1SsrMonthEnabled(): boolean {
   return isOn("CAL1_SSR_MONTH");
 }
+
+/**
+ * CAL2 — when ON (and CAL1 is also ON), the SSR calendar gains the Agenda and Year
+ * sub-views via a sub-view toggle (`?cal_view=month|agenda|year`). Default OFF →
+ * the calendar shows Month only, exactly as CAL1 shipped. Requires CAL1 (the new
+ * views live inside the SSR calendar path; with CAL1 OFF the legacy client calendar
+ * renders and this flag has no effect).
+ */
+export function isCal2ViewsEnabled(): boolean {
+  return isOn("CAL2_VIEWS");
+}
