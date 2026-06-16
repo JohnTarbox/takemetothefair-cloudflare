@@ -14,6 +14,7 @@
 
 import { toCalendarEvents, type CalendarEventInput } from "@/lib/calendar/to-calendar-event";
 import { categoryColorsForEvents } from "@/lib/calendar/colors";
+import { buildCalendarTheme } from "@/lib/calendar/theme";
 import {
   parseCalMonth,
   monthAnchorIso,
@@ -51,9 +52,9 @@ export function CalendarSSR({ events, searchParams, cal2Enabled }: Props) {
   // Month + Agenda consume the loaded window through the same adapter; Year doesn't.
   const calendarEvents =
     subView === "year" ? [] : toCalendarEvents(events, { includePast, todayIso: todayIsoUtc() });
-  const theme = {
-    categoryColors: categoryColorsForEvents(calendarEvents.map((e) => ({ category: e.category }))),
-  };
+  const theme = buildCalendarTheme(
+    categoryColorsForEvents(calendarEvents.map((e) => ({ category: e.category })))
+  );
 
   let body;
   if (subView === "agenda") {

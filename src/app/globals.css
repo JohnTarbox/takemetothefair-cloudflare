@@ -481,3 +481,12 @@ body {
     min-width: 0;
   }
 }
+
+/* CAL2 — Google-Calendar-like event styling. The module ships square-cornered
+   blocks; round them (and the all-day / month ribbons) for the softer GC look.
+   Scoped under .cm-root so only the calendar is affected. */
+.cm-root .cm-tg-block,
+.cm-root .cm-tg-ribbon,
+.cm-root .cm-ribbon {
+  border-radius: 6px;
+}

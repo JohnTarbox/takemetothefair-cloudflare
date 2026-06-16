@@ -86,6 +86,11 @@ export function CalendarTimeGridClient({
         theme={theme}
         weekStartsOn={0}
         locale="en-US"
+        // Google-Calendar-like spacing: airy hour rows, open scrolled to the
+        // morning, and cap the all-day strip so it can't swallow the grid.
+        hourHeightPx={48}
+        weekScrollAnchorHour={8}
+        maxStripLanes={3}
         onNavigate={onNavigate}
         onNavigateToDay={onNavigateToDay}
       />
