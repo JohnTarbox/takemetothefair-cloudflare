@@ -1316,6 +1316,13 @@ function Sparkline({
 // label on each point (8 points, not 30 — labels fit), (2) x-axis date
 // labels at start/middle/end, (3) dots at each milestone so the
 // non-monotonic Mar 1 → Mar 5 dip reads as an honest data point.
+// K12 (2026-06-16): the chart defaults to the post-launch growth arc. The 3
+// pre-May points (Mar 1 / Mar 5 / Apr 29 — including the Mar 1→5 send-order
+// dip artifact) are flat pre-launch noise; starting at May 1 shows the real
+// ramp. Stats above the chart still compute over the full series (e.g. the
+// "May ramp vs April end" stat needs the April point).
+const MILESTONE_CHART_DEFAULT_START = "2026-05-01";
+
 function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
   if (points.length === 0) {
     return (
@@ -1347,12 +1354,19 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
         aprilOrEarlier[aprilOrEarlier.length - 1].threshold
       : 0;
 
+  // Default the plotted series to the post-launch arc (May 1 onward). Fall
+  // back to the full series if that leaves nothing to draw (e.g. a property
+  // with only pre-May milestones) so the chart never renders blank.
+  const inRange = sorted.filter((p) => p.emailDate >= MILESTONE_CHART_DEFAULT_START);
+  const chartPoints = inRange.length > 0 ? inRange : sorted;
+
   return (
     <Card className="mb-6">
       <CardHeader>
         <CardTitle>Search clicks milestones</CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Milestones as reported by Google Search Console emails (28-day window)
+          Milestones from Google Search Console emails · 28-day click window · log scale · from May
+          2026
         </p>
       </CardHeader>
       <CardContent>
@@ -1388,7 +1402,7 @@ function GscMilestoneChartCard({ points }: { points: GscMilestonePoint[] }) {
             <p className="text-xs text-muted-foreground">vs. April end</p>
           </div>
         </div>
-        <MilestoneChart points={sorted} />
+        <MilestoneChart points={chartPoints} />
       </CardContent>
     </Card>
   );
@@ -1403,13 +1417,26 @@ function MilestoneChart({ points }: { points: GscMilestonePoint[] }) {
   const padBottom = 36; // room for date labels below the x-axis
   const padLeft = 12;
   const padRight = 12;
-  const max = Math.max(1, ...points.map((p) => p.threshold));
   const stepX = points.length > 1 ? (width - padLeft - padRight) / (points.length - 1) : 0;
   const plotHeight = height - padTop - padBottom;
 
+  // K12 (2026-06-16): log-linear y-axis. A linear axis crushes the early
+  // milestones — with a 1000-click max, the 20–40 starting points sit at
+  // <4% of the plot height, so the post-launch growth *shape* is unreadable.
+  // Map thresholds through a natural-log scale spanning the in-view
+  // [min, max], with a small low-end pad so the lowest point clears the
+  // baseline. Thresholds are floored at 1 to keep log() finite.
+  const logVals = points.map((p) => Math.log(Math.max(1, p.threshold)));
+  const logMax = Math.max(...logVals);
+  const logMinRaw = Math.min(...logVals);
+  const logSpan = logMax - logMinRaw || 1; // avoid /0 when every point is equal
+  const logMin = logMinRaw - logSpan * 0.08;
+  const yFor = (threshold: number) =>
+    padTop + plotHeight * (1 - (Math.log(Math.max(1, threshold)) - logMin) / (logMax - logMin));
+
   const coords = points.map((p, i) => {
     const x = padLeft + i * stepX;
-    const y = padTop + plotHeight * (1 - p.threshold / max);
+    const y = yFor(p.threshold);
     return { x, y, threshold: p.threshold, emailDate: p.emailDate };
   });
 
