@@ -15,6 +15,7 @@
  * See spec §"Risks + known fragility" for the cap rationale.
  */
 
+import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 import {
   CLASSIFIER_VERSION,
   DEFAULT_CONFIDENCE_THRESHOLD,
@@ -108,14 +109,18 @@ const AI_TIMEOUT_MS = 4000;
 //     swap was routing with classified_rationale='classifier-no-json'
 //     and falling back to address-only — the classifier intelligence
 //     feature was effectively dark.
-//   v3 (2026-05-21, this revert): back to 8B. Trade-off: 8B is a bit
-//     slower + costlier per call than 3B, but it actually works at the
-//     given prompt. Until we have time to trace the 3B response shape
-//     and tune the prompt to coerce plain-JSON output, 8B is the right
-//     answer. Bump CLASSIFIER_VERSION in intent-classifier-prompt.ts
+//   v3 (2026-05-21, this revert): back to 8B. It actually works at the
+//     given prompt where 3B did not.
+//   v4 (2026-06-16, K28): 8B was deprecated by Cloudflare and started
+//     returning error 5028 on every call. Model id is now centralized
+//     in @takemetothefair/constants.WORKERS_AI_MODEL — see that constant
+//     for the current model + the rationale (a fp8-fast Llama 3.3 70B
+//     that preserves the { response: string } shape this classifier
+//     depends on). A deprecation is now one edit there, not three across
+//     the codebase. Bump CLASSIFIER_VERSION in intent-classifier-prompt.ts
 //     alongside any model change so the D.1 accuracy dashboard can
 //     attribute trends to the right model/prompt revision.
-const MODEL = "@cf/meta/llama-3.1-8b-instruct";
+const MODEL = WORKERS_AI_MODEL;
 
 /** Workers AI binding shape. We only call .run(); typed loosely so the
  *  caller can pass either the wrangler-injected `env.AI` binding or a

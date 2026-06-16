@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { withTimeout } from "@/lib/fetch-timeout";
 import { EVENT_CATEGORIES } from "@/lib/constants";
+import { WORKERS_AI_MODEL } from "@takemetothefair/constants";
 
 // Logging: diagnostic output here uses console.warn so it surfaces in
 // `wrangler tail` for an admin running an import while still satisfying the
@@ -255,16 +256,16 @@ export async function extractEventData(
 
   const userPrompt = buildUserPrompt(truncatedContent, contextInfo);
 
-  // Call Workers AI with Llama 3.1 8B using messages format for better instruction following
+  // Call Workers AI using messages format for better instruction following.
   console.warn("[AI Extractor] Calling Workers AI, content length:", truncatedContent.length);
 
-  // Workers AI model name. The unquantized "@cf/meta/llama-3.1-8b-instruct"
-  // works at runtime but isn't included in @cloudflare/workers-types' typed
-  // AiModels registry (only -fp8 and -awq quantized variants are typed).
-  // Use `Parameters<...>[0]` to bypass the registry without `any` — runtime
-  // accepts any string Workers AI supports.
+  // Model id is centralized in @takemetothefair/constants (WORKERS_AI_MODEL)
+  // so a deprecation is one edit, not three (K28). The `Parameters<...>[0]`
+  // cast bypasses @cloudflare/workers-types' typed AiModels registry without
+  // `any` — runtime accepts any model string Workers AI supports, including
+  // ones not present in the generated registry.
   const response = await withTimeout(
-    ai.run("@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof ai.run>[0], {
+    ai.run(WORKERS_AI_MODEL as Parameters<typeof ai.run>[0], {
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
@@ -337,12 +338,12 @@ export async function extractMultipleEvents(
       ? buildMultiEventPromptWithEmailBody(truncatedContent, contextInfo, emailBody)
       : buildMultiEventPrompt(truncatedContent, contextInfo);
 
-  // Call Workers AI with Llama 3.1 8B using messages format
+  // Call Workers AI using messages format.
   console.warn("[AI Extractor Multi] Calling Workers AI, content length:", truncatedContent.length);
 
   const response = await withTimeout(
-    // See note on first ai.run call above re: typed model registry.
-    ai.run("@cf/meta/llama-3.1-8b-instruct" as Parameters<typeof ai.run>[0], {
+    // See note on first ai.run call above re: centralized model id + cast.
+    ai.run(WORKERS_AI_MODEL as Parameters<typeof ai.run>[0], {
       messages: [
         { role: "system", content: MULTI_EVENT_SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
