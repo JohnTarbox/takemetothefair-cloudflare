@@ -20,7 +20,7 @@ import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
-import { evaluateGates, classifySource } from "@takemetothefair/utils";
+import { evaluateGates, classifySource, normalizeEventDate } from "@takemetothefair/utils";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
 
@@ -689,16 +689,15 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         suffix++;
       }
 
-      let startDate: Date | null = null;
-      let endDate: Date | null = null;
-      if (params.start_date) {
-        startDate = new Date(params.start_date);
-        if (isNaN(startDate.getTime())) startDate = null;
-      }
-      if (params.end_date) {
-        endDate = new Date(params.end_date);
-        if (isNaN(endDate.getTime())) endDate = null;
-      }
+      // K25 (invariant 4): anchor bare YYYY-MM-DD dates at noon UTC via the
+      // canonical normalizeEventDate helper — NOT the raw `new Date(str)`,
+      // which parses a date-only string as midnight UTC and renders as the
+      // PREVIOUS day in US (EDT/EST) zones. Same helper update_event uses, so
+      // every event-date write path anchors identically.
+      const startDate: Date | null = params.start_date
+        ? normalizeEventDate(params.start_date)
+        : null;
+      const endDate: Date | null = params.end_date ? normalizeEventDate(params.end_date) : null;
 
       // Build description
       const description = params.description || `${params.name} - suggested via MCP`;
