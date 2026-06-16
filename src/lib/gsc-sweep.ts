@@ -24,6 +24,7 @@ import {
   healthIssues,
   eventSlugHistory,
   vendorSlugHistory,
+  timeToIndexLog,
 } from "@/lib/db/schema";
 import * as schema from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
@@ -102,7 +103,7 @@ interface SweepResult {
 }
 
 /** Build the prioritized list of URLs to inspect this sweep. */
-async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
+export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
   const sixHoursAgo = new Date(Date.now() - 6 * 3600 * 1000);
 
@@ -144,6 +145,32 @@ async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   for (const b of recentBlog) {
     picked.add(`${HOST}/blog/${b.slug}`);
     if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+  }
+
+  // Tier 2c (REL5, 2026-06-16): URLs we've submitted to IndexNow but never
+  // resolved a crawl time for. time_to_index_log is seeded on every
+  // pingIndexNow with first_crawl_at NULL; the reconciler
+  // (sweep-time-to-index) can only set first_crawl_at once gsc_inspection_state
+  // has a PASS verdict for that URL. Before this tier, the inspector only ever
+  // looked at sitemap / recent / round-robin URLs, so submitted URLs that
+  // hadn't already been inspected were invisible — the seed→inspect→reconcile
+  // loop had no inspect step for them, and first_crawl_at stayed NULL across
+  // all 5,924 rows. Prioritize the oldest unresolved submissions so each daily
+  // sweep chips away at measuring them (the rate-limited backfill the §D1 ask
+  // describes — there's no instant backfill under GSC's ~2000/day quota).
+  if (picked.size < batchSize) {
+    const unresolvedSubmitted = await db
+      .selectDistinct({ url: timeToIndexLog.url })
+      .from(timeToIndexLog)
+      .where(isNull(timeToIndexLog.firstCrawlAt))
+      .orderBy(asc(timeToIndexLog.indexnowSubmittedAt))
+      .limit(batchSize - picked.size);
+    for (const r of unresolvedSubmitted) {
+      // Only inspect our own-host URLs (the inspector resolves a path against
+      // the property); a stray external URL in the log can't be inspected.
+      if (r.url.startsWith(HOST)) picked.add(r.url);
+      if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
+    }
   }
 
   // Tier 3: round-robin oldest. Pull from gsc_inspection_state ordered by
