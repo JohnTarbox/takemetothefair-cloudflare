@@ -42,16 +42,21 @@ export function CalendarMonthClient({ events, now, displayTimeZone, initialAncho
     [router, searchParams]
   );
 
+  // `cal-legend-left` drives a CSS-grid override (src/app/globals.css) that moves
+  // the module's category legend into a left sidebar on >=768px. Month-only —
+  // Agenda/Year share `.cm-root` but aren't wrapped, so they're unaffected.
   return (
-    <MonthCalendar
-      events={events}
-      now={now}
-      displayTimeZone={displayTimeZone}
-      initialAnchor={initialAnchor}
-      theme={theme}
-      weekStartsOn={0}
-      locale="en-US"
-      onNavigate={onNavigate}
-    />
+    <div className="cal-legend-left">
+      <MonthCalendar
+        events={events}
+        now={now}
+        displayTimeZone={displayTimeZone}
+        initialAnchor={initialAnchor}
+        theme={theme}
+        weekStartsOn={0}
+        locale="en-US"
+        onNavigate={onNavigate}
+      />
+    </div>
   );
 }
