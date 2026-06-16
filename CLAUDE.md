@@ -22,7 +22,7 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 - **D1 Database**: `d449e416-3814-48a6-b9e8-b676333b2cdc` (name: `takemetothefair-db`)
 - **KV Namespace**: `b7aeca316e7a41108fd375be2e152cff` (binding: `RATE_LIMIT_KV`)
 - **R2 Bucket**: `mmatf-vendor-assets` (binding: `VENDOR_ASSETS`, served at `cdn.meetmeatthefair.com`)
-- **Pages Project**: `takemetothefair`
+- **Main app Worker**: `meetmeatthefair-app` (OpenNext; former Pages project `takemetothefair`, retired 2026-06-10)
 - **Domain**: `meetmeatthefair.com`
 - **AI Model**: `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (single source of truth: `WORKERS_AI_MODEL` in `@takemetothefair/constants`; the prior `@cf/meta/llama-3.1-8b-instruct` was deprecated + error-5028'd 2026-06-15, swapped in K28)
 
@@ -46,14 +46,29 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 
 The site runs as **two separate deploy artifacts on the `meetmeatthefair.com` zone**. They never share a route — they live on different hostnames. Get this wrong and you'll mis-plan migrations or chase phantom route collisions.
 
-| Artifact       | Hostname                     | What it is                                                                                                                                                                                                          | Routing                                                                                                                                                           |
-| -------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Main app**   | `meetmeatthefair.com` (apex) | Next.js via `@cloudflare/next-on-pages`, deployed to the Pages project `takemetothefair`. Serves every page/API route **including all `sitemap*.xml`** (Next.js route handlers in `src/app/sitemap*.xml/route.ts`). | Pages-native routing. No `[[routes]]` block in `wrangler.toml`.                                                                                                   |
-| **MCP Worker** | `mcp.meetmeatthefair.com`    | `meetmeatthefair-mcp` Worker (source in `mcp-server/`). MCP API + inbound/outbound email + Workflows + crons.                                                                                                       | `[[routes]] pattern = "mcp.meetmeatthefair.com"`, `custom_domain = true` in `mcp-server/wrangler.toml`. **A separate hostname, NOT a wildcard path on the apex.** |
+| Artifact       | Hostname                     | What it is                                                                                                                                                                                                                                                                                                                                                             | Routing                                                                                                                                                                  |
+| -------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Main app**   | `meetmeatthefair.com` (apex) | Next.js via `@opennextjs/cloudflare` (`main = .open-next/worker.js`), deployed as the **`meetmeatthefair-app` Worker** — was the Pages project `takemetothefair`, retired in the 2026-06-10 OpenNext cutover (`x-opennext: 1` on responses). Serves every page/API route **including all `sitemap*.xml`** (Next.js route handlers in `src/app/sitemap*.xml/route.ts`). | `[[routes]] pattern = "meetmeatthefair.com/*"`, `zone_name = "meetmeatthefair.com"` in `wrangler.toml` — the Worker serves the apex directly (NOT Pages-native routing). |
+| **MCP Worker** | `mcp.meetmeatthefair.com`    | `meetmeatthefair-mcp` Worker (source in `mcp-server/`). MCP API + inbound/outbound email + Workflows + crons.                                                                                                                                                                                                                                                          | `[[routes]] pattern = "mcp.meetmeatthefair.com"`, `custom_domain = true` in `mcp-server/wrangler.toml`. **A separate hostname, NOT a wildcard path on the apex.**        |
 
 **Cross-artifact contract (these are easy to miss):**
 
-- The main app is a **Queue producer** for `EMAIL_JOBS` and `INDEXNOW_PINGS` (`wrangler.toml`); the **MCP Worker is the consumer**. Producer queue names must match the consumer's exactly or messages drop silently (no email, no IndexNow ping).
+- **Queues: the main app (and MCP) produce; the MCP Worker is the ONLY consumer** (Pages cannot consume queues). Producer ↔ consumer queue names must match exactly or messages drop silently. Dispatch is routed by `batch.queue` in `mcp-server/src/index.ts`'s `queue()` handler → per-queue handlers in `mcp-server/src/queue-consumers.ts` (+ `syndication/dispatch.ts`, `enrichment/dispatch.ts`). An unknown queue is logged, not silently acked.
+
+  | Queue                 | Binding               | Producers | Consumer cfg (`mcp-server/wrangler.toml`)             | DLQ                       |
+  | --------------------- | --------------------- | --------- | ----------------------------------------------------- | ------------------------- |
+  | `email-jobs`          | `EMAIL_JOBS`          | app + MCP | batch 10 / 5s / retries 3                             | `email-jobs-dlq`          |
+  | `indexnow-pings`      | `INDEXNOW_PINGS`      | app + MCP | batch 100 / 30s / retries 3 / **`max_concurrency=1`** | `indexnow-pings-dlq`      |
+  | `event-discrepancies` | `EVENT_DISCREPANCIES` | app + MCP | batch 25 / 15s / retries 3                            | `event-discrepancies-dlq` |
+  | `syndication-changes` | `SYNDICATION_CHANGES` | app + MCP | batch 10 / 10s / retries 5                            | `syndication-changes-dlq` |
+  | `vendor-enrichment`   | `VENDOR_ENRICHMENT`   | MCP       | batch 5 / 30s / retries 3                             | `vendor-enrichment-dlq`   |
+
+  Queue-handling invariants (don't regress these — see the 2026-06-16 queue audit):
+  - **Every consumer names a `dead_letter_queue`.** Without one, Cloudflare DROPS a message after `max_retries` (silent loss). DLQs are **parking lots** (no consumer) for manual review via the dashboard. Each `<queue>-dlq` must be **created before deploy** (`wrangler queues create <name>-dlq`) or `wrangler deploy` of the MCP Worker fails on the dangling reference.
+  - **Per-message `ack()`/`retry()`** in handlers (never whole-batch) so one bad message doesn't reprocess the good ones. Retries use **exponential `delaySeconds`** (not bare `m.retry()`); `indexnow` honors a `429 Retry-After`.
+  - **Email sends are idempotent** via the `email_send_ledger` table (drizzle/0125): the consumer dedups on the Cloudflare message `id` (stable across at-least-once redeliveries), recording after send and skipping on redelivery. The `indexnow` consumer calls Bing via raw `fetch`, **bypassing** the REL4/REL6 `pingIndexNow` circuit breaker — hence its `max_concurrency=1` structural guard.
+  - Prefer `sendBatch` over a `.send()` loop for fan-outs (e.g. the nightly enrichment selector).
+
 - All **Workflows** (`inbound-email`, `recommendations-scan`, `event-date-drift`, `schema-org-sync`) and all **cron**-like work live in the MCP Worker, because **Pages cannot bind Workflows** (Cloudflare rejects `[[workflows]]` in a Pages `wrangler.toml` at config-validation — this caused a 30-min deploy lock-up once). The main app has **no cron triggers**.
 - The main app reaches the MCP Worker over **HTTP + `INTERNAL_API_KEY`**, not a Service Binding.
 
@@ -67,8 +82,9 @@ npm run dev                    # Start Next.js dev server
 
 # Build & Deploy
 npm run build                  # Next.js build (local testing)
-npx @cloudflare/next-on-pages  # Build for Cloudflare Pages
-npx wrangler pages deploy .vercel/output/static --project-name=takemetothefair --commit-dirty=true
+npm run cf:build               # OpenNext build for Cloudflare Workers (.open-next/)
+npm run cf:deploy              # Build + deploy the meetmeatthefair-app Worker
+# Production deploys run automatically via GitHub Actions (.github/workflows/deploy.yml) on push to main
 
 # Database
 npm run db:generate            # Generate Drizzle migrations
@@ -78,15 +94,16 @@ npm run db:seed                # Seed local database
 npm run db:studio              # Open Drizzle Studio
 ```
 
-## Critical: Cloudflare Edge Runtime
+## Critical: OpenNext (Workers) runtime — do NOT declare `runtime = "edge"`
 
-**Every page and API route MUST include:**
+Post-OpenNext (2026-06-10), the entire Next.js app runs on the Cloudflare **Workers**
+runtime via `@opennextjs/cloudflare`. Do **NOT** add `export const runtime = "edge"` to
+pages or route handlers — it is forbidden and CI fails the build (`scripts/check-no-edge-runtime.ts`,
+the "Guard against edge runtime decls" step). The cutover removed all 261 prior edge decls.
 
-```typescript
-export const runtime = "edge";
-```
-
-This project runs on Cloudflare Pages with D1 (SQLite at edge). Node.js APIs are not available.
+D1 (SQLite) is the database, accessed via `getCloudflareDb()`. `nodejs_compat` is enabled
+(`compatibility_flags` in `wrangler.toml`), so a subset of Node APIs is available — but prefer
+Web/Workers-standard APIs.
 
 ## Database Access Pattern
 
@@ -94,8 +111,6 @@ This project runs on Cloudflare Pages with D1 (SQLite at edge). Node.js APIs are
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { eq, and, gte } from "drizzle-orm";
-
-export const runtime = "edge";
 
 async function getData() {
   const db = getCloudflareDb();
