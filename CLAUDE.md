@@ -53,7 +53,22 @@ The site runs as **two separate deploy artifacts on the `meetmeatthefair.com` zo
 
 **Cross-artifact contract (these are easy to miss):**
 
-- The main app is a **Queue producer** for `EMAIL_JOBS` and `INDEXNOW_PINGS` (`wrangler.toml`); the **MCP Worker is the consumer**. Producer queue names must match the consumer's exactly or messages drop silently (no email, no IndexNow ping).
+- **Queues: the main app (and MCP) produce; the MCP Worker is the ONLY consumer** (Pages cannot consume queues). Producer ↔ consumer queue names must match exactly or messages drop silently. Dispatch is routed by `batch.queue` in `mcp-server/src/index.ts`'s `queue()` handler → per-queue handlers in `mcp-server/src/queue-consumers.ts` (+ `syndication/dispatch.ts`, `enrichment/dispatch.ts`). An unknown queue is logged, not silently acked.
+
+  | Queue                 | Binding               | Producers | Consumer cfg (`mcp-server/wrangler.toml`)             | DLQ                       |
+  | --------------------- | --------------------- | --------- | ----------------------------------------------------- | ------------------------- |
+  | `email-jobs`          | `EMAIL_JOBS`          | app + MCP | batch 10 / 5s / retries 3                             | `email-jobs-dlq`          |
+  | `indexnow-pings`      | `INDEXNOW_PINGS`      | app + MCP | batch 100 / 30s / retries 3 / **`max_concurrency=1`** | `indexnow-pings-dlq`      |
+  | `event-discrepancies` | `EVENT_DISCREPANCIES` | app + MCP | batch 25 / 15s / retries 3                            | `event-discrepancies-dlq` |
+  | `syndication-changes` | `SYNDICATION_CHANGES` | app + MCP | batch 10 / 10s / retries 5                            | `syndication-changes-dlq` |
+  | `vendor-enrichment`   | `VENDOR_ENRICHMENT`   | MCP       | batch 5 / 30s / retries 3                             | `vendor-enrichment-dlq`   |
+
+  Queue-handling invariants (don't regress these — see the 2026-06-16 queue audit):
+  - **Every consumer names a `dead_letter_queue`.** Without one, Cloudflare DROPS a message after `max_retries` (silent loss). DLQs are **parking lots** (no consumer) for manual review via the dashboard. Each `<queue>-dlq` must be **created before deploy** (`wrangler queues create <name>-dlq`) or `wrangler deploy` of the MCP Worker fails on the dangling reference.
+  - **Per-message `ack()`/`retry()`** in handlers (never whole-batch) so one bad message doesn't reprocess the good ones. Retries use **exponential `delaySeconds`** (not bare `m.retry()`); `indexnow` honors a `429 Retry-After`.
+  - **Email sends are idempotent** via the `email_send_ledger` table (drizzle/0125): the consumer dedups on the Cloudflare message `id` (stable across at-least-once redeliveries), recording after send and skipping on redelivery. The `indexnow` consumer calls Bing via raw `fetch`, **bypassing** the REL4/REL6 `pingIndexNow` circuit breaker — hence its `max_concurrency=1` structural guard.
+  - Prefer `sendBatch` over a `.send()` loop for fan-outs (e.g. the nightly enrichment selector).
+
 - All **Workflows** (`inbound-email`, `recommendations-scan`, `event-date-drift`, `schema-org-sync`) and all **cron**-like work live in the MCP Worker, because **Pages cannot bind Workflows** (Cloudflare rejects `[[workflows]]` in a Pages `wrangler.toml` at config-validation — this caused a 30-min deploy lock-up once). The main app has **no cron triggers**.
 - The main app reaches the MCP Worker over **HTTP + `INTERNAL_API_KEY`**, not a Service Binding.
 
