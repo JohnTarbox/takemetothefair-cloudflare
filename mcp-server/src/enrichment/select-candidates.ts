@@ -20,7 +20,7 @@ const REATTEMPT_DAYS = 30;
 
 export interface SelectorEnv {
   DB: D1Database;
-  VENDOR_ENRICHMENT?: { send: (msg: VendorEnrichmentMessage) => Promise<unknown> };
+  VENDOR_ENRICHMENT?: Queue<VendorEnrichmentMessage>;
   /** Operator switch — "false" flips off the Phase-1 dry-run default. */
   ENRICHMENT_DRY_RUN?: string;
 }
@@ -86,18 +86,25 @@ export async function runScheduledVendorEnrichment(
     return { jobRunId, enqueued: 0, dryRun };
   }
 
+  // Enqueue with sendBatch (≤100 messages/call) instead of one send() per
+  // vendor — the nightly run selects up to NIGHTLY_LIMIT rows, so this is one
+  // subrequest instead of up to 100.
   let enqueued = 0;
-  for (const r of rows) {
+  const SEND_BATCH = 100;
+  for (let i = 0; i < rows.length; i += SEND_BATCH) {
+    const chunk = rows.slice(i, i + SEND_BATCH);
     try {
-      await env.VENDOR_ENRICHMENT.send({ vendorId: r.id, jobRunId, dryRun });
-      enqueued++;
+      await env.VENDOR_ENRICHMENT.sendBatch(
+        chunk.map((r) => ({ body: { vendorId: r.id, jobRunId, dryRun } }))
+      );
+      enqueued += chunk.length;
     } catch (err) {
       await logError(env.DB, {
         level: "warn",
         source: "mcp:enrichment:selector",
-        message: "failed to enqueue enrichment job",
+        message: "failed to enqueue enrichment job batch",
         error: err,
-        context: { vendorId: r.id, jobRunId },
+        context: { vendorIds: chunk.map((r) => r.id), jobRunId, chunkSize: chunk.length },
       });
     }
   }
