@@ -1025,4 +1025,116 @@ export function registerPublicTools(server: McpServer, db: Db) {
       };
     }
   );
+
+  // ── get_vendor_events ──────────────────────────────────────────
+  // K24 (2026-06-16): the reverse of list_event_vendors. The forward
+  // direction (event → vendors) existed; the vendor → events traversal
+  // previously required search_events + manual filtering or hand-walking
+  // event_vendors. Same gating posture as the other public reads:
+  //   - publicEventWhere() so PENDING/REJECTED *events* never leak, and
+  //   - PUBLIC_VENDOR_STATUSES so a vendor's private application state
+  //     (APPLIED / WAITLISTED / REJECTED links) is never surfaced — the
+  //     returned application_status is therefore always APPROVED/CONFIRMED.
+  server.tool(
+    "get_vendor_events",
+    "List the public events a vendor is linked to, with this vendor's per-event application status + participation type. Reverse of list_event_vendors. Gated like the other public reads: PENDING/REJECTED events never leak, and only public link statuses (APPROVED/CONFIRMED) are surfaced. Optional since/until (YYYY-MM-DD) bound by date overlap. A series event the vendor joins both series-wide and per-occurrence can appear more than once (distinguished by event_day_id).",
+    {
+      vendor_id: z.string().min(1).describe("Vendor ID (UUID or legacy hex)."),
+      since: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .optional()
+        .describe("Lower date bound (YYYY-MM-DD): include events ending on/after this date."),
+      until: z
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/)
+        .optional()
+        .describe("Upper date bound (YYYY-MM-DD): include events starting on/before this date."),
+      limit: z.number().min(1).max(50).optional().describe("Max results (default 20)"),
+      offset: z
+        .number()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip for pagination (default 0)"),
+    },
+    async (params) => {
+      // Distinguish "no such vendor" (404) from "vendor with zero public
+      // links" (empty list) — they mean different things to the caller.
+      const vendorRows = await db
+        .select({ id: vendors.id, businessName: vendors.businessName })
+        .from(vendors)
+        .where(eq(vendors.id, params.vendor_id))
+        .limit(1);
+      if (vendorRows.length === 0) {
+        return { content: [{ type: "text", text: "Vendor not found." }], isError: true };
+      }
+
+      // Date-overlap bounds. since → event hasn't ended before `since`;
+      // until → event starts on/before `until`. Bad parses are ignored
+      // rather than failing the call.
+      const dateConds = [];
+      if (params.since) {
+        const since = new Date(`${params.since}T00:00:00Z`);
+        if (!isNaN(since.getTime())) dateConds.push(gte(events.endDate, since));
+      }
+      if (params.until) {
+        const until = new Date(`${params.until}T23:59:59Z`);
+        if (!isNaN(until.getTime())) dateConds.push(lte(events.startDate, until));
+      }
+
+      const limit = params.limit ?? 20;
+      const offset = params.offset ?? 0;
+
+      const rows = await db
+        .select({
+          eventId: events.id,
+          eventName: events.name,
+          eventSlug: events.slug,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          status: eventVendors.status,
+          participationType: eventVendors.participationType,
+          eventDayId: eventVendors.eventDayId,
+          eventDayDate: eventDays.date,
+        })
+        .from(eventVendors)
+        .innerJoin(events, eq(eventVendors.eventId, events.id))
+        .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
+        .where(
+          and(
+            eq(eventVendors.vendorId, vendorRows[0].id),
+            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
+            publicEventWhere(),
+            ...dateConds
+          )
+        )
+        .orderBy(sql`${events.startDate} ASC`)
+        .limit(limit)
+        .offset(offset);
+
+      const output = rows.map((r) => ({
+        event_id: r.eventId,
+        event_name: r.eventName,
+        event_slug: r.eventSlug,
+        dates: formatDateRange(r.startDate, r.endDate),
+        application_status: r.status,
+        participation_type: r.participationType,
+        // K18 per-occurrence parity with list_event_vendors: null = series-wide.
+        event_day_id: r.eventDayId,
+        event_day_date: r.eventDayDate,
+      }));
+
+      return {
+        content: [
+          jsonContent({
+            vendor: vendorRows[0].businessName,
+            count: output.length,
+            offset,
+            has_more: output.length === limit,
+            events: output,
+          }),
+        ],
+      };
+    }
+  );
 }
