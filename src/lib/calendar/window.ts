@@ -48,3 +48,22 @@ export function parseCalYear(calYear: string | undefined): number {
   const y = Number(calYear);
   return y >= MIN_CAL_YEAR && y <= MAX_CAL_YEAR ? y : current;
 }
+
+const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/**
+ * CAL2 — parse the `cal_date` param ("YYYY-MM-DD"), the anchor for the Week/Day/
+ * Custom time-grid views. Absent/malformed → today (UTC). Used as a `DayKey`.
+ */
+export function parseCalDate(calDate: string | undefined): string {
+  return calDate && DATE_RE.test(calDate) ? calDate : todayIsoUtc();
+}
+
+/**
+ * CAL2 — parse the `cal_days` param for the Custom time-grid view: an integer
+ * 2–7 (the module's supported range). Absent/out-of-range → 3.
+ */
+export function parseCalDays(calDays: string | undefined): number {
+  const n = Number(calDays);
+  return Number.isInteger(n) && n >= 2 && n <= 7 ? n : 3;
+}

@@ -69,18 +69,30 @@ async function loadInputsInRange(
   // under D1's bind-variable cap — same pattern as getEvents().
   const discontinuousIds = rows.filter((r) => r.discontinuousDates).map((r) => r.id);
   const daysByEvent = new Map<string, string[]>();
+  const hoursByEvent = new Map<
+    string,
+    Array<{ date: string; openTime: string | null; closeTime: string | null }>
+  >();
   if (discontinuousIds.length > 0) {
     const BATCH_SIZE = 50;
     for (let i = 0; i < discontinuousIds.length; i += BATCH_SIZE) {
       const batch = discontinuousIds.slice(i, i + BATCH_SIZE);
       const dayRows = await db
-        .select({ eventId: eventDays.eventId, date: eventDays.date })
+        .select({
+          eventId: eventDays.eventId,
+          date: eventDays.date,
+          openTime: eventDays.openTime,
+          closeTime: eventDays.closeTime,
+        })
         .from(eventDays)
         .where(and(inArray(eventDays.eventId, batch), eq(eventDays.vendorOnly, false)));
       for (const row of dayRows) {
         const existing = daysByEvent.get(row.eventId) || [];
         existing.push(row.date);
         daysByEvent.set(row.eventId, existing);
+        const hrs = hoursByEvent.get(row.eventId) || [];
+        hrs.push({ date: row.date, openTime: row.openTime, closeTime: row.closeTime });
+        hoursByEvent.set(row.eventId, hrs);
       }
     }
   }
@@ -90,6 +102,9 @@ async function loadInputsInRange(
     venue: null,
     ...(r.discontinuousDates && daysByEvent.has(r.id)
       ? { eventDayDates: daysByEvent.get(r.id) }
+      : {}),
+    ...(r.discontinuousDates && hoursByEvent.has(r.id)
+      ? { eventDayHours: hoursByEvent.get(r.id) }
       : {}),
   })) as CalendarEventInput[];
 }

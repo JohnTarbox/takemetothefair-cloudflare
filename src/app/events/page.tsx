@@ -125,10 +125,14 @@ interface SearchParams {
   sort?: string;
   /** CAL1 — visible month for the SSR calendar ("YYYY-MM"). */
   cal?: string;
-  /** CAL2 — SSR calendar sub-view ("month" | "agenda" | "year"); default "month". */
+  /** CAL2 — SSR calendar sub-view ("month" | "agenda" | "year" | "week" | "day" | "custom"); default "month". */
   cal_view?: string;
   /** CAL2 — visible year for the Year sub-view ("YYYY"); default current year. */
   cal_year?: string;
+  /** CAL2 — anchor date ("YYYY-MM-DD") for the Week/Day/Custom time-grid views; default today. */
+  cal_date?: string;
+  /** CAL2 — day count (2–7) for the Custom time-grid view; default 3. */
+  cal_days?: string;
 }
 
 type ViewMode = "cards" | "table" | "calendar";
@@ -378,8 +382,15 @@ async function getEvents(
       vendorsByEvent.set(ev.eventId, existing);
     }
 
-    // For calendar view, fetch eventDays for discontinuous events
+    // For calendar view, fetch eventDays for discontinuous events. We collect
+    // both the date list (legacy `eventDayDates`, used by EventCard) and the
+    // per-day hours (`eventDayHours`), which the calendar adapter turns into
+    // TIMED occurrences for the Week/Day grid when a day has open+close times.
     const daysByEvent = new Map<string, string[]>();
+    const hoursByEvent = new Map<
+      string,
+      Array<{ date: string; openTime: string | null; closeTime: string | null }>
+    >();
     if (isCalendarView) {
       const discontinuousIds = results
         .filter((r) => r.events.discontinuousDates)
@@ -394,13 +405,21 @@ async function getEvents(
             dayConditions.push(eq(eventDays.vendorOnly, false));
           }
           const dayResults = await db
-            .select({ eventId: eventDays.eventId, date: eventDays.date })
+            .select({
+              eventId: eventDays.eventId,
+              date: eventDays.date,
+              openTime: eventDays.openTime,
+              closeTime: eventDays.closeTime,
+            })
             .from(eventDays)
             .where(and(...dayConditions));
           for (const row of dayResults) {
             const existing = daysByEvent.get(row.eventId) || [];
             existing.push(row.date);
             daysByEvent.set(row.eventId, existing);
+            const hrs = hoursByEvent.get(row.eventId) || [];
+            hrs.push({ date: row.date, openTime: row.openTime, closeTime: row.closeTime });
+            hoursByEvent.set(row.eventId, hrs);
           }
         }
       }
@@ -437,6 +456,10 @@ async function getEvents(
       // map will already have entries from daysByEvent).
       ...(r.events.discontinuousDates && daysByEvent.has(r.events.id)
         ? { eventDayDates: daysByEvent.get(r.events.id) }
+        : {}),
+      // Per-day hours for the calendar adapter (timed occurrences in Week/Day).
+      ...(r.events.discontinuousDates && hoursByEvent.has(r.events.id)
+        ? { eventDayHours: hoursByEvent.get(r.events.id) }
         : {}),
     }));
 

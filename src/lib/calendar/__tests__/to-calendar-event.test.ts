@@ -202,3 +202,79 @@ describe("adapter output passes the contract's validateWindow", () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe("discontinuous events — timed occurrences (DQ4 hours)", () => {
+  it("a day with both hours becomes a TIMED occurrence (UTC instant + venue tz)", () => {
+    const e = toCalendarEvent(
+      row({
+        discontinuousDates: true,
+        eventDayHours: [{ date: "2026-08-01", openTime: "10:00", closeTime: "18:00" }],
+      })
+    );
+    expect(e).not.toBeNull();
+    const occ = e!.occurrences[0]!;
+    expect(occ.allDay).toBe(false);
+    expect(occ.timezone).toBe("America/New_York");
+    // August = EDT (-04:00): 10:00 ET → 14:00Z, 18:00 ET → 22:00Z.
+    expect(occ.start).toBe("2026-08-01T14:00:00.000Z");
+    expect(occ.end).toBe("2026-08-01T22:00:00.000Z");
+  });
+
+  it("a day with null/partial hours stays all-day", () => {
+    const e = toCalendarEvent(
+      row({
+        discontinuousDates: true,
+        eventDayHours: [
+          { date: "2026-08-01", openTime: null, closeTime: null },
+          { date: "2026-08-02", openTime: "10:00", closeTime: null },
+        ],
+      })
+    );
+    expect(e!.occurrences.every((o) => o.allDay)).toBe(true);
+    expect(e!.occurrences[0]!.start).toBe("2026-08-01");
+  });
+
+  it("falls back to all-day when close is not after open (bad data)", () => {
+    const e = toCalendarEvent(
+      row({
+        discontinuousDates: true,
+        eventDayHours: [{ date: "2026-08-01", openTime: "18:00", closeTime: "10:00" }],
+      })
+    );
+    expect(e!.occurrences[0]!.allDay).toBe(true);
+  });
+
+  it("mixed timed + all-day days still validate (occurrences ascending)", () => {
+    const out = toCalendarEvents([
+      row({
+        discontinuousDates: true,
+        eventDayHours: [
+          { date: "2026-08-08", openTime: "09:00", closeTime: "17:00" },
+          { date: "2026-08-01", openTime: null, closeTime: null },
+          { date: "2026-08-15", openTime: "12:00", closeTime: "20:00" },
+        ],
+      }),
+    ]);
+    const result = validateWindow(out);
+    expect(result.errors).toEqual([]);
+    expect(result.success).toBe(true);
+  });
+
+  it("past-filter drops a fully-past timed day but keeps a future one", () => {
+    const out = toCalendarEvents(
+      [
+        row({
+          discontinuousDates: true,
+          eventDayHours: [
+            { date: "2026-06-10", openTime: "10:00", closeTime: "18:00" }, // past
+            { date: "2026-06-20", openTime: "10:00", closeTime: "18:00" }, // future
+          ],
+        }),
+      ],
+      { includePast: false, todayIso: "2026-06-15" }
+    );
+    expect(out).toHaveLength(1);
+    const days = out[0]!.occurrences.map((o) => o.start.slice(0, 10));
+    expect(days).toEqual(["2026-06-20"]);
+  });
+});
