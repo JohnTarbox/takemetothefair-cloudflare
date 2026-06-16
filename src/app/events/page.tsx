@@ -602,6 +602,21 @@ function EventsFilter({
   return (
     <form className="bg-card p-4 rounded-lg border border-border space-y-4">
       {searchParams.view && <input type="hidden" name="view" value={searchParams.view} />}
+      {/* Preserve the calendar sub-view + anchor so applying a filter doesn't
+          reset the calendar back to Month / today. */}
+      {searchParams.cal_view && (
+        <input type="hidden" name="cal_view" value={searchParams.cal_view} />
+      )}
+      {searchParams.cal && <input type="hidden" name="cal" value={searchParams.cal} />}
+      {searchParams.cal_year && (
+        <input type="hidden" name="cal_year" value={searchParams.cal_year} />
+      )}
+      {searchParams.cal_date && (
+        <input type="hidden" name="cal_date" value={searchParams.cal_date} />
+      )}
+      {searchParams.cal_days && (
+        <input type="hidden" name="cal_days" value={searchParams.cal_days} />
+      )}
 
       {/* Vendor-only filter */}
       {isVendor && (
@@ -864,7 +879,9 @@ export default async function EventsPage({
     : "/events";
 
   return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 print:max-w-none print:px-0 print:py-0">
+    <div
+      className={`mx-auto ${useSsrCalendar ? "max-w-screen-2xl" : "max-w-7xl"} px-4 sm:px-6 lg:px-8 py-8 print:max-w-none print:px-0 print:py-0`}
+    >
       <BreadcrumbSchema
         items={[
           { name: "Home", url: "https://meetmeatthefair.com" },
@@ -911,10 +928,17 @@ export default async function EventsPage({
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 print:block">
-        <aside className="lg:col-span-1 print:hidden">
-          <MobileFilterDrawer>
-            <Suspense fallback={<div className="animate-pulse bg-muted h-64 rounded-lg" />}>
+      {useSsrCalendar ? (
+        // Calendar view: full-width grid (Google-Calendar-like). The site filters
+        // move into a collapsible disclosure above the calendar so the 7-day grid
+        // gets the whole width instead of competing with a left sidebar.
+        <div className="space-y-6">
+          <details className="rounded-lg border border-border bg-card print:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-foreground">
+              <Filter className="h-4 w-4" />
+              Filters
+            </summary>
+            <div className="border-t border-border p-4">
               <EventsFilter
                 categories={categories}
                 states={states}
@@ -922,18 +946,34 @@ export default async function EventsPage({
                 isVendor={isVendor}
                 isLoggedIn={isLoggedIn}
               />
-            </Suspense>
-          </MobileFilterDrawer>
-        </aside>
+            </div>
+          </details>
 
-        <main className="lg:col-span-3">
-          {useSsrCalendar ? (
-            <CalendarSSR
-              events={eventsList}
-              searchParams={params as Record<string, string | undefined>}
-              cal2Enabled={cal2Enabled}
-            />
-          ) : (
+          <CalendarSSR
+            events={eventsList}
+            searchParams={params as Record<string, string | undefined>}
+            cal2Enabled={cal2Enabled}
+          />
+
+          <CalendarPastEventsCta />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 print:block">
+          <aside className="lg:col-span-1 print:hidden">
+            <MobileFilterDrawer>
+              <Suspense fallback={<div className="animate-pulse bg-muted h-64 rounded-lg" />}>
+                <EventsFilter
+                  categories={categories}
+                  states={states}
+                  searchParams={params}
+                  isVendor={isVendor}
+                  isLoggedIn={isLoggedIn}
+                />
+              </Suspense>
+            </MobileFilterDrawer>
+          </aside>
+
+          <main className="lg:col-span-3">
             <EventsView
               events={eventsList}
               view={viewMode}
@@ -949,22 +989,29 @@ export default async function EventsPage({
               myEvents={params.myEvents === "true"}
               vendorCoords={vendorCoords}
             />
-          )}
-          <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border print:hidden">
-            <h3 className="text-lg font-semibold text-foreground mb-2">Looking for past events?</h3>
-            <p className="text-sm text-muted-foreground mb-3">
-              Browse fairs and festivals from previous seasons, including event details and vendor
-              information.
-            </p>
-            <Link
-              href="/events/past"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/90 transition-colors text-sm font-medium"
-            >
-              Browse past events &rarr;
-            </Link>
-          </div>
-        </main>
-      </div>
+            <CalendarPastEventsCta />
+          </main>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Shared "Looking for past events?" call-to-action below the events area. */
+function CalendarPastEventsCta() {
+  return (
+    <div className="mt-8 bg-muted rounded-lg p-6 text-center border border-border print:hidden">
+      <h3 className="text-lg font-semibold text-foreground mb-2">Looking for past events?</h3>
+      <p className="text-sm text-muted-foreground mb-3">
+        Browse fairs and festivals from previous seasons, including event details and vendor
+        information.
+      </p>
+      <Link
+        href="/events/past"
+        className="inline-flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-lg hover:bg-secondary/90 transition-colors text-sm font-medium"
+      >
+        Browse past events &rarr;
+      </Link>
     </div>
   );
 }
