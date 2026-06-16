@@ -24,7 +24,7 @@ This project has the Cloudflare MCP server configured (`.mcp.json`). Use `search
 - **R2 Bucket**: `mmatf-vendor-assets` (binding: `VENDOR_ASSETS`, served at `cdn.meetmeatthefair.com`)
 - **Pages Project**: `takemetothefair`
 - **Domain**: `meetmeatthefair.com`
-- **AI Model**: `@cf/meta/llama-3.1-8b-instruct`
+- **AI Model**: `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (single source of truth: `WORKERS_AI_MODEL` in `@takemetothefair/constants`; the prior `@cf/meta/llama-3.1-8b-instruct` was deprecated + error-5028'd 2026-06-15, swapped in K28)
 
 ## Cloudflare Account
 

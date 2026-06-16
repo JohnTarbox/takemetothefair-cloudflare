@@ -28,8 +28,13 @@
  *    event submissions that contained a vendor-application URL, splitting
  *    them into multi-intent and spawning orphan claim_request child
  *    workflows. claim_request now requires explicit ownership language,
- *    not just the presence of an application/registration link. */
-export const CLASSIFIER_VERSION = "c-2026-05-22-v4";
+ *    not just the presence of an application/registration link.
+ *  v5 (2026-06-16, K28): model binding changed — 3.1-8B was deprecated by
+ *    Cloudflare (error 5028) and the binding moved to the centralized
+ *    @takemetothefair/constants.WORKERS_AI_MODEL (fp8-fast Llama 3.3 70B).
+ *    Prompt itself unchanged; bumped per the "model binding changes" rule
+ *    so the accuracy dashboard attributes any shift to the new model. */
+export const CLASSIFIER_VERSION = "c-2026-06-16-v5";
 
 /** Default confidence gate. Below this, we fall back to address-based
  *  routing and flag the row for admin review. Tuned per Q1 in spec —

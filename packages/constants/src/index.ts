@@ -20,6 +20,34 @@ export const SUPPORT_EMAIL = "noreply@meetmeatthefair.com";
 export const SCRAPER_USER_AGENT =
   "Mozilla/5.0 (compatible; MeetMeAtTheFair/1.0; +https://meetmeatthefair.com)";
 
+// ── Workers AI model ──────────────────────────────────────────────
+// Single source of truth for the Cloudflare Workers AI text-generation
+// model used by both deploy artifacts: URL/email extraction in the main
+// app (src/lib/url-import/ai-extractor.ts) and the inbound-email intent
+// classifier in the MCP worker (mcp-server/src/intent-classifier.ts).
+//
+// History:
+//   @cf/meta/llama-3.1-8b-instruct (through 2026-06-15) — DEPRECATED by
+//     Cloudflare; began returning error 5028 on every call, which hard-
+//     failed the URL-extraction AI fallback and 5028'd the intent
+//     classifier on inbound email. The deprecation surfaced slowly
+//     because the model id was duplicated across three call sites
+//     (K28). Centralizing here makes the next sunset one edit, not three.
+//   @cf/meta/llama-3.3-70b-instruct-fp8-fast (2026-06-16, K28) — current
+//     replacement. Chosen for: (a) same Llama family as the prior model,
+//     so it returns `{ response: <string> }` like 3.1-8b did — avoiding
+//     the non-string `.response` shape that the 2026-05-22 llama-3.2-3b
+//     experiment hit (which crashed the classifier on `.replace`); (b)
+//     strong JSON instruction-following for our structured-output
+//     dependence; (c) the fp8-fast variant is latency-optimized, which
+//     keeps it inside the classifier's 4000ms budget; (d) a 24,000-token
+//     context window comfortably covers our 20KB-truncated prompts.
+//
+// When the next deprecation lands, edit this one constant. (A future
+// option, if we want to roll models without a redeploy, is to read an
+// env-var override at each call site and fall back to this default.)
+export const WORKERS_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
 // ── Event statuses ────────────────────────────────────────────────
 
 export const EVENT_STATUS = {
