@@ -587,6 +587,21 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         ),
       ticket_url: z.string().optional().describe("URL to purchase tickets"),
       source_url: z.string().optional().describe("URL with more information about the event"),
+      // K26 (2026-06-16) — provenance override. Defaults to "vendor-submission"
+      // (→ ingestion_method 'vendor_submission'). Automated callers should pass
+      // a label that classifies to the right bucket — e.g. the daily NE event
+      // discovery harvest skill passes "daily-discovery" (→ 'discovery') so its
+      // events stop being mis-tagged as vendor submissions. Unknown labels fall
+      // through to the classifier's domain logic (admin_manual / direct_scrape).
+      // This only sets the stored provenance tag; quality gating is unchanged
+      // (every suggest_event submission runs the same pre-ingest gates).
+      source_label: z
+        .string()
+        .max(64)
+        .optional()
+        .describe(
+          "Provenance label for ingestion_method classification. Default 'vendor-submission'. Automated discovery callers pass 'daily-discovery' (classifies to ingestion_method='discovery')."
+        ),
       // TAX1 Phase 1 (2026-06-02) — audience / access taxonomy. Both
       // default to the permissive value, so omitting both preserves
       // today's pre-TAX1 semantics. See drizzle/0100 + the events
@@ -955,6 +970,11 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         });
       }
 
+      // K26: resolve provenance once. Default preserves pre-K26 behavior
+      // ("vendor-submission" → ingestion_method 'vendor_submission').
+      const sourceLabel = params.source_label?.trim() || "vendor-submission";
+      const sourceClassification = classifySource(sourceLabel, params.source_url);
+
       const eventId = crypto.randomUUID();
       await db.insert(events).values({
         id: eventId,
@@ -984,11 +1004,13 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // Mirror the main-app suggest-event behavior: vendor submissions are
         // TENTATIVE-lifecycle (dates unconfirmed at submission time).
         lifecycleStatus: "TENTATIVE",
-        sourceName: "vendor-submission",
-        sourceDomain: classifySource("vendor-submission", params.source_url).sourceDomain,
-        ingestionMethod:
-          classifySource("vendor-submission", params.source_url).ingestionMethod ??
-          "vendor_submission",
+        // K26: provenance from the caller-supplied label (default
+        // "vendor-submission"). classifySource maps the label →
+        // ingestion_method; "daily-discovery" → 'discovery', so discovery
+        // harvest events are no longer mis-bucketed as vendor submissions.
+        sourceName: sourceLabel,
+        sourceDomain: sourceClassification.sourceDomain,
+        ingestionMethod: sourceClassification.ingestionMethod,
         sourceUrl: params.source_url || null,
         sourceId: params.source_url
           ? params.source_url
