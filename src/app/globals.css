@@ -452,11 +452,22 @@ body {
    robust if the module adds another child. Scoped to the `.cal-legend-left` host
    wrapper so Agenda/Year (which share .cm-root) are untouched, and gated to
    >=768px so phones keep the natural stacked layout. */
+/* Compact the category legend (Google "My calendars" style): smaller text and
+   tighter rows so it reads as a quiet sidebar list, not a tall dominant column.
+   Applies in every layout (also the mobile wrap). */
+.cm-root .cm-legend {
+  gap: 0.25rem 0.75rem; /* tight row-gap; wider col-gap for the mobile wrap */
+}
+.cm-root .cm-legend-item {
+  font-size: 0.8125rem; /* 13px — set on the item so it can't inherit 16px */
+  line-height: 1.25;
+}
+
 @media (min-width: 768px) {
   .cal-legend-left .cm-root {
     display: grid;
-    grid-template-columns: minmax(11rem, max-content) 1fr;
-    column-gap: 1.5rem;
+    grid-template-columns: minmax(9rem, max-content) 1fr;
+    column-gap: 1.25rem;
     align-items: start;
   }
   .cal-legend-left .cm-root > .cm-legend {
