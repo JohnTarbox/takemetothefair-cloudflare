@@ -118,6 +118,25 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   // "Next: …" line and the date badge. See showsNextOccurrence for the rule.
   const showNextOccurrence = showsNextOccurrence(occurrence);
 
+  // Date line label. Priority: recurring series → "Today"/"Next: <date>";
+  // a currently-running event → "Today" on its last day else "Now through
+  // <end>" (never a backward range that reads as a stale past event); otherwise
+  // the normal start–end range.
+  const sameUTCDay = (a: Date, b: Date) =>
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate();
+  const endsToday = displayEndDate ? sameUTCDay(new Date(displayEndDate), new Date()) : false;
+  const dateLabel = showNextOccurrence
+    ? occurrence!.isToday
+      ? "Today"
+      : `Next: ${formatDate(occurrence!.date)}`
+    : occurrence?.isOngoing
+      ? endsToday || !displayEndDate
+        ? "Today"
+        : `Now through ${formatDate(displayEndDate)}`
+      : formatDateRange(displayStartDate, displayEndDate);
+
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
       {/* Top accent bar */}
@@ -257,13 +276,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span>
-                  {showNextOccurrence
-                    ? occurrence!.isToday
-                      ? "Today"
-                      : `Next: ${formatDate(occurrence!.date)}`
-                    : formatDateRange(displayStartDate, displayEndDate)}
-                </span>
+                <span>{dateLabel}</span>
               </div>
               <AddToCalendar
                 title={event.name}
