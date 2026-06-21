@@ -59,7 +59,7 @@ export function StubEventCard({ event, compact = false }: { event: StubEvent; co
   });
   const date = occurrence?.date ?? baseStart;
   // A series already underway gets a "Next" eyebrow so the numeral reads clearly.
-  const isNextOccurrence = showsNextOccurrence(occurrence, baseStart);
+  const isNextOccurrence = showsNextOccurrence(occurrence);
   const md = date ? monthDay(date) : null;
 
   const location = [event.venue?.city, event.venue?.state].filter(Boolean).join(", ");
