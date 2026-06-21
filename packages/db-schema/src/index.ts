@@ -1464,6 +1464,26 @@ export const indexnowSubmissions = sqliteTable(
   (table) => [index("idx_indexnow_submissions_timestamp").on(table.timestamp)]
 );
 
+// REL7 (2026-06-21) — per-URL last-successful-IndexNow-ping ledger. The dedup
+// suppressor in pingIndexNow() reads this BEFORE the circuit breaker: a URL that
+// returned 2xx from Bing within the last 24h is dropped (status='suppressed_dedup'
+// in indexnow_submissions) instead of re-submitted. Root cause it fixes: both
+// REL4 un-pause attempts re-tripped Bing's per-host throttle because the deferred
+// queue re-pinged the SAME URLs identically on every flush. Suppression breaks
+// that same-URL re-arm loop so the penalty can decay.
+//
+//   - url: canonical public URL (PK). One row per URL, upserted on each success.
+//   - lastSuccessAt: seconds-epoch of the most recent 2xx Bing submission.
+//   - contentHash: RESERVED for v2 — the "content changed → bypass suppression"
+//     path. Unused/null in v1 (pure 24h suppression).
+//   - updatedAt: seconds-epoch of the last write to this row.
+export const indexnowUrlLastSuccess = sqliteTable("indexnow_url_last_success", {
+  url: text("url").primaryKey(),
+  lastSuccessAt: integer("last_success_at", { mode: "timestamp" }).notNull(),
+  contentHash: text("content_hash"),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
 // Email send ledger — idempotency guard for the email-jobs queue consumer.
 // Cloudflare Queues are at-least-once: a message redelivers (same `id`, higher
 // `attempts`) until acked, so a send that succeeded at the provider but crashed

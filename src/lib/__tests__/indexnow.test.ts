@@ -426,3 +426,126 @@ describe("pingIndexNow", () => {
     });
   });
 });
+
+// REL7 (2026-06-21) — same-URL de-dup suppressor. A URL pinged successfully
+// within the last 24h is dropped BEFORE the breaker/Bing so the deferred queue
+// can't re-ram an identical URL set on every un-pause. These tests use a richer
+// fake D1 that supports the suppression read (select→from→where) and the
+// per-URL last-success upsert (insert→values→onConflictDoUpdate).
+describe("pingIndexNow — REL7 suppression", () => {
+  const fetchSpy = vi.spyOn(globalThis, "fetch");
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  // lastSuccessByUrl: url → Date of last 2xx. The select chain returns matching
+  // rows; the insert chain records every written row in `inserted`.
+  function makeSuppressDb(lastSuccessByUrl: Record<string, Date>) {
+    const inserted: Array<Record<string, unknown>> = [];
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          // partitionBySuppression chunks the read; return ALL known rows each
+          // call (the in-memory filter inside the fn re-checks membership).
+          where: vi.fn(async () =>
+            Object.entries(lastSuccessByUrl).map(([url, lastSuccessAt]) => ({
+              url,
+              lastSuccessAt,
+            }))
+          ),
+        })),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn((v: Record<string, unknown>) => {
+          inserted.push(v);
+          // Thenable so `await values(...)` (recordSubmission) AND
+          // `values(...).onConflictDoUpdate(...)` (recordIndexNowSuccess) both work.
+          const p: Promise<undefined> & { onConflictDoUpdate?: () => Promise<undefined> } =
+            Promise.resolve(undefined);
+          p.onConflictDoUpdate = async () => undefined;
+          return p;
+        }),
+      })),
+      delete: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
+      __inserted: inserted,
+    };
+    return db;
+  }
+
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 60 * 60 * 1000);
+
+  it("suppresses a URL pinged < 24h ago and never contacts Bing for it", async () => {
+    const url = `https://${SITE_HOSTNAME}/events/recent`;
+    const db = makeSuppressDb({ [url]: hoursAgo(1) });
+
+    const result = await pingIndexNow(db as never, url, { INDEXNOW_KEY: "k" }, "flush");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, attempted: 0, succeeded: 0, failed: 0 });
+    const supp = db.__inserted.find((r) => r.status === "suppressed_dedup");
+    expect(supp).toBeTruthy();
+    expect(supp?.urlCount).toBe(1);
+  });
+
+  it("re-pings a URL whose last success is older than 24h", async () => {
+    const url = `https://${SITE_HOSTNAME}/events/stale`;
+    const db = makeSuppressDb({ [url]: hoursAgo(48) });
+    fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
+
+    const result = await pingIndexNow(db as never, url, { INDEXNOW_KEY: "k" }, "flush");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: true, succeeded: 1 });
+    // The success ledger is upserted for the pinged URL.
+    const ledger = db.__inserted.find((r) => r.url === url && r.lastSuccessAt !== undefined);
+    expect(ledger).toBeTruthy();
+  });
+
+  it("partitions a mixed batch — suppresses recent, pings stale", async () => {
+    const recent = `https://${SITE_HOSTNAME}/events/recent`;
+    const stale = `https://${SITE_HOSTNAME}/events/stale`;
+    const fresh = `https://${SITE_HOSTNAME}/events/never-seen`;
+    const db = makeSuppressDb({ [recent]: hoursAgo(2), [stale]: hoursAgo(30) });
+    fetchSpy.mockResolvedValueOnce(new Response("", { status: 200 }));
+
+    const result = await pingIndexNow(
+      db as never,
+      [recent, stale, fresh],
+      { INDEXNOW_KEY: "k" },
+      "flush"
+    );
+
+    // One POST batch carrying only the two eligible URLs (stale + fresh).
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, init] = fetchSpy.mock.calls[0];
+    const body = JSON.parse(String(init?.body));
+    expect(body.urlList).toEqual([stale, fresh]);
+    expect(body.urlList).not.toContain(recent);
+    expect(result.attempted).toBe(2);
+    const supp = db.__inserted.find((r) => r.status === "suppressed_dedup");
+    expect(supp?.urlCount).toBe(1);
+  });
+
+  it("returns ok:true with nothing attempted when every URL is suppressed", async () => {
+    const a = `https://${SITE_HOSTNAME}/events/a`;
+    const b = `https://${SITE_HOSTNAME}/events/b`;
+    const db = makeSuppressDb({ [a]: hoursAgo(3), [b]: hoursAgo(10) });
+
+    const result = await pingIndexNow(db as never, [a, b], { INDEXNOW_KEY: "k" }, "flush");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, attempted: 0, deferred: false });
+  });
+});
