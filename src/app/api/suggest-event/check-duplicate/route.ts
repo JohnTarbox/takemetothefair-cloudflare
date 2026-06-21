@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
+import { checkDuplicateSchema } from "./schema";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
@@ -23,26 +23,9 @@ import { logError } from "@/lib/logger";
 // HTTP wrapper: rate-limit + INTERNAL_API_KEY auth + body validation,
 // then delegate to findDuplicate. K2 part 4, analyst 2026-05-31.
 
-// K29 (2026-06-21): every field is `.optional().nullable()`, not just
-// `.optional()`. Callers (the email pipeline) send extracted fields that may be
-// an explicit `null` when a signal is absent — e.g. `venueCity: null`. Without
-// `.nullable()`, a single null tripped a 400 and the caller silently skipped
-// dedup, so events that should have merged were accepted as fresh duplicates
-// (recurring since ≥6/14). findDuplicate already treats null as "missing"
-// (FindDuplicateInput fields are all `?: string | null`), so the schema was the
-// only thing rejecting it.
-export const checkDuplicateSchema = z.object({
-  sourceUrl: z.string().url().optional().nullable(),
-  name: z.string().optional().nullable(),
-  startDate: z.string().optional().nullable(), // YYYY-MM-DD format
-  // Venue signals — resolved server-side inside findDuplicate via
-  // autoLinkVenue, then used for the venue_date and city_state_date
-  // match stages.
-  venueName: z.string().optional().nullable(),
-  venueAddress: z.string().optional().nullable(),
-  venueCity: z.string().optional().nullable(),
-  venueState: z.string().optional().nullable(),
-});
+// Schema lives in ./schema.ts (Next rejects non-handler exports from a route
+// file). K29 (2026-06-21): it now accepts null and normalizes null -> undefined
+// so a `venueCity: null` no longer 400s and silently skips dedup.
 
 export async function POST(request: NextRequest) {
   // Internal callers (MCP Worker email pipeline, future cross-service hooks)
