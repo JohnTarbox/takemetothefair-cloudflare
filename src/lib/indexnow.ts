@@ -16,8 +16,13 @@
  * table for the /admin/analytics → IndexNow tab.
  */
 
-import { indexnowSubmissions, pendingSearchPings, timeToIndexLog } from "@/lib/db/schema";
-import { lt } from "drizzle-orm";
+import {
+  indexnowSubmissions,
+  indexnowUrlLastSuccess,
+  pendingSearchPings,
+  timeToIndexLog,
+} from "@/lib/db/schema";
+import { inArray, lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { SITE_HOSTNAME } from "@takemetothefair/constants";
 import { getCloudflareRateLimitKv, getCloudflareEnv } from "@/lib/cloudflare";
@@ -95,7 +100,24 @@ interface IndexNowEnv {
 
 type Db = DrizzleD1Database<Record<string, unknown>> | null;
 
-type SubmissionStatus = "success" | "failure" | "no_key" | "no_eligible_urls" | "skipped";
+type SubmissionStatus =
+  | "success"
+  | "failure"
+  | "no_key"
+  | "no_eligible_urls"
+  | "skipped"
+  // REL7 — URL pinged successfully within the suppression window; not re-sent.
+  | "suppressed_dedup";
+
+// REL7 same-URL de-dup window. A URL that returned 2xx from Bing within this
+// span is suppressed on subsequent pings (unless content changes — v2). 24h per
+// John's spec; long enough to break the deferred-queue re-arm loop, short enough
+// that a genuinely-stale page still re-pings daily.
+const SUPPRESS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// D1 binds one variable per parameter and caps a statement at ~100. The deferred
+// flush can carry ~120 URLs, so chunk the inArray read well under the limit.
+const SUPPRESS_QUERY_CHUNK = 90;
 
 async function recordSubmission(
   db: Db,
@@ -167,6 +189,72 @@ async function recordTimeToIndexSeed(db: Db, urls: string[], submittedAt: Date):
     }
   } catch (err) {
     console.error("[IndexNow] Failed to seed time_to_index_log:", err);
+  }
+}
+
+/**
+ * REL7 suppression read — partition `urls` into those that were pinged
+ * successfully within SUPPRESS_WINDOW_MS (suppress) and the rest (eligible).
+ * Reads indexnow_url_last_success in ≤90-URL chunks to respect D1's variable cap.
+ * Fails OPEN: any read error treats every URL as eligible so a flaky KV/D1 read
+ * never silently blocks indexing.
+ */
+async function partitionBySuppression(
+  db: NonNullable<Db>,
+  urls: string[],
+  now: Date
+): Promise<{ eligible: string[]; suppressed: string[] }> {
+  try {
+    const lastByUrl = new Map<string, Date>();
+    for (let i = 0; i < urls.length; i += SUPPRESS_QUERY_CHUNK) {
+      const chunk = urls.slice(i, i + SUPPRESS_QUERY_CHUNK);
+      const rows = await db
+        .select({
+          url: indexnowUrlLastSuccess.url,
+          lastSuccessAt: indexnowUrlLastSuccess.lastSuccessAt,
+        })
+        .from(indexnowUrlLastSuccess)
+        .where(inArray(indexnowUrlLastSuccess.url, chunk));
+      for (const r of rows) {
+        if (r.lastSuccessAt) lastByUrl.set(r.url, r.lastSuccessAt);
+      }
+    }
+    const eligible: string[] = [];
+    const suppressed: string[] = [];
+    for (const u of urls) {
+      const last = lastByUrl.get(u);
+      if (last && now.getTime() - last.getTime() < SUPPRESS_WINDOW_MS) {
+        suppressed.push(u);
+      } else {
+        eligible.push(u);
+      }
+    }
+    return { eligible, suppressed };
+  } catch (err) {
+    console.error("[IndexNow] suppression read failed — treating all URLs as eligible:", err);
+    return { eligible: urls, suppressed: [] };
+  }
+}
+
+/**
+ * REL7 success write — upsert the per-URL last-success timestamp after a 2xx
+ * Bing submission so future pings within the window are suppressed. Per-URL loop
+ * (batches here are ≤ the deferred flush size); never throws.
+ */
+async function recordIndexNowSuccess(db: Db, urls: string[], at: Date): Promise<void> {
+  if (!db || urls.length === 0) return;
+  try {
+    for (const url of urls) {
+      await db
+        .insert(indexnowUrlLastSuccess)
+        .values({ url, lastSuccessAt: at, contentHash: null, updatedAt: at })
+        .onConflictDoUpdate({
+          target: indexnowUrlLastSuccess.url,
+          set: { lastSuccessAt: at, updatedAt: at },
+        });
+    }
+  } catch (err) {
+    console.error("[IndexNow] Failed to record per-URL last-success:", err);
   }
 }
 
@@ -284,7 +372,7 @@ export async function pingIndexNow(
 ): Promise<PingResult> {
   const key = env.INDEXNOW_KEY;
   const list = Array.isArray(urls) ? urls : [urls];
-  const filtered = list
+  let filtered = list
     .map((u) => u?.trim())
     .filter((u): u is string => Boolean(u && u.startsWith(`https://${HOST}/`)));
 
@@ -332,6 +420,33 @@ export async function pingIndexNow(
       httpStatus: null,
       failureReason: "no_eligible_urls",
     };
+  }
+
+  // REL7 same-URL de-dup suppressor — sits ABOVE the kill-switch + breaker.
+  // Drop any URL pinged successfully within the last 24h so the deferred queue
+  // can't re-ram Bing with an identical URL set on every un-pause (the exact
+  // failure that survived REL4 recovery attempts #1 and #2). Suppressed URLs are
+  // recorded as a distinct status for the daily aggregate; the breaker and Bing
+  // only ever see the eligible remainder. Fails open (partition swallows errors).
+  if (db) {
+    const { eligible, suppressed } = await partitionBySuppression(db, filtered, new Date());
+    if (suppressed.length > 0) {
+      await recordSubmission(db, source, suppressed, "suppressed_dedup", null, "rel7_24h_dedup");
+    }
+    filtered = eligible;
+    if (filtered.length === 0) {
+      // Everything was suppressed — nothing attempted against Bing. ok:true so a
+      // flush marks its rows drained (they were already indexed within the window).
+      return {
+        ok: true,
+        deferred: false,
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        httpStatus: null,
+        failureReason: null,
+      };
+    }
   }
 
   // REL4 circuit breaker — the single choke point where Bing is actually
@@ -392,6 +507,7 @@ export async function pingIndexNow(
       if (response.ok) {
         succeeded = 1;
         await recordTimeToIndexSeed(db, filtered, submittedAt);
+        await recordIndexNowSuccess(db, filtered, submittedAt);
       } else {
         failed = 1;
         lastHttpStatus = response.status;
@@ -429,6 +545,7 @@ export async function pingIndexNow(
         if (response.ok) {
           succeeded += chunk.length;
           await recordTimeToIndexSeed(db, chunk, submittedAt);
+          await recordIndexNowSuccess(db, chunk, submittedAt);
         } else {
           failed += chunk.length;
           lastHttpStatus = response.status;
