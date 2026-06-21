@@ -178,3 +178,26 @@ export function displayDate(event: EventLike, now: Date = new Date()): Date | nu
   if (occ) return occ.date;
   return toDate(event.startDate);
 }
+
+/**
+ * U-next (2026-06-21): should a card show "Next: <occurrence.date>" instead of
+ * the full season range? True only for a recurring SERIES that's already
+ * underway — discrete days spanning more than a week, with the next occurrence
+ * LATER than the season start, and not currently in progress. A weekly market
+ * (May–Oct, next market Jun 26) returns true; single-day, contiguous multi-day,
+ * pre-season, and in-progress events return false and keep their normal range.
+ * Mirrors the detail page's "Next: …" line and the date badge.
+ */
+export function showsNextOccurrence(
+  occurrence: NextOccurrence | null,
+  baseStart: Date | string | null
+): boolean {
+  if (!occurrence || occurrence.isOngoing || occurrence.totalSpanDays <= 7) return false;
+  const start = toDate(baseStart);
+  if (!start) return false;
+  // Compare by UTC calendar day, not raw ms: event_day dates are anchored at
+  // NOON UTC while a raw startDate may be MIDNIGHT, so a timestamp compare would
+  // false-positive by 12h on the same calendar day.
+  const DAY_MS = 86_400_000;
+  return Math.floor(occurrence.date.getTime() / DAY_MS) > Math.floor(start.getTime() / DAY_MS);
+}
