@@ -35,7 +35,7 @@ import {
   blogPosts,
   contentLinks,
 } from "@/lib/db/schema";
-import { eq, and, sql, ne, lt, like, desc, or, isNull, inArray } from "drizzle-orm";
+import { eq, and, sql, ne, like, desc, or, isNull, inArray } from "drizzle-orm";
 import { resolveEventVendorTarget, dedupeByResolvedSlug } from "@/lib/event-vendor-display";
 import { isPublicVendorStatus, STATUS_BADGE_VARIANTS } from "@/lib/vendor-status";
 import type { EventVendorStatus } from "@/lib/constants";
@@ -318,20 +318,18 @@ async function getEvent(slug: string) {
   }
 }
 
-async function getRelatedEvents(
-  eventId: string,
-  venueId: string | null,
-  categories: string[],
-  isPastEvent: boolean
-) {
+async function getRelatedEvents(eventId: string, venueId: string | null, categories: string[]) {
   const db = getCloudflareDb();
   try {
-    // A2 (Dev backlog 2026-06-05): upcoming branch uses the 24h end-of-day
-    // grace per upcomingEndPredicate. Past branch stays strict lt() since
-    // an event with end_date in the past is unambiguously past.
-    const dateCondition = isPastEvent
-      ? lt(events.endDate, new Date())
-      : upcomingEndPredicate(new Date());
+    // U11 (2026-06-21): related-events modules ALWAYS recommend UPCOMING events
+    // — even on a PAST event's page. This surface answers "what can I go to
+    // next", not "what else happened". The prior code mirrored the host event's
+    // temporal context (strict lt() when the host was past), which surfaced
+    // 11-month-old events on past detail pages (e.g. maine-moose-lottery showed
+    // NH Sheep & Wool from May 2025). Uses the 24h end-of-day grace per
+    // upcomingEndPredicate. If too few upcoming matches exist, prefer fewer (or
+    // an empty module) over backfilling past events.
+    const dateCondition = upcomingEndPredicate(new Date());
     const baseConditions = [ne(events.id, eventId), isPublicEventStatus(), dateCondition];
 
     // Both branches use the narrow projection (D1 100-col cap); see
@@ -622,7 +620,7 @@ export default async function EventDetailPage({ params }: Props) {
   const isPastEvent = event.endDate ? new Date(event.endDate) < new Date() : false;
   const eventCategories = parseJsonArray(event.categories);
   const [relatedEvents, relatedBlogPosts] = await Promise.all([
-    getRelatedEvents(event.id, event.venueId, eventCategories, isPastEvent),
+    getRelatedEvents(event.id, event.venueId, eventCategories),
     getRelatedBlogPosts(event.id, event.name, eventCategories),
   ]);
 
