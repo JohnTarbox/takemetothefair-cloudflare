@@ -39,6 +39,73 @@ import {
 // headroom for the R2 put + Phase-2b Cloudflare Image transform downstream.
 const FETCH_TIMEOUT_MS = 15_000;
 
+// SSRF redirect-bypass defense: a public host can 3xx-redirect to an internal
+// IP, which a single up-front host check misses. We follow redirects MANUALLY,
+// re-validating protocol + isBlockedSsrfHost on every hop, capped at this depth.
+// (DNS rebinding — a public hostname resolving to an internal A-record — remains
+// a documented residual: isBlockedSsrfHost is a string check and Workers fetch
+// exposes no resolved IP. Accepted on this admin-only route, same as the
+// /api/admin/import-url/fetch sibling; Workers have no metadata service or
+// internal HTTP network to pivot into.)
+const MAX_REDIRECTS = 3;
+
+type GuardedFetch = { ok: true; response: Response } | { ok: false; status: number; error: string };
+
+/** Validate a hop's URL: http(s) only + not an internal/private host. */
+function ssrfCheck(u: URL): { ok: true } | { ok: false; error: string } {
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    return { ok: false, error: "image_url must be http(s)" };
+  }
+  if (isBlockedSsrfHost(u.hostname)) {
+    return { ok: false, error: "Internal URLs are not allowed" };
+  }
+  return { ok: true };
+}
+
+/**
+ * Fetch `start`, following redirects manually and re-running the SSRF check on
+ * each Location before issuing the next request. Returns the first non-3xx
+ * response, or a typed error.
+ */
+async function fetchWithSsrfGuardedRedirects(start: URL): Promise<GuardedFetch> {
+  let current = start;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const check = ssrfCheck(current);
+    if (!check.ok) return { ok: false, status: 400, error: check.error };
+
+    let resp: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      resp = await fetch(current.href, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; MMATFBot/1.0)" },
+        signal: controller.signal,
+        redirect: "manual",
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (resp.status >= 300 && resp.status < 400) {
+      const location = resp.headers.get("location");
+      if (!location) {
+        return { ok: false, status: 502, error: "Redirect response without a Location header" };
+      }
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        return { ok: false, status: 502, error: "Redirect to an invalid URL" };
+      }
+      current = next;
+      continue;
+    }
+
+    return { ok: true, response: resp };
+  }
+  return { ok: false, status: 502, error: `Exceeded ${MAX_REDIRECTS} redirects` };
+}
+
 async function authorize(
   request: NextRequest
 ): Promise<{ ok: true; actorId: string } | { ok: false; status: number }> {
@@ -90,18 +157,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing 'target_id'" }, { status: 400 });
   }
 
-  // Validate + SSRF-guard the URL before any outbound request.
+  // Parse the URL. Per-hop protocol + SSRF validation happens inside
+  // fetchWithSsrfGuardedRedirects so a redirect can't bypass the host check.
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(imageUrl);
   } catch {
     return NextResponse.json({ error: "Invalid image_url" }, { status: 400 });
-  }
-  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-    return NextResponse.json({ error: "image_url must be http(s)" }, { status: 400 });
-  }
-  if (isBlockedSsrfHost(parsedUrl.hostname)) {
-    return NextResponse.json({ error: "Internal URLs are not allowed" }, { status: 400 });
   }
 
   // Verify the target row exists before fetching/putting.
@@ -120,18 +182,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: `${targetType} not found: ${targetId}` }, { status: 404 });
   }
 
-  // Fetch the source image. A plausible UA materially improves hit rate on CDN
-  // hosts that reject the default Workers UA.
-  let imageResponse: Response;
+  // Fetch the source image, following redirects manually with a per-hop SSRF
+  // re-check. A plausible UA improves hit rate on CDN hosts that reject the
+  // default Workers UA.
+  let fetchResult: GuardedFetch;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    imageResponse = await fetch(parsedUrl.href, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; MMATFBot/1.0)" },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    clearTimeout(timeout);
+    fetchResult = await fetchWithSsrfGuardedRedirects(parsedUrl);
   } catch (e) {
     await logError(db, {
       message: "upload-image-from-url: source fetch failed",
@@ -144,6 +200,10 @@ export async function POST(request: NextRequest) {
       { status: 502 }
     );
   }
+  if (!fetchResult.ok) {
+    return NextResponse.json({ error: fetchResult.error }, { status: fetchResult.status });
+  }
+  const imageResponse = fetchResult.response;
   if (!imageResponse.ok) {
     return NextResponse.json(
       { error: `Source image fetch returned HTTP ${imageResponse.status}.` },
