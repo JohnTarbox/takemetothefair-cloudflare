@@ -222,3 +222,51 @@ describe("showsNextOccurrence", () => {
     expect(showsNextOccurrence(null, "2026-01-01")).toBe(false);
   });
 });
+
+import { findNextUpcoming } from "../recurring-display";
+
+describe("today counts as upcoming (noon-UTC boundary fix)", () => {
+  // 2026-06-21 is a Sunday; 19:00Z is well past the noon-UTC anchor (8am ET).
+  const AFTERNOON = new Date("2026-06-21T19:00:00Z");
+
+  it("findNextUpcoming returns TODAY even after noon UTC", () => {
+    expect(findNextUpcoming(["2026-06-14", "2026-06-21", "2026-06-28"], AFTERNOON)).toBe(
+      "2026-06-21"
+    );
+  });
+
+  it("nextOccurrence resolves to today (isToday) for a series whose last day is today", () => {
+    // Robin Hood's shape: weekend faire, final day = today.
+    const occ = nextOccurrence(
+      {
+        startDate: "2026-05-16",
+        endDate: "2026-06-21",
+        discontinuousDates: true,
+        eventDayDates: ["2026-05-16", "2026-05-17", "2026-06-20", "2026-06-21"],
+      },
+      AFTERNOON
+    );
+    expect(occ?.date).toEqual(d("2026-06-21"));
+    expect(occ?.isToday).toBe(true);
+    // Still a recurring series → cards show "Today" (showsNextOccurrence true).
+    expect(showsNextOccurrence(occ, "2026-05-16")).toBe(true);
+  });
+
+  it("a contiguous event whose last day is today still reads in-progress (not past)", () => {
+    const occ = nextOccurrence(
+      { startDate: "2026-06-19", endDate: "2026-06-21", discontinuousDates: false },
+      AFTERNOON
+    );
+    expect(occ).not.toBeNull();
+    expect(occ?.isOngoing).toBe(true);
+    expect(occ?.isToday).toBe(true);
+  });
+
+  it("an event that ended YESTERDAY is still past", () => {
+    const occ = nextOccurrence(
+      { startDate: "2026-06-18", endDate: "2026-06-20", discontinuousDates: false },
+      AFTERNOON
+    );
+    expect(occ).toBeNull();
+  });
+});

@@ -83,7 +83,7 @@ export function StubEventCard({ event, compact = false }: { event: StubEvent; co
             <div
               className={`font-bold uppercase tracking-[0.14em] opacity-90 ${compact ? "text-[10px]" : "text-xs"}`}
             >
-              {isNextOccurrence ? `Next · ${md.mon}` : md.mon}
+              {occurrence?.isToday ? "Today" : isNextOccurrence ? `Next · ${md.mon}` : md.mon}
             </div>
             <div
               className={`font-display font-semibold leading-[0.95] ${compact ? "text-[26px]" : "text-[40px]"}`}

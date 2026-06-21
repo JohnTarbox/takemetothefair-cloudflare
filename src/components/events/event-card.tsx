@@ -259,7 +259,9 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
                 <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
                 <span>
                   {showNextOccurrence
-                    ? `Next: ${formatDate(occurrence!.date)}`
+                    ? occurrence!.isToday
+                      ? "Today"
+                      : `Next: ${formatDate(occurrence!.date)}`
                     : formatDateRange(displayStartDate, displayEndDate)}
                 </span>
               </div>
