@@ -1290,10 +1290,14 @@ export function EventsView({
     // occurrence (just-ended, lingering in the 24h grace) returns null → sorts
     // LAST via Infinity instead of floating to the top on its past start date.
     startDate: (e) => {
+      // Use the SAME (public) dates the card displays — publicStartDate/
+      // publicEndDate ?? raw — so the sort key matches the shown date. Mixing
+      // raw end_date here vs public end on the card made a just-ended event
+      // (public end yesterday, raw end today) sort into the "Today" group.
       const occ = nextOccurrence(
         {
-          startDate: e.startDate,
-          endDate: e.endDate,
+          startDate: e.publicStartDate ?? e.startDate,
+          endDate: e.publicEndDate ?? e.endDate,
           discontinuousDates: e.discontinuousDates ?? null,
           eventDayDates: e.eventDayDates,
         },
