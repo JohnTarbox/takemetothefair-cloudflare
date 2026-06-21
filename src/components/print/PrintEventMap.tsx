@@ -26,11 +26,15 @@ export function PrintEventMap({
   latitude,
   longitude,
   venueName,
-  /** Px width — sized for print at ~600px (≈ 2x at 300dpi). */
-  width = 600,
+  /** PRINT1-MAP (2026-06-21): request Google Static Maps' free-tier max base
+   *  size (640, scale 2 → 1280px) so the printed map stays crisp. At the old
+   *  600px the 1200px asset was upscaled across a ~6" print column (~1800px at
+   *  300dpi) and read as low quality. 640 is the hard cap; can't go higher
+   *  without the premium plan. */
+  width = 640,
   /** Px height — 2:1 letterbox is wide enough to show context
    *  without taking the full sheet height. */
-  height = 300,
+  height = 320,
 }: {
   latitude: number;
   longitude: number;
