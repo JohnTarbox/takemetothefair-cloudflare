@@ -90,6 +90,12 @@ const CATEGORY_COLORS: Record<string, CategoryColors> = {
   "Fiber Arts Festival": STONE_CRAFT,
   "Antique Show": STONE_CRAFT,
   "Flea Market": STONE_CRAFT,
+  // TAX1 follow-up (2026-06-21) — the two K21 community categories were
+  // unmapped and fell back to the neutral default, reading as "Other". Group
+  // them with the SAGE (community/growth) family so the badges get a distinct
+  // accent that matches their semantics.
+  Charity: SAGE,
+  "Community Event": SAGE,
   Other: STONE_CRAFT,
 };
 
