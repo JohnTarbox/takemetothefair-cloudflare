@@ -72,6 +72,12 @@ export interface NextOccurrence {
   /** True when `date` is TODAY (UTC calendar day). Lets cards render
    *  "Today" instead of "Next: <today's date>" for an event happening now. */
   isToday: boolean;
+  /** True when the event is a discrete recurring SERIES — its event_days have
+   *  gaps (a weekly/seasonal market, a weekends-only faire), as opposed to a
+   *  single contiguous run (a 3-day fair). Drives the card's "Next: …"/"Today"
+   *  vs. season-range decision. False for single/contiguous events and for
+   *  events with no event_days. Independent of whether the series has started. */
+  isRecurringSeries: boolean;
 }
 
 function toDate(value: Date | string | null): Date | null {
@@ -124,6 +130,20 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
       const sortedDays = [...event.eventDayDates].sort();
       const firstDay = ymdToDate(sortedDays[0]);
       const lastDay = ymdToDate(sortedDays[sortedDays.length - 1]);
+      // A discrete recurring series has a gap (> 1 day) between some pair of
+      // consecutive occurrences (weekly market, weekends-only faire). A single
+      // contiguous run (a 3-day fair listed day-by-day) has none. This — NOT
+      // "occurrence is after the start" — is what distinguishes a series, so a
+      // not-yet-started weekly market still shows "Next: <first market day>".
+      let hasGap = false;
+      for (let i = 1; i < sortedDays.length; i++) {
+        const prevMs = ymdToDate(sortedDays[i - 1]).getTime();
+        const curMs = ymdToDate(sortedDays[i]).getTime();
+        if (Math.round((curMs - prevMs) / 86_400_000) > 1) {
+          hasGap = true;
+          break;
+        }
+      }
       return {
         date,
         isOngoing: false, // per-occurrence — "ongoing" doesn't apply
@@ -131,6 +151,7 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
         isDataQualityGap: false,
         totalSpanDays: dayDiffInclusive(firstDay, lastDay),
         isToday: sameUTCDay(date),
+        isRecurringSeries: hasGap,
       };
     }
     // All event_days are past — fall through to the date-range path,
@@ -151,6 +172,7 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
       isDataQualityGap: true,
       totalSpanDays: end ? dayDiffInclusive(start, end) : 1,
       isToday: sameUTCDay(start),
+      isRecurringSeries: false,
     };
   }
 
@@ -168,6 +190,7 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
       isDataQualityGap: false,
       totalSpanDays: dayDiffInclusive(start, end),
       isToday: true,
+      isRecurringSeries: false,
     };
   }
 
@@ -179,6 +202,7 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
       isDataQualityGap: false,
       totalSpanDays: end ? dayDiffInclusive(start, end) : 1,
       isToday: sameUTCDay(start),
+      isRecurringSeries: false,
     };
   }
 
@@ -200,24 +224,17 @@ export function displayDate(event: EventLike, now: Date = new Date()): Date | nu
 }
 
 /**
- * U-next (2026-06-21): should a card show "Next: <occurrence.date>" instead of
- * the full season range? True only for a recurring SERIES that's already
- * underway — discrete days spanning more than a week, with the next occurrence
- * LATER than the season start, and not currently in progress. A weekly market
- * (May–Oct, next market Jun 26) returns true; single-day, contiguous multi-day,
- * pre-season, and in-progress events return false and keep their normal range.
- * Mirrors the detail page's "Next: …" line and the date badge.
+ * Should a card show "Next: <occurrence.date>" / "Today" instead of the full
+ * season range? True iff the event is a discrete recurring SERIES (its
+ * event_days have gaps — a weekly market, a weekends-only faire). This is
+ * structural, NOT "the next occurrence is after the start", so a not-yet-started
+ * weekly market (first market day = the start) still shows "Next: <first day>"
+ * rather than a months-long range. Single-day and contiguous multi-day events
+ * (a 3-day fair) and events with no event_days return false → keep their range.
+ *
+ * (Revised 2026-06-21 — the prior `occurrence.date > start` heuristic wrongly
+ * excluded future-starting markets, which then rendered season ranges.)
  */
-export function showsNextOccurrence(
-  occurrence: NextOccurrence | null,
-  baseStart: Date | string | null
-): boolean {
-  if (!occurrence || occurrence.isOngoing || occurrence.totalSpanDays <= 7) return false;
-  const start = toDate(baseStart);
-  if (!start) return false;
-  // Compare by UTC calendar day, not raw ms: event_day dates are anchored at
-  // NOON UTC while a raw startDate may be MIDNIGHT, so a timestamp compare would
-  // false-positive by 12h on the same calendar day.
-  const DAY_MS = 86_400_000;
-  return Math.floor(occurrence.date.getTime() / DAY_MS) > Math.floor(start.getTime() / DAY_MS);
+export function showsNextOccurrence(occurrence: NextOccurrence | null): boolean {
+  return !!occurrence && occurrence.isRecurringSeries;
 }

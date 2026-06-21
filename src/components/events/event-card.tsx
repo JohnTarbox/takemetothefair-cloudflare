@@ -116,7 +116,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   // weekly/seasonal market), show "Next: <date>" instead of the full season
   // range, which reads as a stale months-long span. Matches the detail page's
   // "Next: …" line and the date badge. See showsNextOccurrence for the rule.
-  const showNextOccurrence = showsNextOccurrence(occurrence, displayStartDate);
+  const showNextOccurrence = showsNextOccurrence(occurrence);
 
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">

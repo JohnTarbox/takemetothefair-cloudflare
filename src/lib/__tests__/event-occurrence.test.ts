@@ -172,9 +172,7 @@ describe("displayDate", () => {
 });
 
 describe("showsNextOccurrence", () => {
-  // A weekly market May–Oct, viewed mid-season (NOW = 2026-06-15). The next
-  // market day (Jun 19) is later than the season start (May 1) and the series
-  // spans months → show "Next: …" instead of the May 1–Oct 30 range.
+  // A weekly market May–Oct, viewed mid-season — event_days have gaps → series.
   it("true for a recurring season already underway (the Machias case)", () => {
     const occ = nextOccurrence(
       {
@@ -185,7 +183,24 @@ describe("showsNextOccurrence", () => {
       },
       NOW
     );
-    expect(showsNextOccurrence(occ, "2026-05-01")).toBe(true);
+    expect(showsNextOccurrence(occ)).toBe(true);
+  });
+
+  // The fix: a NOT-yet-started weekly market (first market day = the start) is
+  // still a series and shows "Next: <first day>", not a months-long range.
+  it("true for a NOT-yet-started weekly market (the Bridgewater case)", () => {
+    const occ = nextOccurrence(
+      {
+        startDate: "2026-08-01",
+        endDate: "2026-10-24",
+        discontinuousDates: true,
+        // Weekly Saturdays, all in the future relative to NOW (2026-06-15).
+        eventDayDates: ["2026-08-01", "2026-08-08", "2026-08-15", "2026-08-22"],
+      },
+      NOW
+    );
+    expect(occ?.date?.toISOString()).toContain("2026-08-01"); // next == first == start
+    expect(showsNextOccurrence(occ)).toBe(true); // still a series, not a range
   });
 
   it("false for a single-day event", () => {
@@ -193,33 +208,32 @@ describe("showsNextOccurrence", () => {
       { startDate: "2026-07-04", endDate: "2026-07-04", discontinuousDates: false },
       NOW
     );
-    expect(showsNextOccurrence(occ, "2026-07-04")).toBe(false);
+    expect(showsNextOccurrence(occ)).toBe(false);
   });
 
-  it("false for an upcoming contiguous multi-day fair (occurrence == start)", () => {
+  it("false for a CONTIGUOUS multi-day fair (consecutive event_days, no gaps)", () => {
     const occ = nextOccurrence(
       {
         startDate: "2026-08-01",
-        endDate: "2026-08-10",
+        endDate: "2026-08-03",
         discontinuousDates: false,
-        eventDayDates: ["2026-08-01", "2026-08-05", "2026-08-10"],
+        eventDayDates: ["2026-08-01", "2026-08-02", "2026-08-03"],
       },
       NOW
     );
-    expect(showsNextOccurrence(occ, "2026-08-01")).toBe(false);
+    expect(showsNextOccurrence(occ)).toBe(false);
   });
 
-  it("false when the event is in progress (ongoing)", () => {
+  it("false when the event is in progress (ongoing, no event_days)", () => {
     const occ = nextOccurrence(
       { startDate: "2026-06-10", endDate: "2026-06-20", discontinuousDates: false },
       NOW
     );
-    // contiguous in-progress span → isOngoing → keep the range
-    expect(showsNextOccurrence(occ, "2026-06-10")).toBe(false);
+    expect(showsNextOccurrence(occ)).toBe(false);
   });
 
   it("false when occurrence is null (past event)", () => {
-    expect(showsNextOccurrence(null, "2026-01-01")).toBe(false);
+    expect(showsNextOccurrence(null)).toBe(false);
   });
 });
 
@@ -249,7 +263,7 @@ describe("today counts as upcoming (noon-UTC boundary fix)", () => {
     expect(occ?.date).toEqual(d("2026-06-21"));
     expect(occ?.isToday).toBe(true);
     // Still a recurring series → cards show "Today" (showsNextOccurrence true).
-    expect(showsNextOccurrence(occ, "2026-05-16")).toBe(true);
+    expect(showsNextOccurrence(occ)).toBe(true);
   });
 
   it("a contiguous event whose last day is today still reads in-progress (not past)", () => {
