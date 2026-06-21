@@ -75,6 +75,29 @@ function allHoursUnknown(days: EventDay[]): boolean {
   return open.every((d) => d.openTime == null && d.closeTime == null);
 }
 
+/** DQ-HOURS1 (2026-06-21) — true when the OPEN days form a gap-free,
+ *  day-after-day run (each date is exactly one calendar day after the
+ *  previous). The "Daily:" simplified label must reflect ACTUAL date
+ *  contiguity computed from event_days, not the `discontinuous_dates` flag:
+ *  a Saturdays-only market ingested as a single span with
+ *  discontinuous_dates=0 was rendering "Daily:" despite week-long gaps. A
+ *  closed day inside the range also breaks the run (it's not open daily).
+ *  parseDateOnly anchors each date to midnight UTC, so the delta is an exact
+ *  multiple of 86_400_000 ms regardless of viewer timezone. */
+export function isContiguousDaily(openDays: EventDay[]): boolean {
+  if (openDays.length <= 1) return true;
+  const dates = openDays.map((d) => d.date).sort((a, b) => a.localeCompare(b));
+  for (let i = 1; i < dates.length; i++) {
+    const prev = parseDateOnly(dates[i - 1]);
+    const curr = parseDateOnly(dates[i]);
+    // Unparseable date → can't verify contiguity; fall back to the detailed
+    // view rather than risk a wrong "Daily:" label.
+    if (!prev || !curr) return false;
+    if (Math.round((curr.getTime() - prev.getTime()) / 86_400_000) !== 1) return false;
+  }
+  return true;
+}
+
 export function DailyScheduleDisplay({
   days,
   discontinuousDates = false,
@@ -98,8 +121,17 @@ export function DailyScheduleDisplay({
   }
 
   // For discontinuous events, always show per-day listing (users need to see which dates)
-  // For contiguous events with same hours, show simplified display
-  if (!discontinuousDates && allSameHours(visibleDays) && openDays.length > 0) {
+  // For contiguous events with same hours, show simplified display.
+  // DQ-HOURS1: gate on COMPUTED contiguity (isContiguousDaily), not just the
+  // discontinuous_dates flag — the flag is wrong on some ingested spans. The
+  // flag stays as an additional suppressor so an explicitly-flagged event never
+  // shows "Daily:" even if its stored dates happen to look contiguous.
+  if (
+    !discontinuousDates &&
+    isContiguousDaily(openDays) &&
+    allSameHours(visibleDays) &&
+    openDays.length > 0
+  ) {
     // Only use simplified display if no visible vendor-only days need badges
     const hasVendorDays = showVendorDays !== "hide" && visibleDays.some((d) => d.vendorOnly);
     if (!hasVendorDays) {
