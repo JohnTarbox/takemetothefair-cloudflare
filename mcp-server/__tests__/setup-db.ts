@@ -161,7 +161,10 @@ const SCHEMA_SQL = `
     image_focal_x REAL NOT NULL DEFAULT 0.5,
     image_focal_y REAL NOT NULL DEFAULT 0.5,
     -- SYN1 (drizzle/0122) — per-event syndication delivery version.
-    syndication_version INTEGER NOT NULL DEFAULT 0
+    syndication_version INTEGER NOT NULL DEFAULT 0,
+    -- EH3 P0 (drizzle/0127) — occurrence → series link (nullable, no default).
+    -- Mirrored here so the WS2b schema-sync guard passes; no MCP tool writes it yet.
+    series_id TEXT
   );
 
   CREATE TABLE event_date_drift_findings (
