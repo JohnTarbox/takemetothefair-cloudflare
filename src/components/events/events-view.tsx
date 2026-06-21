@@ -16,7 +16,7 @@ import {
   Printer,
   Plus,
 } from "lucide-react";
-import { displayDate } from "@/lib/event-occurrence";
+import { nextOccurrence } from "@/lib/event-occurrence";
 import { EventCard } from "./event-card";
 import { EventPopover, DayEventsPopover } from "./event-popover";
 import {
@@ -1285,12 +1285,12 @@ export function EventsView({
     city: (e) => e.venue?.city?.toLowerCase() || "",
     state: (e) => e.venue?.state || "",
     // Sort by the date the card SHOWS — the next occurrence (a weekly market's
-    // next market day), not the season start. Without this, cards displaying
-    // "Next: Jun 26" appeared out of order because the list sorted on start_date.
-    // displayDate falls back to startDate when there's no event_days schedule.
-    // Null dates sort last via Infinity.
+    // next market day) / today for an in-progress event, NOT the season start.
+    // Use nextOccurrence directly (not displayDate): an event with NO upcoming
+    // occurrence (just-ended, lingering in the 24h grace) returns null → sorts
+    // LAST via Infinity instead of floating to the top on its past start date.
     startDate: (e) => {
-      const d = displayDate(
+      const occ = nextOccurrence(
         {
           startDate: e.startDate,
           endDate: e.endDate,
@@ -1299,7 +1299,7 @@ export function EventsView({
         },
         nowForSort
       );
-      return d ? d.getTime() : Infinity;
+      return occ ? occ.date.getTime() : Infinity;
     },
     endDate: (e) => (e.endDate ? new Date(e.endDate).getTime() : Infinity),
   });
