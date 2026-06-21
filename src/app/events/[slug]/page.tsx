@@ -400,6 +400,33 @@ async function getRelatedEvents(
   }
 }
 
+/** PRINT1-MAP (2026-06-21): build the public "View on Google Maps" link.
+ *  Prefers a curated googleMapsUrl, then the venue's exact lat/lng — the SAME
+ *  point the printed <PrintEventMap> static map pins — so the on-screen link and
+ *  the printed map agree on the location. Falls back to an address text-search
+ *  only when coordinates are missing. Previously the screen links did an address
+ *  search even when coords existed, so the link and the print map could frame
+ *  different spots. */
+function venueMapsHref(venue: {
+  googleMapsUrl?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  name?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+}): string {
+  if (venue.googleMapsUrl) return venue.googleMapsUrl;
+  if (venue.latitude != null && venue.longitude != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${venue.latitude},${venue.longitude}`;
+  }
+  const q = [venue.name, venue.address, venue.city, venue.state, venue.zip]
+    .filter(Boolean)
+    .join(", ");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+}
+
 type RelatedBlogPost = {
   title: string;
   slug: string;
@@ -882,11 +909,7 @@ export default async function EventDetailPage({ params }: Props) {
               }
               const hasCoords = !!(event.venue?.latitude && event.venue?.longitude);
               if (hasCoords && event.venue) {
-                const mapsUrl =
-                  event.venue.googleMapsUrl ||
-                  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                    `${event.venue.name}, ${event.venue.address}, ${event.venue.city}, ${event.venue.state}`
-                  )}`;
+                const mapsUrl = venueMapsHref(event.venue);
                 return (
                   <div
                     className={`aspect-video rounded-xl overflow-hidden ${categoryColors.bg} relative flex items-center justify-center`}
@@ -1359,10 +1382,7 @@ export default async function EventDetailPage({ params }: Props) {
                         {event.venue.city}, {event.venue.state} {event.venue.zip}
                       </p>
                       <a
-                        href={
-                          event.venue.googleMapsUrl ||
-                          `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${event.venue.address}, ${event.venue.city}, ${event.venue.state} ${event.venue.zip}`)}`
-                        }
+                        href={venueMapsHref(event.venue)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-xs text-royal hover:text-navy mt-1"
