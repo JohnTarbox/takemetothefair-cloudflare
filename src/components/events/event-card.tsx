@@ -118,10 +118,13 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   // "Next: …" line and the date badge. See showsNextOccurrence for the rule.
   const showNextOccurrence = showsNextOccurrence(occurrence);
 
-  // Date line label. Priority: recurring series → "Today"/"Next: <date>";
-  // a currently-running event → "Today" on its last day else "Now through
-  // <end>" (never a backward range that reads as a stale past event); otherwise
-  // the normal start–end range.
+  // Date line label. Priority: recurring series → "Today"/"Next: <date>"; an
+  // event whose resolved occurrence is TODAY or that's currently running →
+  // "Today" when it ends today (incl. a single-day event today) else "Now
+  // through <end>" (never a backward range that reads as a stale past event);
+  // otherwise the normal start–end range. (isToday is checked alongside
+  // isOngoing because a single event_day today comes back via Path 1 with
+  // isOngoing=false but isToday=true.)
   const sameUTCDay = (a: Date, b: Date) =>
     a.getUTCFullYear() === b.getUTCFullYear() &&
     a.getUTCMonth() === b.getUTCMonth() &&
@@ -131,7 +134,7 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
     ? occurrence!.isToday
       ? "Today"
       : `Next: ${formatDate(occurrence!.date)}`
-    : occurrence?.isOngoing
+    : occurrence?.isToday || occurrence?.isOngoing
       ? endsToday || !displayEndDate
         ? "Today"
         : `Now through ${formatDate(displayEndDate)}`
