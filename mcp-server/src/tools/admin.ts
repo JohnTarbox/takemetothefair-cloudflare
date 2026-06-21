@@ -1662,6 +1662,130 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
     }
   );
 
+  // ── K30: upload_{vendor,venue}_image_from_url ──────────────────
+  // Sibling of upload_event_image for vendor logos + venue images. Unlike
+  // upload_event_image (which fetches in the Worker and POSTs raw bytes to the
+  // per-event route), these forward the URL to the main app's
+  // /api/admin/upload-image-from-url, which SSRF-guards + fetches + runs the
+  // FULL optimization pipeline (EXIF strip + auto-orient + resize + WebP) and
+  // writes vendors.logo_url / venues.image_url. Closes the painful
+  // "download bytes -> base64 -> upload_image_bytes" path for images >100KB.
+  const uploadImageFromUrl = async (
+    targetType: "vendor" | "venue",
+    targetId: string,
+    imageUrl: string
+  ) => {
+    if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `upload_${targetType}_image_from_url requires MAIN_APP_URL and INTERNAL_API_KEY on the MCP Worker.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Upfront existence check — clearer error than the route's 404, and saves
+    // an outbound image fetch on a mistyped id.
+    const table = targetType === "vendor" ? vendors : venues;
+    const [row] = await db
+      .select({ id: table.id })
+      .from(table)
+      .where(eq(table.id, targetId))
+      .limit(1);
+    if (!row) {
+      return {
+        content: [{ type: "text" as const, text: `${targetType} not found: ${targetId}` }],
+        isError: true,
+      };
+    }
+
+    let resp: Response;
+    try {
+      resp = await fetch(`${env.MAIN_APP_URL}/api/admin/upload-image-from-url`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Key": env.INTERNAL_API_KEY,
+        },
+        body: JSON.stringify({ image_url: imageUrl, target_type: targetType, target_id: targetId }),
+      });
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Upload request to main app failed: ${err instanceof Error ? err.message : "unknown error"}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const resultBody = (await resp.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!resp.ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Upload failed (${resp.status}): ${
+              typeof resultBody.error === "string" ? resultBody.error : "unknown"
+            }`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    // Enrichment log only tracks vendor/event targets (the /admin/analytics
+    // enrichment page is vendor-centric). Venue image writes are already
+    // logged by the main-app route's pipeline; nothing to mirror here.
+    if (targetType === "vendor") {
+      await logEnrichment(db, {
+        targetType: "vendor",
+        targetId,
+        source: "manual_admin",
+        status: "success",
+        fieldsChanged: ["logo_url"],
+        actorUserId: auth.userId,
+        notes: `MCP upload_vendor_image_from_url from ${imageUrl}`,
+      });
+    }
+
+    return {
+      content: [
+        jsonContent({
+          [`${targetType}_id`]: targetId,
+          url: resultBody.url,
+          key: resultBody.key,
+          source_url: resultBody.source_url ?? imageUrl,
+        }),
+      ],
+    };
+  };
+
+  server.tool(
+    "upload_vendor_image_from_url",
+    "Fetch an image from a public URL and store it on cdn.meetmeatthefair.com, then set the vendor's logo_url. The main app SSRF-guards + fetches + optimizes (EXIF strip, auto-orient, resize, WebP). Use this instead of update_vendor(logo_url=...) when the source isn't on a stable host, or instead of upload_image_bytes for images >100KB. Max 5MB; allowed types: jpg, png, webp, svg. Admin only.",
+    {
+      vendor_id: z.string().describe("Vendor ID (UUID) to attach the logo to."),
+      image_url: z.string().url().describe("Publicly fetchable URL of the source image."),
+    },
+    async (params) => uploadImageFromUrl("vendor", params.vendor_id, params.image_url)
+  );
+
+  server.tool(
+    "upload_venue_image_from_url",
+    "Fetch an image from a public URL and store it on cdn.meetmeatthefair.com, then set the venue's image_url. The main app SSRF-guards + fetches + optimizes (EXIF strip, auto-orient, resize, WebP). Use this instead of update_venue(image_url=...) when the source isn't on a stable host, or instead of upload_image_bytes for images >100KB. Max 5MB; allowed types: jpg, png, webp, svg. Admin only.",
+    {
+      venue_id: z.string().describe("Venue ID (UUID) to attach the image to."),
+      image_url: z.string().url().describe("Publicly fetchable URL of the source image."),
+    },
+    async (params) => uploadImageFromUrl("venue", params.venue_id, params.image_url)
+  );
+
   // ── list_event_vendors_admin ───────────────────────────────────
   server.tool(
     "list_event_vendors_admin",
