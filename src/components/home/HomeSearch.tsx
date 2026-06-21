@@ -99,7 +99,11 @@ export function HomeSearch() {
 
         <button
           type="submit"
-          className="flex items-center justify-center gap-2 bg-amber px-7 py-4 text-base font-bold text-navy-dark transition-colors hover:bg-amber/90 sm:py-0"
+          /* HP-DARK1 (2026-06-21): text-primary-foreground (amber-ink 31 26 10,
+             fixed in both themes) instead of text-navy-dark, which lifts to a
+             light sky-blue in dark mode → 1.37:1 on the unchanged amber fill.
+             Matches the sibling "I'm a Promoter" amber CTA button. */
+          className="flex items-center justify-center gap-2 bg-amber px-7 py-4 text-base font-bold text-primary-foreground transition-colors hover:bg-amber/90 sm:py-0"
         >
           <Search className="h-[18px] w-[18px]" aria-hidden="true" />
           Search

@@ -481,14 +481,19 @@ export default async function HomePage() {
         </section>
       )}
 
-      {/* CTA Section — same dark-mode reasoning as the hero above:
-       * --secondary pair stays AA in both themes (13.6:1 light, 7.6:1 dark). */}
-      <section className="py-16 bg-secondary text-secondary-foreground">
+      {/* CTA Section — DM-FIX1 (2026-06-21): use the `--footer` band token, not
+       * `--secondary`. `--secondary` lifts to bright sky-blue in dark mode (for
+       * accent/text legibility), which turned this large FILLED band into a
+       * glaring periwinkle slab. `--footer` is the purpose-built dark-band
+       * surface: its LIGHT value (30 39 97) is identical to light `--secondary`
+       * (so light mode is pixel-unchanged), and it stays deep navy (19 24 56) in
+       * dark mode. White foreground, AAA in both themes. */}
+      <section className="py-16 bg-footer text-footer-foreground">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight">
             Ready to Share Your Event?
           </h2>
-          <p className="mt-4 text-lg text-secondary-foreground/80 max-w-2xl mx-auto">
+          <p className="mt-4 text-lg text-footer-foreground/80 max-w-2xl mx-auto">
             Whether you&apos;re a promoter organizing fairs or a vendor looking to participate,
             we&apos;ve got you covered.
           </p>
@@ -505,7 +510,7 @@ export default async function HomePage() {
               <Button
                 size="lg"
                 variant="outline"
-                className="w-full sm:w-auto bg-transparent border-secondary-foreground text-secondary-foreground hover:bg-secondary-foreground/10"
+                className="w-full sm:w-auto bg-transparent border-footer-foreground text-footer-foreground hover:bg-footer-foreground/10"
               >
                 I&apos;m a Vendor
               </Button>
