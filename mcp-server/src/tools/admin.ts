@@ -64,6 +64,7 @@ import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
 import { registerRequestIndexingTool } from "./admin-request-indexing.js";
 import { registerAdminClaimApprovalTool } from "./admin-claim-approval.js";
 import { registerEventLifecycleTools } from "./admin-event-lifecycle.js";
+import { registerSeriesBackfillTools } from "./admin-series-backfill.js";
 import { registerRecommendationsTools } from "./admin-recommendations.js";
 import { registerUploadImageBytesTool } from "./upload-image-bytes.js";
 import { registerRequestImageUploadSlotTool } from "./request-image-upload-slot.js";
@@ -155,6 +156,9 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // with transition validation, date-swap for RESCHEDULED/POSTPONED,
   // admin_actions audit logging, and IndexNow on visibility crossings.
   registerEventLifecycleTools(server, db, auth, env);
+
+  // EH3 P1 — backfill_event_series (dry-run proposal only; commit gated).
+  registerSeriesBackfillTools(server, auth, env);
 
   // Read-only recommendations feed — same data as /admin/analytics ▸
   // Recommendations. Adds get_recommendations, get_recommendation_rule.
