@@ -100,10 +100,15 @@ export function findNextUpcoming(
   dates: ReadonlyArray<string>,
   now: Date = new Date()
 ): string | null {
-  const nowMs = now.getTime();
+  // Compare against the START of today's UTC day, not the current instant, so
+  // an occurrence on TODAY's calendar date still counts as upcoming. Without
+  // this, a date stored at noon UTC (the parseDateOnlyUTC anchor) drops out of
+  // "upcoming" at 12:00 UTC = 8am ET — i.e. an all-day event happening today
+  // would read as past for most of its own day.
+  const dayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const upcoming = dates
     .map((d) => ({ d, ms: parseDateOnlyUTC(d).getTime() }))
-    .filter(({ ms }) => ms >= nowMs)
+    .filter(({ ms }) => ms >= dayStartMs)
     .sort((a, b) => a.ms - b.ms);
   return upcoming[0]?.d ?? null;
 }

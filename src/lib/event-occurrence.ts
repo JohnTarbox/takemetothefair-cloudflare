@@ -69,6 +69,9 @@ export interface NextOccurrence {
   /** Total span in whole days inclusive (1 for a single-day event).
    *  Useful for the calendar's spanning-bar width. */
   totalSpanDays: number;
+  /** True when `date` is TODAY (UTC calendar day). Lets cards render
+   *  "Today" instead of "Next: <today's date>" for an event happening now. */
+  isToday: boolean;
 }
 
 function toDate(value: Date | string | null): Date | null {
@@ -99,6 +102,17 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
   const start = toDate(event.startDate);
   const end = toDate(event.endDate) ?? start;
 
+  // "Today counts as present": compare by CALENDAR DAY, not the current instant,
+  // so an all-day event happening TODAY doesn't flip to "past" at noon UTC
+  // (8am ET). dayStart = midnight UTC of today; sameUTCDay flags occurrences on
+  // today's date so cards can render "Today".
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const dayEnd = new Date(dayStart.getTime() + 86_400_000 - 1);
+  const sameUTCDay = (d: Date): boolean =>
+    d.getUTCFullYear() === now.getUTCFullYear() &&
+    d.getUTCMonth() === now.getUTCMonth() &&
+    d.getUTCDate() === now.getUTCDate();
+
   // Path 1 — explicit per-day rows. Authoritative when populated.
   if (event.eventDayDates && event.eventDayDates.length > 0) {
     const upcoming = findNextUpcoming(event.eventDayDates, now);
@@ -116,6 +130,7 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
         isContinuousMultiDay: false,
         isDataQualityGap: false,
         totalSpanDays: dayDiffInclusive(firstDay, lastDay),
+        isToday: sameUTCDay(date),
       };
     }
     // All event_days are past — fall through to the date-range path,
@@ -128,20 +143,23 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
   // gap. Return the startDate as a best-effort but flag it so the
   // caller can suppress misleading badges.
   if (event.discontinuousDates && (!event.eventDayDates || event.eventDayDates.length === 0)) {
-    if (end && now > end) return null;
+    if (end && dayStart > end) return null; // ended before today
     return {
       date: start,
-      isOngoing: !!end && now >= start && now <= end,
+      isOngoing: !!end && dayEnd >= start && dayStart <= end,
       isContinuousMultiDay: false,
       isDataQualityGap: true,
       totalSpanDays: end ? dayDiffInclusive(start, end) : 1,
+      isToday: sameUTCDay(start),
     };
   }
 
   // Path 3 — contiguous multi-day or single-day. The common case.
-  if (end && now >= start && now <= end) {
-    // Event is running now. Return today (anchored to noon UTC) so
-    // badges read "Today" rather than the start date in the past.
+  // Use calendar-day bounds so an event whose last day is TODAY still reads as
+  // in-progress (not past) after noon UTC.
+  if (end && dayEnd >= start && dayStart <= end) {
+    // Event is running now (by calendar day). Return today (anchored to noon
+    // UTC) so badges read "Today" rather than the start date in the past.
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12));
     return {
       date: today,
@@ -149,16 +167,18 @@ export function nextOccurrence(event: EventLike, now: Date = new Date()): NextOc
       isContinuousMultiDay: dayDiffInclusive(start, end) > 1,
       isDataQualityGap: false,
       totalSpanDays: dayDiffInclusive(start, end),
+      isToday: true,
     };
   }
 
-  if (now < start) {
+  if (dayStart < start) {
     return {
       date: start,
       isOngoing: false,
       isContinuousMultiDay: !!end && dayDiffInclusive(start, end) > 1,
       isDataQualityGap: false,
       totalSpanDays: end ? dayDiffInclusive(start, end) : 1,
+      isToday: sameUTCDay(start),
     };
   }
 
