@@ -163,6 +163,46 @@ export const promoters = sqliteTable("promoters", {
   imageFocalY: real("image_focal_y").notNull().default(0.5),
 });
 
+// Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the
+// stable identity + canonical-metadata home for a recurring event. Each `events`
+// row is one dated OCCURRENCE under a series (events.series_id) and may override
+// these defaults for its specific year. NULL series_id = standalone one-off.
+// No reads at P0 — backfill (P1) and the series landing/SEO/tools (P2–P3) ship
+// later. See docs/eh3-scoping.md.
+export const eventSeries = sqliteTable(
+  "event_series",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Year-agnostic canonical URL slug (`/events/<canonical_slug>`), e.g.
+    // "newport-international-boat-show". Branded Slug per the #120 convention.
+    canonicalSlug: text("canonical_slug").$type<Slug>().notNull().unique(),
+    name: text("name").notNull(),
+    // Series-level defaults; an occurrence may override. Nullable FKs (a default,
+    // not a requirement) — unlike events.promoterId which stays NOT NULL.
+    venueId: text("venue_id").references(() => venues.id, { onDelete: "set null" }),
+    promoterId: text("promoter_id").references(() => promoters.id, { onDelete: "set null" }),
+    recurrenceRule: text("recurrence_rule"),
+    description: text("description"),
+    imageUrl: text("image_url"),
+    categories: text("categories").default("[]"),
+    tags: text("tags").default("[]"),
+    primaryAudience: text("primary_audience", { enum: ["PUBLIC", "TRADE", "MEMBERS"] })
+      .notNull()
+      .default("PUBLIC"),
+    publicAccess: text("public_access", { enum: ["OPEN", "CLOSED"] })
+      .notNull()
+      .default("OPEN"),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (table) => [
+    index("idx_event_series_venue_id").on(table.venueId),
+    index("idx_event_series_promoter_id").on(table.promoterId),
+  ]
+);
+
 // Events table
 export const events = sqliteTable(
   "events",
@@ -295,6 +335,10 @@ export const events = sqliteTable(
     // (§7) cheaply find auto-rolled rows. Self-FK ON DELETE SET NULL per the
     // mergedInto/possibleDuplicateOf convention — defined at the SQL level.
     rolledFromEventId: text("rolled_from_event_id"),
+    // EH3 P0 (drizzle/0127, 2026-06-21) — occurrence → series link. NULL =
+    // standalone one-off (every existing row at deploy). Set by P1 backfill.
+    // ON DELETE SET NULL at the SQL level (mirrors rolledFromEventId).
+    seriesId: text("series_id").references(() => eventSeries.id, { onDelete: "set null" }),
     // §10.2 cached 0-100 completeness score (drizzle/0055). Same gate as vendors:
     // entries with completenessScore < 40 are excluded from /sitemap.xml.
     completenessScore: integer("completeness_score").notNull().default(0),
@@ -1235,10 +1279,20 @@ export const promotersRelations = relations(promoters, ({ one, many }) => ({
 export const eventsRelations = relations(events, ({ one, many }) => ({
   promoter: one(promoters, { fields: [events.promoterId], references: [promoters.id] }),
   venue: one(venues, { fields: [events.venueId], references: [venues.id] }),
+  // EH3 P0 — the series this occurrence belongs to (NULL for standalone events).
+  series: one(eventSeries, { fields: [events.seriesId], references: [eventSeries.id] }),
   eventVendors: many(eventVendors),
   eventDays: many(eventDays),
   schemaOrg: one(eventSchemaOrg, { fields: [events.id], references: [eventSchemaOrg.eventId] }),
   dataCitations: many(eventDataCitations),
+}));
+
+// EH3 P0 — a series owns many dated occurrences (its events rows) and carries
+// default venue/promoter. No reads wired yet; defined for P2 query ergonomics.
+export const eventSeriesRelations = relations(eventSeries, ({ one, many }) => ({
+  venue: one(venues, { fields: [eventSeries.venueId], references: [venues.id] }),
+  promoter: one(promoters, { fields: [eventSeries.promoterId], references: [promoters.id] }),
+  occurrences: many(events),
 }));
 
 export const eventSchemaOrgRelations = relations(eventSchemaOrg, ({ one }) => ({
