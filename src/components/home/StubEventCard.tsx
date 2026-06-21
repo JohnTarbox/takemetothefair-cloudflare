@@ -16,12 +16,20 @@ import Link from "next/link";
 import { MapPin } from "lucide-react";
 import { parseJsonArray } from "@/types";
 import { getCategoryColors } from "@/lib/category-colors";
+import { nextOccurrence, showsNextOccurrence } from "@/lib/event-occurrence";
 
 export interface StubEvent {
   name: string;
   slug: string;
   startDate: Date | null;
   publicStartDate?: Date | null;
+  // U-next (2026-06-21): occurrence inputs so the ticket-stub numeral shows the
+  // NEXT upcoming date for recurring series (a weekly market) instead of the
+  // season start. Already attached at every homepage fetch site via
+  // attachEventDayDates; optional so other callers compile unchanged.
+  endDate?: Date | null;
+  discontinuousDates?: boolean | null;
+  eventDayDates?: string[];
   categories: string | null; // JSON string array
   venue?: { city: string | null; state: string | null } | null;
 }
@@ -39,7 +47,19 @@ export function StubEventCard({ event, compact = false }: { event: StubEvent; co
   const categories = parseJsonArray(event.categories ?? "");
   const colors = getCategoryColors(categories);
   const primaryCategory = categories[0] ?? "Event";
-  const date = event.publicStartDate ?? event.startDate;
+
+  // U-next (2026-06-21): resolve the date the same way the detail page does —
+  // the next upcoming occurrence for a recurring series, not the season start.
+  const baseStart = event.publicStartDate ?? event.startDate;
+  const occurrence = nextOccurrence({
+    startDate: baseStart,
+    endDate: event.endDate ?? null,
+    discontinuousDates: event.discontinuousDates ?? null,
+    eventDayDates: event.eventDayDates,
+  });
+  const date = occurrence?.date ?? baseStart;
+  // A series already underway gets a "Next" eyebrow so the numeral reads clearly.
+  const isNextOccurrence = showsNextOccurrence(occurrence, baseStart);
   const md = date ? monthDay(date) : null;
 
   const location = [event.venue?.city, event.venue?.state].filter(Boolean).join(", ");
@@ -63,7 +83,7 @@ export function StubEventCard({ event, compact = false }: { event: StubEvent; co
             <div
               className={`font-bold uppercase tracking-[0.14em] opacity-90 ${compact ? "text-[10px]" : "text-xs"}`}
             >
-              {md.mon}
+              {isNextOccurrence ? `Next · ${md.mon}` : md.mon}
             </div>
             <div
               className={`font-display font-semibold leading-[0.95] ${compact ? "text-[26px]" : "text-[40px]"}`}

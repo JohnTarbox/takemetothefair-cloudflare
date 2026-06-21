@@ -7,10 +7,10 @@ import { cdnImage, focalPointGravity } from "@/lib/cdn-image";
 import { Calendar, MapPin, Tag, Store, Users, Home, Trees } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDateRange, formatPrice } from "@/lib/utils";
+import { formatDate, formatDateRange, formatPrice } from "@/lib/utils";
 import { formatDistance } from "@/lib/geo";
 import { parseJsonArray } from "@/types";
-import { nextOccurrence } from "@/lib/event-occurrence";
+import { nextOccurrence, showsNextOccurrence } from "@/lib/event-occurrence";
 import { formatAudienceBadge } from "@/lib/event-audience";
 import type { events, venues, promoters } from "@/lib/db/schema";
 import { AddToCalendar } from "./AddToCalendar";
@@ -111,6 +111,12 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
   const badgeDate = occurrence?.date ?? (displayStartDate ? new Date(displayStartDate) : null);
   const monthAbbr = badgeDate ? formatMonthShort(badgeDate).toUpperCase() : null;
   const dayNum = badgeDate ? badgeDate.getUTCDate() : null;
+
+  // U-next (2026-06-21): for a recurring SERIES that's already underway (a
+  // weekly/seasonal market), show "Next: <date>" instead of the full season
+  // range, which reads as a stale months-long span. Matches the detail page's
+  // "Next: …" line and the date badge. See showsNextOccurrence for the rule.
+  const showNextOccurrence = showsNextOccurrence(occurrence, displayStartDate);
 
   return (
     <Card className="h-full hover:shadow-md hover:-translate-y-0.5 transition-all overflow-hidden">
@@ -251,7 +257,11 @@ export function EventCard({ event, priority = false, distance }: EventCardProps)
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <Calendar className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span>{formatDateRange(displayStartDate, displayEndDate)}</span>
+                <span>
+                  {showNextOccurrence
+                    ? `Next: ${formatDate(occurrence!.date)}`
+                    : formatDateRange(displayStartDate, displayEndDate)}
+                </span>
               </div>
               <AddToCalendar
                 title={event.name}

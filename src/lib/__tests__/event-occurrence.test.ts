@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextOccurrence, displayDate } from "../event-occurrence";
+import { nextOccurrence, displayDate, showsNextOccurrence } from "../event-occurrence";
 
 const NOW = new Date("2026-06-15T12:00:00Z");
 
@@ -168,5 +168,57 @@ describe("displayDate", () => {
       NOW
     );
     expect(result?.toISOString()).toBe(new Date("2024-01-15").toISOString());
+  });
+});
+
+describe("showsNextOccurrence", () => {
+  // A weekly market May–Oct, viewed mid-season (NOW = 2026-06-15). The next
+  // market day (Jun 19) is later than the season start (May 1) and the series
+  // spans months → show "Next: …" instead of the May 1–Oct 30 range.
+  it("true for a recurring season already underway (the Machias case)", () => {
+    const occ = nextOccurrence(
+      {
+        startDate: "2026-05-01",
+        endDate: "2026-10-30",
+        discontinuousDates: true,
+        eventDayDates: ["2026-05-01", "2026-06-05", "2026-06-19", "2026-07-03", "2026-10-30"],
+      },
+      NOW
+    );
+    expect(showsNextOccurrence(occ, "2026-05-01")).toBe(true);
+  });
+
+  it("false for a single-day event", () => {
+    const occ = nextOccurrence(
+      { startDate: "2026-07-04", endDate: "2026-07-04", discontinuousDates: false },
+      NOW
+    );
+    expect(showsNextOccurrence(occ, "2026-07-04")).toBe(false);
+  });
+
+  it("false for an upcoming contiguous multi-day fair (occurrence == start)", () => {
+    const occ = nextOccurrence(
+      {
+        startDate: "2026-08-01",
+        endDate: "2026-08-10",
+        discontinuousDates: false,
+        eventDayDates: ["2026-08-01", "2026-08-05", "2026-08-10"],
+      },
+      NOW
+    );
+    expect(showsNextOccurrence(occ, "2026-08-01")).toBe(false);
+  });
+
+  it("false when the event is in progress (ongoing)", () => {
+    const occ = nextOccurrence(
+      { startDate: "2026-06-10", endDate: "2026-06-20", discontinuousDates: false },
+      NOW
+    );
+    // contiguous in-progress span → isOngoing → keep the range
+    expect(showsNextOccurrence(occ, "2026-06-10")).toBe(false);
+  });
+
+  it("false when occurrence is null (past event)", () => {
+    expect(showsNextOccurrence(null, "2026-01-01")).toBe(false);
   });
 });
