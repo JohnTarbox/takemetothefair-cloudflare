@@ -1,6 +1,5 @@
 import { notFound, permanentRedirect } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import {
   Globe,
   CheckCircle,
@@ -56,7 +55,7 @@ import {
   type ParentDisplayInput,
   type VendorDisplayInput,
 } from "@takemetothefair/utils";
-import { cdnImage, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
+import { cdnImage, focalPointGravity, OG_EVENT, OG_SQUARE } from "@/lib/cdn-image";
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -856,32 +855,62 @@ export default async function VendorDetailPage({ params }: Props) {
             )}
 
             <div className="flex items-start gap-6">
-              {/* UX-A2 Part A (2026-06-08) — monogram-tile placeholder
-                  when there's no uploaded logo. Pre-fix this rendered a
-                  generic Lucide Store/category icon over bg-muted —
-                  visually identical to a broken image, contributing to
-                  the "page looks abandoned" pattern that drove the
-                  1-of-2533 claim rate. See VendorMonogramLogo for the
-                  hash-stable color palette + initials logic. */}
-              {isEnhanced ? (
+              {/* U10 (2026-06-21) — render the uploaded logo for EVERY tier.
+                  Previously the whole tile was gated behind `isEnhanced`, so a
+                  free vendor that had uploaded a logo (e.g. Two Apple Farm's
+                  booth photo, stored in logo_url) showed only the monogram and
+                  rendered zero <img> on the page — even though the og:image meta
+                  already referenced the cdn-cgi URL. Now: logo present → image
+                  for all tiers; no logo → monogram placeholder (UX-A2 Part A,
+                  2026-06-08 — a hash-stable initials tile, not the old generic
+                  Store icon that read as a broken image and fed the
+                  "page looks abandoned" pattern behind the 1-of-2533 claim rate).
+                  Served through cdnImage (fit=cover + focal point + format=auto)
+                  to match the card and the global image rules. */}
+              {vendor.logoUrl ? (
+                (() => {
+                  const gravity = focalPointGravity(vendor.imageFocalX, vendor.imageFocalY);
+                  const opts = (w: number) => ({
+                    width: w,
+                    height: w,
+                    fit: "cover" as const,
+                    ...(gravity ? { gravity } : {}),
+                    format: "auto" as const,
+                    quality: 80,
+                    onerror: "redirect" as const,
+                  });
+                  // 200px display slot; 1x/2x DPR variants.
+                  const srcSet = [200, 400]
+                    .map((w) => `${cdnImage(vendor.logoUrl!, opts(w))} ${w}w`)
+                    .join(", ");
+                  return (
+                    <div
+                      className="w-[200px] h-[200px] rounded-xl flex-shrink-0 relative overflow-hidden"
+                      data-testid="vendor-logo"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={cdnImage(vendor.logoUrl, opts(200))}
+                        srcSet={srcSet}
+                        sizes="200px"
+                        alt={`${resolvedName} logo`}
+                        width={200}
+                        height={200}
+                        decoding="async"
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    </div>
+                  );
+                })()
+              ) : isEnhanced ? (
+                // VendorMonogramLogo intentionally reads the raw businessName:
+                // the initial-letter logo represents row identity, not the
+                // resolved brand surface.
                 <div
-                  className="w-[200px] h-[200px] rounded-xl flex-shrink-0 relative overflow-hidden"
+                  className="w-[200px] h-[200px] rounded-xl flex-shrink-0"
                   data-testid="vendor-logo-enhanced"
                 >
-                  {vendor.logoUrl ? (
-                    <Image
-                      src={vendor.logoUrl}
-                      alt={resolvedName}
-                      fill
-                      sizes="200px"
-                      className="object-cover rounded-xl"
-                    />
-                  ) : (
-                    // VendorMonogramLogo intentionally reads the raw
-                    // businessName: the initial-letter logo represents row
-                    // identity, not the resolved brand surface.
-                    <VendorMonogramLogo businessName={vendor.businessName} size={200} />
-                  )}
+                  <VendorMonogramLogo businessName={vendor.businessName} size={200} />
                 </div>
               ) : (
                 <div className="w-24 h-24 rounded-xl flex-shrink-0" data-testid="vendor-logo-free">
