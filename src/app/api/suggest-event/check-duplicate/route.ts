@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
-import { z } from "zod";
+import { checkDuplicateSchema } from "./schema";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
@@ -23,18 +23,9 @@ import { logError } from "@/lib/logger";
 // HTTP wrapper: rate-limit + INTERNAL_API_KEY auth + body validation,
 // then delegate to findDuplicate. K2 part 4, analyst 2026-05-31.
 
-const checkDuplicateSchema = z.object({
-  sourceUrl: z.string().url().optional(),
-  name: z.string().optional(),
-  startDate: z.string().optional(), // YYYY-MM-DD format
-  // Venue signals — resolved server-side inside findDuplicate via
-  // autoLinkVenue, then used for the venue_date and city_state_date
-  // match stages.
-  venueName: z.string().optional(),
-  venueAddress: z.string().optional(),
-  venueCity: z.string().optional(),
-  venueState: z.string().optional(),
-});
+// Schema lives in ./schema.ts (Next rejects non-handler exports from a route
+// file). K29 (2026-06-21): it now accepts null and normalizes null -> undefined
+// so a `venueCity: null` no longer 400s and silently skips dedup.
 
 export async function POST(request: NextRequest) {
   // Internal callers (MCP Worker email pipeline, future cross-service hooks)
