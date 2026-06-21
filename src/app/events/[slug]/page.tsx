@@ -929,7 +929,7 @@ export default async function EventDetailPage({ params }: Props) {
                         href={mapsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className={`inline-flex items-center gap-1 mt-3 text-sm ${categoryColors.icon} underline hover:no-underline`}
+                        className={`inline-flex items-center min-h-[24px] gap-1 mt-3 text-sm ${categoryColors.icon} underline hover:no-underline`}
                       >
                         View on Map <ExternalLink className="w-3 h-3" />
                       </a>
@@ -1218,7 +1218,7 @@ export default async function EventDetailPage({ params }: Props) {
                             {exhibitors.length > 8 && (
                               <Link
                                 href={`/events/${event.slug}/vendors`}
-                                className="text-sm text-royal hover:text-navy font-medium"
+                                className="inline-flex items-center min-h-[24px] text-sm text-royal hover:text-navy font-medium"
                               >
                                 View all
                               </Link>
@@ -1372,7 +1372,7 @@ export default async function EventDetailPage({ params }: Props) {
                     <div>
                       <Link
                         href={`/venues/${event.venue.slug}`}
-                        className="font-medium text-foreground hover:text-navy"
+                        className="inline-flex items-center min-h-[24px] font-medium text-foreground hover:text-navy"
                       >
                         {event.venue.name}
                       </Link>
@@ -1385,7 +1385,7 @@ export default async function EventDetailPage({ params }: Props) {
                         href={venueMapsHref(event.venue)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-royal hover:text-navy mt-1"
+                        className="inline-flex items-center min-h-[24px] gap-1 text-xs text-royal hover:text-navy mt-1"
                       >
                         <ExternalLink className="w-3 h-3" />
                         View on Google Maps
