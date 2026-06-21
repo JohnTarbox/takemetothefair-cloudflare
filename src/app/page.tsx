@@ -17,7 +17,7 @@ import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 import { logError } from "@/lib/logger";
-import { parseJsonArray } from "@/types";
+import { diversifyByCategory } from "@/lib/diversify-by-category";
 
 import type { Metadata } from "next";
 
@@ -96,37 +96,6 @@ async function getFeaturedEvents() {
     const { FetchError } = await import("@/lib/errors/fetch-error");
     throw new FetchError("app/page.tsx:getFeaturedEvents", e);
   }
-}
-
-// Re-rank a start-date-ordered pool so the small weekend grid shows a VARIETY
-// of event types instead of, e.g., four farmers markets in a row. Primary
-// category is `categories[0]` — the same value StubEventCard renders as the
-// type chip. Two passes: first take at most one event per category (soonest
-// within each), then backfill by soonest if too few categories exist to fill
-// the grid. Degrades to pure chronological order when there's only one type.
-function diversifyByCategory<T extends { categories?: string | null }>(
-  pool: T[],
-  limit: number
-): T[] {
-  const primaryCategory = (e: T) => parseJsonArray(e.categories ?? "")[0] ?? "Event";
-  const picked: T[] = [];
-  const seenCategories = new Set<string>();
-  for (const e of pool) {
-    if (picked.length >= limit) break;
-    const cat = primaryCategory(e);
-    if (!seenCategories.has(cat)) {
-      seenCategories.add(cat);
-      picked.push(e);
-    }
-  }
-  if (picked.length < limit) {
-    const used = new Set(picked);
-    for (const e of pool) {
-      if (picked.length >= limit) break;
-      if (!used.has(e)) picked.push(e);
-    }
-  }
-  return picked;
 }
 
 async function getWeekendEvents() {
