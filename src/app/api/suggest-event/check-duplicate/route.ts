@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { checkDuplicateSchema } from "./schema";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { events, venues } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
 import { compareForIngest } from "@/lib/goodwill/ingest-discrepancy";
@@ -70,13 +71,17 @@ export async function POST(request: NextRequest) {
     // slim ExistingEvent returned by findDuplicate is missing endDate /
     // venueId / venue city+state / sourceDomain — see find-duplicate.ts
     // :62-69), run the field comparator, and enqueue one discrepancy
-    // message per disagreeing field. Fire-and-forget via the producer's
-    // own waitUntil — the route response shape is unchanged.
+    // message per disagreeing field. Registered with ctx.waitUntil so the
+    // background work (a DB read + a queue send) runs to completion AFTER the
+    // response returns — without it, the OpenNext/Workers runtime tears the
+    // promise down on response, which is why ingest_addverify capture sat at
+    // 0 rows since GW1.1 shipped (the daily self_consistency + stale_page_radar
+    // crons were unaffected — they run in the MCP Worker's scheduled context).
     //
     // Stage 1 (exact_url) is skipped at the comparator boundary; we
     // additionally early-skip here to avoid a wasted PK lookup.
     if (result.matchType !== "exact_url" && validation.data.sourceUrl) {
-      enqueueDiscrepanciesAsync(
+      const work = enqueueDiscrepanciesAsync(
         result.matchType,
         result.existingEvent.id,
         validation.data,
@@ -86,6 +91,12 @@ export async function POST(request: NextRequest) {
         // catch only guards against an unexpected throw from the
         // outer Promise so the route response is never blocked.
       });
+      try {
+        getCloudflareContext().ctx.waitUntil(work);
+      } catch {
+        // getCloudflareContext()/ctx is unavailable outside the CF runtime
+        // (local dev, unit tests). The promise still runs there; nothing to do.
+      }
     }
 
     // similarity is only set on similar_name_date and is expressed as
