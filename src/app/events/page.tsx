@@ -34,7 +34,6 @@ import {
 import { isPublicVendorStatus } from "@/lib/vendor-status";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { attachEventDayDates } from "@/lib/event-days-attach";
-import { displayDate } from "@/lib/event-occurrence";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
@@ -511,36 +510,14 @@ async function getEvents(
       });
     }
 
-    // Option-1 sort (2026-06-21): re-order the fetched page by the date the card
-    // actually SHOWS (the next occurrence), so the visible "Next: …" dates read
-    // in order. The DB ORDER BY can't do this — the next-occurrence date is
-    // computed from event_days in app code, not a column. Applies only to the
-    // default date sorts; name/popular stay as the DB returned them. Caveat:
-    // orders WITHIN the fetched page only (pagination boundaries remain by
-    // start_date) — acceptable for now (option 1).
-    let orderedEvents = eventsWithVendors;
-    if (!isCalendarView && (sort === "date-asc" || sort === "date-desc")) {
-      const now = new Date();
-      const sortKey = (e: (typeof eventsWithVendors)[number]): number => {
-        const d = displayDate(
-          {
-            startDate: e.startDate,
-            endDate: e.endDate,
-            discontinuousDates: e.discontinuousDates,
-            eventDayDates: (e as { eventDayDates?: string[] }).eventDayDates,
-          },
-          now
-        );
-        return d ? d.getTime() : Number.MAX_SAFE_INTEGER; // null/TBD dates last
-      };
-      orderedEvents = [...eventsWithVendors].sort((a, b) => {
-        const diff = sortKey(a) - sortKey(b);
-        return sort === "date-asc" ? diff : -diff;
-      });
-    }
+    // NOTE: the visible card sort by next-occurrence date is applied CLIENT-side
+    // in <EventsView> (sortData's startDate accessor → displayDate), because
+    // that component re-sorts the list it receives. A server-side ORDER BY can't
+    // express it anyway (the next date is computed from event_days, not a
+    // column). The DB orderBy above still drives pagination boundaries.
 
     return {
-      events: orderedEvents,
+      events: eventsWithVendors,
       total,
       page,
       limit,
