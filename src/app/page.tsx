@@ -17,6 +17,7 @@ import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 import { logError } from "@/lib/logger";
+import { parseJsonArray } from "@/types";
 
 import type { Metadata } from "next";
 
@@ -97,6 +98,37 @@ async function getFeaturedEvents() {
   }
 }
 
+// Re-rank a start-date-ordered pool so the small weekend grid shows a VARIETY
+// of event types instead of, e.g., four farmers markets in a row. Primary
+// category is `categories[0]` — the same value StubEventCard renders as the
+// type chip. Two passes: first take at most one event per category (soonest
+// within each), then backfill by soonest if too few categories exist to fill
+// the grid. Degrades to pure chronological order when there's only one type.
+function diversifyByCategory<T extends { categories?: string | null }>(
+  pool: T[],
+  limit: number
+): T[] {
+  const primaryCategory = (e: T) => parseJsonArray(e.categories ?? "")[0] ?? "Event";
+  const picked: T[] = [];
+  const seenCategories = new Set<string>();
+  for (const e of pool) {
+    if (picked.length >= limit) break;
+    const cat = primaryCategory(e);
+    if (!seenCategories.has(cat)) {
+      seenCategories.add(cat);
+      picked.push(e);
+    }
+  }
+  if (picked.length < limit) {
+    const used = new Set(picked);
+    for (const e of pool) {
+      if (picked.length >= limit) break;
+      if (!used.has(e)) picked.push(e);
+    }
+  }
+  return picked;
+}
+
 async function getWeekendEvents() {
   const db = getCloudflareDb();
   try {
@@ -104,7 +136,9 @@ async function getWeekendEvents() {
     // Match the /events?when=weekend filter exactly (through the coming Sunday)
     // so the hero preview and its "See all" agree on what "this weekend" means.
     const horizon = whenWindowEnd("weekend", now)!;
-    // Narrow projection — see getFeaturedEvents above.
+    // Narrow projection — see getFeaturedEvents above. Pull a WIDER pool than
+    // the 4 we render so diversifyByCategory() has room to mix event types
+    // (the soonest 4 are often all the same type, e.g. farmers markets).
     const results = await db
       .select(eventJoinProjection)
       .from(events)
@@ -112,7 +146,7 @@ async function getWeekendEvents() {
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(and(isPublicEventStatus(), gte(events.endDate, now), lte(events.startDate, horizon)))
       .orderBy(events.startDate)
-      .limit(4);
+      .limit(24);
     // Cast the narrow venue/promoter projection back to full row types so
     // the EventCard/EventList prop contract compiles unchanged. Sound
     // because every consumer field is present in the projection (same
@@ -124,7 +158,9 @@ async function getWeekendEvents() {
       venue: r.venue as FullVenue,
       promoter: r.promoter as FullPromoter,
     }));
-    return await attachEventDayDates(db, flat);
+    // Diversify by type, then keep only the 4 the grid renders.
+    const diversified = diversifyByCategory(flat, 4);
+    return await attachEventDayDates(db, diversified);
   } catch (e) {
     await logError(db, {
       message: "Error fetching weekend events",
