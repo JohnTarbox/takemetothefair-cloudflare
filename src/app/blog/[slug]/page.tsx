@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users, events, venues } from "@/lib/db/schema";
-import { eq, and, ne, desc, gte, or, like } from "drizzle-orm";
+import { eq, and, ne, desc, or, like } from "drizzle-orm";
+import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
 import { MarkdownContent } from "@/components/blog/markdown-content";
@@ -116,7 +117,10 @@ async function getRelatedEvents(tags: string[], categories: string[]) {
       })
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(and(isPublicEventStatus(), gte(events.endDate, new Date()), or(...searchConditions)))
+      // U11 (2026-06-21): use the canonical upcoming predicate (24h end-of-day
+      // grace) instead of a strict gte(endDate, now) so a same-day event whose
+      // stored end sits at noon UTC isn't dropped at 8am EDT.
+      .where(and(isPublicEventStatus(), upcomingEndPredicate(new Date()), or(...searchConditions)))
       .orderBy(events.startDate)
       .limit(3);
 
