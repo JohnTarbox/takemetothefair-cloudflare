@@ -96,6 +96,12 @@ interface EventSchemaProps {
   primaryAudience?: PrimaryAudience | null;
   publicAccess?: PublicAccess | null;
   accessNotes?: string | null;
+  /**
+   * EH3 P2.3b — when this event is an occurrence of a series, the embedded
+   * `superEvent` EventSeries reference (built by buildSuperEventRef). Null/omitted
+   * for standalone events, which is every event until the P1 backfill links them.
+   */
+  superEvent?: Record<string, unknown> | null;
 }
 
 function getEventType(categories?: string[]): string {
@@ -137,6 +143,7 @@ export function EventSchema({
   primaryAudience,
   publicAccess,
   accessNotes,
+  superEvent,
 }: EventSchemaProps) {
   // Convert integer cents → dollars for JSON-LD emission. Round-2 backlog
   // item 1 (2026-05-11): only emit `offers` and `isAccessibleForFree` when
@@ -389,6 +396,8 @@ export function EventSchema({
     "@context": "https://schema.org",
     "@type": getEventType(categories),
     name,
+    // EH3 P2.3b — superEvent → the parent EventSeries (occurrences only).
+    ...(superEvent ? { superEvent } : {}),
     description: description || `${name} - a fair and community event.`,
     ...(hasDates
       ? {

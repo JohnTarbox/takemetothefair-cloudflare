@@ -34,6 +34,7 @@ import {
   eventDays,
   blogPosts,
   contentLinks,
+  eventSeries,
 } from "@/lib/db/schema";
 import { eq, and, sql, ne, like, desc, or, isNull, inArray } from "drizzle-orm";
 import { resolveEventVendorTarget, dedupeByResolvedSlug } from "@/lib/event-vendor-display";
@@ -61,6 +62,7 @@ import { isFaqPilotEvent } from "@/lib/faq-pilot";
 import { SITE_URL } from "@takemetothefair/constants";
 import { getSeriesLanding } from "@/lib/series/get-series-landing";
 import { SeriesLandingPage } from "@/components/series/series-landing-page";
+import { buildSuperEventRef } from "@/lib/series/series-schema-org";
 import { ShareButtons } from "@/components/ShareButtons";
 import { PrintButton } from "@/components/print/PrintButton";
 // PRINT1 (Dev-Email-2026-06-08 §B): the v1 standalone <PrintEventMap> +
@@ -275,8 +277,24 @@ async function getEvent(slug: string) {
     // actually read is present in the projection (audit 2026-06-04).
     type FullVenue = typeof venues.$inferSelect;
     type FullPromoter = typeof promoters.$inferSelect;
+
+    // EH3 P2.3b — if this event is an occurrence of a series, resolve the parent
+    // series ref (canonical_slug + name) for the occurrence canonical URL +
+    // schema.org superEvent. seriesId is NULL for every event until the P1
+    // backfill, so this extra lookup never runs today.
+    let series: { canonicalSlug: string; name: string } | null = null;
+    if (eventData.events.seriesId) {
+      const [s] = await db
+        .select({ canonicalSlug: eventSeries.canonicalSlug, name: eventSeries.name })
+        .from(eventSeries)
+        .where(eq(eventSeries.id, eventData.events.seriesId))
+        .limit(1);
+      series = s ?? null;
+    }
+
     return {
       ...eventData.events,
+      series,
       venue: eventData.venue as FullVenue | null,
       promoter: eventData.promoter
         ? {
@@ -575,7 +593,16 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const title = buildEventTitle(event);
   const description = buildEventMetaDescription(event);
-  const url = `https://meetmeatthefair.com/events/${event.slug}`;
+  // EH3 P2.3b — an occurrence of a series canonicalizes to its Option-A year URL
+  // (/events/<series>/<year>), regardless of which URL served it, so the legacy
+  // event slug never competes as a duplicate. Standalone events (every event
+  // until backfill) keep their own self-canonical.
+  const occYear =
+    event.series && event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
+  const url =
+    event.series && occYear
+      ? `${SITE_URL}/events/${event.series.canonicalSlug}/${occYear}`
+      : `https://meetmeatthefair.com/events/${event.slug}`;
 
   return {
     title,
@@ -727,7 +754,12 @@ export default async function EventDetailPage({ params }: Props) {
           startDate={event.startDate}
           endDate={event.endDate}
           imageUrl={event.imageUrl}
-          url={`https://meetmeatthefair.com/events/${event.slug}`}
+          url={
+            event.series && event.startDate
+              ? `${SITE_URL}/events/${event.series.canonicalSlug}/${new Date(event.startDate).getUTCFullYear()}`
+              : `https://meetmeatthefair.com/events/${event.slug}`
+          }
+          superEvent={event.series ? buildSuperEventRef(event.series) : undefined}
           venue={
             event.venue
               ? {
