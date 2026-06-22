@@ -39,11 +39,13 @@ interface SendVendorEmailEnv {
 }
 
 const PUBLIC_HOST = "https://meetmeatthefair.com";
-const FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
+// Exported so the K32 send_test_email tool sends from the SAME verified sender.
+export const FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
 const BCC_TO = "jtarboxme@gmail.com";
 const SIGN_OFF = "— Meet Me at the Fair";
 
-const TEMPLATE_VALUES = ["claim_invite"] as const;
+// Exported so K32 (send_test_email) shares this single template registry.
+export const TEMPLATE_VALUES = ["claim_invite"] as const;
 type TemplateId = (typeof TEMPLATE_VALUES)[number];
 
 function escapeHtml(s: string): string {
@@ -64,7 +66,9 @@ function claimUrl(slug: string, businessName: string): string {
   return `${PUBLIC_HOST}/register?role=VENDOR&claim=${encodeURIComponent(slug)}&businessName=${encodeURIComponent(businessName)}`;
 }
 
-function buildTemplate(
+// Exported so K32 (send_test_email) renders via the SAME engine — a synthetic
+// vendor built from `vars` stands in for a real row on the test path.
+export function buildTemplate(
   templateId: TemplateId,
   vendor: { businessName: string; slug: string }
 ): { subject: string; text: string; html: string } {
