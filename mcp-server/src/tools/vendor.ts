@@ -20,7 +20,12 @@ import { checkDuplicateViaMainApp } from "../duplicates/check-duplicate.js";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { gateUrlOnce, loadClassifications, shouldIngestFromSource } from "../url-classification.js";
-import { evaluateGates, classifySource, normalizeEventDate } from "@takemetothefair/utils";
+import {
+  evaluateGates,
+  classifySource,
+  normalizeEventDate,
+  decideDiscoveryRouting,
+} from "@takemetothefair/utils";
 import { EVENT_CATEGORIES, PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import { logError } from "../logger.js";
 
@@ -871,6 +876,72 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           venueState: params.venue_state ?? null,
         });
         if (dupe.isDuplicate) {
+          // EH3 P3.3 — match-to-series. If the matched event belongs to a series
+          // and the incoming event is a DIFFERENT year (a new edition), create an
+          // occurrence UNDER that series (review-gated) instead of blocking as a
+          // duplicate. Vendor-bearing / ambiguous / same-year matches keep today's
+          // block. INERT until the backfill sets series_id (existingSeriesId is
+          // null → decideDiscoveryRouting never returns "occurrence").
+          const [matched] = await db
+            .select({
+              seriesId: events.seriesId,
+              startDate: events.startDate,
+              rolledFromEventId: events.rolledFromEventId,
+            })
+            .from(events)
+            .where(eq(events.id, dupe.existingEvent.id))
+            .limit(1);
+          const [vc] = await db
+            .select({ n: sql<number>`count(*)` })
+            .from(eventVendors)
+            .where(eq(eventVendors.eventId, dupe.existingEvent.id));
+
+          const routing = decideDiscoveryRouting({
+            matched: true,
+            existingSeriesId: matched?.seriesId ?? null,
+            existingYear: matched?.startDate ? new Date(matched.startDate).getUTCFullYear() : null,
+            existingVendorBearing: (vc?.n ?? 0) > 0,
+            existingRolledEdition: !!matched?.rolledFromEventId,
+            incomingYear: startDate ? startDate.getUTCFullYear() : null,
+          });
+
+          if (routing.action === "occurrence" && env?.MAIN_APP_URL && env?.INTERNAL_API_KEY) {
+            const occRes = await fetch(`${env.MAIN_APP_URL}/api/admin/occurrences/create`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-internal-key": env.INTERNAL_API_KEY,
+              },
+              body: JSON.stringify({
+                series_id: routing.seriesId,
+                year: routing.year,
+                name: params.name,
+                venue_id: venueId,
+                promoter_id: eventPromoterId,
+                start_date: params.start_date,
+                end_date: params.end_date,
+                description: params.description,
+              }),
+            });
+            const occ = (await occRes.json().catch(() => null)) as Record<string, unknown> | null;
+            if (occRes.ok && occ) {
+              return {
+                content: [
+                  jsonContent({
+                    routed: "series_occurrence",
+                    series_id: routing.seriesId,
+                    year: routing.year,
+                    matched_event: { id: dupe.existingEvent.id, slug: dupe.existingEvent.slug },
+                    warning: routing.warning,
+                    ...occ,
+                  }),
+                ],
+              };
+            }
+            // On failure, fall through to the standard duplicate block below so
+            // the suggestion is never silently lost.
+          }
+
           return {
             content: [
               jsonContent({

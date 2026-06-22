@@ -418,3 +418,7 @@ export * from "./syndication-outbox";
 // K27 (2026-06-15): recurrence-rule parser + next-occurrence date math, shared
 // by the MCP auto-rollover sweep (and available to the main app for display).
 export * from "./recurrence";
+
+// EH3 P3.3 (2026-06-22): discovery match-to-series routing decision. Shared so
+// the MCP server's suggest_event ingest path can import it.
+export * from "./discovery-routing";
