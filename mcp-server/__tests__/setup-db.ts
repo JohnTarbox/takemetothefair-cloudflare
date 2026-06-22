@@ -167,6 +167,25 @@ const SCHEMA_SQL = `
     series_id TEXT
   );
 
+  -- EH3 P0 (drizzle/0127) — series parent. Needed here once tools join it
+  -- (P3.4 get_vendor_events leftJoins event_series).
+  CREATE TABLE event_series (
+    id TEXT PRIMARY KEY,
+    canonical_slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    venue_id TEXT,
+    promoter_id TEXT,
+    recurrence_rule TEXT,
+    description TEXT,
+    image_url TEXT,
+    categories TEXT DEFAULT '[]',
+    tags TEXT DEFAULT '[]',
+    primary_audience TEXT NOT NULL DEFAULT 'PUBLIC',
+    public_access TEXT NOT NULL DEFAULT 'OPEN',
+    created_at INTEGER,
+    updated_at INTEGER
+  );
+
   CREATE TABLE event_date_drift_findings (
     id TEXT PRIMARY KEY,
     event_id TEXT NOT NULL,
