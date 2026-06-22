@@ -58,6 +58,9 @@ import { EventFAQSection } from "@/components/events/EventFAQSection";
 import { SameDayEventsButton } from "@/components/events/SameDayEventsButton";
 import { buildEventFaqItems } from "@/lib/event-faq";
 import { isFaqPilotEvent } from "@/lib/faq-pilot";
+import { SITE_URL } from "@takemetothefair/constants";
+import { getSeriesLanding } from "@/lib/series/get-series-landing";
+import { SeriesLandingPage } from "@/components/series/series-landing-page";
 import { ShareButtons } from "@/components/ShareButtons";
 import { PrintButton } from "@/components/print/PrintButton";
 // PRINT1 (Dev-Email-2026-06-08 §B): the v1 standalone <PrintEventMap> +
@@ -532,6 +535,26 @@ async function getRelatedBlogPosts(
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
+
+  // EH3 P2.3 — series-first resolution. When the slug is a series canonical_slug,
+  // render the series-landing metadata (self-canonical to /events/<series>).
+  // Returns null until the gated backfill creates series, so event pages are
+  // unaffected today.
+  const landing = await getSeriesLanding(slug);
+  if (landing) {
+    const url = `${SITE_URL}/events/${landing.series.canonicalSlug}`;
+    const title = `${landing.series.name} — Meet Me at the Fair`;
+    const description =
+      landing.series.description ??
+      `${landing.series.name}: every year's dates, location, and details.`;
+    return {
+      title,
+      description,
+      alternates: { canonical: url },
+      openGraph: { title, description, url, siteName: "Meet Me at the Fair", type: "website" },
+    };
+  }
+
   const event = await getEvent(slug);
 
   if (!event) {
@@ -610,6 +633,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function EventDetailPage({ params }: Props) {
   const { slug } = await params;
+
+  // EH3 P2.3 — series branch (see generateMetadata). getSeriesLanding is React-
+  // cached, so this shares the lookup with generateMetadata; null until backfill.
+  const landing = await getSeriesLanding(slug);
+  if (landing) {
+    return <SeriesLandingPage landing={landing} now={new Date()} />;
+  }
+
   const event = await getEvent(slug);
 
   if (!event) {
