@@ -24,6 +24,7 @@ import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js"
 import { registerSyndicationTools } from "./tools/admin-syndication.js";
 import { registerEnrichVendorTool } from "./tools/admin-enrich-vendor.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
+import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -284,6 +285,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerEnrichVendorTool(this.server, db, auth, this.env);
         // K31 (2026-06-21) — send_vendor_email (claim invites + outreach).
         registerSendVendorEmailTool(this.server, db, auth, this.env);
+        // K32 (2026-06-21) — send_test_email (no-side-effects deliverability test).
+        registerSendTestEmailTool(this.server, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -541,6 +544,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerVendorHierarchyTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
+      registerSendTestEmailTool(server, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
