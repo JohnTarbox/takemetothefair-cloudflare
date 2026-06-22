@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
-import { and, count, gte, isNotNull } from "drizzle-orm";
+import { and, count, gte, isNotNull, eq } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { SITEMAP_MIN_COMPLETENESS } from "@/lib/completeness";
-import { events } from "@/lib/db/schema";
+import { events, eventSeries } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import {
@@ -24,8 +24,18 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
 
   const [eventRows, futureCountRow, allCountRow] = await Promise.all([
     db
-      .select({ slug: events.slug, updatedAt: events.updatedAt, endDate: events.endDate })
+      .select({
+        slug: events.slug,
+        updatedAt: events.updatedAt,
+        startDate: events.startDate,
+        endDate: events.endDate,
+        // EH3 P2.4 — when set, the event is a series occurrence; emit its
+        // canonical Option-A /events/<series>/<year> URL instead of the legacy
+        // slug. leftJoin → NULL for every event until the P1 backfill (inert).
+        seriesSlug: eventSeries.canonicalSlug,
+      })
       .from(events)
+      .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
       .where(
         and(
           isPublicEventStatus(),
@@ -41,8 +51,30 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     db.select({ count: count() }).from(events).where(isPublicEventStatus()),
   ]);
 
+  // Series landing URLs, deduped (one per series across its occurrences).
+  const seriesLandings = new Map<string, Date | null>();
+
   const detailPages: SitemapUrl[] = eventRows.map((event) => {
     const isPast = event.endDate && new Date(event.endDate) < now;
+    if (event.seriesSlug) {
+      // Occurrence → canonical /events/<series>/<year>; collect its landing.
+      const year = event.startDate ? new Date(event.startDate).getUTCFullYear() : null;
+      // Landing lastModified = the most recent occurrence updatedAt.
+      const prev = seriesLandings.get(event.seriesSlug) ?? null;
+      seriesLandings.set(
+        event.seriesSlug,
+        event.updatedAt && (!prev || event.updatedAt > prev) ? event.updatedAt : prev
+      );
+      return {
+        // year is always present (startDate is NOT NULL via the WHERE gate).
+        url: `${SITEMAP_BASE_URL}/events/${event.seriesSlug}/${year}`,
+        lastModified: safeLastMod(event.updatedAt),
+        changeFrequency: isPast ? "yearly" : "weekly",
+        // Locked §8.3 — bias toward current/future occurrences.
+        priority: isPast ? 0.4 : 0.8,
+      };
+    }
+    // Standalone event → its own slug (today's behavior, unchanged).
     return {
       url: `${SITEMAP_BASE_URL}/events/${event.slug}`,
       lastModified: safeLastMod(event.updatedAt),
@@ -50,6 +82,14 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
       priority: isPast ? 0.5 : 0.7,
     };
   });
+
+  // One landing entry per series that has ≥1 sitemap-eligible occurrence.
+  const seriesPages: SitemapUrl[] = [...seriesLandings.entries()].map(([slug, lastMod]) => ({
+    url: `${SITEMAP_BASE_URL}/events/${slug}`,
+    lastModified: safeLastMod(lastMod),
+    changeFrequency: "weekly",
+    priority: 0.8,
+  }));
 
   const paginationPages: SitemapUrl[] = [];
   const futureTotal = futureCountRow[0]?.count ?? 0;
@@ -73,7 +113,7 @@ async function buildEventUrls(): Promise<SitemapUrl[]> {
     });
   }
 
-  return [...paginationPages, ...detailPages];
+  return [...paginationPages, ...seriesPages, ...detailPages];
 }
 
 export async function GET(): Promise<Response> {
