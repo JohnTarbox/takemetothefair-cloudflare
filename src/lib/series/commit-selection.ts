@@ -16,7 +16,11 @@
  */
 import type { SeriesGroup } from "./group-events";
 
-export type SkipReason = "already-exists" | "same-year-conflict" | "needs-manual-confirm";
+export type SkipReason =
+  | "already-exists"
+  | "same-year-conflict"
+  | "needs-manual-confirm"
+  | "canonical-collision";
 
 export interface SkippedGroup {
   canonicalSlug: string;
@@ -51,5 +55,27 @@ export function selectCommittableGroups(
     }
   }
 
-  return { commit, skipped };
+  // Hold canonical-slug collisions among the would-be-committed groups.
+  // `groupEvents` assigns each group's canonicalSlug independently, so two
+  // groups can resolve to the same slug (same stem at different venues, neither
+  // with a clean member). event_series.canonical_slug is UNIQUE, so committing
+  // both would violate the constraint and roll back the whole batch. A collision
+  // is also a data signal — sometimes a duplicate venue to merge, sometimes two
+  // genuinely-distinct same-named events needing distinct slugs — so we never
+  // auto-resolve it: hold ALL members of a colliding slug for operator triage,
+  // mirroring the same-year-conflict hold.
+  const slugCounts = new Map<string, number>();
+  for (const g of commit)
+    slugCounts.set(g.canonicalSlug, (slugCounts.get(g.canonicalSlug) ?? 0) + 1);
+
+  const finalCommit: SeriesGroup[] = [];
+  for (const g of commit) {
+    if ((slugCounts.get(g.canonicalSlug) ?? 0) > 1) {
+      skipped.push({ canonicalSlug: g.canonicalSlug, reason: "canonical-collision" });
+    } else {
+      finalCommit.push(g);
+    }
+  }
+
+  return { commit: finalCommit, skipped };
 }

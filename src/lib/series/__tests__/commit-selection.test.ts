@@ -75,6 +75,42 @@ describe("selectCommittableGroups", () => {
     expect(sel.skipped[0].reason).toBe("already-exists");
   });
 
+  it("holds BOTH groups when two committable groups collide on canonical_slug", () => {
+    // Same stem at two different venues, neither with a clean member → both
+    // resolve to the same canonical_slug. event_series.canonical_slug is UNIQUE.
+    const sel = selectCommittableGroups([
+      g({ canonicalSlug: "guilford-fair", venueId: "v-ct" }),
+      g({ canonicalSlug: "guilford-fair", venueId: "v-vt" }),
+    ]);
+    expect(sel.commit).toEqual([]);
+    expect(sel.skipped).toEqual([
+      { canonicalSlug: "guilford-fair", reason: "canonical-collision" },
+      { canonicalSlug: "guilford-fair", reason: "canonical-collision" },
+    ]);
+  });
+
+  it("commits a unique canonical_slug while holding a colliding pair", () => {
+    const sel = selectCommittableGroups([
+      g({ canonicalSlug: "unique-fair" }),
+      g({ canonicalSlug: "dup-fair", venueId: "a" }),
+      g({ canonicalSlug: "dup-fair", venueId: "b" }),
+    ]);
+    expect(slugs(sel.commit)).toEqual(["unique-fair"]);
+    expect(sel.skipped.every((s) => s.reason === "canonical-collision")).toBe(true);
+    expect(sel.skipped).toHaveLength(2);
+  });
+
+  it("a same-year-held group does not count toward a collision", () => {
+    // The same-year group is held BEFORE the collision pass, so the other group
+    // with the same slug is alone in commit → it commits.
+    const sel = selectCommittableGroups([
+      g({ canonicalSlug: "shared", venueId: "a", sameYearConflict: true }),
+      g({ canonicalSlug: "shared", venueId: "b" }),
+    ]);
+    expect(slugs(sel.commit)).toEqual(["shared"]);
+    expect(sel.skipped).toEqual([{ canonicalSlug: "shared", reason: "same-year-conflict" }]);
+  });
+
   it("partitions a mixed batch correctly", () => {
     const sel = selectCommittableGroups(
       [
