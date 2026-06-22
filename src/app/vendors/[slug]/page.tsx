@@ -25,8 +25,11 @@ import {
   venues,
   eventDays,
   vendorSlugHistory,
+  eventSeries,
 } from "@/lib/db/schema";
 import { formatOccurrenceDate } from "@/lib/k18-vendor-grouping";
+import { groupVendorShows } from "@/lib/series/group-vendor-shows";
+import { VendorShowsByYear } from "@/components/vendors/VendorShowsByYear";
 import { eq, ne, and, or, asc, desc, sql, isNull, inArray, gte } from "drizzle-orm";
 import { VendorGallery, type GalleryImage } from "@/components/vendors/VendorGallery";
 import { VendorContactForm } from "@/components/vendors/VendorContactForm";
@@ -239,6 +242,42 @@ async function getVendor(slug: string) {
         return aTime - bTime;
       });
 
+    // EH3 P2.5b — "Shows by year": group the vendor's events into the recurring
+    // series they return to. The events row already carries series_id; the series
+    // slug/name come from a SEPARATE small query (in-array on distinct ids) so the
+    // main vendor-events projection stays under D1's 100-col result cap. We only
+    // surface series with 2+ years — a "shows you return to" highlight, not a
+    // restatement of the chronological lists below (which keep every event).
+    const vendorSeriesIds = [
+      ...new Set(vendorEvents.map((ve) => ve.event.seriesId).filter((x): x is string => !!x)),
+    ];
+    const seriesRefById = new Map<string, { canonicalSlug: string; name: string }>();
+    if (vendorSeriesIds.length > 0) {
+      const seriesRows = await db
+        .select({
+          id: eventSeries.id,
+          canonicalSlug: eventSeries.canonicalSlug,
+          name: eventSeries.name,
+        })
+        .from(eventSeries)
+        .where(inArray(eventSeries.id, vendorSeriesIds));
+      for (const s of seriesRows)
+        seriesRefById.set(s.id, { canonicalSlug: s.canonicalSlug, name: s.name });
+    }
+    const seriesShows = groupVendorShows(
+      vendorEvents.map((ve) => {
+        const ref = ve.event.seriesId ? seriesRefById.get(ve.event.seriesId) : undefined;
+        return {
+          seriesId: ve.event.seriesId ?? null,
+          seriesSlug: ref?.canonicalSlug ?? null,
+          seriesName: ref?.name ?? null,
+          eventSlug: ve.event.slug,
+          eventName: ve.event.name,
+          startDate: ve.event.startDate ?? null,
+        };
+      })
+    ).series.filter((s) => s.years.length > 1);
+
     // Status-agnostic counts for the §6.6 SEO predicate. Mirrors the SQL
     // gate in src/app/sitemap.ts so page noindex and sitemap inclusion
     // can never disagree for the same vendor.
@@ -438,6 +477,7 @@ async function getVendor(slug: string) {
         ? { name: vendor.users.name, email: vendor.users.email }
         : { name: null, email: null },
       eventVendors: vendorEvents,
+      seriesShows,
       seoEventAssociationCount: Number(seoCounts?.eventAssociationCount ?? 0),
       seoEventVenueGeoCount: Number(seoCounts?.eventVenueGeoCount ?? 0),
       parent: brandParent,
@@ -1133,6 +1173,12 @@ export default async function VendorDetailPage({ params }: Props) {
                   ))}
                 </div>
               </div>
+            )}
+
+            {/* EH3 P2.5b — recurring shows highlight (only when the vendor has a
+                2+-year series). Sits above the chronological lists. */}
+            {!isNationalHub && vendor.seriesShows.length > 0 && (
+              <VendorShowsByYear series={vendor.seriesShows} />
             )}
 
             {!isNationalHub && upcomingEvents.length > 0 && (
