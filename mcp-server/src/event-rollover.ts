@@ -168,6 +168,16 @@ export async function rolloverEventIfRecurring(
   const newEventId = crypto.randomUUID();
   const insertEvent = db.insert(events).values({
     id: newEventId,
+    // EH3 P3.5 — series-aware rollover. The rolled edition inherits the source's
+    // series_id, so it's a real series occurrence (not a disconnected shadow
+    // sibling) by construction. NULL until the P1 backfill links the source, so
+    // this is inert today. NOTE: implemented in-place rather than routing through
+    // the create_occurrence HTTP route (John's selected mechanism) because that
+    // route inherits only thin series defaults and would drop K27's rich
+    // source-event inheritance (ticket/vendor-fee/application/attendance/scale).
+    // This achieves the chosen goal — series-linked editions, automation kept —
+    // with zero inheritance regression. Revisit if a single create-path is wanted.
+    seriesId: source.seriesId,
     name: newName,
     slug: finalSlug,
     description: source.description,

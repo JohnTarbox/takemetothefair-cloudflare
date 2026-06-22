@@ -96,6 +96,34 @@ describe("rolloverEventIfRecurring — happy path", () => {
     expect(rolled.completenessScore).toBeGreaterThan(0);
   });
 
+  it("inherits the source's series_id so the rolled edition is series-linked (P3.5)", async () => {
+    const sourceId = seedAnnual({
+      id: "evt-series-2026",
+      slug: unsafeSlug("series-fair-2026"),
+      name: "Series Fair 2026",
+      seriesId: "series-xyz",
+    });
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    expect(res.created).toBe(true);
+    const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(rolled.seriesId).toBe("series-xyz");
+  });
+
+  it("leaves series_id null for a standalone (non-series) source — inert until backfill", async () => {
+    const sourceId = seedAnnual();
+    const res = await rolloverEventIfRecurring(db, sourceId, {
+      via: "cron",
+      actorUserId: null,
+      now: NOW,
+    });
+    const [rolled] = db.select().from(events).where(eq(events.id, res.newEventId!)).all();
+    expect(rolled.seriesId ?? null).toBeNull();
+  });
+
   it("writes an event.auto_rollover admin_actions row", async () => {
     const sourceId = seedAnnual();
     const res = await rolloverEventIfRecurring(db, sourceId, {
