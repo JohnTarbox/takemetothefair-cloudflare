@@ -37,11 +37,23 @@ export function registerSeriesBackfillTools(server: McpServer, auth: AuthContext
       "request in this build. Use this to review the proposal.",
     ].join(" "),
     {
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe(
+          "Defaults true (proposal only). dry_run:false attempts the COMMIT, which is additionally gated server-side by the EH3_P1_BACKFILL_ENABLED env flag — it returns 423 until an operator enables it."
+        ),
       include_all_groups: z
         .boolean()
         .optional()
         .describe(
           "If true, also return the full lean group list (canonical_slug + member ids per group), not just the attention subsets. Defaults to false."
+        ),
+      confirm_series_slugs: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Canonical slugs of vendor-bearing multi-occurrence groups (needs_manual_confirm) to commit. Only consulted on a non-dry-run commit; without it those roster-fuse-risk groups are held back."
         ),
     },
     async (params) => {
@@ -59,8 +71,9 @@ export function registerSeriesBackfillTools(server: McpServer, auth: AuthContext
           "x-internal-key": env.INTERNAL_API_KEY,
         },
         body: JSON.stringify({
-          dry_run: true,
+          dry_run: params.dry_run ?? true,
           include_all_groups: params.include_all_groups ?? false,
+          confirm_series_slugs: params.confirm_series_slugs ?? [],
         }),
       });
 
