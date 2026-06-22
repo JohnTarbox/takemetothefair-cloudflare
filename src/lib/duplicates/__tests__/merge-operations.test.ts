@@ -405,6 +405,72 @@ describe("executeMerge", () => {
       expect(transferUpdate?.sourceName).toBe("Example.org");
     });
 
+    // Day-dedup (analyst follow-up, 2026-06-22): merging two events that BOTH
+    // carry event_days for the same date must not leave the keeper with a doubled
+    // day. mergeEvents pre-deletes the duplicate's days that collide with a keeper
+    // day before transferring the rest. db.delete is used by mergeEvents ONLY for
+    // this collision cleanup, and only when the keeper has days — so a delete call
+    // proves the dedup fired.
+    it("dedups event_days: deletes duplicate days that collide with a keeper day", async () => {
+      let batchCallCount = 0;
+      const db = {
+        // keeperDayDates read → the keeper already has these two days.
+        select: vi.fn().mockImplementation(() => ({
+          from: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockResolvedValue([{ date: "2026-09-12" }, { date: "2026-09-13" }]),
+          })),
+        })),
+        update: vi.fn().mockImplementation(() => ({
+          set: vi.fn().mockImplementation(() => ({
+            where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+          })),
+        })),
+        delete: vi.fn().mockImplementation(() => ({
+          where: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        insert: vi.fn().mockImplementation(() => ({
+          values: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        })),
+        batch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1)
+            return Promise.resolve([
+              [{ vendorId: "vendor-1" }],
+              [{ userId: "user-1" }],
+              [{ slug: "primary-event", viewCount: 1 }],
+              [{ slug: "duplicate-event", viewCount: 1, mergedInto: null }],
+            ]);
+          if (batchCallCount === 2)
+            return Promise.resolve([
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+              { rowsAffected: 1 },
+            ]);
+          return Promise.resolve([
+            [
+              {
+                id: "primary-id",
+                name: "P",
+                slug: "primary-event",
+                viewCount: 1,
+                venueId: "v1",
+                promoterId: "p1",
+              },
+            ],
+            [{ name: "Venue" }],
+            [{ companyName: "Promoter" }],
+            [{ count: 0 }],
+          ]);
+        }),
+      } as unknown;
+
+      const result = await executeMerge(db as never, "events", "primary-id", "duplicate-id");
+      expect(result.success).toBe(true);
+      expect((db as { delete: ReturnType<typeof vi.fn> }).delete).toHaveBeenCalled();
+    });
+
     it("does NOT overwrite source_* fields when keeper already has them", async () => {
       let batchCallCount = 0;
       const updateSetCalls: Array<Record<string, unknown>> = [];

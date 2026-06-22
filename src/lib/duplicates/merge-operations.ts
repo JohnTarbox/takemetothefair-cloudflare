@@ -165,9 +165,7 @@ export async function transferFavorites(
         eq(userFavorites.favoritableId, duplicateId)
       )
     );
-  const transferableIds = dupFavorites
-    .filter((f) => !keeperUserIds.has(f.userId))
-    .map((f) => f.id);
+  const transferableIds = dupFavorites.filter((f) => !keeperUserIds.has(f.userId)).map((f) => f.id);
   if (transferableIds.length === 0) return 0;
 
   // Chunk by PK so each UPDATE stays under D1's ~100 bound-variable cap
@@ -710,12 +708,16 @@ async function mergeEvents(
   // (we'd render a duplicated Saturday slot). Pre-delete dup rows that
   // collide on date with a keeper row, mirroring the event_vendors
   // overlap-cleanup pattern.
-  const dupDayDates = await db
+  // The KEEPER's existing day dates — any duplicate day on one of these dates is
+  // a collision and must be DELETED (not transferred), or the keeper would end up
+  // with two rows for the same day. (Naming: this is the keeper's set; we use it
+  // to filter the duplicate's days.)
+  const keeperDayDates = await db
     .select({ date: eventDays.date })
     .from(eventDays)
     .where(eq(eventDays.eventId, primaryId));
-  if (dupDayDates.length > 0) {
-    const dates = dupDayDates.map((d) => d.date);
+  if (keeperDayDates.length > 0) {
+    const dates = keeperDayDates.map((d) => d.date);
     const BATCH_SIZE = 50;
     for (let i = 0; i < dates.length; i += BATCH_SIZE) {
       const batch = dates.slice(i, i + BATCH_SIZE);
@@ -724,6 +726,7 @@ async function mergeEvents(
         .where(and(eq(eventDays.eventId, duplicateId), inArray(eventDays.date, batch)));
     }
   }
+  // Transfer the duplicate's remaining (non-colliding) days to the keeper.
   await db.update(eventDays).set({ eventId: primaryId }).where(eq(eventDays.eventId, duplicateId));
 
   await db

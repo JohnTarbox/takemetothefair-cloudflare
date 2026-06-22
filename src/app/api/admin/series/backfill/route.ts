@@ -31,7 +31,7 @@ import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { events, eventVendors, eventSeries, adminActions } from "@/lib/db/schema";
-import { isNull, isNotNull, count, and, eq, inArray } from "drizzle-orm";
+import { isNull, isNotNull, count, and, eq, inArray, notInArray } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import {
   planSeriesBackfill,
@@ -39,6 +39,13 @@ import {
   type SeriesGroup,
 } from "@/lib/series/group-events";
 import { selectCommittableGroups } from "@/lib/series/commit-selection";
+
+// EH3 — non-public statuses are NOT occurrences and must be excluded from the
+// backfill grouping. Counting a REJECTED duplicate as a group member created
+// phantom "same-year conflict" holds (a live event + its already-rejected dupe).
+// CANCELLED is terminal too. (DRAFT/PENDING/TENTATIVE stay — they're real
+// editions-in-progress that should get a series_id.)
+const NON_OCCURRENCE_STATUSES = ["REJECTED", "CANCELLED"] as const;
 
 async function authorize(request: NextRequest): Promise<boolean> {
   if (await internalKeyMatches(request)) return true;
@@ -123,7 +130,9 @@ export async function POST(request: NextRequest) {
         completenessScore: events.completenessScore,
       })
       .from(events)
-      .where(isNull(events.mergedInto));
+      .where(
+        and(isNull(events.mergedInto), notInArray(events.status, [...NON_OCCURRENCE_STATUSES]))
+      );
 
     const vendorRows = await db
       .select({ eventId: eventVendors.eventId, n: count() })
@@ -209,7 +218,13 @@ async function commitBackfill(
       publicAccess: events.publicAccess,
     })
     .from(events)
-    .where(and(isNull(events.mergedInto), isNull(events.seriesId)));
+    .where(
+      and(
+        isNull(events.mergedInto),
+        isNull(events.seriesId),
+        notInArray(events.status, [...NON_OCCURRENCE_STATUSES])
+      )
+    );
 
   const vendorRows = await db
     .select({ eventId: eventVendors.eventId, n: count() })
