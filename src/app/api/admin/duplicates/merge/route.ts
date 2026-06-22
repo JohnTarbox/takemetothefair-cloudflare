@@ -5,6 +5,9 @@ import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { executeMerge } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergeRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
+import { events } from "@/lib/db/schema";
+import { inArray } from "drizzle-orm";
+import { differentEditionYears } from "@/lib/series/merge-year-guard";
 
 export async function POST(request: NextRequest) {
   let db: ReturnType<typeof getCloudflareDb> | null = null;
@@ -53,6 +56,34 @@ export async function POST(request: NextRequest) {
 
     if (primaryId === duplicateId) {
       return NextResponse.json({ error: "Cannot merge an entity with itself" }, { status: 400 });
+    }
+
+    // EH3 P3.2 — cross-year merge guard. Two events whose start-years differ are
+    // different EDITIONS of a series, not duplicates; merging would fuse their
+    // per-year vendor rosters (the original 548-link Newport/Norwalk incident
+    // class). Hard-refuse and point the operator at create_occurrence. Same-year
+    // / unknown-year pairs fall through to the normal merge.
+    if (type === "events") {
+      const rows = await db
+        .select({ id: events.id, startDate: events.startDate })
+        .from(events)
+        .where(inArray(events.id, [primaryId, duplicateId]));
+      const keeper = rows.find((r) => r.id === primaryId);
+      const dup = rows.find((r) => r.id === duplicateId);
+      if (keeper && dup && differentEditionYears(keeper.startDate, dup.startDate)) {
+        return NextResponse.json(
+          {
+            error: "different_editions",
+            keeper_year: keeper.startDate?.getUTCFullYear() ?? null,
+            duplicate_year: dup.startDate?.getUTCFullYear() ?? null,
+            message:
+              "These are different editions (different years), not duplicates. Link them as " +
+              "occurrences of one series with create_occurrence — merging would fuse their " +
+              "per-year vendor rosters across years.",
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const result = await executeMerge(
