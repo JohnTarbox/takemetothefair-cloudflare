@@ -6,6 +6,7 @@ import { canonicalParentSlugFor, timingSafeEqualString } from "@takemetothefair/
 import {
   vendors,
   events,
+  eventSeries,
   eventSlugHistory,
   blogPosts,
   blogSlugHistory,
@@ -188,8 +189,15 @@ export async function middleware(request: NextRequest) {
 
     try {
       const [row] = await db
-        .select({ status: events.status, lifecycleStatus: events.lifecycleStatus })
+        .select({
+          status: events.status,
+          lifecycleStatus: events.lifecycleStatus,
+          // EH3 P2.6 — series occurrence → canonical /events/<series>/<year> 301.
+          startDate: events.startDate,
+          seriesSlug: eventSeries.canonicalSlug,
+        })
         .from(events)
+        .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
         .where(eq(events.slug, unsafeSlug(slug)))
         .limit(1);
 
@@ -215,6 +223,16 @@ export async function middleware(request: NextRequest) {
             status: 404,
             headers: { "Content-Type": "text/plain; charset=utf-8" },
           });
+        }
+        // EH3 P2.6 — a public occurrence of a series 301s to its canonical
+        // Option-A URL /events/<series-slug>/<year>. Skip when the slug already
+        // EQUALS the series canonical slug: that bare slug is the series LANDING
+        // (a clean-slug member), which the page must render, not redirect.
+        if (row.seriesSlug && row.startDate && slug !== row.seriesSlug) {
+          const year = new Date(row.startDate).getUTCFullYear();
+          const url = request.nextUrl.clone();
+          url.pathname = `/events/${row.seriesSlug}/${year}`;
+          return NextResponse.redirect(url, 301);
         }
         // Public — let the page render.
         return NextResponse.next();
