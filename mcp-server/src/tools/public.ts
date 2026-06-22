@@ -1,7 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { eq, and, or, gte, lte, like, inArray, sql } from "drizzle-orm";
-import { events, venues, vendors, eventVendors, eventDays, promoters } from "../schema.js";
+import {
+  events,
+  venues,
+  vendors,
+  eventVendors,
+  eventDays,
+  promoters,
+  eventSeries,
+} from "../schema.js";
 import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
 import {
   parseJsonArray,
@@ -1096,10 +1104,15 @@ export function registerPublicTools(server: McpServer, db: Db) {
           participationType: eventVendors.participationType,
           eventDayId: eventVendors.eventDayId,
           eventDayDate: eventDays.date,
+          // EH3 P3.4 — series tagging (null until the backfill links events).
+          seriesId: events.seriesId,
+          seriesSlug: eventSeries.canonicalSlug,
+          seriesName: eventSeries.name,
         })
         .from(eventVendors)
         .innerJoin(events, eq(eventVendors.eventId, events.id))
         .leftJoin(eventDays, eq(eventVendors.eventDayId, eventDays.id))
+        .leftJoin(eventSeries, eq(events.seriesId, eventSeries.id))
         .where(
           and(
             eq(eventVendors.vendorId, vendorRows[0].id),
@@ -1122,6 +1135,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
         // K18 per-occurrence parity with list_event_vendors: null = series-wide.
         event_day_id: r.eventDayId,
         event_day_date: r.eventDayDate,
+        // EH3 P3.4 — series + edition year so callers can group "shows by year".
+        // Null/absent for standalone events (every event until the backfill).
+        series_id: r.seriesId ?? null,
+        series_slug: r.seriesSlug ?? null,
+        series_name: r.seriesName ?? null,
+        year: r.startDate ? new Date(r.startDate).getUTCFullYear() : null,
       }));
 
       return {
