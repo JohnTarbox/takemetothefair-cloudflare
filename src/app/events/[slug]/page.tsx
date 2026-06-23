@@ -565,11 +565,27 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     const description =
       landing.series.description ??
       `${landing.series.name}: every year's dates, location, and details.`;
+    // Emit og:image/twitter for the landing too — mirrors the occurrence block.
+    // The series row's imageUrl is commonly NULL (backfill seeds defaults from an
+    // image-less member), so fall back to og-default; route through cdn-cgi/image
+    // for the 1200×630 gravity=auto derivative, exactly like the occurrence page.
+    const ogImage = cdnImage(
+      landing.series.imageUrl || "https://meetmeatthefair.com/og-default.png",
+      OG_EVENT
+    );
     return {
       title,
       description,
       alternates: { canonical: url },
-      openGraph: { title, description, url, siteName: "Meet Me at the Fair", type: "website" },
+      openGraph: {
+        title,
+        description,
+        url,
+        siteName: "Meet Me at the Fair",
+        type: "website",
+        images: [{ url: ogImage, width: 1200, height: 630, alt: title }],
+      },
+      twitter: { card: "summary_large_image", title, description, images: [ogImage] },
     };
   }
 
