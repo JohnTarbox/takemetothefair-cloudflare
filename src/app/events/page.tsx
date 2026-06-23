@@ -192,7 +192,7 @@ async function getEvents(
       conditions.push(upcomingEndPredicate(new Date()));
     }
 
-    // C2 P2 — "this weekend / this month" date window (homepage chips → ?when=).
+    // C2 P2 — "this week / this weekend / this month" date window (homepage chips → ?when=).
     const whenEnd = whenWindowEnd(searchParams.when);
     if (whenEnd) {
       conditions.push(lte(events.startDate, whenEnd));
@@ -875,7 +875,13 @@ export default async function EventsPage({
   // surface it as a dismissible pill. The ✕ clears `when` (and resets to page 1)
   // while preserving every other active filter.
   const whenLabel =
-    params.when === "weekend" ? "This weekend" : params.when === "month" ? "This month" : null;
+    params.when === "week"
+      ? "This week"
+      : params.when === "weekend"
+        ? "This weekend"
+        : params.when === "month"
+          ? "This month"
+          : null;
   const clearWhenParams = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (k !== "when" && k !== "page" && typeof v === "string" && v) clearWhenParams.set(k, v);
