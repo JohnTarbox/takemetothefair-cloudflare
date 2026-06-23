@@ -162,6 +162,17 @@ export async function POST(request: NextRequest) {
       same_year_conflicts: plan.groups
         .filter((g) => g.sameYearConflict)
         .map(serializeAttentionGroup),
+      // Global-uniqueness pre-check: canonical_slug clashes a commit would trip
+      // over (UNIQUE constraint). Surfaced here so they're resolved BEFORE commit.
+      canonical_collisions: plan.canonicalCollisions.map((c) => ({
+        canonical_slug: c.canonicalSlug,
+        groups: c.groups.map((g) => ({
+          stem: g.stem,
+          venue_id: g.venueId,
+          member_count: g.memberCount,
+          member_ids: g.memberIds,
+        })),
+      })),
       vendor_review_flags: plan.vendorReviewFlags,
       groups: body.include_all_groups ? plan.groups.map(serializeGroupLean) : undefined,
     });
