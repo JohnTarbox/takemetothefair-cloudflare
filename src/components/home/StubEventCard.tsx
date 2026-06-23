@@ -62,6 +62,22 @@ export function StubEventCard({ event, compact = false }: { event: StubEvent; co
   const isNextOccurrence = showsNextOccurrence(occurrence);
   const md = date ? monthDay(date) : null;
 
+  // "Ongoing through" treatment: a single contiguous multi-day event that is in
+  // progress now AND keeps running past today (a festival straddling today and
+  // the coming weekend). Showing a bare "Today / 23" under a "this week/weekend"
+  // heading reads oddly, so we instead show the END date as the numeral with an
+  // "Ongoing · thru" eyebrow. Gated on isContinuousMultiDay so weekly markets
+  // (discrete occurrences) keep their "Next/Today" treatment.
+  const end = event.endDate ?? null;
+  const today = new Date();
+  const endsAfterToday =
+    !!end &&
+    Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()) >
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const isOngoingSpan =
+    !!occurrence?.isOngoing && !!occurrence?.isContinuousMultiDay && endsAfterToday;
+  const endMd = end ? monthDay(end) : null;
+
   const location = [event.venue?.city, event.venue?.state].filter(Boolean).join(", ");
 
   return (
@@ -83,12 +99,18 @@ export function StubEventCard({ event, compact = false }: { event: StubEvent; co
             <div
               className={`font-bold uppercase tracking-[0.14em] opacity-90 ${compact ? "text-[10px]" : "text-xs"}`}
             >
-              {occurrence?.isToday ? "Today" : isNextOccurrence ? `Next · ${md.mon}` : md.mon}
+              {isOngoingSpan && endMd
+                ? `Ongoing · thru ${endMd.mon}`
+                : occurrence?.isToday
+                  ? "Today"
+                  : isNextOccurrence
+                    ? `Next · ${md.mon}`
+                    : md.mon}
             </div>
             <div
               className={`font-display font-semibold leading-[0.95] ${compact ? "text-[26px]" : "text-[40px]"}`}
             >
-              {md.day}
+              {isOngoingSpan && endMd ? endMd.day : md.day}
             </div>
           </>
         ) : (

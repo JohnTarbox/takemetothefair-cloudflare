@@ -122,10 +122,10 @@ export function HomeSearch() {
         </button>
         <button
           type="button"
-          onClick={() => navigate({ when: "weekend" })}
+          onClick={() => navigate({ when: "week" })}
           className="inline-flex items-center rounded-full border border-amber/40 bg-amber-light px-3.5 py-[7px] text-[13.5px] font-semibold text-secondary hover:bg-amber-light/70"
         >
-          This weekend
+          This week
         </button>
         <button
           type="button"

@@ -46,22 +46,27 @@ export function upcomingEndPredicate(now: Date): SQL {
 /**
  * C2 P2 (2026-06-12) — upper bound on `events.start_date` for the homepage
  * "when" quick-filter chips routed to /events?when=…:
- *   weekend → events starting within the next 7 days
+ *   week    → events from now through the end of the current week (coming Sun)
+ *   weekend → same upper bound (now through the coming Sunday)
  *   month   → events starting within the next 30 days
  * Returns null for any other/absent value (no date cap). Shared by the
  * /events query and countPublicFilteredEvents so the two never drift.
+ *
+ * `week` and `weekend` share an identical horizon: the query is lower-bounded by
+ * `endDate >= now` (upcomingEndPredicate), so both already span "now through the
+ * coming Sunday." `week` is the honest label for that span (it includes mid-week
+ * events in progress); `weekend` is kept for the existing homepage search chip.
  */
 export function whenWindowEnd(when: string | undefined, from: Date = new Date()): Date | null {
   if (when === "month") {
     return new Date(from.getTime() + 30 * 86_400_000);
   }
-  if (when === "weekend") {
-    // The actual upcoming weekend — through the end of the coming Sunday — NOT
-    // a flat "next 7 days" (which would pull in an event a full week out, e.g.
-    // a Fri–Sat event 7 days away reading as "this weekend"). If today is Sat
-    // or Sun, this covers the current weekend; otherwise the coming Sat–Sun.
+  if (when === "week" || when === "weekend") {
+    // Through the end of the current week — the coming Sunday — NOT a flat
+    // "next 7 days" (which would pull in an event a full week out). If today is
+    // Sunday, this covers just today; otherwise it runs to the coming Sunday.
     // UTC day boundaries: events store start_date at noon UTC, so capping at
-    // 00:00 UTC of the Monday after Sunday includes every Sat/Sun event.
+    // 00:00 UTC of the Monday after Sunday includes every event through Sunday.
     const dow = from.getUTCDay(); // 0 = Sun … 6 = Sat
     const daysUntilSunday = (7 - dow) % 7;
     return new Date(

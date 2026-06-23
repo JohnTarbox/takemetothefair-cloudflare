@@ -98,13 +98,13 @@ async function getFeaturedEvents() {
   }
 }
 
-async function getWeekendEvents() {
+async function getWeekEvents() {
   const db = getCloudflareDb();
   try {
     const now = new Date();
-    // Match the /events?when=weekend filter exactly (through the coming Sunday)
-    // so the hero preview and its "See all" agree on what "this weekend" means.
-    const horizon = whenWindowEnd("weekend", now)!;
+    // Match the /events?when=week filter exactly (now through the coming Sunday)
+    // so the hero preview and its "See all" agree on what "this week" means.
+    const horizon = whenWindowEnd("week", now)!;
     // Narrow projection — see getFeaturedEvents above. Pull a WIDER pool than
     // the 4 we render so diversifyByCategory() has room to mix event types
     // (the soonest 4 are often all the same type, e.g. farmers markets).
@@ -132,12 +132,12 @@ async function getWeekendEvents() {
     return await attachEventDayDates(db, diversified);
   } catch (e) {
     await logError(db, {
-      message: "Error fetching weekend events",
+      message: "Error fetching this-week events",
       error: e,
-      source: "app/page.tsx:getWeekendEvents",
+      source: "app/page.tsx:getWeekEvents",
     });
     const { FetchError } = await import("@/lib/errors/fetch-error");
-    throw new FetchError("app/page.tsx:getWeekendEvents", e);
+    throw new FetchError("app/page.tsx:getWeekEvents", e);
   }
 }
 
@@ -211,20 +211,20 @@ async function getRecentBlogPosts() {
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [featuredEventsRaw, weekendEvents, counts, recentPosts] = await Promise.all([
+  const [featuredEventsRaw, weekEvents, counts, recentPosts] = await Promise.all([
     getFeaturedEvents(),
-    getWeekendEvents(),
+    getWeekEvents(),
     getPlatformCounts(),
     getRecentBlogPosts(),
   ]);
 
-  // C2 P3 (2026-06-12) — the hero now carries the "This weekend" preview and a
+  // C2 P3 (2026-06-12) — the hero now carries the "This week" preview and a
   // Browse-by-category module replaced the old "Upcoming" grid, so Featured is
-  // the only remaining event grid below. Dedup it against the weekend preview
-  // (precedence This Weekend > Featured) so an event that is both featured AND
-  // happening this weekend isn't shown twice on the page.
-  const weekendIds = new Set(weekendEvents.map((e) => e.id));
-  const featuredEvents = featuredEventsRaw.filter((e) => !weekendIds.has(e.id));
+  // the only remaining event grid below. Dedup it against the this-week preview
+  // (precedence This Week > Featured) so an event that is both featured AND
+  // happening this week isn't shown twice on the page.
+  const weekIds = new Set(weekEvents.map((e) => e.id));
+  const featuredEvents = featuredEventsRaw.filter((e) => !weekIds.has(e.id));
 
   return (
     <div>
@@ -249,7 +249,7 @@ export default async function HomePage() {
         <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-9 md:py-12">
           <div
             className={
-              weekendEvents.length > 0
+              weekEvents.length > 0
                 ? "grid items-center gap-x-12 gap-y-10 lg:grid-cols-[1.05fr_0.95fr]"
                 : "max-w-3xl"
             }
@@ -299,23 +299,23 @@ export default async function HomePage() {
               </div>
             </div>
 
-            {/* RIGHT — live "This weekend" preview (compact ticket stubs). Fills
+            {/* RIGHT — live "This week" preview (compact ticket stubs). Fills
                 the hero width with real events + shows the category colour key. */}
-            {weekendEvents.length > 0 && (
+            {weekEvents.length > 0 && (
               <div>
                 <div className="mb-3 flex items-end justify-between">
                   <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
-                    Happening this weekend
+                    Happening this week
                   </div>
                   <Link
-                    href="/events?when=weekend"
+                    href="/events?when=week"
                     className="flex items-center whitespace-nowrap text-sm font-semibold text-secondary hover:text-terracotta"
                   >
                     See all <ArrowRight className="ml-1 h-3.5 w-3.5" />
                   </Link>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  {weekendEvents.slice(0, 4).map((event) => (
+                  {weekEvents.slice(0, 4).map((event) => (
                     <StubEventCard key={event.id} event={event} compact />
                   ))}
                 </div>
@@ -381,7 +381,7 @@ export default async function HomePage() {
 
       {/* Browse by category — navigational module (C2 P3, replaces the old
           "Upcoming" grid). Colour-coded via the shared category palette so it
-          differentiates from the Featured/Weekend event grids by purpose. */}
+          differentiates from the Featured/This-week event grids by purpose. */}
       <section className="border-y border-border bg-muted py-14">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mb-7 flex items-end justify-between">
