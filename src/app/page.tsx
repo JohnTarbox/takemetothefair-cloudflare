@@ -522,13 +522,15 @@ export default async function HomePage() {
         </div>
       </section>
 
-      {/* Latest from the Blog */}
+      {/* From the Blog — weighted ranking (timeliness/popularity/recency +
+          featured pin), not chronological, so the heading makes no "latest"
+          claim. See src/lib/blog/homepage-ranking.ts. */}
       {recentPosts.length > 0 && (
         <section className="py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground">
-                Latest from the Blog
+                From the Blog
               </h2>
               <Link
                 href="/blog"
