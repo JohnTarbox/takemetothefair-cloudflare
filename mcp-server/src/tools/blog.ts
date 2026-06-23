@@ -341,6 +341,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         .optional()
         .describe("Featured image focal Y (0.0–1.0). Default 0.5 (center)."),
       status: z.enum(BLOG_STATUS_ENUM).optional().describe("New status: DRAFT or PUBLISHED"),
+      featured: z
+        .boolean()
+        .optional()
+        .describe(
+          "Editorial pin for the homepage 'Latest from the Blog' section. true gives the post a strong ranking boost (it usually surfaces in the top 3, but a very timely + popular post can still edge it out). false unpins."
+        ),
       publish_date: z.string().optional().describe("New publish date (ISO 8601)"),
       meta_title: z.string().max(70).optional().describe("New SEO meta title"),
       meta_description: z.string().max(160).optional().describe("New SEO meta description"),
@@ -372,6 +378,7 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         if (params.image_focal_x !== undefined) payload.imageFocalX = params.image_focal_x;
         if (params.image_focal_y !== undefined) payload.imageFocalY = params.image_focal_y;
         if (params.status !== undefined) payload.status = params.status;
+        if (params.featured !== undefined) payload.featured = params.featured;
         if (params.publish_date !== undefined) payload.publishDate = params.publish_date;
         if (params.meta_title !== undefined) payload.metaTitle = params.meta_title;
         if (params.meta_description !== undefined)

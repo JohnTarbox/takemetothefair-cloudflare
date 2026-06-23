@@ -7,8 +7,16 @@ import { StubEventCard } from "@/components/home/StubEventCard";
 import { getCategoryColors } from "@/lib/category-colors";
 import { STATES } from "@/lib/states";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, venues, vendors, promoters, blogPosts, users } from "@/lib/db/schema";
-import { and, gte, eq, desc, count, lte } from "drizzle-orm";
+import {
+  events,
+  venues,
+  vendors,
+  promoters,
+  blogPosts,
+  users,
+  contentLinks,
+} from "@/lib/db/schema";
+import { and, gte, eq, count, lte, sql, inArray } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
 import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
@@ -18,6 +26,7 @@ import { extractFirstImage } from "@/lib/markdown-utils";
 import { formatAuthorName } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { diversifyByCategory } from "@/lib/diversify-by-category";
+import { selectHomepageBlogPosts } from "@/lib/blog/homepage-ranking";
 
 import type { Metadata } from "next";
 
@@ -171,31 +180,82 @@ async function getPlatformCounts() {
 async function getRecentBlogPosts() {
   const db = getCloudflareDb();
   try {
-    const posts = await db
+    const now = new Date();
+    // Pull the WHOLE published pool (small corpus, ~100 rows) so the weighted
+    // scorer ranks across all of it — not just the newest few, which had frozen
+    // into an arbitrary set. Body is deliberately NOT selected here (it would pull
+    // every post's full markdown per request); we fetch it below only for the
+    // selected few that need an image fallback. See src/lib/blog/homepage-ranking.ts.
+    const pool = await db
       .select({
+        id: blogPosts.id,
         title: blogPosts.title,
         slug: blogPosts.slug,
         excerpt: blogPosts.excerpt,
-        body: blogPosts.body,
         featuredImageUrl: blogPosts.featuredImageUrl,
+        imageFocalX: blogPosts.imageFocalX,
+        imageFocalY: blogPosts.imageFocalY,
         authorName: users.name,
         tags: blogPosts.tags,
         categories: blogPosts.categories,
         status: blogPosts.status,
         publishDate: blogPosts.publishDate,
+        viewCount: blogPosts.viewCount,
+        featured: blogPosts.featured,
       })
       .from(blogPosts)
       .leftJoin(users, eq(blogPosts.authorId, users.id))
-      .where(eq(blogPosts.status, "PUBLISHED"))
-      .orderBy(desc(blogPosts.publishDate))
-      .limit(3);
+      .where(eq(blogPosts.status, "PUBLISHED"));
 
-    return posts.map((p) => ({
+    // Timeliness signal — soonest UPCOMING public linked event per post
+    // (content_links BLOG_POST → EVENT, joined by event id; slug-only links with
+    // a null target_id simply don't contribute, degrading gracefully).
+    const timeliness = await db
+      .select({
+        postId: contentLinks.sourceId,
+        soonest: sql<number | null>`MIN(${events.startDate})`,
+      })
+      .from(contentLinks)
+      .innerJoin(events, eq(events.id, contentLinks.targetId))
+      .where(
+        and(
+          eq(contentLinks.sourceType, "BLOG_POST"),
+          eq(contentLinks.targetType, "EVENT"),
+          isPublicEventStatus(),
+          gte(events.endDate, now)
+        )
+      )
+      .groupBy(contentLinks.sourceId);
+
+    // events.start_date is stored as seconds-epoch (Drizzle mode:"timestamp").
+    const soonestByPost = new Map<string, Date>();
+    for (const t of timeliness) {
+      if (t.soonest != null) soonestByPost.set(t.postId, new Date(Number(t.soonest) * 1000));
+    }
+
+    const ranked = selectHomepageBlogPosts(
+      pool.map((p) => ({ ...p, soonestUpcomingEventStart: soonestByPost.get(p.id) ?? null })),
+      { now, limit: 3 }
+    );
+
+    // Image fallback (extract first body image) only for the selected posts that
+    // lack a featured image — keeps the pool query body-free.
+    const needBody = ranked.filter((p) => !p.featuredImageUrl).map((p) => p.id);
+    const bodyById = new Map<string, string>();
+    if (needBody.length > 0) {
+      const bodies = await db
+        .select({ id: blogPosts.id, body: blogPosts.body })
+        .from(blogPosts)
+        .where(inArray(blogPosts.id, needBody));
+      for (const b of bodies) bodyById.set(b.id, b.body);
+    }
+
+    return ranked.map((p) => ({
       ...p,
       authorName: formatAuthorName(p.authorName),
       tags: JSON.parse(p.tags || "[]") as string[],
       categories: JSON.parse(p.categories || "[]") as string[],
-      featuredImageUrl: p.featuredImageUrl || extractFirstImage(p.body),
+      featuredImageUrl: p.featuredImageUrl || extractFirstImage(bodyById.get(p.id) ?? ""),
     }));
   } catch (e) {
     await logError(db, {
