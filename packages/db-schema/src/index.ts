@@ -1245,6 +1245,13 @@ export const blogPosts = sqliteTable(
     publishDate: integer("publish_date", { mode: "timestamp" }),
     metaTitle: text("meta_title"),
     metaDescription: text("meta_description"),
+    // Homepage ranking inputs (drizzle/0128, 2026-06-23). view_count is a coarse
+    // popularity signal incremented on the ISR-cached blog detail render (counts
+    // regenerations, not raw views — relative, fine for ranking). featured is an
+    // editorial pin fed to the scorer as a strong weighted boost. See
+    // src/lib/blog/homepage-ranking.ts.
+    viewCount: integer("view_count").notNull().default(0),
+    featured: integer("featured", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
     updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   },
@@ -1252,6 +1259,7 @@ export const blogPosts = sqliteTable(
     index("idx_blogposts_status_publishdate").on(table.status, table.publishDate),
     index("idx_blogposts_slug").on(table.slug),
     index("idx_blogposts_authorid").on(table.authorId),
+    index("idx_blogposts_status_featured").on(table.status, table.featured),
   ]
 );
 

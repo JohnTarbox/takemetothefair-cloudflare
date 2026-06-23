@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { blogPosts, users, events, venues } from "@/lib/db/schema";
-import { eq, and, ne, desc, or, like } from "drizzle-orm";
+import { eq, and, ne, desc, or, like, sql } from "drizzle-orm";
 import { upcomingEndPredicate } from "@/lib/event-dates";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { auth } from "@/lib/auth";
@@ -192,6 +192,17 @@ export default async function BlogPostPage({ params }: Props) {
   // Non-admins can only see published posts
   if (post.status !== "PUBLISHED" && !isAdmin) {
     notFound();
+  }
+
+  // Coarse popularity signal for homepage ranking (src/lib/blog/homepage-ranking.ts).
+  // Mirrors events/vendors detail pages: incremented inside the ISR-cached render,
+  // so it counts regenerations, not raw views — a RELATIVE signal, fine for ranking.
+  // Only published views count (skip admin draft previews).
+  if (post.status === "PUBLISHED") {
+    await getCloudflareDb()
+      .update(blogPosts)
+      .set({ viewCount: sql`${blogPosts.viewCount} + 1` })
+      .where(eq(blogPosts.id, post.id));
   }
 
   const tags = JSON.parse(post.tags || "[]") as string[];

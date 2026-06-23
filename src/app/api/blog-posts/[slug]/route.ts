@@ -47,6 +47,8 @@ export async function GET(request: NextRequest, { params }: Params) {
         publishDate: blogPosts.publishDate,
         metaTitle: blogPosts.metaTitle,
         metaDescription: blogPosts.metaDescription,
+        featured: blogPosts.featured,
+        viewCount: blogPosts.viewCount,
         createdAt: blogPosts.createdAt,
         updatedAt: blogPosts.updatedAt,
       })
@@ -151,6 +153,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     }
     if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
     if (data.metaDescription !== undefined) updateData.metaDescription = data.metaDescription;
+    // Homepage ranking pin (drizzle/0128). Boolean column; only written when provided.
+    if (data.featured !== undefined) updateData.featured = data.featured;
 
     if (data.status !== undefined) {
       updateData.status = data.status;
@@ -209,6 +213,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
         publishDate: blogPosts.publishDate,
         metaTitle: blogPosts.metaTitle,
         metaDescription: blogPosts.metaDescription,
+        featured: blogPosts.featured,
+        viewCount: blogPosts.viewCount,
         createdAt: blogPosts.createdAt,
         updatedAt: blogPosts.updatedAt,
       })

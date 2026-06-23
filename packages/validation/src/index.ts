@@ -758,6 +758,10 @@ export const blogPostCreateSchema = z.object({
   publishDate: z.string().datetime().optional().nullable(),
   metaTitle: z.string().max(70).optional().nullable(),
   metaDescription: z.string().max(160).optional().nullable(),
+  // Homepage ranking (drizzle/0128, 2026-06-23) — editorial pin. Fed to the
+  // weighted scorer as a strong boost (src/lib/blog/homepage-ranking.ts), not a
+  // hard override. Omitted → backend default false.
+  featured: z.boolean().optional(),
 });
 
 export const blogPostUpdateSchema = blogPostCreateSchema
