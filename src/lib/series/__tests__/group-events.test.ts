@@ -3,6 +3,7 @@ import {
   slugStem,
   groupEvents,
   findVendorNameCollisions,
+  findCanonicalSlugCollisions,
   planSeriesBackfill,
   type GroupableEvent,
 } from "../group-events";
@@ -204,6 +205,45 @@ describe("findVendorNameCollisions — slug-drift among vendor groups", () => {
   });
 });
 
+describe("findCanonicalSlugCollisions — global-uniqueness pre-check", () => {
+  it("flags two distinct groups that mint the same canonical_slug (same stem, different venues)", () => {
+    // Same stem at two venues → two groups (no fuse), but both fall back to the
+    // bare stem for canonicalSlug → a UNIQUE-constraint collision at commit.
+    const groups = groupEvents([
+      mk({ id: "a", slug: "craft-fair-2026", venueId: "v1" }),
+      mk({ id: "b", slug: "craft-fair-2026", venueId: "v2" }),
+    ]);
+    expect(groups).toHaveLength(2); // confirm they did split into distinct groups
+
+    const collisions = findCanonicalSlugCollisions(groups);
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0].canonicalSlug).toBe("craft-fair");
+    expect(collisions[0].groups).toHaveLength(2);
+    expect(collisions[0].groups.map((g) => g.venueId).sort()).toEqual(["v1", "v2"]);
+    expect(collisions[0].groups.flatMap((g) => g.memberIds).sort()).toEqual(["a", "b"]);
+    expect(collisions[0].groups.every((g) => g.memberCount === 1)).toBe(true);
+  });
+
+  it("does not flag when every group's canonical_slug is unique", () => {
+    const groups = groupEvents([
+      mk({ id: "a", slug: "alpha-fair-2026", venueId: "v1" }),
+      mk({ id: "b", slug: "beta-fair-2026", venueId: "v2" }),
+    ]);
+    expect(findCanonicalSlugCollisions(groups)).toEqual([]);
+  });
+
+  it("surfaces collisions through planSeriesBackfill's summary + payload", () => {
+    const plan = planSeriesBackfill([
+      mk({ id: "a", slug: "craft-fair-2026", venueId: "v1" }),
+      mk({ id: "b", slug: "craft-fair-2026", venueId: "v2" }),
+      mk({ id: "c", slug: "unique-fest-2026", venueId: "v3" }),
+    ]);
+    expect(plan.summary.canonicalCollisions).toBe(1);
+    expect(plan.canonicalCollisions).toHaveLength(1);
+    expect(plan.canonicalCollisions[0].canonicalSlug).toBe("craft-fair");
+  });
+});
+
 describe("planSeriesBackfill — summary + invariants", () => {
   it("produces correct summary counts over a mixed corpus", () => {
     const plan = planSeriesBackfill([
@@ -221,6 +261,7 @@ describe("planSeriesBackfill — summary + invariants", () => {
     expect(plan.summary.singletons).toBe(1);
     expect(plan.summary.needsManualConfirm).toBe(1);
     expect(plan.summary.sameYearConflicts).toBe(1);
+    expect(plan.summary.canonicalCollisions).toBe(0); // distinct slugs throughout
   });
 
   it("is deterministic and does not mutate its input", () => {
