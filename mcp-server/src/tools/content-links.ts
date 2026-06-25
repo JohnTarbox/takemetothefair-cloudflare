@@ -222,35 +222,46 @@ export function registerContentLinksTools(server: McpServer, db: Db, auth: AuthC
         idsByType[t].push(link.targetId);
       }
 
+      // Resolve names. Chunk each IN(...) under D1's 100 bound-param cap — a
+      // link-dense post (the CT pillar has 144 links, ~100+ events) would
+      // otherwise throw "too many SQL variables" here. This is the read-side
+      // sibling of the K42 write-path fix: once rebuild_content_links could
+      // store 100+ rows, this resolver started tripping the same cap.
+      const NAME_RESOLVE_CHUNK = 90;
       const nameById = new Map<string, string>();
-      if (idsByType.EVENT.length > 0) {
-        const rows = await db
+      const fillNames = async (
+        ids: string[],
+        run: (chunk: string[]) => Promise<{ id: string; name: string }[]>
+      ) => {
+        for (let i = 0; i < ids.length; i += NAME_RESOLVE_CHUNK) {
+          for (const r of await run(ids.slice(i, i + NAME_RESOLVE_CHUNK)))
+            nameById.set(r.id, r.name);
+        }
+      };
+      await fillNames(idsByType.EVENT, (chunk) =>
+        db
           .select({ id: events.id, name: events.name })
           .from(events)
-          .where(inArray(events.id, idsByType.EVENT));
-        for (const r of rows) nameById.set(r.id, r.name);
-      }
-      if (idsByType.VENDOR.length > 0) {
-        const rows = await db
+          .where(inArray(events.id, chunk))
+      );
+      await fillNames(idsByType.VENDOR, (chunk) =>
+        db
           .select({ id: vendors.id, name: vendors.businessName })
           .from(vendors)
-          .where(inArray(vendors.id, idsByType.VENDOR));
-        for (const r of rows) nameById.set(r.id, r.name);
-      }
-      if (idsByType.VENUE.length > 0) {
-        const rows = await db
+          .where(inArray(vendors.id, chunk))
+      );
+      await fillNames(idsByType.VENUE, (chunk) =>
+        db
           .select({ id: venues.id, name: venues.name })
           .from(venues)
-          .where(inArray(venues.id, idsByType.VENUE));
-        for (const r of rows) nameById.set(r.id, r.name);
-      }
-      if (idsByType.BLOG_POST.length > 0) {
-        const rows = await db
+          .where(inArray(venues.id, chunk))
+      );
+      await fillNames(idsByType.BLOG_POST, (chunk) =>
+        db
           .select({ id: blogPosts.id, name: blogPosts.title })
           .from(blogPosts)
-          .where(inArray(blogPosts.id, idsByType.BLOG_POST));
-        for (const r of rows) nameById.set(r.id, r.name);
-      }
+          .where(inArray(blogPosts.id, chunk))
+      );
 
       return {
         content: [

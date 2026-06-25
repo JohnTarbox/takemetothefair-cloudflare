@@ -532,6 +532,25 @@ const SCHEMA_SQL = `
     created_at INTEGER NOT NULL
   );
 
+  CREATE TABLE blog_posts (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT,
+    status TEXT NOT NULL DEFAULT 'PUBLISHED'
+  );
+
+  CREATE TABLE content_links (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_slug TEXT NOT NULL,
+    target_id TEXT,
+    created_at INTEGER,
+    notified_at INTEGER
+  );
+
   CREATE TABLE pending_search_pings (
     id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,
