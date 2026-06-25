@@ -16,7 +16,11 @@ import {
 } from "../src/tools/admin-send-vendor-email.js";
 import { registerSendTestEmailTool } from "../src/tools/admin-send-test-email.js";
 import { vendors, emailSuppressionList, vendorOutreachAttempts } from "../src/schema.js";
-import { computeUnsubscribeToken, verifyUnsubscribeToken } from "@takemetothefair/utils";
+import {
+  base64UrlEncode,
+  computeUnsubscribeToken,
+  verifyUnsubscribeToken,
+} from "@takemetothefair/utils";
 
 const ADMIN_AUTH = { userId: "u-admin", role: "ADMIN" as const };
 
@@ -78,9 +82,11 @@ describe("send_vendor_email — K41 free-form + K36 footer", () => {
     expect(primary.text).toContain("Unsubscribe:");
     expect(primary.html).toContain("Unsubscribe</a>");
 
-    // The link carries the correct HMAC token for this recipient.
+    // The link carries the correct HMAC token for this recipient, in PATH form
+    // (no `=`, so quoted-printable transport can't corrupt the hex token).
     const token = await computeUnsubscribeToken("test-secret", "owner@acme.test");
-    expect(primary.text).toContain(`/unsubscribe?e=owner%40acme.test&t=${token}`);
+    expect(primary.text).toContain(`/unsubscribe/${base64UrlEncode("owner@acme.test")}/${token}`);
+    expect(primary.text).not.toContain("&t="); // the corruption-prone form is gone
   });
 
   it("free-form subject + body renders instead of a template", async () => {
@@ -179,6 +185,15 @@ describe("unsubscribe token (shared HMAC)", () => {
     expect(await verifyUnsubscribeToken("secret", "someone@else.test", t)).toBe(false);
     // wrong secret
     expect(await verifyUnsubscribeToken("other-secret", "owner@acme.test", t)).toBe(false);
+  });
+
+  it("base64url round-trips the email and emits no '=' (QP-safe)", async () => {
+    for (const e of ["owner@acme.test", "a.b+tag@sub.example.co.uk", "ab@x.io"]) {
+      const enc = base64UrlEncode(e);
+      expect(enc).not.toMatch(/[=+/]/); // url-safe, unpadded
+      const { base64UrlDecode } = await import("@takemetothefair/utils");
+      expect(base64UrlDecode(enc)).toBe(e);
+    }
   });
 });
 
