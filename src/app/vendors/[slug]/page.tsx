@@ -1040,6 +1040,21 @@ export default async function VendorDetailPage({ params }: Props) {
               </div>
             </div>
 
+            {/* UX-A2a (2026-06-25) — surface the claim CTA above-the-fold, at
+                the top of the main column. The sidebar stacks BELOW all content
+                on mobile, so the claim funnel never fired for the exact audience
+                that matters: a vendor seeing their own (unclaimed) page for the
+                first time, by definition logged-out. Same gate + click-through
+                as the sidebar instance (which this replaces). */}
+            {!vendor.claimed && !isOwner && !isAdmin && (
+              <ClaimListingCTA
+                businessName={vendor.businessName}
+                vendorSlug={vendor.slug}
+                vendorId={vendor.id}
+                eligibleForDirectClaim={eligibleForDirectClaim}
+              />
+            )}
+
             {isEnhanced && galleryImages.length > 0 && (
               <VendorGallery images={galleryImages} vendorName={resolvedName} />
             )}
@@ -1404,14 +1419,8 @@ export default async function VendorDetailPage({ params }: Props) {
               </Card>
             )}
 
-            {!vendor.claimed && !isOwner && !isAdmin && (
-              <ClaimListingCTA
-                businessName={vendor.businessName}
-                vendorSlug={vendor.slug}
-                vendorId={vendor.id}
-                eligibleForDirectClaim={eligibleForDirectClaim}
-              />
-            )}
+            {/* UX-A2a — the claim CTA moved above-the-fold into the main column
+                (see the header region). Intentionally not duplicated here. */}
 
             <Card>
               <CardHeader>
