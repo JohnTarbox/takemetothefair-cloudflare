@@ -31,6 +31,26 @@ import { logError } from "../logger.js";
 
 const COMMUNITY_PROMOTER_ID = "system-community-suggestions";
 
+/**
+ * K44 — venue dedup key. Mirrors the SQL normalization used by the dedup
+ * sweep (`/api/admin/duplicates/sweep-entities`) EXACTLY so a JS-normalized
+ * input compares equal to the SQL-normalized `venues.name`: lowercase, strip
+ * `,` `.` `'`, expand `&`→`and`, `-`→space, then a single collapse of double
+ * spaces (SQLite REPLACE(x,'  ',' ') replaces all non-overlapping pairs in one
+ * pass — `replaceAll('  ', ' ')` matches that), and trim.
+ */
+function normalizeVenueKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replaceAll(",", "")
+    .replaceAll(".", "")
+    .replaceAll("'", "")
+    .replaceAll("&", "and")
+    .replaceAll("-", " ")
+    .replaceAll("  ", " ")
+    .trim();
+}
+
 type IndexNowEnv = { MAIN_APP_URL?: string; INTERNAL_API_KEY?: string };
 
 export function registerVendorTools(
@@ -577,6 +597,18 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       venue_name: z.string().transform(sanitizeProse).optional().describe("Venue name"),
       venue_city: z.string().optional().describe("Venue city"),
       venue_state: z.string().optional().describe("Venue state (2-letter code)"),
+      // K44 (2026-06-25) — explicit venue link. When provided, the event is
+      // attached to this exact venue and ALL name-matching / auto-creation is
+      // skipped. The reliable way to avoid the orphan-venue litter the fuzzy
+      // matcher accrues (Fitzwilliam Common, Cape Elizabeth Town Center, …):
+      // resolve/confirm the venue first, then pass its id here. Takes
+      // precedence over venue_name/city/state.
+      venue_id: z
+        .string()
+        .optional()
+        .describe(
+          "Existing venue ID. When set, links this venue directly and skips all name-matching and auto-creation (takes precedence over venue_name)."
+        ),
       // TAX1 A11 (2026-06-02) — let suggest_event accept categories at
       // create time. Before this PR every suggestion landed with the
       // hardcoded ["Event"] placeholder and needed manual recategorization
@@ -726,7 +758,23 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
       let venueId: string | null = null;
       let venueResult: { matched: boolean; venueId: string; name: string } | null = null;
 
-      if (params.venue_name) {
+      if (params.venue_id) {
+        // K44 — explicit link. Validate the id exists, then use it verbatim and
+        // skip all name-matching/creation. The orphan-proof path.
+        const [v] = await db
+          .select({ id: venues.id, name: venues.name })
+          .from(venues)
+          .where(eq(venues.id, params.venue_id))
+          .limit(1);
+        if (!v) {
+          return {
+            content: [{ type: "text", text: `Venue not found: ${params.venue_id}` }],
+            isError: true,
+          };
+        }
+        venueId = v.id;
+        venueResult = { matched: true, venueId: v.id, name: v.name };
+      } else if (params.venue_name) {
         // DQ2 (2026-06-04): coerce address-as-name BEFORE slug + dedup. AI
         // extraction occasionally pulls a street address as the venue
         // name (the U9 root cause). Running the coercion here means the
@@ -761,7 +809,13 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
         // Match on the coerced name — if `params.venue_name` was a street
         // address, we want to match an existing "Event venue in {City}"
         // (the coerced form), not the raw address that no real row carries.
-        const normalizedVenueName = effectiveVenueName.trim().toLowerCase();
+        // K44 — match on the same normalized key the dedup sweep uses
+        // (LOWER + strip ,.' , &→and, -→space, collapse double-space), not
+        // just LOWER(TRIM(name)). Catches near-name variants ("Cape Elizabeth
+        // Town Center" vs "Cape Elizabeth Town Center.") that the looser key
+        // missed, spawning orphan duplicates. `normalizeVenueKey` mirrors the
+        // SQL transform exactly so both sides compare equal.
+        const normalizedVenueName = normalizeVenueKey(effectiveVenueName);
         const existingVenues = await db
           .select({
             id: venues.id,
@@ -774,38 +828,29 @@ function registerSuggestEvent(server: McpServer, db: Db, auth: AuthContext, env?
           .where(
             or(
               eq(venues.slug, unsafeSlug(venueSlug)),
-              sql`LOWER(TRIM(${venues.name})) = ${normalizedVenueName}`
+              sql`TRIM(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(${venues.name}), ',', ''), '.', ''), '''', ''), '&', 'and'), '-', ' '), '  ', ' ')) = ${normalizedVenueName}`
             )
           );
 
+        // K44 — once a slug/normalized-name candidate exists, ALWAYS reuse one
+        // rather than creating a duplicate. The previous code only reused on a
+        // city (or state) agreement and otherwise fell through to create — so a
+        // suggestion carrying a city that the stored row left blank (or vice
+        // versa) spawned an orphan duplicate. Disambiguation preference among
+        // candidates: exact city > exact state > exact canonical slug > first.
         let matched = false;
-
-        if (existingVenues.length > 0 && venueCity) {
-          // Match by slug + city
-          const cityMatch = existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity);
-          if (cityMatch) {
-            venueId = cityMatch.id;
-            venueResult = { matched: true, venueId: cityMatch.id, name: cityMatch.name };
-            matched = true;
-          }
-        } else if (existingVenues.length > 0 && !venueCity && venueState) {
-          // No city — try state match
-          const stateMatch = existingVenues.find(
-            (v) => v.state.toUpperCase().trim() === venueState
-          );
-          if (stateMatch) {
-            venueId = stateMatch.id;
-            venueResult = { matched: true, venueId: stateMatch.id, name: stateMatch.name };
-            matched = true;
-          }
-        } else if (existingVenues.length > 0) {
-          // No city or state — use first match
-          venueId = existingVenues[0].id;
-          venueResult = {
-            matched: true,
-            venueId: existingVenues[0].id,
-            name: existingVenues[0].name,
-          };
+        if (existingVenues.length > 0) {
+          const cityMatch = venueCity
+            ? existingVenues.find((v) => v.city.toLowerCase().trim() === venueCity)
+            : undefined;
+          const stateMatch =
+            !cityMatch && venueState
+              ? existingVenues.find((v) => v.state.toUpperCase().trim() === venueState)
+              : undefined;
+          const slugMatch = existingVenues.find((v) => v.slug === unsafeSlug(venueSlug));
+          const chosen = cityMatch ?? stateMatch ?? slugMatch ?? existingVenues[0];
+          venueId = chosen.id;
+          venueResult = { matched: true, venueId: chosen.id, name: chosen.name };
           matched = true;
         }
 
