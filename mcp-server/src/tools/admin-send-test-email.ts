@@ -19,8 +19,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { jsonContent } from "../helpers.js";
+import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
-import { buildTemplate, TEMPLATE_VALUES, FROM } from "./admin-send-vendor-email.js";
+import {
+  applyCanSpamFooter,
+  isEmailSuppressed,
+  renderEmailBody,
+  TEMPLATE_VALUES,
+  FROM,
+  type SendVendorEmailEnv,
+} from "./admin-send-vendor-email.js";
 
 interface EmailJobMessage {
   to: string;
@@ -31,37 +39,43 @@ interface EmailJobMessage {
   source: string;
 }
 
-interface SendTestEmailEnv {
-  EMAIL_JOBS?: Queue<unknown>;
-}
-
 // Pragmatic "looks like an email" check — the consumer / CF Email binding is the
 // real validator; this just rejects obvious garbage before enqueueing.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function registerSendTestEmailTool(
   server: McpServer,
+  db: Db,
   auth: AuthContext,
-  env?: SendTestEmailEnv
+  env?: SendVendorEmailEnv
 ) {
   if (auth.role !== "ADMIN") return;
 
   server.tool(
     "send_test_email",
     [
-      "Send a TEST email (via the same EMAIL_JOBS queue + templates as",
+      "Send a TEST email (via the same EMAIL_JOBS queue + render path as",
       "send_vendor_email) to a caller-specified address, with NO side effects: no",
       "vendor_outreach_attempts row, no admin_actions row, no vendor_id needed.",
-      "Use it to confirm @meetmeatthefair.com deliverability to your own inbox",
-      "before the first real claim_invite. Subject is [TEST]-prefixed. For",
-      "claim_invite, pass vars.businessName / vars.slug to control the rendered",
-      "name + claim link (they default to a placeholder vendor).",
+      "Render a template (claim_invite) OR send free-form via subject + body.",
+      "Honors the suppression list and appends the CAN-SPAM footer, so it tests",
+      "the REAL outbound shape. Subject is [TEST]-prefixed. Use it to confirm",
+      "@meetmeatthefair.com deliverability before the first real claim_invite.",
     ].join(" "),
     {
       to_address: z.string().min(3).describe("Destination email address (e.g. your own inbox)."),
       template_id: z
         .enum(TEMPLATE_VALUES)
-        .describe("Template to render — same registry as send_vendor_email."),
+        .optional()
+        .describe("Template to render — same registry as send_vendor_email. Omit for free-form."),
+      subject: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Free-form subject (provide with `body` instead of template_id)."),
+      body: z.string().min(1).optional().describe("Free-form plain-text body."),
+      html: z.string().optional().describe("Optional free-form HTML body."),
       vars: z
         .record(z.string(), z.string())
         .optional()
@@ -83,17 +97,58 @@ export function registerSendTestEmailTool(
         };
       }
 
+      const freeForm = !!(params.subject && params.body);
+      if (!freeForm && !params.template_id) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Provide either template_id (e.g. claim_invite) or a free-form subject + body.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // K36 — honor the suppression list even on the test path (it's a real
+      // send). No DB writes either way: side-effect-free is preserved.
+      if (await isEmailSuppressed(db, params.to_address)) {
+        return {
+          content: [
+            jsonContent({
+              success: false,
+              suppressed: true,
+              sent_to: params.to_address,
+              note: "Address is on the suppression list (unsubscribed). Nothing was sent.",
+            }),
+          ],
+        };
+      }
+
       const vars = params.vars ?? {};
-      const tpl = buildTemplate(params.template_id, {
-        businessName: vars.businessName ?? "Test Vendor",
-        slug: vars.slug ?? "test-vendor",
-      });
+      const rendered = await applyCanSpamFooter(
+        renderEmailBody({
+          templateId: params.template_id,
+          vendor: {
+            businessName: vars.businessName ?? "Test Vendor",
+            slug: vars.slug ?? "test-vendor",
+          },
+          subject: params.subject,
+          body: params.body,
+          html: params.html,
+        }),
+        {
+          recipientEmail: params.to_address,
+          reasonLine: "this is a deliverability test you triggered from Meet Me at the Fair.",
+          env,
+        }
+      );
 
       const msg: EmailJobMessage = {
         to: params.to_address,
-        subject: `[TEST] ${tpl.subject}`.slice(0, 200),
-        text: tpl.text,
-        html: tpl.html,
+        subject: `[TEST] ${rendered.subject}`.slice(0, 200),
+        text: rendered.text,
+        html: rendered.html,
         from: FROM,
         source: "email:test",
       };
@@ -104,7 +159,8 @@ export function registerSendTestEmailTool(
           jsonContent({
             success: true,
             sent_to: params.to_address,
-            template_id: params.template_id,
+            mode: freeForm ? "free-form" : (params.template_id as string),
+            template_id: params.template_id ?? null,
             subject: msg.subject,
             no_side_effects: true,
             note: "Enqueued one EMAIL_JOBS message. No vendor_outreach_attempts or admin_actions written; the only DB row is the consumer's email_send_ledger idempotency entry.",

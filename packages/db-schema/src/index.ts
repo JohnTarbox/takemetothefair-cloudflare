@@ -1565,6 +1565,23 @@ export const emailSendLedger = sqliteTable(
   (table) => [index("idx_email_send_ledger_sent_at").on(table.sentAt)]
 );
 
+// K36 (2026-06-25) — CAN-SPAM suppression list. Keyed by LOWERCASE email.
+// An address here has unsubscribed (or was manually suppressed/bounced) and
+// MUST NOT receive solicited outbound mail (send_vendor_email, send_test_email,
+// and any K41 free-form send). Transactional/system emails (receipts, approval
+// notices) are exempt and do NOT consult this list — see the email subsystem
+// docs. `reason`/`source` are informational for operator triage.
+export const emailSuppressionList = sqliteTable(
+  "email_suppression_list",
+  {
+    email: text("email").primaryKey(), // always stored lowercased
+    reason: text("reason"), // 'unsubscribe' | 'manual' | 'bounce' | 'complaint'
+    source: text("source"), // e.g. 'unsubscribe-link', 'admin'
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("idx_email_suppression_created_at").on(table.createdAt)]
+);
+
 // Pending Search Pings — outbox for deferred IndexNow + schema.org regen
 // requests. Bulk ingestion workflows set `defer_search_ping: true` on each
 // write, which routes the lifecycle hook into this table instead of firing
