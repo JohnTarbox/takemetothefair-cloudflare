@@ -645,4 +645,99 @@ describe("suggest_event", () => {
     // The legacy slug stays — fix should not rewrite existing rows.
     expect(rows[0].slug).toBe("earth-expo-convention-center-at-mohegan-sun");
   });
+
+  // ── K44 (2026-06-25) — orphan-venue dedup ──────────────────────────
+  // The orphan-litter bug: a slug/name match was only reused when its city
+  // (or state) ALSO agreed. A suggestion carrying a city the stored row left
+  // blank fell through to CREATE a duplicate (Fitzwilliam Common, Cape
+  // Elizabeth Town Center, …). Now any candidate is reused.
+  it("K44: reuses a name-matched venue even when the stored row has no city", async () => {
+    seedVenue({
+      id: "venue-cape-elizabeth",
+      name: "Cape Elizabeth Town Center",
+      slug: "cape-elizabeth-town-center",
+      city: "", // stored row left city blank — the orphan-bug trigger
+      state: "",
+    });
+    await vendorServer.invoke("suggest_event", {
+      name: "Strawberry Festival",
+      venue_name: "Cape Elizabeth Town Center",
+      venue_city: "Cape Elizabeth",
+      venue_state: "ME",
+      start_date: "2026-06-27",
+      force_create: true,
+      defer_search_ping: false,
+    });
+    // No venue-create — the existing row must be reused despite the city gap.
+    expect(mock.calls.map((c) => c.source).sort()).toEqual(["event-create"]);
+    const rows = db
+      .select({ id: venues.id })
+      .from(venues)
+      .where(eq(venues.name, "Cape Elizabeth Town Center"))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("venue-cape-elizabeth");
+  });
+
+  it("K44: matches a venue across trailing-punctuation name variants", async () => {
+    seedVenue({
+      id: "venue-fitzwilliam",
+      name: "Fitzwilliam Common",
+      slug: "fitzwilliam-common",
+      city: "Fitzwilliam",
+      state: "NH",
+    });
+    await vendorServer.invoke("suggest_event", {
+      name: "Apple Harvest Day",
+      venue_name: "Fitzwilliam Common.", // trailing period variant
+      venue_city: "Fitzwilliam",
+      venue_state: "NH",
+      start_date: "2026-10-03",
+      force_create: true,
+      defer_search_ping: false,
+    });
+    expect(mock.calls.map((c) => c.source).sort()).toEqual(["event-create"]);
+    const rows = db
+      .select({ id: venues.id })
+      .from(venues)
+      .where(eq(venues.name, "Fitzwilliam Common"))
+      .all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("K44: explicit venue_id links directly and skips name-matching/creation", async () => {
+    const vid = seedVenue({
+      id: "venue-explicit",
+      name: "Greenfield Fairgrounds",
+      slug: "greenfield-fairgrounds",
+      city: "Greenfield",
+      state: "MA",
+    });
+    await vendorServer.invoke("suggest_event", {
+      name: "Franklin County Fair",
+      venue_id: vid,
+      // A venue_name that would otherwise NOT match anything — must be ignored.
+      venue_name: "Totally Different Place",
+      start_date: "2026-09-17",
+      force_create: true,
+      defer_search_ping: false,
+    });
+    // Only event-create — venue_id path creates no venue.
+    expect(mock.calls.map((c) => c.source).sort()).toEqual(["event-create"]);
+    const rows = db.select({ id: venues.id }).from(venues).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("venue-explicit");
+  });
+
+  it("K44: errors when an explicit venue_id does not exist", async () => {
+    const res = await vendorServer.invoke("suggest_event", {
+      name: "Phantom Fair",
+      venue_id: "does-not-exist",
+      start_date: "2026-08-01",
+      force_create: true,
+      defer_search_ping: false,
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain("Venue not found");
+  });
 });
