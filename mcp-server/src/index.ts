@@ -1497,6 +1497,17 @@ export default {
         // already-OCCURRED recurring events. Cosmetic-failsoft by construction
         // (each row + each pass catches its own errors and logs to error_logs).
         runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
+        // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
+        // every PUBLISHED post and reports internal /events,/vendors,/venues,
+        // /blog links that no longer resolve (drift a slug rename/merge left
+        // behind). Writes an error_logs warn on any drift so the standing-
+        // failure / page-error canaries alert. Failsoft via runMainAppSweep.
+        runMainAppSweep(
+          env,
+          "blog-link-audit",
+          "/api/admin/content-links/audit",
+          (r) => `affected=${r.posts_affected ?? "?"} unresolved=${r.unresolved_total ?? "?"}`
+        ),
       ]).then(() => undefined)
     );
   },

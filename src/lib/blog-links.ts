@@ -1,8 +1,19 @@
-import { inArray } from "drizzle-orm";
-import { blogPosts, events, vendors, venues } from "@/lib/db/schema";
+import { and, gte, inArray, lt } from "drizzle-orm";
+import { blogPosts, events, eventSlugHistory, vendors, venues } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
 import { EVENT_LISTING_SLUGS } from "@/lib/constants";
-import type { Slug } from "@/lib/utils";
+import { getSlugPrefixBounds, type Slug } from "@/lib/utils";
+
+/**
+ * D1 caps each statement at 100 bound parameters. Every `inArray(col, slugs)`
+ * resolution here can exceed that on link-dense posts — the CT pillar
+ * (`connecticut-fairs-and-festivals-2026-...`) references 100+ events in one
+ * body, which blew past the cap as "too many SQL variables at offset 360"
+ * (K42). Chunk every `IN (...)` lookup at 90 to leave headroom for the
+ * non-list columns in the statement. Same bound-param family as MIG6 / the
+ * event_days chunking (PR #200).
+ */
+export const CONTENT_LINK_INARRAY_CHUNK = 90;
 
 // Match /blog/<slug> occurrences (hrefs, markdown links, bare text).
 const BLOG_LINK_RE = /\/blog\/([a-z0-9][a-z0-9-]*)(?=[^a-z0-9-]|$)/gi;
@@ -115,13 +126,46 @@ export async function findBrokenContentLinksInDb(
 ): Promise<ContentLinkRef[]> {
   const referenced = extractContentLinks(body);
   if (referenced.length === 0) return [];
+  const resolved = await resolveContentLinkTargetIds(db, referenced);
+  return referenced.filter((r) => !resolved.has(`${r.targetType}|${r.targetSlug}`));
+}
 
-  // Resolve in parallel — one query per target type, only for slugs of
-  // that type that were actually referenced. Mirrors syncContentLinks.
-  const resolvedKeys = new Set<string>();
+function contentLinkKey(targetType: ContentLinkTargetType, slug: string): string {
+  return `${targetType}|${slug.toLowerCase()}`;
+}
+
+/**
+ * Resolve a set of content-link refs to their live target ids.
+ *
+ * Returns a map keyed `TYPE|slug` → target id, containing only refs that
+ * resolve. A ref absent from the map is "broken" (no live entity, no
+ * redirect). Two-pass resolution:
+ *
+ *  1. **Current slug** — `events.slug` / `vendors.slug` / `venues.slug` /
+ *     `blog_posts.slug`. Chunked at {@link CONTENT_LINK_INARRAY_CHUNK} to
+ *     stay under D1's 100 bound-param cap (K42).
+ *  2. **`event_slug_history` redirects (EVENT only)** — any EVENT ref that
+ *     didn't resolve via the current slug is re-checked against
+ *     `event_slug_history.old_slug`. A body link to an event that has since
+ *     been renamed (admin edit, merge, or EH3 series-occurrence
+ *     canonicalization) 301-redirects to its current URL via middleware, so
+ *     it is NOT broken — it resolves to the event's id. This is the K45
+ *     re-resolution fix and what keeps EH3-canonicalized links off the
+ *     broken-link surface (K43 acceptance #3).
+ *
+ * Read-only; safe to call before a save (publish gate) and during sync.
+ */
+export async function resolveContentLinkTargetIds(
+  db: ReturnType<typeof getCloudflareDb>,
+  refs: ContentLinkRef[]
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (refs.length === 0) return map;
+
+  // Pass 1 — current slugs, one chunked lookup per target type.
   await Promise.all(
     (["EVENT", "VENDOR", "VENUE", "BLOG_POST"] as const).map(async (type) => {
-      const slugs = referenced.filter((r) => r.targetType === type).map((r) => r.targetSlug);
+      const slugs = refs.filter((r) => r.targetType === type).map((r) => r.targetSlug);
       if (slugs.length === 0) return;
       const table =
         type === "EVENT"
@@ -131,15 +175,81 @@ export async function findBrokenContentLinksInDb(
             : type === "VENUE"
               ? venues
               : blogPosts;
-      const rows = await db
-        .select({ slug: table.slug })
-        .from(table)
-        .where(inArray(table.slug, slugs as Slug[]));
-      for (const r of rows) {
-        resolvedKeys.add(`${type}|${r.slug.toLowerCase()}`);
+      for (let i = 0; i < slugs.length; i += CONTENT_LINK_INARRAY_CHUNK) {
+        const chunk = slugs.slice(i, i + CONTENT_LINK_INARRAY_CHUNK);
+        const rows = await db
+          .select({ id: table.id, slug: table.slug })
+          .from(table)
+          .where(inArray(table.slug, chunk as Slug[]));
+        for (const r of rows) map.set(contentLinkKey(type, r.slug), r.id);
       }
     })
   );
 
-  return referenced.filter((r) => !resolvedKeys.has(`${r.targetType}|${r.targetSlug}`));
+  // Pass 2 — EVENT redirects via event_slug_history for refs still unresolved.
+  const unresolvedEventSlugs = refs
+    .filter((r) => r.targetType === "EVENT" && !map.has(contentLinkKey("EVENT", r.targetSlug)))
+    .map((r) => r.targetSlug);
+  if (unresolvedEventSlugs.length > 0) {
+    for (let i = 0; i < unresolvedEventSlugs.length; i += CONTENT_LINK_INARRAY_CHUNK) {
+      const chunk = unresolvedEventSlugs.slice(i, i + CONTENT_LINK_INARRAY_CHUNK);
+      const rows = await db
+        .select({ eventId: eventSlugHistory.eventId, oldSlug: eventSlugHistory.oldSlug })
+        .from(eventSlugHistory)
+        .where(inArray(eventSlugHistory.oldSlug, chunk as Slug[]));
+      for (const r of rows) {
+        const key = contentLinkKey("EVENT", r.oldSlug);
+        if (!map.has(key)) map.set(key, r.eventId);
+      }
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Best-effort canonical-slug suggestions for a broken content link, for the
+ * publish-time gate's "did you mean…" hint (K43 acceptance #1). Strips a
+ * trailing year / ordinal off the broken slug, prefix-scans live slugs of the
+ * same target type, and returns up to 3 candidates ordered by shared-prefix
+ * length. Cheap (indexed prefix range) and silent on failure — a suggestion
+ * is a courtesy, never load-bearing.
+ */
+export async function suggestCanonicalSlugs(
+  db: ReturnType<typeof getCloudflareDb>,
+  ref: ContentLinkRef
+): Promise<string[]> {
+  const table =
+    ref.targetType === "EVENT"
+      ? events
+      : ref.targetType === "VENDOR"
+        ? vendors
+        : ref.targetType === "VENUE"
+          ? venues
+          : blogPosts;
+  // Drop a trailing `-2026` year and/or leading ordinal noise, then keep the
+  // first ~3 hyphen tokens as a prefix probe.
+  const stripped = ref.targetSlug.replace(/-(19|20)\d{2}$/, "");
+  const prefix = stripped.split("-").slice(0, 3).join("-");
+  if (prefix.length < 3) return [];
+  const [lowerBound, upperBound] = getSlugPrefixBounds(prefix);
+  try {
+    const rows = await db
+      .select({ slug: table.slug })
+      .from(table)
+      .where(and(gte(table.slug, lowerBound as Slug), lt(table.slug, upperBound as Slug)))
+      .limit(8);
+    const sharedLen = (a: string, b: string) => {
+      let n = 0;
+      while (n < a.length && n < b.length && a[n] === b[n]) n++;
+      return n;
+    };
+    return rows
+      .map((r) => r.slug as string)
+      .filter((s) => s !== ref.targetSlug)
+      .sort((a, b) => sharedLen(b, ref.targetSlug) - sharedLen(a, ref.targetSlug))
+      .slice(0, 3);
+  } catch {
+    return [];
+  }
 }

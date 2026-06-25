@@ -774,6 +774,12 @@ export const blogPostUpdateSchema = blogPostCreateSchema
     categories: z.array(z.string()).optional(),
     faqs: z.array(blogFaqItemSchema).optional(),
     status: z.enum([BLOG_POST_STATUS.DRAFT, BLOG_POST_STATUS.PUBLISHED]).optional(),
+    // K43 / A3.1 — escape hatch for the publish-time broken-link gate. When a
+    // PUBLISHED save introduces an internal /events,/vendors,/venues,/blog link
+    // that doesn't resolve, the PUT is rejected 422 unless this is true. Lets a
+    // deliberate forward-reference (cluster guide published before its pillar)
+    // through while still blocking accidental dead links. Not persisted.
+    allowBrokenLinks: z.boolean().optional(),
   });
 
 // ── Event lifecycle update ───────────────────────────────────────

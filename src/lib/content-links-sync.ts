@@ -1,17 +1,10 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { getCloudflareDb } from "@/lib/cloudflare";
-import type { Slug } from "@/lib/utils";
+import { contentLinks, events, blogPosts, promoters, users } from "@/lib/db/schema";
 import {
-  contentLinks,
-  events,
-  vendors,
-  venues,
-  blogPosts,
-  promoters,
-  users,
-} from "@/lib/db/schema";
-import {
+  CONTENT_LINK_INARRAY_CHUNK,
   extractContentLinks,
+  resolveContentLinkTargetIds,
   type ContentLinkRef,
   type ContentLinkTargetType,
 } from "@/lib/blog-links";
@@ -83,33 +76,14 @@ export async function syncContentLinks(
       )
     : rawReferenced;
 
-  // Resolve slugs → ids in one query per entity type.
-  const targetIdsByTypeSlug = new Map<string, string>(); // "TYPE|slug" → id
-  await Promise.all(
-    (["EVENT", "VENDOR", "VENUE", "BLOG_POST"] as const).map(async (type) => {
-      const slugs = referenced.filter((r) => r.targetType === type).map((r) => r.targetSlug);
-      if (slugs.length === 0) return;
-      const table =
-        type === "EVENT"
-          ? events
-          : type === "VENDOR"
-            ? vendors
-            : type === "VENUE"
-              ? venues
-              : blogPosts;
-      const rows = await db
-        .select({ id: table.id, slug: table.slug })
-        .from(table)
-        .where(inArray(table.slug, slugs as Slug[]));
-      for (const r of rows) {
-        targetIdsByTypeSlug.set(`${type}|${r.slug.toLowerCase()}`, r.id);
-      }
-    })
-  );
+  // Resolve slugs → ids. Chunked under D1's bound-param cap (K42) and
+  // event_slug_history-aware so a body link to a renamed event still
+  // resolves (K45) instead of being stored as a dangling null.
+  const targetIdsByTypeSlug = await resolveContentLinkTargetIds(db, referenced);
 
   const referencedWithIds = referenced.map((r) => ({
     ...r,
-    targetId: targetIdsByTypeSlug.get(`${r.targetType}|${r.targetSlug}`) ?? null,
+    targetId: targetIdsByTypeSlug.get(`${r.targetType}|${r.targetSlug.toLowerCase()}`) ?? null,
   }));
 
   // Load existing rows for this source.
@@ -131,6 +105,20 @@ export async function syncContentLinks(
   const toInsert = referencedWithIds.filter((r) => !existSet.has(existingKey(r)));
   const toDelete = existing.filter((r) => !refSet.has(existingKey(r)));
 
+  // A2/K45 — existing rows still present in the body but stored with a NULL
+  // target_id (the target didn't exist at the original save time, or its slug
+  // has since moved into event_slug_history). If they resolve now, patch the
+  // id in place. Without this the link stayed broken until the SOURCE post was
+  // manually re-saved (the strawberry-guide → pillar and Bar Harbor cases).
+  const toUpdate: Array<{ id: string; targetId: string }> = [];
+  for (const r of existing) {
+    if (r.targetId !== null) continue;
+    const key = `${r.targetType}|${r.targetSlug.toLowerCase()}`;
+    if (!refSet.has(existingKey(r))) continue; // headed for deletion instead
+    const resolvedId = targetIdsByTypeSlug.get(key);
+    if (resolvedId) toUpdate.push({ id: r.id, targetId: resolvedId });
+  }
+
   if (toInsert.length > 0) {
     // D1 caps each statement at 100 bound parameters. content_links has 8
     // columns (id and createdAt come from $defaultFn but Drizzle still emits
@@ -150,13 +138,20 @@ export async function syncContentLinks(
     }
   }
 
+  // Re-resolve previously-null rows in place (A2/K45).
+  for (const u of toUpdate) {
+    await db.update(contentLinks).set({ targetId: u.targetId }).where(eq(contentLinks.id, u.id));
+  }
+
   if (toDelete.length > 0) {
-    await db.delete(contentLinks).where(
-      inArray(
-        contentLinks.id,
-        toDelete.map((r) => r.id)
-      )
-    );
+    // Chunk the id list under D1's 100 bound-param cap — a post that shed many
+    // links in one edit could otherwise blow the cap here (K42, delete side).
+    const ids = toDelete.map((r) => r.id);
+    for (let i = 0; i < ids.length; i += CONTENT_LINK_INARRAY_CHUNK) {
+      await db
+        .delete(contentLinks)
+        .where(inArray(contentLinks.id, ids.slice(i, i + CONTENT_LINK_INARRAY_CHUNK)));
+    }
   }
 
   let notified = 0;
@@ -188,6 +183,101 @@ export async function syncContentLinks(
     current: referencedWithIds,
     notified,
   };
+}
+
+const SLUG_PATH_BY_TYPE: Record<ContentLinkTargetType, string> = {
+  EVENT: "events",
+  VENDOR: "vendors",
+  VENUE: "venues",
+  BLOG_POST: "blog",
+};
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A3.3 / K43 — slug-change auto-repair hook.
+ *
+ * When an entity's slug changes (event admin edit, merge, EH3
+ * series-occurrence canonicalization), every blog body that links to the OLD
+ * slug keeps pointing at a URL that now only 301-redirects. `resolveContent
+ * LinkTargetIds` already keeps such a link from being flagged broken (via
+ * `event_slug_history`), but the body still carries the stale slug, and each
+ * future canonical change would quietly add another layer of redirect. This
+ * rewrites the slug in the body to the new canonical and re-syncs the index,
+ * so inbound blog links track the entity's current URL with no manual edit.
+ *
+ * Idempotent and boundary-safe: `/events/big-e` is rewritten, `/events/
+ * big-e-2026` is not. No-op when oldSlug === newSlug or nothing links to it.
+ * Each post is independent — a failure on one is logged and skipped, never
+ * thrown, so a slug rename never fails on link-repair.
+ */
+export async function repairBlogLinksForSlugChange(
+  db: ReturnType<typeof getCloudflareDb>,
+  targetType: ContentLinkTargetType,
+  oldSlug: string,
+  newSlug: string
+): Promise<{ postsUpdated: number; linksRewritten: number }> {
+  if (!oldSlug || !newSlug || oldSlug === newSlug) {
+    return { postsUpdated: 0, linksRewritten: 0 };
+  }
+  const path = SLUG_PATH_BY_TYPE[targetType];
+
+  // Which blog posts link to the old slug? Read it off the content_links index
+  // (kept fresh by syncContentLinks) rather than scanning every body.
+  const rows = await db
+    .select({ sourceId: contentLinks.sourceId })
+    .from(contentLinks)
+    .where(
+      and(
+        eq(contentLinks.sourceType, "BLOG_POST"),
+        eq(contentLinks.targetType, targetType),
+        eq(contentLinks.targetSlug, oldSlug.toLowerCase())
+      )
+    );
+  const postIds = Array.from(new Set(rows.map((r) => r.sourceId)));
+  if (postIds.length === 0) return { postsUpdated: 0, linksRewritten: 0 };
+
+  const linkRe = new RegExp(`/${path}/${escapeRegExp(oldSlug)}(?=[^a-z0-9-]|$)`, "gi");
+  const replacement = `/${path}/${newSlug}`;
+
+  let postsUpdated = 0;
+  let linksRewritten = 0;
+  for (let i = 0; i < postIds.length; i += CONTENT_LINK_INARRAY_CHUNK) {
+    const chunk = postIds.slice(i, i + CONTENT_LINK_INARRAY_CHUNK);
+    const posts = await db
+      .select({ id: blogPosts.id, slug: blogPosts.slug, body: blogPosts.body })
+      .from(blogPosts)
+      .where(inArray(blogPosts.id, chunk));
+    for (const post of posts) {
+      if (!post.body) continue;
+      const matches = post.body.match(linkRe);
+      if (!matches || matches.length === 0) continue;
+      const newBody = post.body.replace(linkRe, replacement);
+      if (newBody === post.body) continue;
+      try {
+        await db
+          .update(blogPosts)
+          .set({ body: newBody, updatedAt: new Date() })
+          .where(eq(blogPosts.id, post.id));
+        // Re-sync so the content_links rows pick up the new slug + resolved id.
+        await syncContentLinks(db, post.id, newBody, { notify: false, sourceSlug: post.slug });
+        postsUpdated++;
+        linksRewritten += matches.length;
+      } catch (err) {
+        await logError(db, {
+          level: "warn",
+          message: "Blog link slug-change repair failed for post",
+          error: err,
+          source: "content-links-sync:repair-slug-change",
+          context: { postId: post.id, targetType, oldSlug, newSlug },
+        });
+      }
+    }
+  }
+
+  return { postsUpdated, linksRewritten };
 }
 
 /**
