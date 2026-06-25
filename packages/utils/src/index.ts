@@ -422,3 +422,7 @@ export * from "./recurrence";
 // EH3 P3.3 (2026-06-22): discovery match-to-series routing decision. Shared so
 // the MCP server's suggest_event ingest path can import it.
 export * from "./discovery-routing";
+
+// K36 (2026-06-25): stateless one-click unsubscribe tokens. Shared so the MCP
+// Worker (footer render) and the main app (/unsubscribe verify) agree.
+export * from "./email-unsubscribe";

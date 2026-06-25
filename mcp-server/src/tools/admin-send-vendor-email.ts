@@ -19,9 +19,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { vendors, vendorOutreachAttempts, adminActions } from "../schema.js";
+import { desc, eq } from "drizzle-orm";
+import { vendors, vendorOutreachAttempts, adminActions, emailSuppressionList } from "../schema.js";
 import { jsonContent } from "../helpers.js";
+import { buildUnsubscribeUrl } from "@takemetothefair/utils";
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 
@@ -34,8 +35,15 @@ interface EmailJobMessage {
   source: string;
 }
 
-interface SendVendorEmailEnv {
+// K36 — footer/unsubscribe needs the shared HMAC secret + (optional) override
+// mailing address. INTERNAL_API_KEY is the default token-signing key (both this
+// Worker and the main-app /unsubscribe route hold it). Exported shape reused by
+// send_test_email.
+export interface SendVendorEmailEnv {
   EMAIL_JOBS?: Queue<unknown>;
+  INTERNAL_API_KEY?: string;
+  UNSUBSCRIBE_SECRET?: string;
+  MAILING_ADDRESS?: string;
 }
 
 const PUBLIC_HOST = "https://meetmeatthefair.com";
@@ -43,6 +51,17 @@ const PUBLIC_HOST = "https://meetmeatthefair.com";
 export const FROM = "Meet Me at the Fair <hello@meetmeatthefair.com>";
 const BCC_TO = "jtarboxme@gmail.com";
 const SIGN_OFF = "— Meet Me at the Fair";
+
+// K36 — CAN-SPAM §5(a)(5) physical postal address. OPERATOR ACTION REQUIRED:
+// set the real mailing address via the MAILING_ADDRESS secret on the MCP Worker
+// before sending real outbound mail at volume. The placeholder is intentionally
+// obvious so an un-set deploy is caught in review/inbox, not silently shipped.
+const DEFAULT_MAILING_ADDRESS = "Meet Me at the Fair, [MAILING_ADDRESS not set]";
+
+/** The HMAC key for unsubscribe tokens — dedicated secret if set, else the shared internal key. */
+function unsubscribeSecret(env?: SendVendorEmailEnv): string {
+  return env?.UNSUBSCRIBE_SECRET || env?.INTERNAL_API_KEY || "";
+}
 
 // Exported so K32 (send_test_email) shares this single template registry.
 export const TEMPLATE_VALUES = ["claim_invite"] as const;
@@ -96,6 +115,79 @@ ${SIGN_OFF}`;
   }
 }
 
+export interface RenderedEmail {
+  subject: string;
+  text: string;
+  html: string;
+}
+
+/**
+ * K41 — render either a registered template OR a free-form subject+body. When
+ * `subject` and `body` are supplied they win (free-form); otherwise the
+ * `templateId`+`vendor` template is rendered. Footer is NOT applied here —
+ * callers add it via {@link applyCanSpamFooter} once the recipient is known.
+ */
+export function renderEmailBody(input: {
+  templateId?: TemplateId;
+  vendor?: { businessName: string; slug: string };
+  subject?: string;
+  body?: string;
+  html?: string;
+}): RenderedEmail {
+  if (input.subject && input.body) {
+    return {
+      subject: input.subject,
+      text: input.body,
+      html: input.html ?? paragraphsToHtml(input.body),
+    };
+  }
+  if (input.templateId && input.vendor) {
+    return buildTemplate(input.templateId, input.vendor);
+  }
+  throw new Error("renderEmailBody needs subject+body (free-form) or templateId+vendor (template)");
+}
+
+/**
+ * K36 — append the CAN-SPAM footer (working one-click unsubscribe link,
+ * physical mailing address, "you're receiving this because…" line) to both the
+ * text and HTML bodies. Async because the unsubscribe link carries an HMAC
+ * token over the recipient address.
+ */
+export async function applyCanSpamFooter(
+  rendered: RenderedEmail,
+  opts: { recipientEmail: string; reasonLine: string; env?: SendVendorEmailEnv }
+): Promise<RenderedEmail> {
+  const mailingAddress = opts.env?.MAILING_ADDRESS || DEFAULT_MAILING_ADDRESS;
+  const unsubscribeUrl = await buildUnsubscribeUrl(
+    PUBLIC_HOST,
+    unsubscribeSecret(opts.env),
+    opts.recipientEmail
+  );
+
+  const footerText = `\n\n--\nYou're receiving this because ${opts.reasonLine}\nUnsubscribe: ${unsubscribeUrl}\nMeet Me at the Fair · ${mailingAddress}`;
+  const footerHtml = `<hr style="margin-top:24px;border:none;border-top:1px solid #ddd"><p style="font-size:12px;color:#666;line-height:1.5">You're receiving this because ${escapeHtml(opts.reasonLine)}<br><a href="${escapeHtml(unsubscribeUrl)}">Unsubscribe</a> · Meet Me at the Fair · ${escapeHtml(mailingAddress)}</p>`;
+
+  return {
+    subject: rendered.subject,
+    text: rendered.text + footerText,
+    html: rendered.html + footerHtml,
+  };
+}
+
+/**
+ * K36 — has this address opted out? Lowercased lookup against the suppression
+ * list. Solicited sends (vendor outreach, free-form, test) must skip a match;
+ * transactional/system mail does NOT call this.
+ */
+export async function isEmailSuppressed(db: Db, email: string): Promise<boolean> {
+  const [row] = await db
+    .select({ email: emailSuppressionList.email })
+    .from(emailSuppressionList)
+    .where(eq(emailSuppressionList.email, email.trim().toLowerCase()))
+    .limit(1);
+  return !!row;
+}
+
 export function registerSendVendorEmailTool(
   server: McpServer,
   db: Db,
@@ -106,12 +198,32 @@ export function registerSendVendorEmailTool(
 
   server.tool(
     "send_vendor_email",
-    "Compose + send a one-off email from a @meetmeatthefair.com address to a vendor (claim invites, outreach for missing data, replies). Sends via the transactional email pipeline, auto-BCCs the operator, and logs to admin_actions + vendor_outreach_attempts (so the claim leaderboard stops re-suggesting the vendor). First template: 'claim_invite' — pre-filled with the vendor's free-claim URL. Requires the vendor to have a contact_email on file. Admin only.",
+    "Compose + send a one-off email from a @meetmeatthefair.com address to a vendor (claim invites, outreach for missing data, replies). Either render a template ('claim_invite') OR send FREE-FORM by passing subject + body (+ optional html). Sends via the transactional email pipeline, auto-BCCs the operator, appends a CAN-SPAM footer (unsubscribe + mailing address), honors the suppression list (returns suppressed:true and sends nothing if the vendor unsubscribed), and logs to admin_actions + vendor_outreach_attempts. Requires the vendor to have a contact_email on file. Admin only.",
     {
       vendor_id: z.string().min(1).describe("Vendor ID (UUID). Find via search_vendors."),
       template_id: z
         .enum(TEMPLATE_VALUES)
-        .describe("Email template. 'claim_invite' = 'you're listed; claim your free profile'."),
+        .optional()
+        .describe(
+          "Email template. 'claim_invite' = 'you're listed; claim your free profile'. Omit when sending free-form (subject + body)."
+        ),
+      subject: z
+        .string()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe(
+          "Free-form subject. Provide with `body` instead of template_id to send any email."
+        ),
+      body: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Free-form plain-text body (a CAN-SPAM footer is appended automatically)."),
+      html: z
+        .string()
+        .optional()
+        .describe("Optional free-form HTML body. When omitted, HTML is derived from `body`."),
       vars: z
         .record(z.string(), z.string())
         .optional()
@@ -161,7 +273,22 @@ export function registerSendVendorEmailTool(
           isError: true,
         };
       }
-      if (params.template_id === "claim_invite" && vendor.claimed) {
+
+      // K41 — decide template vs free-form. subject+body wins; otherwise a
+      // template_id is required.
+      const freeForm = !!(params.subject && params.body);
+      if (!freeForm && !params.template_id) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Provide either template_id (e.g. claim_invite) or a free-form subject + body.",
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (!freeForm && params.template_id === "claim_invite" && vendor.claimed) {
         return {
           content: [
             {
@@ -173,29 +300,57 @@ export function registerSendVendorEmailTool(
         };
       }
 
-      const tpl = buildTemplate(params.template_id, {
-        businessName: vendor.businessName,
-        slug: vendor.slug,
-      });
+      // K36 — suppression gate. If the vendor unsubscribed, send NOTHING and
+      // write no outreach/audit rows.
+      if (await isEmailSuppressed(db, vendor.contactEmail)) {
+        return {
+          content: [
+            jsonContent({
+              success: false,
+              suppressed: true,
+              vendor_id: vendor.id,
+              sent_to: vendor.contactEmail,
+              note: "Recipient is on the suppression list (unsubscribed). Nothing was sent or logged.",
+            }),
+          ],
+        };
+      }
+
+      const rendered = await applyCanSpamFooter(
+        renderEmailBody({
+          templateId: params.template_id,
+          vendor: { businessName: vendor.businessName, slug: vendor.slug },
+          subject: params.subject,
+          body: params.body,
+          html: params.html,
+        }),
+        {
+          recipientEmail: vendor.contactEmail,
+          reasonLine: "your business is listed on Meet Me at the Fair.",
+          env,
+        }
+      );
+
+      const mode = freeForm ? "free-form" : (params.template_id as string);
 
       // Primary send to the vendor.
       const primary: EmailJobMessage = {
         to: vendor.contactEmail,
-        subject: tpl.subject.slice(0, 200),
-        text: tpl.text,
-        html: tpl.html,
+        subject: rendered.subject.slice(0, 200),
+        text: rendered.text,
+        html: rendered.html,
         from: FROM,
         source: "email:vendor-outreach",
       };
       await env.EMAIL_JOBS.send(primary);
 
       // BCC copy to the operator (CF Email send() has no bcc field — second msg).
-      const bccNote = `[BCC copy] The email below was sent to ${vendor.businessName} <${vendor.contactEmail}> via send_vendor_email (${params.template_id}).\n\n----------\n\n`;
+      const bccNote = `[BCC copy] The email below was sent to ${vendor.businessName} <${vendor.contactEmail}> via send_vendor_email (${mode}).\n\n----------\n\n`;
       const bcc: EmailJobMessage = {
         to: BCC_TO,
-        subject: `[BCC] ${tpl.subject}`.slice(0, 200),
-        text: bccNote + tpl.text,
-        html: `<p>${escapeHtml(bccNote.trim())}</p>${tpl.html}`,
+        subject: `[BCC] ${rendered.subject}`.slice(0, 200),
+        text: bccNote + rendered.text,
+        html: `<p>${escapeHtml(bccNote.trim())}</p>${rendered.html}`,
         from: FROM,
         source: "email:vendor-bcc",
       };
@@ -212,7 +367,7 @@ export function registerSendVendorEmailTool(
         channel: "email",
         outcome: "sent",
         outcomeAt: now,
-        notes: `send_vendor_email: ${params.template_id}`.slice(0, 500),
+        notes: `send_vendor_email: ${mode}`.slice(0, 500),
         createdBy: auth.userId,
       });
 
@@ -223,7 +378,8 @@ export function registerSendVendorEmailTool(
         targetType: "vendor",
         targetId: vendor.id,
         payloadJson: JSON.stringify({
-          template_id: params.template_id,
+          template_id: params.template_id ?? null,
+          mode,
           to: vendor.contactEmail,
           bcc: BCC_TO,
           attemptId,
@@ -238,10 +394,47 @@ export function registerSendVendorEmailTool(
             success: true,
             vendor_id: vendor.id,
             business_name: vendor.businessName,
-            template_id: params.template_id,
+            mode,
+            template_id: params.template_id ?? null,
             sent_to: vendor.contactEmail,
             bcc: BCC_TO,
             outreach_attempt_id: attemptId,
+          }),
+        ],
+      };
+    }
+  );
+
+  // K36 — operator visibility into the suppression list (acceptance: "admin can
+  // see the suppression list"). Read-only.
+  server.tool(
+    "list_email_suppressions",
+    "List addresses on the email suppression list (people who unsubscribed or were manually suppressed). Solicited sends (send_vendor_email, send_test_email, K41 free-form) skip these. Admin only.",
+    {
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe("Max rows to return (most recent first). Default 100."),
+    },
+    async (params) => {
+      const rows = await db
+        .select()
+        .from(emailSuppressionList)
+        .orderBy(desc(emailSuppressionList.createdAt))
+        .limit(params.limit ?? 100);
+      return {
+        content: [
+          jsonContent({
+            count: rows.length,
+            suppressions: rows.map((r) => ({
+              email: r.email,
+              reason: r.reason,
+              source: r.source,
+              created_at: r.createdAt,
+            })),
           }),
         ],
       };

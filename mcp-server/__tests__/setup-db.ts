@@ -525,6 +525,13 @@ const SCHEMA_SQL = `
     provider_message_id TEXT
   );
 
+  CREATE TABLE email_suppression_list (
+    email TEXT PRIMARY KEY,
+    reason TEXT,
+    source TEXT,
+    created_at INTEGER NOT NULL
+  );
+
   CREATE TABLE pending_search_pings (
     id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,

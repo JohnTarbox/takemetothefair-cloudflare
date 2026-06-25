@@ -61,6 +61,12 @@ interface Env {
   MCP_OBJECT: DurableObjectNamespace;
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  // K36 (2026-06-25) — outbound CAN-SPAM footer. MAILING_ADDRESS is the
+  // physical postal address (§5(a)(5)); UNSUBSCRIBE_SECRET signs the one-click
+  // unsubscribe token (falls back to INTERNAL_API_KEY when unset). Both
+  // optional — set MAILING_ADDRESS before sending real outbound mail at volume.
+  MAILING_ADDRESS?: string;
+  UNSUBSCRIBE_SECRET?: string;
   // Optional Pages service binding — bound in production via wrangler.toml,
   // typically absent in local dev. When present, internal API calls (IndexNow
   // ping, future cross-Worker calls) skip the public-internet round-trip.
@@ -286,7 +292,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         // K31 (2026-06-21) — send_vendor_email (claim invites + outreach).
         registerSendVendorEmailTool(this.server, db, auth, this.env);
         // K32 (2026-06-21) — send_test_email (no-side-effects deliverability test).
-        registerSendTestEmailTool(this.server, auth, this.env);
+        registerSendTestEmailTool(this.server, db, auth, this.env);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -544,7 +550,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerVendorHierarchyTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
-      registerSendTestEmailTool(server, auth, env);
+      registerSendTestEmailTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);
