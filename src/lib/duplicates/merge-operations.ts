@@ -14,6 +14,8 @@ import {
   adminActions,
 } from "@/lib/db/schema";
 import { unsafeSlug } from "@takemetothefair/utils";
+import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
+import { logError } from "@/lib/logger";
 import type {
   DuplicateEntityType,
   MergePreviewResponse,
@@ -892,6 +894,21 @@ async function mergeEvents(
       createdAt: new Date(),
     }),
   ]);
+
+  // K43 / A3.3 — rewrite blog bodies that linked to the duplicate's original
+  // slug so they point at the keeper's canonical URL (not just rely on the
+  // slug-history 301). Non-fatal: the merge has already committed.
+  try {
+    await repairBlogLinksForSlugChange(db, "EVENT", originalDupSlug, keeper.slug);
+  } catch (err) {
+    await logError(db, {
+      level: "warn",
+      message: "Blog-link slug-change repair failed after event merge",
+      error: err,
+      source: "duplicates/merge-operations",
+      context: { primaryId, duplicateId, originalDupSlug, keeperSlug: keeper.slug },
+    });
+  }
 
   // Final fetch: return the merged keeper with its venue + promoter
   // join. Same shape the original mergeEvents returned for backwards

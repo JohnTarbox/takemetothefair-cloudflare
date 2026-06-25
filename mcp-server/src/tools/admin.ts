@@ -1233,11 +1233,13 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         // src/app/api/admin/events/[id]/route.ts (drizzle/0061). Non-fatal
         // on insert error — the rename has already succeeded above.
         if (typeof updates.slug === "string" && updates.slug !== event.slug) {
+          const renamedFrom = event.slug;
+          const renamedTo = unsafeSlug(updates.slug);
           try {
             await db.insert(eventSlugHistory).values({
               eventId: event.id,
-              oldSlug: event.slug,
-              newSlug: unsafeSlug(updates.slug),
+              oldSlug: renamedFrom,
+              newSlug: renamedTo,
               changedAt: new Date(),
               changedBy: auth.userId,
             });
@@ -1246,6 +1248,32 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
               `[MCP/update_event] failed to write event_slug_history row for ${event.id} (${event.slug} → ${updates.slug}):`,
               err
             );
+          }
+
+          // K43 / A3.3 — slug-change auto-repair. This Worker can't import the
+          // main app's content-links lib, so fire the repair endpoint over
+          // X-Internal-Key (EH3 series-occurrence canonicalization renames
+          // events through this same path). Non-fatal: the rename is committed.
+          if (env?.MAIN_APP_URL && env?.INTERNAL_API_KEY) {
+            try {
+              await fetch(`${env.MAIN_APP_URL}/api/admin/content-links/repair-slug-change`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Internal-Key": env.INTERNAL_API_KEY,
+                },
+                body: JSON.stringify({
+                  targetType: "EVENT",
+                  oldSlug: renamedFrom,
+                  newSlug: renamedTo,
+                }),
+              });
+            } catch (err) {
+              console.error(
+                `[MCP/update_event] blog-link slug-change repair call failed for ${event.id} (${renamedFrom} → ${renamedTo}):`,
+                err
+              );
+            }
           }
         }
       }

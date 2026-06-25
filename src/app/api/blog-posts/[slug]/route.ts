@@ -7,7 +7,11 @@ import { blogPostUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { createSlug, getSlugPrefixBounds, findUniqueSlug, unsafeSlug } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import { eq, and, or, gt, lt, ne } from "drizzle-orm";
-import { findBrokenContentLinksInDb, findBrokenLinksInDb } from "@/lib/blog-links";
+import {
+  findBrokenContentLinksInDb,
+  findBrokenLinksInDb,
+  suggestCanonicalSlugs,
+} from "@/lib/blog-links";
 import { syncContentLinks } from "@/lib/content-links-sync";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
@@ -102,6 +106,45 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
     if (!existing) {
       return NextResponse.json({ error: "Blog post not found" }, { status: 404 });
+    }
+
+    // K43 / A3.1 — publish-time broken-link gate. A save that lands the post in
+    // PUBLISHED and either changes the body or flips it live is rejected if it
+    // carries an internal /events,/vendors,/venues,/blog link that doesn't
+    // resolve (slug-history redirects count as resolved, so renamed-event links
+    // are fine). Metadata-only edits of an already-published post aren't
+    // re-gated. `allowBrokenLinks:true` is the deliberate forward-reference
+    // escape hatch (cluster guide published before its pillar).
+    {
+      const finalStatus = (data.status ?? existing.status) as string;
+      const bodyForGate = data.body !== undefined ? data.body : existing.body;
+      const bodyTouched = data.body !== undefined;
+      const publishingTransition = data.status === "PUBLISHED" && existing.status !== "PUBLISHED";
+      if (
+        finalStatus === "PUBLISHED" &&
+        (bodyTouched || publishingTransition) &&
+        data.allowBrokenLinks !== true &&
+        bodyForGate
+      ) {
+        const broken = await findBrokenContentLinksInDb(db, bodyForGate);
+        if (broken.length > 0) {
+          const needsFix = await Promise.all(
+            broken.slice(0, 25).map(async (r) => ({
+              targetType: r.targetType,
+              targetSlug: r.targetSlug,
+              suggestions: await suggestCanonicalSlugs(db, r),
+            }))
+          );
+          return NextResponse.json(
+            {
+              error: "broken_content_links",
+              message: `This published save has ${broken.length} internal link(s) that don't resolve. Fix them (see needs_fix.suggestions), or pass allowBrokenLinks:true to publish anyway.`,
+              needs_fix: needsFix,
+            },
+            { status: 422 }
+          );
+        }
+      }
     }
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() };

@@ -350,6 +350,12 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
       publish_date: z.string().optional().describe("New publish date (ISO 8601)"),
       meta_title: z.string().max(70).optional().describe("New SEO meta title"),
       meta_description: z.string().max(160).optional().describe("New SEO meta description"),
+      allow_broken_links: z
+        .boolean()
+        .optional()
+        .describe(
+          "Override the publish-time broken-link gate (K43). A PUBLISHED save that introduces an internal /events,/vendors,/venues,/blog link that doesn't resolve is rejected unless this is true. Set true only for a deliberate forward-reference (e.g. a cluster guide published before its pillar)."
+        ),
     },
     async (params) => {
       if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
@@ -383,6 +389,8 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         if (params.meta_title !== undefined) payload.metaTitle = params.meta_title;
         if (params.meta_description !== undefined)
           payload.metaDescription = params.meta_description;
+        if (params.allow_broken_links !== undefined)
+          payload.allowBrokenLinks = params.allow_broken_links;
 
         const response = await fetch(
           `${env.MAIN_APP_URL}/api/blog-posts/${encodeURIComponent(params.slug)}`,
@@ -397,12 +405,28 @@ export function registerBlogTools(server: McpServer, db: Db, auth: AuthContext, 
         );
 
         if (!response.ok) {
-          const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;
+          const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+          // K43 — surface the broken-link gate's needs_fix list (with suggested
+          // canonical slugs) so the caller can fix the body or re-send with
+          // allow_broken_links: true.
+          if (response.status === 422 && errorData.error === "broken_content_links") {
+            return {
+              content: [
+                jsonContent({
+                  error: "broken_content_links",
+                  message: errorData.message,
+                  needs_fix: errorData.needs_fix,
+                  hint: "Fix the listed links, or re-send with allow_broken_links: true to publish anyway.",
+                }),
+              ],
+              isError: true,
+            };
+          }
           return {
             content: [
               {
                 type: "text",
-                text: `Failed to update blog post (${response.status}): ${errorData.error || response.statusText}`,
+                text: `Failed to update blog post (${response.status}): ${(errorData.error as string) || response.statusText}`,
               },
             ],
             isError: true,

@@ -26,6 +26,7 @@ import { notifyApprovalIfNeeded } from "@/lib/approval-notification";
 import { evaluateGates, mirroredFieldsChanged } from "@takemetothefair/utils";
 import { eventSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
+import { repairBlogLinksForSlugChange } from "@/lib/content-links-sync";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
@@ -493,6 +494,28 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     // Run after the batch so completeness reflects the fresh row (the score
     // depends on dates, venue, etc., which the UPDATE just changed).
     await recomputeEventCompleteness(db, id);
+
+    // K43 / A3.3 — slug-change auto-repair. When the rename committed, rewrite
+    // every blog body that links to the old /events/<slug> so inbound links
+    // track the new canonical instead of relying on the 301 forever. Non-fatal.
+    if (slugChanged) {
+      try {
+        await repairBlogLinksForSlugChange(
+          db,
+          "EVENT",
+          currentEvent.slug,
+          unsafeSlug(updateData.slug as string)
+        );
+      } catch (err) {
+        await logError(db, {
+          level: "warn",
+          message: "Blog-link slug-change repair failed after event edit",
+          error: err,
+          source: "api/admin/events/[id]",
+          request,
+        });
+      }
+    }
 
     // J2/C1 (2026-06-12) — log the field-level edit to admin_actions so the
     // admin_actions mining card (docs/j2-admin-actions-mining-card-brief.md) can
