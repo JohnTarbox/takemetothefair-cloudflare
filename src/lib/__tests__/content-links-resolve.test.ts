@@ -100,7 +100,7 @@ describe("resolveContentLinkTargetIds", () => {
       seedEvent(`e${i}`, `ev-${i}`);
       refs.push({ targetType: "EVENT" as const, targetSlug: `ev-${i}` });
     }
-    const map = await resolveContentLinkTargetIds(db, refs);
+    const map = await resolveContentLinkTargetIds(db as never, refs);
     expect(map.size).toBe(120);
     expect(map.get("EVENT|ev-0")).toBe("e0");
     expect(map.get("EVENT|ev-119")).toBe("e119");
@@ -114,14 +114,14 @@ describe("resolveContentLinkTargetIds", () => {
       )
       .run("h1", "e1", "big-fair", "big-fair-2026", Date.now());
 
-    const map = await resolveContentLinkTargetIds(db, [
+    const map = await resolveContentLinkTargetIds(db as never, [
       { targetType: "EVENT", targetSlug: "big-fair" }, // old slug
     ]);
     expect(map.get("EVENT|big-fair")).toBe("e1");
   });
 
   it("does not resolve a slug with no live entity and no history", async () => {
-    const map = await resolveContentLinkTargetIds(db, [
+    const map = await resolveContentLinkTargetIds(db as never, [
       { targetType: "EVENT", targetSlug: "ghost-fair-2026" },
     ]);
     expect(map.size).toBe(0);
@@ -139,7 +139,7 @@ describe("findBrokenContentLinksInDb", () => {
 
     const body =
       "Live: [a](/events/live-fair-2026), redirect: [b](/events/live-fair), dead: [c](/events/never-existed)";
-    const broken = await findBrokenContentLinksInDb(db, body);
+    const broken = await findBrokenContentLinksInDb(db as never, body);
     expect(broken).toEqual([{ targetType: "EVENT", targetSlug: "never-existed" }]);
   });
 });
@@ -161,7 +161,10 @@ describe("syncContentLinks — K45 in-place null re-resolution", () => {
     // Now the event goes live.
     seedEvent("e1", "late-fair-2026");
 
-    const result = await syncContentLinks(db, "p1", body, { notify: false, sourceSlug: "guide" });
+    const result = await syncContentLinks(db as never, "p1", body, {
+      notify: false,
+      sourceSlug: "guide",
+    });
     // Nothing added/removed — the row already existed, only re-resolved.
     expect(result.added).toHaveLength(0);
     expect(result.removed).toHaveLength(0);
@@ -189,7 +192,7 @@ describe("repairBlogLinksForSlugChange — K43 A3.3", () => {
     seedEvent("e1", "winthrop-fair-2026");
 
     const result = await repairBlogLinksForSlugChange(
-      db,
+      db as never,
       "EVENT",
       "winthrop-fair",
       "winthrop-fair-2026"
@@ -220,7 +223,12 @@ describe("repairBlogLinksForSlugChange — K43 A3.3", () => {
   });
 
   it("is a no-op when nothing links to the old slug", async () => {
-    const result = await repairBlogLinksForSlugChange(db, "EVENT", "nobody-links-here", "new-slug");
+    const result = await repairBlogLinksForSlugChange(
+      db as never,
+      "EVENT",
+      "nobody-links-here",
+      "new-slug"
+    );
     expect(result).toEqual({ postsUpdated: 0, linksRewritten: 0 });
   });
 });
