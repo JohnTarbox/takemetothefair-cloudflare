@@ -10,24 +10,17 @@ export const dynamic = "force-dynamic";
  * which the dashboard de-duplicates per (inbound_email_id, feedback_source).
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { inboundEmails, inboundEmailIntentFeedback, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
+export const POST = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ db, session, params }) => {
+  const { id } = params;
   if (!id || typeof id !== "string") {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
 
-  const db = getCloudflareDb();
   const rows = await db
     .select({
       classifiedIntent: inboundEmails.classifiedIntent,
@@ -72,4 +65,4 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
   });
 
   return NextResponse.json({ ok: true });
-}
+});

@@ -14,21 +14,15 @@ export const dynamic = "force-dynamic";
  * table owned by a separate harvest-rules feature.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { adminActions, discoveryCandidates, emailSourceSuggestions } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const statusFilter = request.nextUrl.searchParams.get("status") ?? "pending_review";
 
-  const db = getCloudflareDb();
   const rows = await db
     .select()
     .from(emailSourceSuggestions)
@@ -43,13 +37,9 @@ export async function GET(request: NextRequest) {
       reviewedAt: r.reviewedAt instanceof Date ? r.reviewedAt.toISOString() : r.reviewedAt,
     })),
   });
-}
+});
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   const body = (await request.json().catch(() => null)) as {
     id?: string;
     action?: "approve" | "reject";
@@ -64,7 +54,6 @@ export async function POST(request: NextRequest) {
   }
 
   const newStatus = body.action === "approve" ? "active" : "rejected";
-  const db = getCloudflareDb();
   await db
     .update(emailSourceSuggestions)
     .set({
@@ -139,4 +128,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ success: true, status: newStatus });
-}
+});

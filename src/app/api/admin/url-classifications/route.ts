@@ -1,9 +1,8 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withAuth } from "@/lib/api/with-auth";
 import { urlDomainClassifications } from "@/lib/db/schema";
 import { extractDomain } from "@/lib/url-classification";
 import { logError } from "@/lib/logger";
@@ -23,13 +22,7 @@ const bodySchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   try {
     const body = await request.json();
     const parsed = bodySchema.safeParse(body);
@@ -88,15 +81,9 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to save classification" }, { status: 500 });
   }
-}
+});
 
-export async function GET() {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
+export const GET = withAuth({ role: "ADMIN" }, async ({ db }) => {
   try {
     const rows = await db
       .select()
@@ -114,4 +101,4 @@ export async function GET() {
     });
     return NextResponse.json({ error: "Failed to list classifications" }, { status: 500 });
   }
-}
+});
