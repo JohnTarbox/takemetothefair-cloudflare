@@ -19,6 +19,7 @@ import { classifySource } from "@/lib/source-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
+import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
@@ -288,6 +289,46 @@ export async function POST(request: NextRequest) {
       const sortedDates = effectiveEventDays.map((d) => d.date).sort();
       effectiveStartDate = normalizeEventDate(sortedDates[0]);
       effectiveEndDate = normalizeEventDate(sortedDates[sortedDates.length - 1]);
+    }
+
+    // K34 / EH3 P3.3b — if this submission is really a new EDITION of an
+    // existing event that belongs to a SERIES (different year), attach it as an
+    // occurrence under that series instead of minting a year-suffixed standalone
+    // (the cheshire-fair-nh-2027 class). INERT until the P1 backfill sets
+    // series_id: until then any findDuplicate hit has no series, so this returns
+    // routed:false and we fall through to the standalone insert below unchanged.
+    const occRoute = await maybeRouteToOccurrence(db, {
+      name: data.name,
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
+      sourceUrl: data.sourceUrl ?? null,
+      venueName: data.venueName ?? null,
+      venueAddress: data.venueAddress ?? null,
+      venueCity: data.venueCity ?? null,
+      venueState: data.venueState ?? null,
+      actorUserId: data.submittedByUserId ?? null,
+    });
+    if (occRoute.routed) {
+      const r = occRoute.result;
+      if (r.created) {
+        return NextResponse.json({
+          success: true,
+          routed: "occurrence",
+          event: { id: r.occurrenceId, slug: r.slug, name: data.name },
+          year: r.year,
+        });
+      }
+      if (r.reason === "occurrence_exists") {
+        // The edition already exists under the series — don't create a sibling.
+        return NextResponse.json({
+          success: true,
+          routed: "occurrence_exists",
+          event: { id: r.existingEventId, name: data.name },
+          year: r.year,
+        });
+      }
+      // series_not_found / promoter_required: fall through to the standalone
+      // insert (safe default — better a standalone row than a dropped submission).
     }
 
     // Create the event
