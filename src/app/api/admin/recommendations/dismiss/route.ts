@@ -1,9 +1,7 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { getAuthorizedSession } from "@/lib/api-auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { adminActions } from "@/lib/db/schema";
 import { dismissItem, markActed } from "@/lib/recommendations/engine";
 
@@ -16,12 +14,7 @@ const bodySchema = z.object({
   acted: z.boolean().optional(),
 });
 
-export async function POST(request: Request) {
-  const authz = await getAuthorizedSession(request);
-  if (!authz.authorized) {
-    return NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -36,10 +29,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const session = await auth();
-  const userId = authz.userId ?? session?.user?.id ?? "internal";
-  const db = getCloudflareDb();
-
   if (parsed.data.acted) {
     await markActed(db, parsed.data.itemId);
   } else {
@@ -53,7 +42,7 @@ export async function POST(request: Request) {
   await db.insert(adminActions).values({
     id: crypto.randomUUID(),
     action: parsed.data.acted ? "recommendation.act" : "recommendation.dismiss",
-    actorUserId: userId,
+    actorUserId: userId ?? "internal",
     targetType: "recommendation_item",
     targetId: parsed.data.itemId,
     payloadJson: JSON.stringify({
@@ -64,4 +53,4 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json({ success: true });
-}
+});

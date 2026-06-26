@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { auth, hasRole } from "@/lib/auth";
-import { internalKeyMatches } from "@/lib/api-auth";
+import { internalKeyMatches, getAuthorizedSession } from "@/lib/api-auth";
 import { authenticateVendorToken } from "@/lib/api-token-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
@@ -206,6 +206,67 @@ export function withApiToken<P extends Record<string, string> = { slug: string }
   };
 }
 
+// ─── withAuthorized — admin session OR X-Internal-Key OR read-only Bearer ──────
+
+export interface AuthorizedContext<P> {
+  request: NextRequest;
+  db: Db;
+  params: P;
+  /**
+   * Actor id for audit writes (`admin_actions.actorUserId`):
+   *   - the user id for an ADMIN session
+   *   - `null` for X-Internal-Key (system-driven) or read-only Bearer
+   * Audit-writing handlers typically do `userId ?? "internal"`.
+   */
+  userId: string | null;
+}
+
+export type AuthorizedHandler<P> = (ctx: AuthorizedContext<P>) => Promise<Response> | Response;
+
+export interface WithAuthorizedOptions {
+  /** `source` tag for logError on throw. Defaults to the request pathname. */
+  source?: string;
+}
+
+/**
+ * Gate on {@link getAuthorizedSession} — authorized if the caller is an ADMIN
+ * session OR presents a valid `X-Internal-Key` OR a read-only Bearer on a safe
+ * method. This is the combined gate the MCP server + cron sweeps rely on; it's
+ * the wrapper form of the `requireAdminAuth` / `getAuthorizedSession` family
+ * (~39 routes). The handler gets `userId` for audit attribution.
+ *
+ * Failure returns the standard `{ error: "Unauthorized" }` 401 (matching
+ * `requireAdminAuth`). Some hand-rolled routes returned a different 401 body
+ * (e.g. `{ success: false, error: "unauthorized" }`); converting them
+ * normalizes to this shape — these are admin/internal surfaces whose callers
+ * key off the status code, not the body.
+ */
+export function withAuthorized<P = Record<string, never>>(
+  handler: AuthorizedHandler<P>
+): NextRouteHandler<P>;
+export function withAuthorized<P = Record<string, never>>(
+  options: WithAuthorizedOptions,
+  handler: AuthorizedHandler<P>
+): NextRouteHandler<P>;
+export function withAuthorized<P = Record<string, never>>(
+  optionsOrHandler: WithAuthorizedOptions | AuthorizedHandler<P>,
+  maybeHandler?: AuthorizedHandler<P>
+): NextRouteHandler<P> {
+  const options: WithAuthorizedOptions =
+    typeof optionsOrHandler === "function" ? {} : optionsOrHandler;
+  const handler = (typeof optionsOrHandler === "function" ? optionsOrHandler : maybeHandler)!;
+
+  return async (request, ctx) => {
+    const authz = await getAuthorizedSession(request);
+    if (!authz.authorized) {
+      return unauthorized();
+    }
+    const userId = authz.userId ?? null;
+    const params = await resolveParams<P>(ctx);
+    return dispatch(request, options.source, (db) => ({ request, db, params, userId }), handler);
+  };
+}
+
 /*
  * ── Before ──────────────────────────────────────────────────────────────────
  * export async function GET(request: NextRequest) {
@@ -235,9 +296,12 @@ export function withApiToken<P extends Record<string, string> = { slug: string }
  *     async ({ db, params }) => { const { id } = params; ... }
  *   );
  *
- * Cross-Worker / vendor-token routes use the siblings:
+ * Cross-Worker / vendor-token / admin-or-internal routes use the siblings:
  *   export const POST = withInternalKey(async ({ db }) => { ... });
  *   export const GET  = withApiToken<{ slug: string }>(
  *     {}, async ({ db, vendorId }) => { ... }
  *   );
+ *   export const POST = withAuthorized(async ({ db, userId }) => {
+ *     await db.insert(adminActions).values({ actorUserId: userId ?? "internal", ... });
+ *   });
  */

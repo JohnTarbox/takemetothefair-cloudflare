@@ -18,6 +18,7 @@ const ctl = vi.hoisted(() => ({
   vendorAuth: { authorized: false, error: "Invalid token" } as
     | { authorized: true; vendorId: string }
     | { authorized: false; error: string },
+  authorized: { authorized: false } as { authorized: boolean; userId?: string },
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -28,12 +29,15 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/cloudflare", () => ({ getCloudflareDb: vi.fn(() => ctl.db) }));
 vi.mock("@/lib/logger", () => ({ logError: (...args: unknown[]) => ctl.logError(...args) }));
-vi.mock("@/lib/api-auth", () => ({ internalKeyMatches: vi.fn(async () => ctl.internalKeyOk) }));
+vi.mock("@/lib/api-auth", () => ({
+  internalKeyMatches: vi.fn(async () => ctl.internalKeyOk),
+  getAuthorizedSession: vi.fn(async () => ctl.authorized),
+}));
 vi.mock("@/lib/api-token-auth", () => ({
   authenticateVendorToken: vi.fn(async () => ctl.vendorAuth),
 }));
 
-import { withApiToken, withAuth, withInternalKey } from "@/lib/api/with-auth";
+import { withApiToken, withAuth, withAuthorized, withInternalKey } from "@/lib/api/with-auth";
 
 const adminSession = {
   user: { id: "u1", email: "a@b.c", role: "ADMIN", roles: ["ADMIN"] },
@@ -46,6 +50,7 @@ beforeEach(() => {
   ctl.session = null;
   ctl.internalKeyOk = false;
   ctl.vendorAuth = { authorized: false, error: "Invalid token" };
+  ctl.authorized = { authorized: false };
   ctl.logError.mockClear();
 });
 
@@ -153,5 +158,44 @@ describe("withApiToken", () => {
     const res = await GET(req(), ctx({ slug: "acme" }));
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ vendorId: "v-123" });
+  });
+});
+
+describe("withAuthorized", () => {
+  it("returns 401 when not authorized", async () => {
+    const handler = vi.fn();
+    const POST = withAuthorized(handler);
+    const res = await POST(req(), ctx({}));
+    expect(res.status).toBe(401);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("exposes the user id for an admin session", async () => {
+    ctl.authorized = { authorized: true, userId: "admin-7" };
+    const POST = withAuthorized(async ({ db, userId }) => {
+      expect(db).toBe(ctl.db);
+      return Response.json({ userId });
+    });
+    const res = await POST(req(), ctx({}));
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ userId: "admin-7" });
+  });
+
+  it("exposes userId=null for X-Internal-Key (no session user)", async () => {
+    ctl.authorized = { authorized: true }; // internal-key: authorized, no userId
+    const POST = withAuthorized(async ({ userId }) => Response.json({ userId }));
+    const res = await POST(req(), ctx({}));
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ userId: null });
+  });
+
+  it("funnels a thrown error to 500 and logs it", async () => {
+    ctl.authorized = { authorized: true, userId: "admin-7" };
+    const POST = withAuthorized(async () => {
+      throw new Error("boom");
+    });
+    const res = await POST(req(), ctx({}));
+    expect(res.status).toBe(500);
+    expect(ctl.logError).toHaveBeenCalledOnce();
   });
 });
