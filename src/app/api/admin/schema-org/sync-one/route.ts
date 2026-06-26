@@ -18,11 +18,10 @@ export const dynamic = "force-dynamic";
  * Worker hits (see admin/vendors/[id]/route.ts).
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { eq, sql } from "drizzle-orm";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
@@ -32,24 +31,10 @@ const bodySchema = z.object({
   eventId: z.string().min(1),
 });
 
-export async function POST(request: NextRequest) {
-  const db = getCloudflareDb();
-
-  // Accept admin session OR X-Internal-Key (MCP Worker Workflow step).
-  const internalKey = request.headers.get("x-internal-key");
-  const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
-  if (!isInternal) {
-    const session = await auth();
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
-
+// Accept admin session OR X-Internal-Key (MCP Worker Workflow step). The inner
+// try/catch below is kept so the custom {success,eventId,status,error} 500 body
+// the Workflow inspects is preserved; withAuthorized's funnel is a backstop.
+export const POST = withAuthorized(async ({ request, db }) => {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -171,4 +156,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

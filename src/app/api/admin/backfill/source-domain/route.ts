@@ -16,10 +16,9 @@ export const dynamic = "force-dynamic";
  *
  * Auth: admin session OR X-Internal-Key.
  */
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { eq, isNull, sql } from "drizzle-orm";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { events } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { classifySource, type IngestionMethod } from "@/lib/source-classification";
@@ -36,31 +35,13 @@ interface Outcome {
   changed: boolean;
 }
 
-async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
-): Promise<boolean> {
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
-    return true;
-  }
-  const session = await auth();
-  return session?.user?.role === "ADMIN";
-}
-
-export async function POST(request: NextRequest) {
-  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  if (!(await authorize(request, env))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuthorized(async ({ request, db }) => {
   const url = new URL(request.url);
   const apply = url.searchParams.get("apply") === "true";
   const limitParam = parseInt(url.searchParams.get("limit") ?? `${DEFAULT_LIMIT}`, 10);
   const limit =
     Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIMIT) : DEFAULT_LIMIT;
 
-  const db = getCloudflareDb();
   try {
     // Unclassified rows are the ones with null ingestion_method. source_domain
     // may legitimately be null on classified rows too (admin_manual events
@@ -129,15 +110,10 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ error: "Backfill failed" }, { status: 500 });
   }
-}
+});
 
 // Counts remaining work. Cheap; no writes.
-export async function GET(request: NextRequest) {
-  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  if (!(await authorize(request, env))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const db = getCloudflareDb();
+export const GET = withAuthorized(async ({ db }) => {
   // ingestion_method is the canonical "has been classified" marker; see
   // the POST handler's WHERE clause for why source_domain alone isn't.
   const [{ remaining = 0 } = { remaining: 0 }] = await db
@@ -152,4 +128,4 @@ export async function GET(request: NextRequest) {
     total: total ?? 0,
     pctComplete: total > 0 ? Math.round(((total - (remaining ?? 0)) / total) * 1000) / 10 : null,
   });
-}
+});
