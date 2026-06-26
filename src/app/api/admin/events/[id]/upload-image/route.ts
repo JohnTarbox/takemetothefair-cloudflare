@@ -7,30 +7,25 @@ export const dynamic = "force-dynamic";
  * completeness for the right entity) differ enough that the abstraction would
  * mostly be parameter passing.
  *
- * Two auth paths:
+ * Two auth paths (via withAuthorized — admin session OR X-Internal-Key, the
+ * latter checked constant-time):
  *   - Admin session (cookie) — same as the vendor route. Used by any future
  *     admin UI that exposes "upload event image".
- *   - X-Internal-Key header (matches INTERNAL_API_KEY env) — used by the MCP
- *     server's `upload_event_image` tool so bulk image enrichment can run
- *     without an admin session. Same dual-auth pattern as
- *     /api/internal/indexnow.
+ *   - X-Internal-Key header — used by the MCP server's `upload_event_image`
+ *     tool so bulk image enrichment can run without an admin session.
  *
  * Posted as multipart form-data (field name: "file"). Returns the CDN URL
  * on success. Naming convention: `events/{eventId}/image-{ts}.{ext}` —
  * timestamp suffix defeats CDN caching when the image is replaced.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
-
-interface Params {
-  params: Promise<{ id: string }>;
-}
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB — events tend to want larger banners than vendor logos.
 const ALLOWED_TYPES = new Set([
@@ -59,39 +54,17 @@ function extensionFor(contentType: string): string | null {
   }
 }
 
-async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
-): Promise<{ ok: true; actorId: string } | { ok: false; status: number }> {
-  // Internal-key path takes precedence — the MCP server presents this header
-  // and never has a session cookie to fall back to.
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
-    return { ok: true, actorId: "mcp-server" };
-  }
-  const session = await auth();
-  if (session?.user?.role === "ADMIN") {
-    return { ok: true, actorId: session.user.id };
-  }
-  return { ok: false, status: 401 };
-}
+export const POST = withAuthorized<{ id: string }>(async ({ request, db, params, userId }) => {
+  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
 
-export async function POST(request: NextRequest, { params }: Params) {
-  const env = getCloudflareEnv() as unknown as {
-    INTERNAL_API_KEY?: string;
-    VENDOR_ASSETS?: R2Bucket;
-  };
+  // Audit actor for the R2 customMetadata: the admin user id, or the
+  // "mcp-server" sentinel when authorized via X-Internal-Key (userId is null
+  // for the internal-key path, same as before's actorId mapping).
+  const actorId = userId ?? "mcp-server";
 
-  const authResult = await authorize(request, env);
-  if (!authResult.ok) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: authResult.status });
-  }
-  const { actorId } = authResult;
-
-  const { id } = await params;
+  const { id } = params;
 
   // Confirm event exists before paying for the upload.
-  const db = getCloudflareDb();
   const existing = await db.select({ id: events.id }).from(events).where(eq(events.id, id));
   if (existing.length === 0) {
     return NextResponse.json({ error: "Event not found" }, { status: 404 });
@@ -187,4 +160,4 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   return NextResponse.json({ url, key });
-}
+});

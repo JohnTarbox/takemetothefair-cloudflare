@@ -37,31 +37,18 @@ export const dynamic = "force-dynamic";
  *     possible_duplicate_of IS NOT NULL — they're already flagged.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { events, venues } from "@/lib/db/schema";
 import { sql, eq, and, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
 /**
- * Dual auth: admin session OR X-Internal-Key. The latter lets the MCP
- * Worker's dedup-sweep canary (A3, PR-6, 2026-06-01 EVE) poll this
- * endpoint without an admin session. Same shape as the other internal-
- * cron-friendly admin routes (see backfill/source-domain etc).
+ * Dual auth: admin session OR X-Internal-Key (via withAuthorized). The latter
+ * lets the MCP Worker's dedup-sweep canary (A3, PR-6, 2026-06-01 EVE) poll this
+ * read-only endpoint without an admin session. Same shape as the other
+ * internal-cron-friendly admin routes (see backfill/source-domain etc).
  */
-async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
-): Promise<boolean> {
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
-    return true;
-  }
-  const session = await auth();
-  return session?.user?.role === "ADMIN";
-}
-
 interface VenueDateCluster {
   cluster_key: "venue_date";
   venue_id: string;
@@ -81,14 +68,8 @@ interface CityStateDateCluster {
 
 type Cluster = VenueDateCluster | CityStateDateCluster;
 
-export async function GET(request: NextRequest) {
+export const GET = withAuthorized(async ({ request, db }) => {
   try {
-    const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-    if (!(await authorize(request, env))) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const db = getCloudflareDb();
     const limitParam = parseInt(request.nextUrl.searchParams.get("limit") || "100", 10);
     const limit = Math.max(1, Math.min(500, isNaN(limitParam) ? 100 : limitParam));
 
@@ -177,7 +158,7 @@ export async function GET(request: NextRequest) {
         "For each genuine duplicate pair, call merge_events(keeper_event_id, duplicate_event_id). Confirmed-distinct pairs need no action — the sweep will surface them again next run, which is OK for now (a 'mark as not-a-duplicate' bypass is a future enhancement).",
     });
   } catch (error) {
-    await logError(getCloudflareDb(), {
+    await logError(db, {
       message: "Dedup sweep route failure",
       error,
       source: "admin-duplicates-sweep",
@@ -189,4 +170,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
