@@ -1,15 +1,10 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { lookupPlace } from "@/lib/google-maps";
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request }) => {
   const body = (await request.json()) as {
     name: string;
     city: string;
@@ -32,4 +27,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json(result);
-}
+});

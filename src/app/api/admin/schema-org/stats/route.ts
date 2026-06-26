@@ -7,21 +7,13 @@ export const dynamic = "force-dynamic";
  * The admin UI button reads this for the coverage / missing-count display.
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { eq, isNotNull, sql } from "drizzle-orm";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withAuth } from "@/lib/api/with-auth";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const [eventsWithTicketUrl] = await db
       .select({ count: sql<number>`count(*)` })
@@ -60,4 +52,4 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to get schema.org stats" }, { status: 500 });
   }
-}
+});

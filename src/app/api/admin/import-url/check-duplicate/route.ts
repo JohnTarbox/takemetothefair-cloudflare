@@ -1,22 +1,14 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { events } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const url = request.nextUrl.searchParams.get("url");
   if (!url) {
     return NextResponse.json({ isDuplicate: false });
   }
-
-  const db = getCloudflareDb();
 
   const existing = await db
     .select({
@@ -36,4 +28,4 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({ isDuplicate: false });
-}
+});
