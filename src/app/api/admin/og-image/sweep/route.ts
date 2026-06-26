@@ -22,9 +22,9 @@ export const dynamic = "force-dynamic";
  * Cloudflare's 30s response budget, MAX_LIMIT=10 keeps us safe.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events } from "@/lib/db/schema";
 import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { logError } from "@/lib/logger";
@@ -61,32 +61,12 @@ interface EventOutcome {
   reason?: string;
 }
 
-async function authorize(
-  request: NextRequest,
-  env: { INTERNAL_API_KEY?: string }
-): Promise<{ ok: true; actorId: string } | { ok: false; status: number }> {
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (internalKey && env.INTERNAL_API_KEY && internalKey === env.INTERNAL_API_KEY) {
-    return { ok: true, actorId: "internal" };
-  }
-  const session = await auth();
-  if (session?.user?.role === "ADMIN") {
-    return { ok: true, actorId: session.user.id };
-  }
-  return { ok: false, status: 401 };
-}
+export const POST = withAuthorized(async ({ request, db, userId }) => {
+  const env = getCloudflareEnv() as unknown as { VENDOR_ASSETS?: R2Bucket };
 
-export async function POST(request: NextRequest) {
-  const env = getCloudflareEnv() as unknown as {
-    INTERNAL_API_KEY?: string;
-    VENDOR_ASSETS?: R2Bucket;
-  };
-
-  const authResult = await authorize(request, env);
-  if (!authResult.ok) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: authResult.status });
-  }
-  const { actorId } = authResult;
+  // Audit actor for R2 customMetadata: the admin user id, or the "internal"
+  // sentinel when authorized via X-Internal-Key (userId is null then).
+  const actorId = userId ?? "internal";
 
   const url = new URL(request.url);
   const limit = Math.min(
@@ -94,8 +74,6 @@ export async function POST(request: NextRequest) {
     MAX_LIMIT
   );
   const apply = url.searchParams.get("apply") === "true";
-
-  const db = getCloudflareDb();
 
   // Candidate set: APPROVED events with no image AND a source_url AND
   // never previously attempted by this sweep. The
@@ -362,19 +340,13 @@ export async function POST(request: NextRequest) {
   };
 
   return NextResponse.json({ summary, outcomes });
-}
+});
 
 // Cheap progress endpoint for the admin UI. Returns the count of APPROVED
 // events that would land in the next POST's candidate set — same predicate
 // as the SELECT above. Plus a total-APPROVED denominator so the dashboard
 // can show "X of Y events imageless."
-export async function GET(request: NextRequest) {
-  const env = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-  const authResult = await authorize(request, env);
-  if (!authResult.ok) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: authResult.status });
-  }
-  const db = getCloudflareDb();
+export const GET = withAuthorized(async ({ db }) => {
   // Mirror the POST SELECT exactly so `remaining` matches what the next
   // POST will actually pick up. After drizzle/0092 the "remaining"
   // semantics are "imageless AND has source_url AND never attempted" —
@@ -417,4 +389,4 @@ export async function GET(request: NextRequest) {
     pctImageless:
       totalApproved > 0 ? Math.round(((remaining ?? 0) / totalApproved) * 1000) / 10 : null,
   });
-}
+});
