@@ -1,6 +1,6 @@
 import { parseDateLoose, parseWallClockInVenueZone, formatIsoInVenueZone } from "@/lib/datetime";
 import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
-import { displayVenueName } from "@/lib/venue-display";
+import { buildPlaceJsonLd } from "@/lib/seo/place-jsonld";
 import { formatAudienceBadge, isClosedToPublic, hasNonDefaultAudience } from "@/lib/event-audience";
 import type { PrimaryAudience, PublicAccess } from "@takemetothefair/constants";
 
@@ -164,41 +164,13 @@ export function EventSchema({
   // Confirmed-free only when min is explicitly 0; omitted when unknown.
   const isAccessibleForFree = priceMinDollars === 0 ? true : undefined;
 
-  const location = venue
-    ? {
-        "@type": "Place",
-        // Cohort 8 follow-up (2026-06-01) — use the same display fallback
-        // as the venue detail page H1, so a street-address-named venue
-        // surfaces as "Event venue in {City}, {State}" in event JSON-LD
-        // rather than "18 Spring Street". Google Rich Results prefers a
-        // descriptive name over a street address.
-        name: displayVenueName(venue),
-        address: {
-          "@type": "PostalAddress",
-          streetAddress: venue.address || undefined,
-          addressLocality: venue.city || undefined,
-          addressRegion: venue.state || undefined,
-          postalCode: venue.zip || undefined,
-          addressCountry: "US",
-        },
-        geo:
-          venue.latitude && venue.longitude
-            ? {
-                "@type": "GeoCoordinates",
-                latitude: venue.latitude,
-                longitude: venue.longitude,
-              }
-            : undefined,
-      }
-    : {
-        "@type": "Place",
-        name: "Location to be announced",
-        address: {
-          "@type": "PostalAddress",
-          addressRegion: stateCode || undefined,
-          addressCountry: "US",
-        },
-      };
+  // K46 (2026-06-26) — Place node now comes from the shared buildPlaceJsonLd
+  // helper so the event + series builders emit byte-identical `location`. The
+  // Cohort 8 displayVenueName fallback ("Event venue in {City}, {State}" for a
+  // street-address-named venue) and the lat/long GeoCoordinates gate live in
+  // the helper. When `venue` is absent we still emit a Place (state code only),
+  // which keeps the required-field check satisfied.
+  const location = buildPlaceJsonLd(venue, stateCode);
 
   const hasDates = startDate && endDate;
   const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;

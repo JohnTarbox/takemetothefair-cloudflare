@@ -857,7 +857,17 @@ export type UrlInspectionResult = {
   };
   richResults?: {
     verdict?: string;
-    detectedItems?: Array<{ richResultType?: string; items?: Array<{ name?: string }> }>;
+    // A10 (2026-06-26) — the per-item `issues[]` carry the actionable detail
+    // (`issueMessage: "Missing field 'location'"`, `severity: ERROR|WARNING`)
+    // that the GSC_RICH_RESULT_FAIL health issue persists. Previously parsed
+    // out and discarded, which is why K46 sat unseen for 2 months.
+    detectedItems?: Array<{
+      richResultType?: string;
+      items?: Array<{
+        name?: string;
+        issues?: Array<{ issueMessage?: string; severity?: string }>;
+      }>;
+    }>;
   };
   generatedAt: string;
 };
@@ -933,7 +943,13 @@ export async function inspectUrl(
       };
       richResultsResult?: {
         verdict?: string;
-        detectedItems?: Array<{ richResultType?: string; items?: Array<{ name?: string }> }>;
+        detectedItems?: Array<{
+          richResultType?: string;
+          items?: Array<{
+            name?: string;
+            issues?: Array<{ issueMessage?: string; severity?: string }>;
+          }>;
+        }>;
       };
     };
   };

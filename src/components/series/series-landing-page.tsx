@@ -10,13 +10,17 @@
  * is the unit-tested occurrence-view module.
  */
 import Link from "next/link";
-import { partitionOccurrences, toSchemaOccurrences } from "@/lib/series/occurrence-view";
+import {
+  partitionOccurrences,
+  pickHeroOccurrence,
+  toSchemaOccurrences,
+} from "@/lib/series/occurrence-view";
 import { buildEventSeriesJsonLd } from "@/lib/series/series-schema-org";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
 import { formatDateRange } from "@/lib/utils";
 
 function venueLabel(o: LandingOccurrence): string {
-  return [o.venueCity, o.venueState].filter(Boolean).join(", ");
+  return [o.venue?.city, o.venue?.state].filter(Boolean).join(", ");
 }
 
 export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; now: Date }) {
@@ -24,12 +28,19 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
   const { current, past } = partitionOccurrences(occurrences, now);
   const byId = new Map(occurrences.map((o) => [o.id, o]));
 
+  // K46 — the hero occurrence (next/current, else most recent) supplies the
+  // series-level `location` + `startDate`/`endDate`. Every subEvent carries its
+  // own venue, but the EventSeries node itself needs a representative one.
+  const hero = pickHeroOccurrence(occurrences, now);
   const jsonLd = buildEventSeriesJsonLd(
     {
       canonicalSlug: series.canonicalSlug,
       name: series.name,
       description: series.description,
       imageUrl: series.imageUrl,
+      venue: hero?.venue ?? null,
+      startDateIso: hero?.startDate ? hero.startDate.toISOString().slice(0, 10) : null,
+      endDateIso: hero?.endDate ? hero.endDate.toISOString().slice(0, 10) : null,
     },
     toSchemaOccurrences(occurrences)
   );
