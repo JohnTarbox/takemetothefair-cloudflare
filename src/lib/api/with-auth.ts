@@ -225,6 +225,13 @@ export type AuthorizedHandler<P> = (ctx: AuthorizedContext<P>) => Promise<Respon
 export interface WithAuthorizedOptions {
   /** `source` tag for logError on throw. Defaults to the request pathname. */
   source?: string;
+  /**
+   * Whether to accept the Claude read-only Bearer on safe methods (default
+   * true). Set `false` for read-shaped methods with real side effects — e.g. a
+   * GET that triggers an outbound fetch — so only an admin session or the
+   * internal key authorize, not the read-only token.
+   */
+  allowReadonlyBearer?: boolean;
 }
 
 /**
@@ -256,7 +263,9 @@ export function withAuthorized<P = Record<string, never>>(
   const handler = (typeof optionsOrHandler === "function" ? optionsOrHandler : maybeHandler)!;
 
   return async (request, ctx) => {
-    const authz = await getAuthorizedSession(request);
+    const authz = await getAuthorizedSession(request, {
+      allowReadonlyBearer: options.allowReadonlyBearer,
+    });
     if (!authz.authorized) {
       return unauthorized();
     }

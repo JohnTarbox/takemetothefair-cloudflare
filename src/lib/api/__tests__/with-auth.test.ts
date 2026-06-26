@@ -19,6 +19,7 @@ const ctl = vi.hoisted(() => ({
     | { authorized: true; vendorId: string }
     | { authorized: false; error: string },
   authorized: { authorized: false } as { authorized: boolean; userId?: string },
+  getAuthorizedSessionSpy: vi.fn((..._args: unknown[]) => {}),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -31,7 +32,10 @@ vi.mock("@/lib/cloudflare", () => ({ getCloudflareDb: vi.fn(() => ctl.db) }));
 vi.mock("@/lib/logger", () => ({ logError: (...args: unknown[]) => ctl.logError(...args) }));
 vi.mock("@/lib/api-auth", () => ({
   internalKeyMatches: vi.fn(async () => ctl.internalKeyOk),
-  getAuthorizedSession: vi.fn(async () => ctl.authorized),
+  getAuthorizedSession: (...args: unknown[]) => {
+    ctl.getAuthorizedSessionSpy(...args);
+    return Promise.resolve(ctl.authorized);
+  },
 }));
 vi.mock("@/lib/api-token-auth", () => ({
   authenticateVendorToken: vi.fn(async () => ctl.vendorAuth),
@@ -52,6 +56,7 @@ beforeEach(() => {
   ctl.vendorAuth = { authorized: false, error: "Invalid token" };
   ctl.authorized = { authorized: false };
   ctl.logError.mockClear();
+  ctl.getAuthorizedSessionSpy.mockClear();
 });
 
 describe("withAuth", () => {
@@ -197,5 +202,16 @@ describe("withAuthorized", () => {
     const res = await POST(req(), ctx({}));
     expect(res.status).toBe(500);
     expect(ctl.logError).toHaveBeenCalledOnce();
+  });
+
+  it("forwards allowReadonlyBearer:false to getAuthorizedSession", async () => {
+    ctl.authorized = { authorized: true, userId: "admin-7" };
+    const GET = withAuthorized({ allowReadonlyBearer: false }, async () =>
+      Response.json({ ok: 1 })
+    );
+    await GET(req(), ctx({}));
+    expect(ctl.getAuthorizedSessionSpy).toHaveBeenCalledWith(expect.anything(), {
+      allowReadonlyBearer: false,
+    });
   });
 });

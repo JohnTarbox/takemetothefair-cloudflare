@@ -47,6 +47,11 @@ function makeRequest(url: string): NextRequest {
   );
 }
 
+// The route now exports a withAuthorized-wrapped handler whose Next-15 typed
+// signature requires the second (context) argument. This static route has no
+// dynamic params, so params resolves to {}.
+const noParams = { params: Promise.resolve({} as Record<string, never>) };
+
 describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -61,7 +66,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
         })
     );
 
-    const res = await GET(makeRequest("https://example.com/ok"));
+    const res = await GET(makeRequest("https://example.com/ok"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -93,7 +98,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
       );
     });
 
-    const res = await GET(makeRequest("https://example.com/blocked"));
+    const res = await GET(makeRequest("https://example.com/blocked"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -116,7 +121,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
       });
     });
 
-    const res = await GET(makeRequest("https://example.com/throttled"));
+    const res = await GET(makeRequest("https://example.com/throttled"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -130,7 +135,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
   it("does NOT escalate on 404 — surfaces fetchMethod='failed'", async () => {
     global.fetch = vi.fn(async () => new Response("not found", { status: 404 }));
 
-    const res = await GET(makeRequest("https://example.com/gone"));
+    const res = await GET(makeRequest("https://example.com/gone"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -151,7 +156,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
       return new Response("server error", { status: 500 });
     });
 
-    const res = await GET(makeRequest("https://example.com/hard-block"));
+    const res = await GET(makeRequest("https://example.com/hard-block"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -176,7 +181,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
       );
     });
 
-    const res = await GET(makeRequest("https://example.com/br-fail"));
+    const res = await GET(makeRequest("https://example.com/br-fail"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -203,7 +208,7 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
         })
     );
 
-    const res = await GET(makeRequest("https://example.com/event-flyer"));
+    const res = await GET(makeRequest("https://example.com/event-flyer"), noParams);
     const body = (await res.json()) as {
       success: boolean;
       fetchMethod?: string;
@@ -232,7 +237,8 @@ describe("GET /api/admin/import-url/fetch — Browser Rendering escalation", () 
     );
 
     const res = await GET(
-      makeRequest("https://belgrademaine.gov/craft_fair_2026_application.pdf?download=1")
+      makeRequest("https://belgrademaine.gov/craft_fair_2026_application.pdf?download=1"),
+      noParams
     );
     const body = (await res.json()) as {
       success: boolean;
