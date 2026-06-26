@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { events, venues, promoters, eventSchemaOrg } from "@/lib/db/schema";
 import { parseJsonLd } from "@/lib/schema-org";
 import { eq } from "drizzle-orm";
@@ -31,13 +30,7 @@ interface ImportRequest {
   jsonLd?: Record<string, unknown>; // JSON-LD from the source page for schema.org storage
 }
 
-export async function POST(request: NextRequest) {
-  const db = getCloudflareDb();
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const body = (await request.json()) as ImportRequest;
     const { event, venueOption, promoterId, sourceUrl, jsonLd } = body;
@@ -417,4 +410,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});
