@@ -1,20 +1,14 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq, isNull, inArray, and } from "drizzle-orm";
 import { lookupPlace } from "@/lib/google-maps";
 import { logError } from "@/lib/logger";
 import { createSlug } from "@/lib/utils";
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const env = getCloudflareEnv();
   const apiKey = env.GOOGLE_MAPS_API_KEY;
 
@@ -94,4 +88,4 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ error: "Google backfill failed" }, { status: 500 });
   }
-}
+});

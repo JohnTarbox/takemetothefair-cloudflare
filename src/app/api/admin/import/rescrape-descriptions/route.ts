@@ -1,20 +1,13 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withAuth } from "@/lib/api/with-auth";
 import { events } from "@/lib/db/schema";
-import { auth } from "@/lib/auth";
 import { logError } from "@/lib/logger";
 import { getDetailsScraper } from "@/lib/scrapers/registry";
 import { like, and, isNotNull } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 
-export async function POST(request: Request) {
-  const db = getCloudflareDb();
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const url = new URL(request.url);
   const dryRun = url.searchParams.get("dryRun") === "true";
 
@@ -105,4 +98,4 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ error: "Failed to re-scrape descriptions" }, { status: 500 });
   }
-}
+});
