@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { withInternalKey } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { pingIndexNow } from "@/lib/indexnow";
 
 // `source` is optional and free-form so callers can label the lifecycle event
@@ -15,26 +16,21 @@ const bodySchema = z.object({
 /**
  * POST /api/internal/indexnow
  * Internal endpoint for the MCP server (and other Workers) to trigger an
- * IndexNow ping. Auth: X-Internal-Key header.
+ * IndexNow ping. Auth: X-Internal-Key header (now via withInternalKey, which
+ * does a constant-time compare — replaces the prior timing-unsafe `!==`. The
+ * 401 body normalized to `{ error: "Unauthorized" }`; callers key off
+ * response.ok, not the body, so this is internal-only and inert in practice).
  *
- * REL4 (2026-06-13): this endpoint now propagates the TRUE Bing outcome. It
- * used to always return `{ success: true }` 200 even when Bing 429'd, which let
- * the MCP `flush_pending_search_pings` mark its outbox rows flushed on a
- * throttled batch — silently dropping every URL. We now return a non-2xx (502)
- * with the real Bing HTTP status when the submission failed, so the flush
- * treats it as a failure and leaves the rows pending for a later cron. Inline
- * fire-and-forget callers (`triggerIndexNow`) ignore the body as before.
+ * REL4 (2026-06-13): this endpoint propagates the TRUE Bing outcome. It used to
+ * always return `{ success: true }` 200 even when Bing 429'd, which let the MCP
+ * `flush_pending_search_pings` mark its outbox rows flushed on a throttled batch
+ * — silently dropping every URL. We now return a non-2xx (502) with the real
+ * Bing HTTP status when the submission failed, so the flush treats it as a
+ * failure and leaves the rows pending for a later cron. Inline fire-and-forget
+ * callers (`triggerIndexNow`) ignore the body as before.
  */
-export async function POST(request: Request) {
-  const env = getCloudflareEnv() as unknown as {
-    INTERNAL_API_KEY?: string;
-    INDEXNOW_KEY?: string;
-  };
-
-  const internalKey = request.headers.get("X-Internal-Key");
-  if (!internalKey || internalKey !== env.INTERNAL_API_KEY) {
-    return NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 });
-  }
+export const POST = withInternalKey(async ({ request, db }) => {
+  const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
 
   let raw: unknown;
   try {
@@ -48,7 +44,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: "invalid_payload" }, { status: 400 });
   }
 
-  const db = getCloudflareDb();
   const result = await pingIndexNow(
     db,
     parsed.data.urls,
@@ -70,4 +65,4 @@ export async function POST(request: Request) {
     // non-2xx leaves its outbox rows pending instead of silently flushed.
     { status: result.ok ? 200 : 502 }
   );
-}
+});
