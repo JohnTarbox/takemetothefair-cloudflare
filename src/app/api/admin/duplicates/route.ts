@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { venues, events, vendors, promoters, eventVendors } from "@/lib/db/schema";
 import { eq, count } from "drizzle-orm";
 import {
@@ -14,12 +13,7 @@ import {
 import type { DuplicateEntityType, FindDuplicatesResponse } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
   const type = searchParams.get("type") as DuplicateEntityType | null;
   const threshold = parseFloat(searchParams.get("threshold") || "0.7");
@@ -32,7 +26,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Threshold must be between 0 and 1" }, { status: 400 });
   }
 
-  const db = getCloudflareDb();
   try {
     let duplicates;
     let totalEntities = 0;
@@ -219,4 +212,4 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ error: userMessage, isTimeout }, { status: isTimeout ? 503 : 500 });
   }
-}
+});

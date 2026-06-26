@@ -1,29 +1,18 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { events, eventSchemaOrg } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { fetchSchemaOrg } from "@/lib/schema-org";
 import { logError } from "@/lib/logger";
 import { dollarsToCents } from "@/lib/utils";
 
-interface Params {
-  params: Promise<{ id: string }>;
-}
-
 /**
  * GET /api/admin/events/[id]/schema-org
  * Returns stored schema.org data for an event
  */
-export async function GET(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-  const db = getCloudflareDb();
+export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
+  const { id } = params;
 
   try {
     // Get the event and its schema.org data
@@ -64,20 +53,14 @@ export async function GET(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to fetch schema.org data" }, { status: 500 });
   }
-}
+});
 
 /**
  * POST /api/admin/events/[id]/schema-org
  * Fetches/refreshes schema.org data from the event's ticketUrl
  */
-export async function POST(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-  const db = getCloudflareDb();
+export const POST = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
+  const { id } = params;
 
   try {
     // Get the event
@@ -177,100 +160,97 @@ export async function POST(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to fetch schema.org data" }, { status: 500 });
   }
-}
+});
 
 /**
  * PATCH /api/admin/events/[id]/schema-org
  * Apply selected schema.org fields to the event
  */
-export async function PATCH(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const PATCH = withAuth<{ id: string }>(
+  { role: "ADMIN" },
+  async ({ request, db, params }) => {
+    const { id } = params;
 
-  const { id } = await params;
-  const db = getCloudflareDb();
+    try {
+      const body = (await request.json()) as { fields: string[] };
+      const { fields } = body;
 
-  try {
-    const body = (await request.json()) as { fields: string[] };
-    const { fields } = body;
-
-    if (!fields || !Array.isArray(fields) || fields.length === 0) {
-      return NextResponse.json({ error: "No fields specified to apply" }, { status: 400 });
-    }
-
-    // Get the schema.org data
-    const [schemaOrg] = await db
-      .select()
-      .from(eventSchemaOrg)
-      .where(eq(eventSchemaOrg.eventId, id))
-      .limit(1);
-
-    if (!schemaOrg || schemaOrg.status !== "available") {
-      return NextResponse.json(
-        { error: "No schema.org data available for this event" },
-        { status: 400 }
-      );
-    }
-
-    // Map schema.org fields to event fields
-    const fieldMapping: Record<string, { eventField: string; schemaValue: unknown }> = {
-      name: { eventField: "name", schemaValue: schemaOrg.schemaName },
-      description: { eventField: "description", schemaValue: schemaOrg.schemaDescription },
-      startDate: { eventField: "startDate", schemaValue: schemaOrg.schemaStartDate },
-      endDate: { eventField: "endDate", schemaValue: schemaOrg.schemaEndDate },
-      // Both sides are integer cents post-0048. Pre-0048 this had two latent
-      // bugs that masked each other: eventField pointed at the legacy
-      // `ticketPriceMin/Max` columns that #56 dropped, and schemaValue pulled
-      // a float dollar from `schemaPriceMin/Max`. Now both columns exist as
-      // *_cents and the "apply this schema-org field" path actually works.
-      ticketPriceMin: {
-        eventField: "ticketPriceMinCents",
-        schemaValue: schemaOrg.schemaPriceMinCents,
-      },
-      ticketPriceMax: {
-        eventField: "ticketPriceMaxCents",
-        schemaValue: schemaOrg.schemaPriceMaxCents,
-      },
-      imageUrl: { eventField: "imageUrl", schemaValue: schemaOrg.schemaImageUrl },
-      ticketUrl: { eventField: "ticketUrl", schemaValue: schemaOrg.schemaTicketUrl },
-    };
-
-    // Build update object with only the specified fields
-    const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    const appliedFields: string[] = [];
-
-    for (const field of fields) {
-      const mapping = fieldMapping[field];
-      if (mapping && mapping.schemaValue !== null && mapping.schemaValue !== undefined) {
-        updateData[mapping.eventField] = mapping.schemaValue;
-        appliedFields.push(field);
+      if (!fields || !Array.isArray(fields) || fields.length === 0) {
+        return NextResponse.json({ error: "No fields specified to apply" }, { status: 400 });
       }
+
+      // Get the schema.org data
+      const [schemaOrg] = await db
+        .select()
+        .from(eventSchemaOrg)
+        .where(eq(eventSchemaOrg.eventId, id))
+        .limit(1);
+
+      if (!schemaOrg || schemaOrg.status !== "available") {
+        return NextResponse.json(
+          { error: "No schema.org data available for this event" },
+          { status: 400 }
+        );
+      }
+
+      // Map schema.org fields to event fields
+      const fieldMapping: Record<string, { eventField: string; schemaValue: unknown }> = {
+        name: { eventField: "name", schemaValue: schemaOrg.schemaName },
+        description: { eventField: "description", schemaValue: schemaOrg.schemaDescription },
+        startDate: { eventField: "startDate", schemaValue: schemaOrg.schemaStartDate },
+        endDate: { eventField: "endDate", schemaValue: schemaOrg.schemaEndDate },
+        // Both sides are integer cents post-0048. Pre-0048 this had two latent
+        // bugs that masked each other: eventField pointed at the legacy
+        // `ticketPriceMin/Max` columns that #56 dropped, and schemaValue pulled
+        // a float dollar from `schemaPriceMin/Max`. Now both columns exist as
+        // *_cents and the "apply this schema-org field" path actually works.
+        ticketPriceMin: {
+          eventField: "ticketPriceMinCents",
+          schemaValue: schemaOrg.schemaPriceMinCents,
+        },
+        ticketPriceMax: {
+          eventField: "ticketPriceMaxCents",
+          schemaValue: schemaOrg.schemaPriceMaxCents,
+        },
+        imageUrl: { eventField: "imageUrl", schemaValue: schemaOrg.schemaImageUrl },
+        ticketUrl: { eventField: "ticketUrl", schemaValue: schemaOrg.schemaTicketUrl },
+      };
+
+      // Build update object with only the specified fields
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      const appliedFields: string[] = [];
+
+      for (const field of fields) {
+        const mapping = fieldMapping[field];
+        if (mapping && mapping.schemaValue !== null && mapping.schemaValue !== undefined) {
+          updateData[mapping.eventField] = mapping.schemaValue;
+          appliedFields.push(field);
+        }
+      }
+
+      if (appliedFields.length === 0) {
+        return NextResponse.json({ error: "No valid fields to apply" }, { status: 400 });
+      }
+
+      // Update the event
+      await db.update(events).set(updateData).where(eq(events.id, id));
+
+      // Get updated event
+      const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
+
+      return NextResponse.json({
+        success: true,
+        appliedFields,
+        event: updatedEvent,
+      });
+    } catch (error) {
+      await logError(db, {
+        message: "Failed to apply schema.org data",
+        error,
+        source: "api/admin/events/[id]/schema-org",
+        request,
+      });
+      return NextResponse.json({ error: "Failed to apply schema.org data" }, { status: 500 });
     }
-
-    if (appliedFields.length === 0) {
-      return NextResponse.json({ error: "No valid fields to apply" }, { status: 400 });
-    }
-
-    // Update the event
-    await db.update(events).set(updateData).where(eq(events.id, id));
-
-    // Get updated event
-    const [updatedEvent] = await db.select().from(events).where(eq(events.id, id)).limit(1);
-
-    return NextResponse.json({
-      success: true,
-      appliedFields,
-      event: updatedEvent,
-    });
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to apply schema.org data",
-      error,
-      source: "api/admin/events/[id]/schema-org",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to apply schema.org data" }, { status: 500 });
   }
-}
+);

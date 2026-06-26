@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues, events } from "@/lib/db/schema";
 import { eq, desc, and, ne } from "drizzle-orm";
 import { createSlug, unsafeSlug } from "@/lib/utils";
@@ -12,19 +12,9 @@ import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { venueSyndicationStatements } from "@/lib/syndication/outbox";
 import { enqueueSyndicationChange } from "@/lib/queues/producers";
 
-interface Params {
-  params: Promise<{ id: string }>;
-}
+export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
+  const { id } = params;
 
-export async function GET(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-
-  const db = getCloudflareDb();
   try {
     const venueResults = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 
@@ -55,226 +45,224 @@ export async function GET(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to fetch venue" }, { status: 500 });
   }
-}
+});
 
-export async function PATCH(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const PATCH = withAuth<{ id: string }>(
+  { role: "ADMIN" },
+  async ({ request, db, params }) => {
+    const { id } = params;
 
-  const { id } = await params;
-
-  // Validate request body
-  const validation = await validateRequestBody(request, venueUpdateSchema);
-  if (!validation.success) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
-  }
-
-  const data = validation.data;
-
-  const db = getCloudflareDb();
-  try {
-    // Get current venue to check if slug needs updating + capture prior values
-    // for IndexNow transition / material-change detection.
-    const [currentVenue] = await db
-      .select({
-        slug: venues.slug,
-        status: venues.status,
-        name: venues.name,
-        address: venues.address,
-        city: venues.city,
-        state: venues.state,
-        zip: venues.zip,
-        description: venues.description,
-      })
-      .from(venues)
-      .where(eq(venues.id, id))
-      .limit(1);
-
-    if (!currentVenue) {
-      return NextResponse.json({ error: "Venue not found" }, { status: 404 });
+    // Validate request body
+    const validation = await validateRequestBody(request, venueUpdateSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    // Check for duplicate Google Place ID (exclude current venue)
-    if (data.googlePlaceId) {
-      const existingVenue = await findVenueByGooglePlaceId(db, data.googlePlaceId, id);
-      if (existingVenue) {
-        return NextResponse.json(
-          {
-            error: `Another venue already uses this Google Place ID: "${existingVenue.name}" in ${existingVenue.city}, ${existingVenue.state}`,
-            existingVenue: {
-              id: existingVenue.id,
-              name: existingVenue.name,
-              city: existingVenue.city,
-              state: existingVenue.state,
+    const data = validation.data;
+
+    try {
+      // Get current venue to check if slug needs updating + capture prior values
+      // for IndexNow transition / material-change detection.
+      const [currentVenue] = await db
+        .select({
+          slug: venues.slug,
+          status: venues.status,
+          name: venues.name,
+          address: venues.address,
+          city: venues.city,
+          state: venues.state,
+          zip: venues.zip,
+          description: venues.description,
+        })
+        .from(venues)
+        .where(eq(venues.id, id))
+        .limit(1);
+
+      if (!currentVenue) {
+        return NextResponse.json({ error: "Venue not found" }, { status: 404 });
+      }
+
+      // Check for duplicate Google Place ID (exclude current venue)
+      if (data.googlePlaceId) {
+        const existingVenue = await findVenueByGooglePlaceId(db, data.googlePlaceId, id);
+        if (existingVenue) {
+          return NextResponse.json(
+            {
+              error: `Another venue already uses this Google Place ID: "${existingVenue.name}" in ${existingVenue.city}, ${existingVenue.state}`,
+              existingVenue: {
+                id: existingVenue.id,
+                name: existingVenue.name,
+                city: existingVenue.city,
+                state: existingVenue.state,
+              },
             },
-          },
-          { status: 409 }
-        );
-      }
-    }
-
-    const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (data.name) {
-      updateData.name = data.name;
-      const newSlug = createSlug(data.name);
-
-      // Only update slug if it would change
-      if (newSlug !== currentVenue.slug) {
-        // Check if new slug already exists for another venue
-        const slug = newSlug;
-        let slugSuffix = 0;
-        while (true) {
-          const existingSlug = await db
-            .select({ id: venues.id })
-            .from(venues)
-            .where(
-              and(
-                eq(venues.slug, unsafeSlug(slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug)),
-                ne(venues.id, id)
-              )
-            )
-            .limit(1);
-          if (existingSlug.length === 0) break;
-          slugSuffix++;
+            { status: 409 }
+          );
         }
-        updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
       }
-    }
-    if (data.address) updateData.address = data.address;
-    if (data.city) updateData.city = data.city;
-    if (data.state) updateData.state = data.state;
-    if (data.zip) updateData.zip = data.zip;
-    if (data.latitude !== undefined) updateData.latitude = data.latitude;
-    if (data.longitude !== undefined) updateData.longitude = data.longitude;
-    if (data.capacity !== undefined) updateData.capacity = data.capacity;
-    if (data.amenities) updateData.amenities = JSON.stringify(data.amenities);
-    if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
-    if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
-    if (data.website !== undefined) updateData.website = data.website;
-    if (data.description !== undefined) updateData.description = data.description;
-    if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
-    // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped (defense in depth).
-    if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
-      updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
-    }
-    if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
-      updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
-    }
-    if (data.googlePlaceId !== undefined) updateData.googlePlaceId = data.googlePlaceId;
-    if (data.googleMapsUrl !== undefined) updateData.googleMapsUrl = data.googleMapsUrl;
-    if (data.openingHours !== undefined) updateData.openingHours = data.openingHours;
-    if (data.googleRating !== undefined) updateData.googleRating = data.googleRating;
-    if (data.googleRatingCount !== undefined) updateData.googleRatingCount = data.googleRatingCount;
-    if (data.googleTypes !== undefined) updateData.googleTypes = data.googleTypes;
-    if (data.accessibility !== undefined) updateData.accessibility = data.accessibility;
-    if (data.parking !== undefined) updateData.parking = data.parking;
-    if (data.status) updateData.status = data.status;
 
-    // SYN1 — venue correction fans out to every event at this venue. The
-    // outbox row + the events-version bump commit in the SAME batch as the
-    // venue UPDATE (was a bare update; converted to a batch so a correction is
-    // never dropped). `venueSyndicationStatements` returns [] when no mirrored
-    // field (name/address/city/state/zip) changed, leaving a single-statement
-    // batch — which is exactly the old behavior.
-    const venueChangedFields = Object.keys(updateData).filter(
-      (k) => k !== "updatedAt" && k !== "slug"
-    );
-    const venueSyndicationStmts = venueSyndicationStatements(db, {
-      venueId: id,
-      changedFields: venueChangedFields,
-      venue: {
-        name: (updateData.name as string) ?? currentVenue.name,
-        address: (updateData.address as string) ?? currentVenue.address,
-        city: (updateData.city as string) ?? currentVenue.city,
-        state: (updateData.state as string) ?? currentVenue.state,
-        zip: (updateData.zip as string) ?? currentVenue.zip,
-      },
-    });
-    const venueBatch = [
-      db.update(venues).set(updateData).where(eq(venues.id, id)),
-      ...venueSyndicationStmts,
-    ] as const;
-    await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (data.name) {
+        updateData.name = data.name;
+        const newSlug = createSlug(data.name);
 
-    // SYN1 — trigger the dispatcher only when a mirrored field changed (the
-    // venue fan-out also bumped its events' versions in the batch above).
-    if (venueSyndicationStmts.length > 0) {
-      await enqueueSyndicationChange({ entityType: "venue", entityId: id });
-    }
+        // Only update slug if it would change
+        if (newSlug !== currentVenue.slug) {
+          // Check if new slug already exists for another venue
+          const slug = newSlug;
+          let slugSuffix = 0;
+          while (true) {
+            const existingSlug = await db
+              .select({ id: venues.id })
+              .from(venues)
+              .where(
+                and(
+                  eq(venues.slug, unsafeSlug(slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug)),
+                  ne(venues.id, id)
+                )
+              )
+              .limit(1);
+            if (existingSlug.length === 0) break;
+            slugSuffix++;
+          }
+          updateData.slug = slugSuffix > 0 ? `${slug}-${slugSuffix}` : slug;
+        }
+      }
+      if (data.address) updateData.address = data.address;
+      if (data.city) updateData.city = data.city;
+      if (data.state) updateData.state = data.state;
+      if (data.zip) updateData.zip = data.zip;
+      if (data.latitude !== undefined) updateData.latitude = data.latitude;
+      if (data.longitude !== undefined) updateData.longitude = data.longitude;
+      if (data.capacity !== undefined) updateData.capacity = data.capacity;
+      if (data.amenities) updateData.amenities = JSON.stringify(data.amenities);
+      if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
+      if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
+      if (data.website !== undefined) updateData.website = data.website;
+      if (data.description !== undefined) updateData.description = data.description;
+      if (data.imageUrl !== undefined) updateData.imageUrl = data.imageUrl;
+      // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped (defense in depth).
+      if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
+        updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
+      }
+      if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
+        updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
+      }
+      if (data.googlePlaceId !== undefined) updateData.googlePlaceId = data.googlePlaceId;
+      if (data.googleMapsUrl !== undefined) updateData.googleMapsUrl = data.googleMapsUrl;
+      if (data.openingHours !== undefined) updateData.openingHours = data.openingHours;
+      if (data.googleRating !== undefined) updateData.googleRating = data.googleRating;
+      if (data.googleRatingCount !== undefined)
+        updateData.googleRatingCount = data.googleRatingCount;
+      if (data.googleTypes !== undefined) updateData.googleTypes = data.googleTypes;
+      if (data.accessibility !== undefined) updateData.accessibility = data.accessibility;
+      if (data.parking !== undefined) updateData.parking = data.parking;
+      if (data.status) updateData.status = data.status;
 
-    const [updatedVenue] = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
+      // SYN1 — venue correction fans out to every event at this venue. The
+      // outbox row + the events-version bump commit in the SAME batch as the
+      // venue UPDATE (was a bare update; converted to a batch so a correction is
+      // never dropped). `venueSyndicationStatements` returns [] when no mirrored
+      // field (name/address/city/state/zip) changed, leaving a single-statement
+      // batch — which is exactly the old behavior.
+      const venueChangedFields = Object.keys(updateData).filter(
+        (k) => k !== "updatedAt" && k !== "slug"
+      );
+      const venueSyndicationStmts = venueSyndicationStatements(db, {
+        venueId: id,
+        changedFields: venueChangedFields,
+        venue: {
+          name: (updateData.name as string) ?? currentVenue.name,
+          address: (updateData.address as string) ?? currentVenue.address,
+          city: (updateData.city as string) ?? currentVenue.city,
+          state: (updateData.state as string) ?? currentVenue.state,
+          zip: (updateData.zip as string) ?? currentVenue.zip,
+        },
+      });
+      const venueBatch = [
+        db.update(venues).set(updateData).where(eq(venues.id, id)),
+        ...venueSyndicationStmts,
+      ] as const;
+      await db.batch(venueBatch as unknown as Parameters<typeof db.batch>[0]);
 
-    // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material edits
-    // on already-ACTIVE venues so analytics can attribute indexing requests.
-    const wasActive = currentVenue.status === "ACTIVE";
-    const newStatus = data.status ?? currentVenue.status;
-    const isActive = newStatus === "ACTIVE";
+      // SYN1 — trigger the dispatcher only when a mirrored field changed (the
+      // venue fan-out also bumped its events' versions in the batch above).
+      if (venueSyndicationStmts.length > 0) {
+        await enqueueSyndicationChange({ entityType: "venue", entityId: id });
+      }
 
-    let venueIndexNowSource: string | null = null;
-    if (!wasActive && isActive) {
-      venueIndexNowSource = "venue-activate";
-    } else if (wasActive && isActive) {
-      const materialChanged =
-        (data.name !== undefined && data.name !== currentVenue.name) ||
-        (data.address !== undefined && data.address !== currentVenue.address) ||
-        (data.city !== undefined && data.city !== currentVenue.city) ||
-        (data.state !== undefined && data.state !== currentVenue.state) ||
-        (data.description !== undefined && data.description !== currentVenue.description);
-      if (materialChanged) venueIndexNowSource = "venue-update";
-    }
+      const [updatedVenue] = await db.select().from(venues).where(eq(venues.id, id)).limit(1);
 
-    if (venueIndexNowSource) {
-      const finalSlug = (updateData.slug as string | undefined) ?? currentVenue.slug;
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, venueIndexNowSource);
-    }
+      // IndexNow: distinguish first-publish (INACTIVE→ACTIVE) from material edits
+      // on already-ACTIVE venues so analytics can attribute indexing requests.
+      const wasActive = currentVenue.status === "ACTIVE";
+      const newStatus = data.status ?? currentVenue.status;
+      const isActive = newStatus === "ACTIVE";
 
-    return NextResponse.json(updatedVenue);
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to update venue",
-      error,
-      source: "api/admin/venues/[id]",
-      request,
-    });
-    const errorMessage = error instanceof Error ? error.message : String(error);
+      let venueIndexNowSource: string | null = null;
+      if (!wasActive && isActive) {
+        venueIndexNowSource = "venue-activate";
+      } else if (wasActive && isActive) {
+        const materialChanged =
+          (data.name !== undefined && data.name !== currentVenue.name) ||
+          (data.address !== undefined && data.address !== currentVenue.address) ||
+          (data.city !== undefined && data.city !== currentVenue.city) ||
+          (data.state !== undefined && data.state !== currentVenue.state) ||
+          (data.description !== undefined && data.description !== currentVenue.description);
+        if (materialChanged) venueIndexNowSource = "venue-update";
+      }
 
-    // Handle unique constraint violations
-    if (errorMessage.includes("UNIQUE constraint failed")) {
-      if (errorMessage.includes("google_place_id")) {
+      if (venueIndexNowSource) {
+        const finalSlug = (updateData.slug as string | undefined) ?? currentVenue.slug;
+        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        await pingIndexNow(db, indexNowUrlFor("venues", finalSlug), env, venueIndexNowSource);
+      }
+
+      return NextResponse.json(updatedVenue);
+    } catch (error) {
+      await logError(db, {
+        message: "Failed to update venue",
+        error,
+        source: "api/admin/venues/[id]",
+        request,
+      });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Handle unique constraint violations
+      if (errorMessage.includes("UNIQUE constraint failed")) {
+        if (errorMessage.includes("google_place_id")) {
+          return NextResponse.json(
+            { error: "A venue with this Google Place ID already exists" },
+            { status: 409 }
+          );
+        }
         return NextResponse.json(
-          { error: "A venue with this Google Place ID already exists" },
+          { error: "A venue with this name already exists" },
           { status: 409 }
         );
       }
-      return NextResponse.json({ error: "A venue with this name already exists" }, { status: 409 });
+
+      return NextResponse.json({ error: "Failed to update venue" }, { status: 500 });
     }
-
-    return NextResponse.json({ error: "Failed to update venue" }, { status: 500 });
   }
-}
+);
 
-export async function DELETE(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const DELETE = withAuth<{ id: string }>(
+  { role: "ADMIN" },
+  async ({ request, db, params }) => {
+    const { id } = params;
+
+    try {
+      await db.delete(venues).where(eq(venues.id, id));
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      await logError(db, {
+        message: "Failed to delete venue",
+        error,
+        source: "api/admin/venues/[id]",
+        request,
+      });
+      return NextResponse.json({ error: "Failed to delete venue" }, { status: 500 });
+    }
   }
-
-  const { id } = await params;
-
-  const db = getCloudflareDb();
-  try {
-    await db.delete(venues).where(eq(venues.id, id));
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to delete venue",
-      error,
-      source: "api/admin/venues/[id]",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to delete venue" }, { status: 500 });
-  }
-}
+);
