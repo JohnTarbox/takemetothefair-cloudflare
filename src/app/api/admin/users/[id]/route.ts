@@ -1,34 +1,23 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { users, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { userUpdateSchema, validateRequestBody } from "@/lib/validations";
-import { logError } from "@/lib/logger";
 
-interface Params {
-  params: Promise<{ id: string }>;
-}
+export const PATCH = withAuth<{ id: string }>(
+  { role: "ADMIN", source: "api/admin/users/[id]" },
+  async ({ request, db, session, params }) => {
+    const { id } = params;
 
-export async function PATCH(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+    // Validate request body
+    const validation = await validateRequestBody(request, userUpdateSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
 
-  const { id } = await params;
+    const data = validation.data;
 
-  // Validate request body
-  const validation = await validateRequestBody(request, userUpdateSchema);
-  if (!validation.success) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
-  }
-
-  const data = validation.data;
-
-  const db = getCloudflareDb();
-  try {
     // WS3d — snapshot the prior role so a role change can be audited with the
     // previous → new transition (admin elevating/demoting a user is a
     // privileged action and must leave a trail).
@@ -67,13 +56,5 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       .limit(1);
 
     return NextResponse.json(updatedUser);
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to update user",
-      error,
-      source: "api/admin/users/[id]",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to update user" }, { status: 500 });
   }
-}
+);

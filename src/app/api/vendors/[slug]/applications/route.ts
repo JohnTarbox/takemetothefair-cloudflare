@@ -1,23 +1,13 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withApiToken } from "@/lib/api/with-auth";
 import { eventVendors, events } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { authenticateVendorToken } from "@/lib/api-token-auth";
 import { isValidTransition } from "@/lib/vendor-status";
-import { logError } from "@/lib/logger";
 
-export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
-  const db = getCloudflareDb();
-  try {
-    const { slug } = await params;
-
-    // Authenticate via Bearer token
-    const auth = await authenticateVendorToken(request, slug);
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
-    }
-
+export const GET = withApiToken<{ slug: string }>(
+  { source: "api/vendors/[slug]/applications" },
+  async ({ db, vendorId }) => {
     // Get all applications for this vendor
     const results = await db
       .select({
@@ -33,7 +23,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       })
       .from(eventVendors)
       .innerJoin(events, eq(eventVendors.eventId, events.id))
-      .where(eq(eventVendors.vendorId, auth.vendorId));
+      .where(eq(eventVendors.vendorId, vendorId));
 
     return NextResponse.json({
       applications: results.map((r) => ({
@@ -48,28 +38,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
         createdAt: r.createdAt,
       })),
     });
-  } catch (error) {
-    await logError(db, {
-      message: "Error fetching vendor applications",
-      error,
-      source: "api/vendors/[slug]/applications",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to fetch applications" }, { status: 500 });
   }
-}
+);
 
 /** PATCH — update vendor's own application status/paymentStatus for an event */
-export async function PATCH(request: Request, { params }: { params: Promise<{ slug: string }> }) {
-  const db = getCloudflareDb();
-  try {
-    const { slug } = await params;
-
-    const auth = await authenticateVendorToken(request, slug);
-    if (!auth.authorized) {
-      return NextResponse.json({ error: auth.error }, { status: 401 });
-    }
-
+export const PATCH = withApiToken<{ slug: string }>(
+  { source: "api/vendors/[slug]/applications" },
+  async ({ request, db, vendorId }) => {
     let body: { eventId?: string; status?: string; paymentStatus?: string };
     try {
       body = await request.json();
@@ -85,7 +60,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
     const [existing] = await db
       .select()
       .from(eventVendors)
-      .where(and(eq(eventVendors.vendorId, auth.vendorId), eq(eventVendors.eventId, body.eventId)))
+      .where(and(eq(eventVendors.vendorId, vendorId), eq(eventVendors.eventId, body.eventId)))
       .limit(1);
 
     if (!existing) {
@@ -96,7 +71,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
 
       await db.insert(eventVendors).values({
         eventId: body.eventId,
-        vendorId: auth.vendorId,
+        vendorId,
         status: newStatus,
         paymentStatus: newPayment,
       });
@@ -140,13 +115,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
       status: updates.status ?? existing.status,
       paymentStatus: updates.paymentStatus ?? existing.paymentStatus,
     });
-  } catch (error) {
-    await logError(db, {
-      message: "Error updating vendor application",
-      error,
-      source: "api/vendors/[slug]/applications",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to update application" }, { status: 500 });
   }
-}
+);
