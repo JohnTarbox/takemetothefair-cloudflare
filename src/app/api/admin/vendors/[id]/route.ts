@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth, withAuthorized } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import {
   vendors,
   eventVendors,
@@ -14,7 +14,6 @@ import {
   recommendationItems,
 } from "@/lib/db/schema";
 import { eq, and, ne, inArray, gte, sql } from "drizzle-orm";
-import { internalKeyMatches } from "@/lib/api-auth";
 import { createSlug, appendSlugSegment, unsafeSlug, type Slug } from "@/lib/utils";
 import { vendorUpdateSchema, vendorDeleteSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
@@ -26,19 +25,9 @@ import { markActedAllForTarget } from "@/lib/recommendations/engine";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 
-interface Params {
-  params: Promise<{ id: string }>;
-}
+export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
+  const { id } = params;
 
-export async function GET(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-
-  const db = getCloudflareDb();
   try {
     const vendorResults = await db
       .select()
@@ -76,452 +65,435 @@ export async function GET(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to fetch vendor" }, { status: 500 });
   }
-}
+});
 
-export async function PATCH(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const PATCH = withAuth<{ id: string }>(
+  { role: "ADMIN" },
+  async ({ request, db, session, params }) => {
+    const { id } = params;
 
-  const { id } = await params;
-
-  // Validate request body
-  const validation = await validateRequestBody(request, vendorUpdateSchema);
-  if (!validation.success) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
-  }
-
-  const data = validation.data;
-
-  const db = getCloudflareDb();
-  try {
-    // Get current vendor to check if slug needs updating + capture prior values
-    // for IndexNow material-change detection and audit log.
-    const [currentVendor] = await db
-      .select({
-        slug: vendors.slug,
-        businessName: vendors.businessName,
-        vendorType: vendors.vendorType,
-        description: vendors.description,
-        city: vendors.city,
-        state: vendors.state,
-        userId: vendors.userId,
-        enhancedProfile: vendors.enhancedProfile,
-        enhancedProfileStartedAt: vendors.enhancedProfileStartedAt,
-        enhancedProfileExpiresAt: vendors.enhancedProfileExpiresAt,
-        claimed: vendors.claimed,
-        verifiedPro: vendors.verifiedPro,
-        // A5 — prior value for the display-override gate transition audit.
-        displayOverridePermitted: vendors.displayOverridePermitted,
-      })
-      .from(vendors)
-      .where(eq(vendors.id, id))
-      .limit(1);
-
-    if (!currentVendor) {
-      return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
+    // Validate request body
+    const validation = await validateRequestBody(request, vendorUpdateSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (data.businessName) {
-      updateData.businessName = data.businessName;
-    }
+    const data = validation.data;
 
-    // Slug resolution: explicit `slug` param wins over auto-generation from
-    // businessName. Both paths run through the same uniqueness check and
-    // both write a vendor_slug_history row when the slug actually changes.
-    const slugSeed = data.slug
-      ? createSlug(data.slug)
-      : data.businessName
-        ? createSlug(data.businessName)
-        : null;
+    try {
+      // Get current vendor to check if slug needs updating + capture prior values
+      // for IndexNow material-change detection and audit log.
+      const [currentVendor] = await db
+        .select({
+          slug: vendors.slug,
+          businessName: vendors.businessName,
+          vendorType: vendors.vendorType,
+          description: vendors.description,
+          city: vendors.city,
+          state: vendors.state,
+          userId: vendors.userId,
+          enhancedProfile: vendors.enhancedProfile,
+          enhancedProfileStartedAt: vendors.enhancedProfileStartedAt,
+          enhancedProfileExpiresAt: vendors.enhancedProfileExpiresAt,
+          claimed: vendors.claimed,
+          verifiedPro: vendors.verifiedPro,
+          // A5 — prior value for the display-override gate transition audit.
+          displayOverridePermitted: vendors.displayOverridePermitted,
+        })
+        .from(vendors)
+        .where(eq(vendors.id, id))
+        .limit(1);
 
-    if (slugSeed && slugSeed !== currentVendor.slug) {
-      let slugSuffix = 0;
-      let candidate = slugSeed;
-      while (true) {
-        const existingSlug = await db
-          .select({ id: vendors.id })
-          .from(vendors)
-          .where(
-            and(
-              eq(vendors.slug, slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed),
-              ne(vendors.id, id)
+      if (!currentVendor) {
+        return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
+      }
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (data.businessName) {
+        updateData.businessName = data.businessName;
+      }
+
+      // Slug resolution: explicit `slug` param wins over auto-generation from
+      // businessName. Both paths run through the same uniqueness check and
+      // both write a vendor_slug_history row when the slug actually changes.
+      const slugSeed = data.slug
+        ? createSlug(data.slug)
+        : data.businessName
+          ? createSlug(data.businessName)
+          : null;
+
+      if (slugSeed && slugSeed !== currentVendor.slug) {
+        let slugSuffix = 0;
+        let candidate = slugSeed;
+        while (true) {
+          const existingSlug = await db
+            .select({ id: vendors.id })
+            .from(vendors)
+            .where(
+              and(
+                eq(
+                  vendors.slug,
+                  slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed
+                ),
+                ne(vendors.id, id)
+              )
             )
-          )
-          .limit(1);
-        if (existingSlug.length === 0) {
-          candidate = slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed;
-          break;
+            .limit(1);
+          if (existingSlug.length === 0) {
+            candidate = slugSuffix > 0 ? appendSlugSegment(slugSeed, slugSuffix) : slugSeed;
+            break;
+          }
+          slugSuffix++;
         }
-        slugSuffix++;
-      }
-      if (candidate !== currentVendor.slug) {
-        updateData.slug = candidate;
-      }
-    }
-    if (data.description !== undefined) updateData.description = data.description;
-    if (data.vendorType !== undefined) updateData.vendorType = data.vendorType;
-    if (data.website !== undefined) updateData.website = data.website;
-    if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
-    // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.
-    if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
-      updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
-    }
-    if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
-      updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
-    }
-    if (data.verified !== undefined) updateData.verified = data.verified;
-    if (data.commercial !== undefined) updateData.commercial = data.commercial;
-    if (data.canSelfConfirm !== undefined) updateData.canSelfConfirm = data.canSelfConfirm;
-    // Contact Information
-    if (data.contactName !== undefined) updateData.contactName = data.contactName;
-    if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
-    if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
-    // Physical Address
-    if (data.address !== undefined) updateData.address = data.address;
-    if (data.city !== undefined) updateData.city = data.city;
-    if (data.state !== undefined) updateData.state = data.state;
-    if (data.zip !== undefined) updateData.zip = data.zip;
-    // Business Details
-    if (data.yearEstablished !== undefined) updateData.yearEstablished = data.yearEstablished;
-    if (data.paymentMethods !== undefined)
-      updateData.paymentMethods = JSON.stringify(data.paymentMethods);
-    if (data.licenseInfo !== undefined) updateData.licenseInfo = data.licenseInfo;
-    if (data.insuranceInfo !== undefined) updateData.insuranceInfo = data.insuranceInfo;
-
-    // Enhanced Profile fields (round-3) ----------------------------------
-    // The boolean transition from off→on additionally sets verified=1 and
-    // started_at as the activation timestamp; the panel/MCP usually go
-    // through set_enhanced_profile but this PATCH handles direct field
-    // updates and the admin UI's activate/expire buttons.
-    const now = new Date();
-    let enhancedProfileTransitioned: "activated" | "expire_set" | null = null;
-
-    if (data.enhanced_profile !== undefined) {
-      updateData.enhancedProfile = data.enhanced_profile;
-      if (data.enhanced_profile && !currentVendor.enhancedProfile) {
-        // Off→on activation: stamp started_at if first time, set 1-year expiry,
-        // and flip the verified badge on automatically.
-        updateData.verified = true;
-        if (!currentVendor.enhancedProfileStartedAt) {
-          updateData.enhancedProfileStartedAt = now;
-        }
-        if (!data.enhanced_profile_expires_at) {
-          updateData.enhancedProfileExpiresAt = new Date(now.getTime() + 365 * 86400000);
-        }
-        enhancedProfileTransitioned = "activated";
-      }
-    }
-    if (data.enhanced_profile_expires_at !== undefined) {
-      const expDate = new Date(data.enhanced_profile_expires_at);
-      updateData.enhancedProfileExpiresAt = expDate;
-      if (expDate.getTime() <= now.getTime() && currentVendor.enhancedProfile) {
-        enhancedProfileTransitioned = "expire_set";
-      }
-    }
-    if (data.gallery_images !== undefined) {
-      updateData.galleryImages = JSON.stringify(data.gallery_images);
-    }
-    if (data.featured_priority !== undefined) {
-      updateData.featuredPriority = data.featured_priority;
-    }
-
-    // Claimed transition (drizzle/0049). false→true grants Claimed badge,
-    // sends confirmation email, logs admin action. true→false revokes.
-    let claimedTransitioned: "granted" | "revoked" | null = null;
-    if (data.claimed !== undefined && data.claimed !== currentVendor.claimed) {
-      if (data.claimed) {
-        updateData.claimed = true;
-        updateData.claimedAt = now;
-        updateData.claimedBy = session.user.id;
-        claimedTransitioned = "granted";
-      } else {
-        updateData.claimed = false;
-        updateData.claimedAt = null;
-        updateData.claimedBy = null;
-        claimedTransitioned = "revoked";
-      }
-    }
-
-    // Verified Pro transition (drizzle/0052). Same shape as Claimed but
-    // admin-only — no vendor email per business decision. Orthogonal to
-    // Claimed: each is granted/revoked independently.
-    let verifiedProTransitioned: "granted" | "revoked" | null = null;
-    if (data.verified_pro !== undefined && data.verified_pro !== currentVendor.verifiedPro) {
-      if (data.verified_pro) {
-        updateData.verifiedPro = true;
-        updateData.verifiedProAt = now;
-        updateData.verifiedProBy = session.user.id;
-        verifiedProTransitioned = "granted";
-      } else {
-        updateData.verifiedPro = false;
-        updateData.verifiedProAt = null;
-        updateData.verifiedProBy = null;
-        verifiedProTransitioned = "revoked";
-      }
-    }
-
-    // EH1 Phase 1 (drizzle/0106 + 0107) — hierarchy + relationship fields.
-    // Admin-only by virtue of this route's admin-role gate at the top.
-    // Vendor self-edit can set display_mode but cannot touch the other
-    // seven (the gate stays with admins / brand-parent owners). See
-    // resolveVendorDisplay() in src/lib/vendor-hierarchy.ts for how these
-    // are consumed at render time. No transition log emitted today —
-    // changes are rare and the standard enrichment log captures the
-    // field-set list.
-    //
-    // Cycle / self-ref protection for the three FK columns: walk the
-    // chain up to depth 5 via DB lookups and reject anything that would
-    // either self-ref or reach back to this row. The three admin MCP
-    // tools (set_vendor_relationship / set_vendor_alias) carry the same
-    // checks; we duplicate here because the admin form posts straight
-    // here, not through MCP.
-    async function wouldFormCycle(
-      column: "brand_parent_vendor_id" | "operator_parent_vendor_id" | "alias_of_vendor_id",
-      targetId: string | null
-    ): Promise<boolean> {
-      if (targetId == null) return false;
-      if (targetId === id) return true; // self-ref
-      const seen = new Set<string>([id]);
-      let cursor: string | null = targetId;
-      for (let depth = 0; depth < 5; depth++) {
-        if (cursor == null) return false;
-        if (seen.has(cursor)) return true;
-        seen.add(cursor);
-        const [row] = await db
-          .select({
-            brand: vendors.brandParentVendorId,
-            op: vendors.operatorParentVendorId,
-            alias: vendors.aliasOfVendorId,
-          })
-          .from(vendors)
-          .where(eq(vendors.id, cursor))
-          .limit(1);
-        if (!row) return false;
-        // Follow the same column we're testing; cross-column chains
-        // (e.g. brand_parent → alias_of) are not cycles for this column.
-        cursor =
-          column === "brand_parent_vendor_id"
-            ? row.brand
-            : column === "operator_parent_vendor_id"
-              ? row.op
-              : row.alias;
-      }
-      return true; // depth exceeded — treat as cycle
-    }
-
-    for (const [col, val] of [
-      ["brand_parent_vendor_id", data.brand_parent_vendor_id],
-      ["operator_parent_vendor_id", data.operator_parent_vendor_id],
-      ["alias_of_vendor_id", data.alias_of_vendor_id],
-    ] as const) {
-      if (val !== undefined && (await wouldFormCycle(col, val))) {
-        return NextResponse.json(
-          { error: `Invalid ${col}: would create a cycle or self-reference` },
-          { status: 400 }
-        );
-      }
-    }
-
-    if (data.role !== undefined) updateData.role = data.role;
-    if (data.brand_parent_vendor_id !== undefined)
-      updateData.brandParentVendorId = data.brand_parent_vendor_id;
-    if (data.operator_parent_vendor_id !== undefined)
-      updateData.operatorParentVendorId = data.operator_parent_vendor_id;
-    if (data.alias_of_vendor_id !== undefined) updateData.aliasOfVendorId = data.alias_of_vendor_id;
-    if (data.relationship_type !== undefined) updateData.relationshipType = data.relationship_type;
-    if (data.default_child_display !== undefined)
-      updateData.defaultChildDisplay = data.default_child_display;
-    if (data.display_override_permitted !== undefined)
-      updateData.displayOverridePermitted = data.display_override_permitted;
-    if (data.display_mode !== undefined) updateData.displayMode = data.display_mode;
-    // A5 — admin can set the public display-name alias (snake_case in →
-    // camelCase column).
-    if (data.display_name !== undefined) updateData.displayName = data.display_name;
-
-    // A5 — display-override gate transition (false⇄true). Granting lets the
-    // office's displayMode preference take effect at render; revoking falls the
-    // listing back to the brand's default. Same shape as the claimed /
-    // verified-pro transitions above; audited below as `vendor.gate_change`.
-    let gateTransitioned: "granted" | "revoked" | null = null;
-    if (
-      data.display_override_permitted !== undefined &&
-      data.display_override_permitted !== Boolean(currentVendor.displayOverridePermitted)
-    ) {
-      gateTransitioned = data.display_override_permitted ? "granted" : "revoked";
-    }
-
-    await db.update(vendors).set(updateData).where(eq(vendors.id, id));
-
-    await recomputeVendorCompleteness(db, id);
-
-    await logEnrichment(db, {
-      targetType: "vendor",
-      targetId: id,
-      source: "manual_admin",
-      status: "success",
-      actorUserId: session.user.id,
-      fieldsChanged: Object.keys(updateData).filter((k) => k !== "updatedAt"),
-    });
-
-    // Slug history write — fires whenever the resolved slug actually changed,
-    // regardless of whether it came from `slug` param or `businessName` rename.
-    if (updateData.slug && updateData.slug !== currentVendor.slug) {
-      await db.insert(vendorSlugHistory).values({
-        vendorId: id,
-        oldSlug: currentVendor.slug,
-        newSlug: unsafeSlug(updateData.slug as string),
-        changedAt: now,
-        changedBy: session.user.id,
-      });
-    }
-
-    // Audit log: record Enhanced Profile lifecycle transitions.
-    if (enhancedProfileTransitioned) {
-      await db.insert(adminActions).values({
-        action:
-          enhancedProfileTransitioned === "activated"
-            ? "enhanced_profile.activate"
-            : "enhanced_profile.expire_set",
-        actorUserId: session.user.id,
-        targetType: "vendor",
-        targetId: id,
-        payloadJson: JSON.stringify({
-          previous_enhanced_profile: currentVendor.enhancedProfile,
-          previous_expires_at: currentVendor.enhancedProfileExpiresAt,
-        }),
-        createdAt: now,
-      });
-    }
-
-    // Audit log + email for Claimed transition.
-    if (claimedTransitioned) {
-      await db.insert(adminActions).values({
-        action: claimedTransitioned === "granted" ? "vendor.claim_grant" : "vendor.claim_revoke",
-        actorUserId: session.user.id,
-        targetType: "vendor",
-        targetId: id,
-        payloadJson: JSON.stringify({ previous_claimed: currentVendor.claimed }),
-        createdAt: now,
-      });
-
-      if (claimedTransitioned === "granted") {
-        // Fire confirmation email if vendor's owner-user has an email. The
-        // existing sendEmail() falls back to logging when RESEND_API_KEY is
-        // unset, so this is safe in dev.
-        const [ownerUser] = await db
-          .select({ email: users.email })
-          .from(users)
-          .where(eq(users.id, currentVendor.userId))
-          .limit(1);
-        if (ownerUser?.email) {
-          const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
-          const tpl = vendorClaimConfirmationTemplate({
-            businessName: currentVendor.businessName,
-            vendorSlug: finalSlug,
-            siteUrl: getSiteUrl(),
-          });
-          await enqueueEmail({
-            to: ownerUser.email,
-            ...tpl,
-            source: "admin.vendor-claim-confirm",
-          });
+        if (candidate !== currentVendor.slug) {
+          updateData.slug = candidate;
         }
       }
-    }
+      if (data.description !== undefined) updateData.description = data.description;
+      if (data.vendorType !== undefined) updateData.vendorType = data.vendorType;
+      if (data.website !== undefined) updateData.website = data.website;
+      if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
+      // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.
+      if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
+        updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
+      }
+      if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
+        updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
+      }
+      if (data.verified !== undefined) updateData.verified = data.verified;
+      if (data.commercial !== undefined) updateData.commercial = data.commercial;
+      if (data.canSelfConfirm !== undefined) updateData.canSelfConfirm = data.canSelfConfirm;
+      // Contact Information
+      if (data.contactName !== undefined) updateData.contactName = data.contactName;
+      if (data.contactEmail !== undefined) updateData.contactEmail = data.contactEmail;
+      if (data.contactPhone !== undefined) updateData.contactPhone = data.contactPhone;
+      // Physical Address
+      if (data.address !== undefined) updateData.address = data.address;
+      if (data.city !== undefined) updateData.city = data.city;
+      if (data.state !== undefined) updateData.state = data.state;
+      if (data.zip !== undefined) updateData.zip = data.zip;
+      // Business Details
+      if (data.yearEstablished !== undefined) updateData.yearEstablished = data.yearEstablished;
+      if (data.paymentMethods !== undefined)
+        updateData.paymentMethods = JSON.stringify(data.paymentMethods);
+      if (data.licenseInfo !== undefined) updateData.licenseInfo = data.licenseInfo;
+      if (data.insuranceInfo !== undefined) updateData.insuranceInfo = data.insuranceInfo;
 
-    // Audit log for the display-override gate transition (A5). Admin (or the
-    // brand-parent owner via admin tools) granting/revoking an office's right
-    // to override the brand's default display. Counterpart to the office-side
-    // `vendor.display_preference_change` row written by the vendor self-edit
-    // route (api/vendor/profile/route.ts).
-    if (gateTransitioned) {
-      await db.insert(adminActions).values({
-        action: "vendor.gate_change",
-        actorUserId: session.user.id,
+      // Enhanced Profile fields (round-3) ----------------------------------
+      // The boolean transition from off→on additionally sets verified=1 and
+      // started_at as the activation timestamp; the panel/MCP usually go
+      // through set_enhanced_profile but this PATCH handles direct field
+      // updates and the admin UI's activate/expire buttons.
+      const now = new Date();
+      let enhancedProfileTransitioned: "activated" | "expire_set" | null = null;
+
+      if (data.enhanced_profile !== undefined) {
+        updateData.enhancedProfile = data.enhanced_profile;
+        if (data.enhanced_profile && !currentVendor.enhancedProfile) {
+          // Off→on activation: stamp started_at if first time, set 1-year expiry,
+          // and flip the verified badge on automatically.
+          updateData.verified = true;
+          if (!currentVendor.enhancedProfileStartedAt) {
+            updateData.enhancedProfileStartedAt = now;
+          }
+          if (!data.enhanced_profile_expires_at) {
+            updateData.enhancedProfileExpiresAt = new Date(now.getTime() + 365 * 86400000);
+          }
+          enhancedProfileTransitioned = "activated";
+        }
+      }
+      if (data.enhanced_profile_expires_at !== undefined) {
+        const expDate = new Date(data.enhanced_profile_expires_at);
+        updateData.enhancedProfileExpiresAt = expDate;
+        if (expDate.getTime() <= now.getTime() && currentVendor.enhancedProfile) {
+          enhancedProfileTransitioned = "expire_set";
+        }
+      }
+      if (data.gallery_images !== undefined) {
+        updateData.galleryImages = JSON.stringify(data.gallery_images);
+      }
+      if (data.featured_priority !== undefined) {
+        updateData.featuredPriority = data.featured_priority;
+      }
+
+      // Claimed transition (drizzle/0049). false→true grants Claimed badge,
+      // sends confirmation email, logs admin action. true→false revokes.
+      let claimedTransitioned: "granted" | "revoked" | null = null;
+      if (data.claimed !== undefined && data.claimed !== currentVendor.claimed) {
+        if (data.claimed) {
+          updateData.claimed = true;
+          updateData.claimedAt = now;
+          updateData.claimedBy = session.user.id;
+          claimedTransitioned = "granted";
+        } else {
+          updateData.claimed = false;
+          updateData.claimedAt = null;
+          updateData.claimedBy = null;
+          claimedTransitioned = "revoked";
+        }
+      }
+
+      // Verified Pro transition (drizzle/0052). Same shape as Claimed but
+      // admin-only — no vendor email per business decision. Orthogonal to
+      // Claimed: each is granted/revoked independently.
+      let verifiedProTransitioned: "granted" | "revoked" | null = null;
+      if (data.verified_pro !== undefined && data.verified_pro !== currentVendor.verifiedPro) {
+        if (data.verified_pro) {
+          updateData.verifiedPro = true;
+          updateData.verifiedProAt = now;
+          updateData.verifiedProBy = session.user.id;
+          verifiedProTransitioned = "granted";
+        } else {
+          updateData.verifiedPro = false;
+          updateData.verifiedProAt = null;
+          updateData.verifiedProBy = null;
+          verifiedProTransitioned = "revoked";
+        }
+      }
+
+      // EH1 Phase 1 (drizzle/0106 + 0107) — hierarchy + relationship fields.
+      // Admin-only by virtue of this route's admin-role gate at the top.
+      // Vendor self-edit can set display_mode but cannot touch the other
+      // seven (the gate stays with admins / brand-parent owners). See
+      // resolveVendorDisplay() in src/lib/vendor-hierarchy.ts for how these
+      // are consumed at render time. No transition log emitted today —
+      // changes are rare and the standard enrichment log captures the
+      // field-set list.
+      //
+      // Cycle / self-ref protection for the three FK columns: walk the
+      // chain up to depth 5 via DB lookups and reject anything that would
+      // either self-ref or reach back to this row. The three admin MCP
+      // tools (set_vendor_relationship / set_vendor_alias) carry the same
+      // checks; we duplicate here because the admin form posts straight
+      // here, not through MCP.
+      async function wouldFormCycle(
+        column: "brand_parent_vendor_id" | "operator_parent_vendor_id" | "alias_of_vendor_id",
+        targetId: string | null
+      ): Promise<boolean> {
+        if (targetId == null) return false;
+        if (targetId === id) return true; // self-ref
+        const seen = new Set<string>([id]);
+        let cursor: string | null = targetId;
+        for (let depth = 0; depth < 5; depth++) {
+          if (cursor == null) return false;
+          if (seen.has(cursor)) return true;
+          seen.add(cursor);
+          const [row] = await db
+            .select({
+              brand: vendors.brandParentVendorId,
+              op: vendors.operatorParentVendorId,
+              alias: vendors.aliasOfVendorId,
+            })
+            .from(vendors)
+            .where(eq(vendors.id, cursor))
+            .limit(1);
+          if (!row) return false;
+          // Follow the same column we're testing; cross-column chains
+          // (e.g. brand_parent → alias_of) are not cycles for this column.
+          cursor =
+            column === "brand_parent_vendor_id"
+              ? row.brand
+              : column === "operator_parent_vendor_id"
+                ? row.op
+                : row.alias;
+        }
+        return true; // depth exceeded — treat as cycle
+      }
+
+      for (const [col, val] of [
+        ["brand_parent_vendor_id", data.brand_parent_vendor_id],
+        ["operator_parent_vendor_id", data.operator_parent_vendor_id],
+        ["alias_of_vendor_id", data.alias_of_vendor_id],
+      ] as const) {
+        if (val !== undefined && (await wouldFormCycle(col, val))) {
+          return NextResponse.json(
+            { error: `Invalid ${col}: would create a cycle or self-reference` },
+            { status: 400 }
+          );
+        }
+      }
+
+      if (data.role !== undefined) updateData.role = data.role;
+      if (data.brand_parent_vendor_id !== undefined)
+        updateData.brandParentVendorId = data.brand_parent_vendor_id;
+      if (data.operator_parent_vendor_id !== undefined)
+        updateData.operatorParentVendorId = data.operator_parent_vendor_id;
+      if (data.alias_of_vendor_id !== undefined)
+        updateData.aliasOfVendorId = data.alias_of_vendor_id;
+      if (data.relationship_type !== undefined)
+        updateData.relationshipType = data.relationship_type;
+      if (data.default_child_display !== undefined)
+        updateData.defaultChildDisplay = data.default_child_display;
+      if (data.display_override_permitted !== undefined)
+        updateData.displayOverridePermitted = data.display_override_permitted;
+      if (data.display_mode !== undefined) updateData.displayMode = data.display_mode;
+      // A5 — admin can set the public display-name alias (snake_case in →
+      // camelCase column).
+      if (data.display_name !== undefined) updateData.displayName = data.display_name;
+
+      // A5 — display-override gate transition (false⇄true). Granting lets the
+      // office's displayMode preference take effect at render; revoking falls the
+      // listing back to the brand's default. Same shape as the claimed /
+      // verified-pro transitions above; audited below as `vendor.gate_change`.
+      let gateTransitioned: "granted" | "revoked" | null = null;
+      if (
+        data.display_override_permitted !== undefined &&
+        data.display_override_permitted !== Boolean(currentVendor.displayOverridePermitted)
+      ) {
+        gateTransitioned = data.display_override_permitted ? "granted" : "revoked";
+      }
+
+      await db.update(vendors).set(updateData).where(eq(vendors.id, id));
+
+      await recomputeVendorCompleteness(db, id);
+
+      await logEnrichment(db, {
         targetType: "vendor",
         targetId: id,
-        payloadJson: JSON.stringify({
-          transition: gateTransitioned,
-          previous_display_override_permitted: Boolean(currentVendor.displayOverridePermitted),
-          new_display_override_permitted: data.display_override_permitted,
-        }),
-        createdAt: now,
-      });
-    }
-
-    // Audit log for Verified Pro transition. NO email per business decision —
-    // admin-only credentialing; vendor sees the badge appear next page visit.
-    if (verifiedProTransitioned) {
-      await db.insert(adminActions).values({
-        action:
-          verifiedProTransitioned === "granted"
-            ? "vendor.verified_pro_grant"
-            : "vendor.verified_pro_revoke",
+        source: "manual_admin",
+        status: "success",
         actorUserId: session.user.id,
-        targetType: "vendor",
-        targetId: id,
-        payloadJson: JSON.stringify({ previous_verified_pro: currentVendor.verifiedPro }),
-        createdAt: now,
+        fieldsChanged: Object.keys(updateData).filter((k) => k !== "updatedAt"),
       });
+
+      // Slug history write — fires whenever the resolved slug actually changed,
+      // regardless of whether it came from `slug` param or `businessName` rename.
+      if (updateData.slug && updateData.slug !== currentVendor.slug) {
+        await db.insert(vendorSlugHistory).values({
+          vendorId: id,
+          oldSlug: currentVendor.slug,
+          newSlug: unsafeSlug(updateData.slug as string),
+          changedAt: now,
+          changedBy: session.user.id,
+        });
+      }
+
+      // Audit log: record Enhanced Profile lifecycle transitions.
+      if (enhancedProfileTransitioned) {
+        await db.insert(adminActions).values({
+          action:
+            enhancedProfileTransitioned === "activated"
+              ? "enhanced_profile.activate"
+              : "enhanced_profile.expire_set",
+          actorUserId: session.user.id,
+          targetType: "vendor",
+          targetId: id,
+          payloadJson: JSON.stringify({
+            previous_enhanced_profile: currentVendor.enhancedProfile,
+            previous_expires_at: currentVendor.enhancedProfileExpiresAt,
+          }),
+          createdAt: now,
+        });
+      }
+
+      // Audit log + email for Claimed transition.
+      if (claimedTransitioned) {
+        await db.insert(adminActions).values({
+          action: claimedTransitioned === "granted" ? "vendor.claim_grant" : "vendor.claim_revoke",
+          actorUserId: session.user.id,
+          targetType: "vendor",
+          targetId: id,
+          payloadJson: JSON.stringify({ previous_claimed: currentVendor.claimed }),
+          createdAt: now,
+        });
+
+        if (claimedTransitioned === "granted") {
+          // Fire confirmation email if vendor's owner-user has an email. The
+          // existing sendEmail() falls back to logging when RESEND_API_KEY is
+          // unset, so this is safe in dev.
+          const [ownerUser] = await db
+            .select({ email: users.email })
+            .from(users)
+            .where(eq(users.id, currentVendor.userId))
+            .limit(1);
+          if (ownerUser?.email) {
+            const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
+            const tpl = vendorClaimConfirmationTemplate({
+              businessName: currentVendor.businessName,
+              vendorSlug: finalSlug,
+              siteUrl: getSiteUrl(),
+            });
+            await enqueueEmail({
+              to: ownerUser.email,
+              ...tpl,
+              source: "admin.vendor-claim-confirm",
+            });
+          }
+        }
+      }
+
+      // Audit log for the display-override gate transition (A5). Admin (or the
+      // brand-parent owner via admin tools) granting/revoking an office's right
+      // to override the brand's default display. Counterpart to the office-side
+      // `vendor.display_preference_change` row written by the vendor self-edit
+      // route (api/vendor/profile/route.ts).
+      if (gateTransitioned) {
+        await db.insert(adminActions).values({
+          action: "vendor.gate_change",
+          actorUserId: session.user.id,
+          targetType: "vendor",
+          targetId: id,
+          payloadJson: JSON.stringify({
+            transition: gateTransitioned,
+            previous_display_override_permitted: Boolean(currentVendor.displayOverridePermitted),
+            new_display_override_permitted: data.display_override_permitted,
+          }),
+          createdAt: now,
+        });
+      }
+
+      // Audit log for Verified Pro transition. NO email per business decision —
+      // admin-only credentialing; vendor sees the badge appear next page visit.
+      if (verifiedProTransitioned) {
+        await db.insert(adminActions).values({
+          action:
+            verifiedProTransitioned === "granted"
+              ? "vendor.verified_pro_grant"
+              : "vendor.verified_pro_revoke",
+          actorUserId: session.user.id,
+          targetType: "vendor",
+          targetId: id,
+          payloadJson: JSON.stringify({ previous_verified_pro: currentVendor.verifiedPro }),
+          createdAt: now,
+        });
+      }
+
+      const [updatedVendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
+
+      // IndexNow: ping when fields rendered on the public vendor page change.
+      // Material list expanded for round-3 to cover Enhanced Profile fields
+      // since they affect what's shown publicly (gallery, badge, contact form).
+      const vendorMaterialChanged =
+        (data.businessName !== undefined && data.businessName !== currentVendor.businessName) ||
+        (data.vendorType !== undefined && (data.vendorType ?? null) !== currentVendor.vendorType) ||
+        (data.description !== undefined &&
+          (data.description ?? null) !== currentVendor.description) ||
+        (data.city !== undefined && (data.city ?? null) !== currentVendor.city) ||
+        (data.state !== undefined && (data.state ?? null) !== currentVendor.state) ||
+        data.enhanced_profile !== undefined ||
+        data.gallery_images !== undefined ||
+        claimedTransitioned !== null ||
+        verifiedProTransitioned !== null ||
+        (updateData.slug !== undefined && updateData.slug !== currentVendor.slug);
+      if (vendorMaterialChanged) {
+        const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
+        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        await pingIndexNow(db, indexNowUrlFor("vendors", finalSlug), env, "vendor-update");
+      }
+
+      return NextResponse.json(updatedVendor);
+    } catch (error) {
+      await logError(db, {
+        message: "Failed to update vendor",
+        error,
+        source: "api/admin/vendors/[id]",
+        request,
+      });
+      const message = error instanceof Error ? error.message : "Failed to update vendor";
+      return NextResponse.json({ error: message }, { status: 500 });
     }
-
-    const [updatedVendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
-
-    // IndexNow: ping when fields rendered on the public vendor page change.
-    // Material list expanded for round-3 to cover Enhanced Profile fields
-    // since they affect what's shown publicly (gallery, badge, contact form).
-    const vendorMaterialChanged =
-      (data.businessName !== undefined && data.businessName !== currentVendor.businessName) ||
-      (data.vendorType !== undefined && (data.vendorType ?? null) !== currentVendor.vendorType) ||
-      (data.description !== undefined &&
-        (data.description ?? null) !== currentVendor.description) ||
-      (data.city !== undefined && (data.city ?? null) !== currentVendor.city) ||
-      (data.state !== undefined && (data.state ?? null) !== currentVendor.state) ||
-      data.enhanced_profile !== undefined ||
-      data.gallery_images !== undefined ||
-      claimedTransitioned !== null ||
-      verifiedProTransitioned !== null ||
-      (updateData.slug !== undefined && updateData.slug !== currentVendor.slug);
-    if (vendorMaterialChanged) {
-      const finalSlug = (updateData.slug as string | undefined) ?? currentVendor.slug;
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      await pingIndexNow(db, indexNowUrlFor("vendors", finalSlug), env, "vendor-update");
-    }
-
-    return NextResponse.json(updatedVendor);
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to update vendor",
-      error,
-      source: "api/admin/vendors/[id]",
-      request,
-    });
-    const message = error instanceof Error ? error.message : "Failed to update vendor";
-    return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-// Auth helper: accepts either an admin session OR a valid X-Internal-Key
-// (so the MCP server can call this same route via the existing
-// INTERNAL_API_KEY pattern, mirroring delete_blog_post).
-async function authorizeAdminOrInternal(
-  request: NextRequest
-): Promise<
-  { ok: true; actorUserId: string | null } | { ok: false; status: number; error: string }
-> {
-  // WS3b — constant-time X-Internal-Key check via the shared helper.
-  if (await internalKeyMatches(request)) {
-    return { ok: true, actorUserId: null }; // system-driven; null actor in audit log
-  }
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return { ok: false, status: 401, error: "Unauthorized" };
-  }
-  return { ok: true, actorUserId: session.user.id };
-}
+);
 
 const PURGE_GRACE_DAYS = 30;
 const ACTIVE_VENDOR_STATUSES = [
@@ -533,14 +505,14 @@ const ACTIVE_VENDOR_STATUSES = [
   "CONFIRMED",
 ] as const;
 
-export async function DELETE(request: NextRequest, { params }: Params) {
-  const authResult = await authorizeAdminOrInternal(request);
-  if (!authResult.ok) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-  const actorUserId = authResult.actorUserId;
+// DELETE — dual auth (admin session OR X-Internal-Key) via withAuthorized, so
+// the MCP server can call this route (mirroring delete_blog_post). actorUserId
+// is the admin's id, or null for an internal-key caller (system-driven; null
+// actor in the audit log) — exactly withAuthorized's `userId`.
+export const DELETE = withAuthorized<{ id: string }>(async ({ request, db, userId, params }) => {
+  const actorUserId = userId;
 
-  const { id } = await params;
+  const { id } = params;
 
   // Body is optional (e.g., MCP wrapper or curl with no body); default to soft-delete.
   let bodyParsed: ReturnType<typeof vendorDeleteSchema.parse>;
@@ -563,7 +535,6 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     );
   }
 
-  const db = getCloudflareDb();
   try {
     const [vendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
     if (!vendor) {
@@ -930,4 +901,4 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to delete vendor" }, { status: 500 });
   }
-}
+});
