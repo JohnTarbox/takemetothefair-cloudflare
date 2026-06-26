@@ -1,35 +1,18 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { internalKeyMatches } from "@/lib/api-auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { getMergePreview } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergePreviewRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
 
-export async function POST(request: NextRequest) {
-  let db: ReturnType<typeof getCloudflareDb> | null = null;
+// K8 (analyst, 2026-06-01). Dual auth (admin session OR X-Internal-Key, via
+// withAuthorized — constant-time, replacing K3's timing-unsafe `===`) so the
+// MCP-server merge_events tool can preview before committing. Read-only — no
+// actorUserId needed; both branches converge on the same SELECT.
+export const POST = withAuthorized(async ({ request, db }) => {
   let body: MergePreviewRequest | null = null;
 
   try {
-    // K8 (analyst, 2026-06-01). Accept INTERNAL_API_KEY in addition to
-    // admin session so the MCP-server merge_events tool can preview
-    // before committing. Mirrors the same auth dual-path on the sibling
-    // merge route (src/app/api/admin/duplicates/merge/route.ts:22-37)
-    // added in K3. The preview path is read-only, so no actorUserId is
-    // needed in the body — both branches converge on the same SELECT.
-    // WS3b — constant-time X-Internal-Key check via the shared helper (was a
-    // timing-unsafe `===`).
-    const isInternal = await internalKeyMatches(request);
-
-    if (!isInternal) {
-      const session = await auth();
-      if (!session || session.user.role !== "ADMIN") {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-    }
-
-    db = getCloudflareDb();
     body = (await request.json()) as MergePreviewRequest;
     const { type, primaryId, duplicateId } = body;
 
@@ -80,4 +63,4 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: userMessage, isTimeout }, { status: isTimeout ? 503 : 500 });
   }
-}
+});
