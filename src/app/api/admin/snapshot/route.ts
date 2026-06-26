@@ -31,8 +31,7 @@ export const dynamic = "force-dynamic";
  */
 
 import { NextResponse } from "next/server";
-import { getAuthorizedSession } from "@/lib/api-auth";
-import { auth } from "@/lib/auth";
+import { withAuth } from "@/lib/api/with-auth";
 
 const MAX_PATH_LENGTH = 512;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // 2 MB cap on rendered HTML.
@@ -75,22 +74,13 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-export async function GET(request: Request) {
-  const authz = await getAuthorizedSession(request);
-  if (!authz.authorized) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  // For session-based callers, also require ADMIN role. Token callers
-  // (mmatf_…) are already gated to admin scope by the token model.
-  if (!authz.userId) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const session = await auth();
-  const isTokenCall = session?.user == null;
-  if (!isTokenCall && session?.user?.role !== "ADMIN") {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  }
-
+// Admin-session-only (withAuth). Although getAuthorizedSession was used before,
+// the handler REQUIRED authz.userId (an admin session) and forwards the
+// caller's session cookie to SSR below — a cookieless internal-key/token caller
+// has nothing to forward, so the route is session-bound by construction. The
+// prior dead 403 branch (unreachable once userId was required) collapses into
+// withAuth's single 401.
+export const GET = withAuth({ role: "ADMIN" }, async ({ request }) => {
   const url = new URL(request.url);
   const path = url.searchParams.get("path");
   if (!path || !isPathSafe(path)) {
@@ -189,4 +179,4 @@ export async function GET(request: Request) {
     // the byte cap above.
     html,
   });
-}
+});
