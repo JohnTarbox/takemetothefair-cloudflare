@@ -25,8 +25,14 @@ const SCHEMA_SQL = `
   CREATE TABLE events (
     id TEXT PRIMARY KEY,
     series_id TEXT,
+    name TEXT,
+    venue_id TEXT,
     start_date INTEGER,
     rolled_from_event_id TEXT
+  );
+  CREATE TABLE event_series (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL
   );
   CREATE TABLE event_vendors (
     id TEXT PRIMARY KEY,
@@ -142,5 +148,104 @@ describe("maybeRouteToOccurrence", () => {
       startDate: new Date("2027-08-01T00:00:00Z"),
     });
     expect(res.routed).toBe(false);
+  });
+});
+
+describe("maybeRouteToOccurrence — cross-year series match by name + venue", () => {
+  function seedSeriesEvent(
+    seriesId: string,
+    seriesName: string,
+    eventId: string,
+    eventName: string,
+    venueId: string,
+    startIso: string
+  ) {
+    raw.prepare(`INSERT INTO event_series (id, name) VALUES (?, ?)`).run(seriesId, seriesName);
+    raw
+      .prepare(
+        `INSERT INTO events (id, series_id, name, venue_id, start_date) VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(eventId, seriesId, eventName, venueId, Math.floor(new Date(startIso).getTime() / 1000));
+  }
+
+  it("matches a different-year edition by normalized name + venue (no source_url, no date window)", async () => {
+    seedSeriesEvent(
+      "ser-cheshire",
+      "Cheshire Fair",
+      "e2026",
+      "Cheshire Fair",
+      "venueX",
+      "2026-08-01T00:00:00Z"
+    );
+    mockCreate.mockResolvedValue({
+      created: true,
+      occurrenceId: "occ",
+      slug: "cheshire-fair-2027",
+      year: 2027,
+    });
+
+    const res = await maybeRouteToOccurrence(db as never, {
+      name: "38th Annual Cheshire Fair", // normalizes to "cheshire fair"
+      venueId: "venueX",
+      startDate: new Date("2027-08-01T00:00:00Z"),
+    });
+
+    expect(res.routed).toBe(true);
+    expect(mockCreate).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ seriesId: "ser-cheshire", year: 2027 })
+    );
+    // findDuplicate is never consulted — the series match short-circuits.
+    expect(mockFindDup).not.toHaveBeenCalled();
+  });
+
+  it("treats occurrence_exists as routed (recognise the edition, don't mint a sibling)", async () => {
+    seedSeriesEvent("ser-x", "Acme Fair", "e2027", "Acme Fair", "venueX", "2027-08-01T00:00:00Z");
+    mockCreate.mockResolvedValue({
+      created: false,
+      reason: "occurrence_exists",
+      existingEventId: "e2027",
+      year: 2027,
+    });
+    const res = await maybeRouteToOccurrence(db as never, {
+      name: "Acme Fair",
+      venueId: "venueX",
+      startDate: new Date("2027-08-15T00:00:00Z"),
+    });
+    expect(res.routed).toBe(true);
+  });
+
+  it("does NOT route an ambiguous match (two series at the venue both normalize-match)", async () => {
+    seedSeriesEvent("ser-a", "Acme Fair", "ea", "Acme Fair", "venueX", "2026-08-01T00:00:00Z");
+    seedSeriesEvent("ser-b", "Acme Fair", "eb", "Acme Fair", "venueX", "2025-08-01T00:00:00Z");
+    mockFindDup.mockResolvedValue({ isDuplicate: false });
+    const res = await maybeRouteToOccurrence(db as never, {
+      name: "Acme Fair",
+      venueId: "venueX",
+      startDate: new Date("2027-08-01T00:00:00Z"),
+    });
+    expect(res.routed).toBe(false);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockFindDup).toHaveBeenCalled(); // fell through to the fallback
+  });
+
+  it("falls through to findDuplicate when no series at the venue matches by name", async () => {
+    seedSeriesEvent(
+      "ser-other",
+      "Different Fair",
+      "eo",
+      "Different Fair",
+      "venueX",
+      "2026-08-01T00:00:00Z"
+    );
+    mockFindDup.mockResolvedValue({ isDuplicate: false });
+    const res = await maybeRouteToOccurrence(db as never, {
+      name: "Cheshire Fair",
+      venueId: "venueX",
+      startDate: new Date("2027-08-01T00:00:00Z"),
+    });
+    expect(res.routed).toBe(false);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockFindDup).toHaveBeenCalled();
   });
 });
