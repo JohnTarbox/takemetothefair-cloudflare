@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { Session } from "next-auth";
-import type { DrizzleD1Database } from "drizzle-orm/d1";
 import { auth, hasRole } from "@/lib/auth";
 import { internalKeyMatches, getAuthorizedSession } from "@/lib/api-auth";
 import { authenticateVendorToken } from "@/lib/api-token-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import type { UserRole } from "@takemetothefair/constants";
-import * as schema from "@/lib/db/schema";
 
 /**
  * Route-handler wrappers that lift the boilerplate repeated across ~160 API
@@ -27,7 +25,8 @@ import * as schema from "@/lib/db/schema";
  * checks emitted. Don't "fix" this to 403 without auditing clients/tests first.
  */
 
-export type Db = DrizzleD1Database<typeof schema>;
+/** The exact handle `getCloudflareDb()` returns (drizzle D1 + its `$client`). */
+export type Db = ReturnType<typeof getCloudflareDb>;
 
 /**
  * Next.js route-handler shape. The second arg carries `params` as a Promise in
