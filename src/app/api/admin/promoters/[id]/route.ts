@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { promoters, events, users } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -9,19 +9,9 @@ import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
-interface Params {
-  params: Promise<{ id: string }>;
-}
+export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
+  const { id } = params;
 
-export async function GET(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { id } = await params;
-
-  const db = getCloudflareDb();
   try {
     const promoterResults = await db
       .select()
@@ -57,108 +47,102 @@ export async function GET(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to fetch promoter" }, { status: 500 });
   }
-}
+});
 
-export async function PATCH(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const PATCH = withAuth<{ id: string }>(
+  { role: "ADMIN" },
+  async ({ request, db, params }) => {
+    const { id } = params;
 
-  const { id } = await params;
-
-  // Validate request body
-  const validation = await validateRequestBody(request, promoterUpdateSchema);
-  if (!validation.success) {
-    return NextResponse.json({ error: validation.error }, { status: 400 });
-  }
-
-  const data = validation.data;
-
-  const db = getCloudflareDb();
-  try {
-    // Read prior slug so we can ping IndexNow for both old + new on rename.
-    const [prior] = await db
-      .select({ slug: promoters.slug })
-      .from(promoters)
-      .where(eq(promoters.id, id))
-      .limit(1);
-
-    const updateData: Record<string, unknown> = { updatedAt: new Date() };
-    if (data.companyName) {
-      updateData.companyName = data.companyName;
-      updateData.slug = createSlug(data.companyName);
+    // Validate request body
+    const validation = await validateRequestBody(request, promoterUpdateSchema);
+    if (!validation.success) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    if (data.description !== undefined) updateData.description = data.description;
-    if (data.website !== undefined) updateData.website = data.website;
-    if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
-    // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.
-    if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
-      updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
-    }
-    if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
-      updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
-    }
-    if (data.verified !== undefined) updateData.verified = data.verified;
 
-    await db.update(promoters).set(updateData).where(eq(promoters.id, id));
+    const data = validation.data;
 
-    const [updatedPromoter] = await db
-      .select()
-      .from(promoters)
-      .where(eq(promoters.id, id))
-      .limit(1);
+    try {
+      // Read prior slug so we can ping IndexNow for both old + new on rename.
+      const [prior] = await db
+        .select({ slug: promoters.slug })
+        .from(promoters)
+        .where(eq(promoters.id, id))
+        .limit(1);
 
-    // IndexNow: ping on every update (content changed). Include the prior
-    // slug too if it differs, so search engines can crawl-and-redirect.
-    if (updatedPromoter?.slug) {
-      const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
-      const urls = [indexNowUrlFor("promoters", updatedPromoter.slug)];
-      if (prior?.slug && prior.slug !== updatedPromoter.slug) {
-        urls.push(indexNowUrlFor("promoters", prior.slug));
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (data.companyName) {
+        updateData.companyName = data.companyName;
+        updateData.slug = createSlug(data.companyName);
       }
-      await pingIndexNow(db, urls, env, "promoter.update");
+      if (data.description !== undefined) updateData.description = data.description;
+      if (data.website !== undefined) updateData.website = data.website;
+      if (data.logoUrl !== undefined) updateData.logoUrl = data.logoUrl;
+      // IMG1 §1b Phase 1 (2026-06-08) — focal point clamped.
+      if (typeof data.imageFocalX === "number" && Number.isFinite(data.imageFocalX)) {
+        updateData.imageFocalX = Math.max(0, Math.min(1, data.imageFocalX));
+      }
+      if (typeof data.imageFocalY === "number" && Number.isFinite(data.imageFocalY)) {
+        updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
+      }
+      if (data.verified !== undefined) updateData.verified = data.verified;
+
+      await db.update(promoters).set(updateData).where(eq(promoters.id, id));
+
+      const [updatedPromoter] = await db
+        .select()
+        .from(promoters)
+        .where(eq(promoters.id, id))
+        .limit(1);
+
+      // IndexNow: ping on every update (content changed). Include the prior
+      // slug too if it differs, so search engines can crawl-and-redirect.
+      if (updatedPromoter?.slug) {
+        const env = getCloudflareEnv() as unknown as { INDEXNOW_KEY?: string };
+        const urls = [indexNowUrlFor("promoters", updatedPromoter.slug)];
+        if (prior?.slug && prior.slug !== updatedPromoter.slug) {
+          urls.push(indexNowUrlFor("promoters", prior.slug));
+        }
+        await pingIndexNow(db, urls, env, "promoter.update");
+      }
+
+      return NextResponse.json(updatedPromoter);
+    } catch (error) {
+      await logError(db, {
+        message: "Failed to update promoter",
+        error,
+        source: "api/admin/promoters/[id]",
+        request,
+      });
+      return NextResponse.json({ error: "Failed to update promoter" }, { status: 500 });
     }
-
-    return NextResponse.json(updatedPromoter);
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to update promoter",
-      error,
-      source: "api/admin/promoters/[id]",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to update promoter" }, { status: 500 });
   }
-}
+);
 
-export async function DELETE(request: NextRequest, { params }: Params) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const DELETE = withAuth<{ id: string }>(
+  { role: "ADMIN" },
+  async ({ request, db, params }) => {
+    const { id } = params;
 
-  const { id } = await params;
+    try {
+      // Get promoter to find user
+      const promoter = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
 
-  const db = getCloudflareDb();
-  try {
-    // Get promoter to find user
-    const promoter = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
+      if (promoter.length > 0) {
+        // Reset user role to USER
+        await db.update(users).set({ role: "USER" }).where(eq(users.id, promoter[0].userId!));
+      }
 
-    if (promoter.length > 0) {
-      // Reset user role to USER
-      await db.update(users).set({ role: "USER" }).where(eq(users.id, promoter[0].userId!));
+      await db.delete(promoters).where(eq(promoters.id, id));
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      await logError(db, {
+        message: "Failed to delete promoter",
+        error,
+        source: "api/admin/promoters/[id]",
+        request,
+      });
+      return NextResponse.json({ error: "Failed to delete promoter" }, { status: 500 });
     }
-
-    await db.delete(promoters).where(eq(promoters.id, id));
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    await logError(db, {
-      message: "Failed to delete promoter",
-      error,
-      source: "api/admin/promoters/[id]",
-      request,
-    });
-    return NextResponse.json({ error: "Failed to delete promoter" }, { status: 500 });
   }
-}
+);

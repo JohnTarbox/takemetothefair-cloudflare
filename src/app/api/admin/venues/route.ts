@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { venues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -10,13 +10,7 @@ import { venueCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const venuesWithCounts = await getVenuesWithEventCounts(db);
     return NextResponse.json(venuesWithCounts);
@@ -29,14 +23,9 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to fetch venues" }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   // Validate request body
   const validation = await validateRequestBody(request, venueCreateSchema);
   if (!validation.success) {
@@ -45,7 +34,6 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
-  const db = getCloudflareDb();
   try {
     // Check for duplicate Google Place ID
     if (data.googlePlaceId) {
@@ -126,4 +114,4 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: "Failed to create venue" }, { status: 500 });
   }
-}
+});

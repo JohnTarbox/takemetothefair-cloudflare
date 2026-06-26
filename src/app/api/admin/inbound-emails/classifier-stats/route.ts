@@ -16,28 +16,20 @@ export const dynamic = "force-dynamic";
  * (confirmations — not disagreements). Spec §D.4.1.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { inboundEmails, inboundEmailIntentFeedback } from "@/lib/db/schema";
 import { and, gte, isNotNull, ne, sql } from "drizzle-orm";
 
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 365;
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const url = new URL(request.url);
   const daysRaw = parseInt(url.searchParams.get("days") || "", 10);
   const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, MAX_DAYS) : DEFAULT_DAYS;
   const sinceMs = Date.now() - days * 86400 * 1000;
   const sinceDate = new Date(sinceMs);
-
-  const db = getCloudflareDb();
 
   // Accuracy by classifier_version. Calculation:
   //   accuracy = 1 - (admin_reroute + sender_feedback disagreements
@@ -135,4 +127,4 @@ export async function GET(request: NextRequest) {
       n: Number(r.n),
     })),
   });
-}
+});

@@ -19,24 +19,16 @@ export const dynamic = "force-dynamic";
  * writes happen via the set_email_sender_trust MCP tool.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { inboundEmails, events, inboundEmailSenders } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 
 const NE_STATES = new Set(["ME", "NH", "VT", "MA", "CT", "RI"]);
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const params = request.nextUrl.searchParams;
   const limit = Math.min(Math.max(parseInt(params.get("limit") || "50", 10), 1), 200);
-
-  const db = getCloudflareDb();
 
   // Inbound aggregates per sender (only submit intent — other intents
   // aren't "submitters" in the sense this report measures). The
@@ -157,4 +149,4 @@ export async function GET(request: NextRequest) {
     .slice(0, limit);
 
   return NextResponse.json({ senders });
-}
+});
