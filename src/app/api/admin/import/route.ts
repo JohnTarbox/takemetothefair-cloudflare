@@ -1,9 +1,8 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withAuth } from "@/lib/api/with-auth";
 import { events, venues, promoters, eventDays } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { auth } from "@/lib/auth";
 import type { ScrapedEvent, ScrapedVenue } from "@/lib/scrapers/types";
 import { decodeHtmlEntities, sanitizeScrapedDescription } from "@/lib/scrapers/utils";
 import { getScraper, parseSourceOptions, getDetailsScraper } from "@/lib/scrapers/registry";
@@ -12,7 +11,7 @@ import { normalizeEventDate } from "@/lib/event-dates";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
-import { getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import {
   loadClassifications,
@@ -136,13 +135,7 @@ async function findOrCreateVenue(
 }
 
 // GET - Preview events from a source
-export async function GET(request: Request) {
-  const db = getCloudflareDb();
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const { searchParams } = new URL(request.url);
   const source = searchParams.get("source") || "mainefairs.net";
   const fetchDetails = searchParams.get("fetchDetails") === "true";
@@ -239,16 +232,10 @@ export async function GET(request: Request) {
     });
     return NextResponse.json({ error: "Failed to preview events" }, { status: 500 });
   }
-}
+});
 
 // POST - Import selected events
-export async function POST(request: Request) {
-  const db = getCloudflareDb();
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const body = await request.json();
     const {
@@ -630,16 +617,10 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ error: "Failed to import events" }, { status: 500 });
   }
-}
+});
 
 // PATCH - Sync existing events from their sources
-export async function PATCH(request: Request) {
-  const db = getCloudflareDb();
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const PATCH = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     // Get all events with sync enabled
     const syncableEvents = await db
@@ -749,4 +730,4 @@ export async function PATCH(request: Request) {
     });
     return NextResponse.json({ error: "Failed to sync events" }, { status: 500 });
   }
-}
+});
