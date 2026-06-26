@@ -12,16 +12,12 @@ export const dynamic = "force-dynamic";
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareRateLimitKv } from "@/lib/cloudflare";
 import { adminActions } from "@/lib/db/schema";
 import { getIndexNowPauseState, setIndexNowPaused } from "@/lib/indexnow-breaker";
 
-export async function GET() {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const GET = withAuth({ role: "ADMIN" }, async () => {
   const kv = getCloudflareRateLimitKv();
   if (!kv) {
     // No KV binding → breaker fails open (never blocks). Report unpaused so the
@@ -30,19 +26,14 @@ export async function GET() {
   }
   const state = await getIndexNowPauseState(kv);
   return NextResponse.json({ ...state, kvAvailable: true });
-}
+});
 
 const bodySchema = z.object({
   paused: z.boolean(),
   note: z.string().max(200).optional(),
 });
 
-export async function POST(request: Request) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -73,7 +64,6 @@ export async function POST(request: Request) {
 
   // Audit trail — fire-and-forget; a logging failure must not fail the toggle.
   try {
-    const db = getCloudflareDb();
     await db.insert(adminActions).values({
       action: parsed.data.paused ? "indexnow.pause" : "indexnow.resume",
       actorUserId: session.user.id ?? null,
@@ -88,4 +78,4 @@ export async function POST(request: Request) {
 
   const state = await getIndexNowPauseState(kv);
   return NextResponse.json({ ...state, kvAvailable: true });
-}
+});

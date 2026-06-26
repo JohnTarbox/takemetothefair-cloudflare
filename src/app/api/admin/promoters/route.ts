@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { promoters, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -11,13 +10,7 @@ import { logError } from "@/lib/logger";
 import { indexNowUrlFor } from "@/lib/indexnow";
 import { enqueueIndexNow } from "@/lib/queues/producers";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const promotersWithCounts = await getPromotersWithCounts(db);
     return NextResponse.json(promotersWithCounts);
@@ -30,14 +23,9 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to fetch promoters" }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   // Validate request body
   const validation = await validateRequestBody(request, promoterCreateSchema);
   if (!validation.success) {
@@ -46,7 +34,6 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
-  const db = getCloudflareDb();
   try {
     const promoterId = crypto.randomUUID();
 
@@ -91,4 +78,4 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to create promoter" }, { status: 500 });
   }
-}
+});

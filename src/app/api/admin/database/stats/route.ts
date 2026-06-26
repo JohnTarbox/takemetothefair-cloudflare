@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { getCloudflareEnv, getCloudflareDb } from "@/lib/cloudflare";
-import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { getCloudflareEnv } from "@/lib/cloudflare";
+import { withAuth } from "@/lib/api/with-auth";
 import { logError } from "@/lib/logger";
 
 interface TableStats {
@@ -9,14 +9,9 @@ interface TableStats {
   rowCount: number;
 }
 
-// GET - Get database statistics
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const errorDb = getCloudflareDb();
+// GET - Get database statistics. `db` (drizzle, for logError) is aliased
+// errorDb to leave the local `db = env.DB` (raw D1, for prepare()) untouched.
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db: errorDb }) => {
   try {
     const env = getCloudflareEnv();
     const db = env.DB;
@@ -87,4 +82,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+});

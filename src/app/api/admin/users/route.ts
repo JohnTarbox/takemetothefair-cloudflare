@@ -1,21 +1,14 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
 import { users, promoters, vendors } from "@/lib/db/schema";
 import { notInArray, isNotNull } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
   const available = searchParams.get("available");
 
-  const db = getCloudflareDb();
   try {
     if (available === "promoter") {
       // Users who don't already have a promoter profile. Uses a NOT IN
@@ -31,7 +24,10 @@ export async function GET(request: NextRequest) {
         .where(
           notInArray(
             users.id,
-            db.select({ userId: promoters.userId }).from(promoters).where(isNotNull(promoters.userId))
+            db
+              .select({ userId: promoters.userId })
+              .from(promoters)
+              .where(isNotNull(promoters.userId))
           )
         )
         .orderBy(users.email);
@@ -78,4 +74,4 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 });
   }
-}
+});
