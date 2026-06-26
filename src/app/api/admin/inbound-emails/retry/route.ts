@@ -18,9 +18,9 @@ export const dynamic = "force-dynamic";
  * Audit row written via admin_actions.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { inboundEmails, adminActions } from "@/lib/db/schema";
 import { eq, inArray, and } from "drizzle-orm";
 
@@ -31,12 +31,7 @@ interface RetryBody {
   messageRowId?: unknown;
 }
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   const body = (await request.json().catch(() => ({}))) as RetryBody;
   if (typeof body.messageRowId !== "string" || body.messageRowId.length === 0) {
     return NextResponse.json({ error: "messageRowId required" }, { status: 400 });
@@ -50,8 +45,6 @@ export async function POST(request: NextRequest) {
       { status: 503 }
     );
   }
-
-  const db = getCloudflareDb();
 
   // Confirm row exists and is in a retryable state, capture intent for
   // the MCP-side workflow create.
@@ -117,4 +110,4 @@ export async function POST(request: NextRequest) {
     messageRowId,
     workflowInstanceId: startData.workflowId ?? null,
   });
-}
+});
