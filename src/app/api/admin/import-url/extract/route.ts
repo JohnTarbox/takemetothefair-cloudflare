@@ -1,9 +1,8 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
-import { internalKeyMatches } from "@/lib/api-auth";
-import { getCloudflareAi, getCloudflareDb } from "@/lib/cloudflare";
+import { withAuthorized } from "@/lib/api/with-auth";
+import { getCloudflareAi } from "@/lib/cloudflare";
 import { extractMultipleEvents } from "@/lib/url-import/ai-extractor";
 import { tryExtractFromJsonLd } from "@/lib/url-import/jsonld-to-event";
 import type { PageMetadata, ExtractedEvent } from "@/lib/url-import/types";
@@ -33,19 +32,9 @@ const extractRequestSchema = z.object({
   emailBody: z.string().max(8000).optional(),
 });
 
-export async function POST(request: NextRequest) {
-  const db = getCloudflareDb();
-  // Accept admin session OR X-Internal-Key (MCP Worker email handler).
-  // WS3b — constant-time key check via the shared helper (was a timing-unsafe
-  // `===`).
-  const isInternal = await internalKeyMatches(request);
-  if (!isInternal) {
-    const session = await auth();
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
-
+// Accept admin session OR X-Internal-Key (MCP Worker email handler), via
+// withAuthorized — constant-time, replacing a prior timing-unsafe `===`.
+export const POST = withAuthorized(async ({ request, db }) => {
   try {
     const body = await request.json();
     const validation = extractRequestSchema.safeParse(body);
@@ -223,4 +212,4 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   }
-}
+});

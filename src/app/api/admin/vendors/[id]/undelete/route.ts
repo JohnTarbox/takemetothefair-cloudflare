@@ -4,45 +4,21 @@ export const dynamic = "force-dynamic";
 // (admin can clear separately if desired), regenerates sitemap entry on next
 // request, IndexNow-pings so search engines re-discover.
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { internalKeyMatches } from "@/lib/api-auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, adminActions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 
-interface Params {
-  params: Promise<{ id: string }>;
-}
+// Dual auth (admin session OR X-Internal-Key, constant-time) via withAuthorized.
+// The actor is the admin's user id, or null for an internal-key caller (recorded
+// as such in admin_actions) — exactly withAuthorized's `userId` semantics.
+export const POST = withAuthorized<{ id: string }>(async ({ request, db, userId, params }) => {
+  const actorUserId = userId;
+  const { id } = params;
 
-async function authorizeAdminOrInternal(
-  request: NextRequest
-): Promise<
-  { ok: true; actorUserId: string | null } | { ok: false; status: number; error: string }
-> {
-  // WS3b — constant-time X-Internal-Key check via the shared helper (was a
-  // timing-unsafe `===`).
-  if (await internalKeyMatches(request)) {
-    return { ok: true, actorUserId: null };
-  }
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return { ok: false, status: 401, error: "Unauthorized" };
-  }
-  return { ok: true, actorUserId: session.user.id };
-}
-
-export async function POST(request: NextRequest, { params }: Params) {
-  const authResult = await authorizeAdminOrInternal(request);
-  if (!authResult.ok) {
-    return NextResponse.json({ error: authResult.error }, { status: authResult.status });
-  }
-  const actorUserId = authResult.actorUserId;
-  const { id } = await params;
-
-  const db = getCloudflareDb();
   try {
     const [vendor] = await db.select().from(vendors).where(eq(vendors.id, id)).limit(1);
     if (!vendor) {
@@ -89,4 +65,4 @@ export async function POST(request: NextRequest, { params }: Params) {
     });
     return NextResponse.json({ error: "Failed to undelete vendor" }, { status: 500 });
   }
-}
+});
