@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { events, contentLinks, blogPosts, venues } from "@/lib/db/schema";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { createSlug, computePublicDates, dollarsToCents, unsafeSlug } from "@/lib/utils";
@@ -19,16 +19,10 @@ import { evaluateGates } from "@/lib/event-date-gates";
 
 const PUBLIC_EVENT_SET = new Set<string>(PUBLIC_EVENT_STATUSES);
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   const searchParams = request.nextUrl.searchParams;
   const status = searchParams.get("status");
 
-  const db = getCloudflareDb();
   try {
     const eventsList = await getEventsWithRelations(db, {
       status: status || undefined,
@@ -118,14 +112,9 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   // Validate request body
   const validation = await validateRequestBody(request, eventCreateSchema);
   if (!validation.success) {
@@ -134,7 +123,6 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
-  const db = getCloudflareDb();
   try {
     const eventId = crypto.randomUUID();
     const baseSlug = createSlug(data.name);
@@ -283,4 +271,4 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ error: "Failed to create event" }, { status: 500 });
   }
-}
+});
