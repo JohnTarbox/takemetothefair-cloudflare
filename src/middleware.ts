@@ -17,6 +17,7 @@ import {
 } from "@/lib/db/schema";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
 import { unsafeSlug } from "@/lib/utils";
+import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
 
 /**
  * Middleware handles five pre-route concerns that must NOT be cached:
@@ -146,6 +147,44 @@ export async function middleware(request: NextRequest) {
   } catch {
     // Outside the Cloudflare runtime (local `next build`) — fall through.
     return NextResponse.next();
+  }
+
+  // ── A9 — edge request sampling ─────────────────────────────────
+  // Sample a small slice of PUBLIC page requests (UA/IP/ASN/path) so the
+  // recurring 21st-of-month bot is identifiable from edge data (the zone is
+  // Free-plan → no Logpush). Fire-and-forget via ctx.waitUntil; the whole block
+  // is wrapped so it can NEVER affect routing or the response. Skips admin/api
+  // (our own traffic, not bot targets); coverage is the matcher's detail-page
+  // set (events/vendors/venues/blog/promoters) — where a content crawler walks.
+  if (
+    !pathname.startsWith("/admin") &&
+    !pathname.startsWith("/api/") &&
+    shouldSample(Math.random())
+  ) {
+    try {
+      const cfCtx = getCloudflareContext();
+      const d1 = (cfCtx.env as unknown as { DB?: D1Database }).DB;
+      const cf = cfCtx.cf as
+        | { asn?: number; asOrganization?: string; country?: string }
+        | undefined;
+      if (d1) {
+        cfCtx.ctx.waitUntil(
+          writeRequestSample(drizzle(d1), {
+            path: pathname,
+            method: request.method,
+            userAgent: request.headers.get("user-agent"),
+            ip: request.headers.get("cf-connecting-ip"),
+            asn: cf?.asn ?? null,
+            asOrganization: cf?.asOrganization ?? null,
+            country: request.headers.get("cf-ipcountry") ?? cf?.country ?? null,
+            referer: request.headers.get("referer"),
+            ray: request.headers.get("cf-ray"),
+          })
+        );
+      }
+    } catch {
+      // sampling must never affect the response path
+    }
   }
 
   // ── /admin/* + /api/admin/* — read-only Bearer method gate ─────

@@ -1664,6 +1664,36 @@ export const errorLogs = sqliteTable("error_logs", {
   source: text("source"),
 });
 
+// A9 (drizzle/0130, 2026-06-26) — edge request sampling to identify the
+// recurring 21st-of-month bot inflating GA4. The zone is on the FREE plan (no
+// Logpush — the only CF-native raw-UA capture, and it's Enterprise-only), so we
+// sample a small slice of page requests at the middleware edge: UA + IP + ASN
+// (from getCloudflareContext().cf) + path. Written fire-and-forget via
+// ctx.waitUntil (never blocks the response) and pruned to ~60 days
+// probabilistically. Aggregated via GET /api/admin/request-samples.
+export const requestSamples = sqliteTable(
+  "request_samples",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    timestamp: integer("timestamp", { mode: "timestamp" }).notNull(),
+    path: text("path"),
+    method: text("method"),
+    userAgent: text("user_agent"),
+    ip: text("ip"),
+    asn: integer("asn"),
+    asOrganization: text("as_organization"),
+    country: text("country"),
+    referer: text("referer"),
+    ray: text("ray"),
+  },
+  (t) => ({
+    tsIdx: index("request_samples_timestamp_idx").on(t.timestamp),
+    asnIdx: index("request_samples_asn_idx").on(t.asn),
+  })
+);
+
 // Recommendations engine — drizzle/0042. See migration file for design notes.
 export const recommendationRules = sqliteTable("recommendation_rules", {
   id: text("id")

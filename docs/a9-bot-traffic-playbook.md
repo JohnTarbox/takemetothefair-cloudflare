@@ -1,7 +1,9 @@
 # A9 — 21st-of-month bot traffic inflating GA4 (CF-native playbook)
 
-**Status:** capture + exclusion runbook. No app code — these are Cloudflare
-dashboard / GA4 actions an operator applies. Tied to Dev-Email-2026-06-26 A9.
+**Status:** Phase 1 (capture) is SHIPPED as in-repo edge sampling (zone is
+Free-plan → Logpush unavailable). Phase 2 (exclusion) stays operator-applied
+Cloudflare/GA4 actions, keyed on what Phase 1 captures. Tied to
+Dev-Email-2026-06-26 A9.
 
 ## The signature (from the 2026-05-21 + 2026-06-21 spikes)
 
@@ -26,31 +28,35 @@ exclude by that identity**.
 
 ---
 
-## Phase 1 — Capture per-request identity (do BEFORE 7/21)
+## Verified environment (2026-06-26)
 
-Goal: retain `ClientRequestUserAgent`, `ClientIP`, `ClientASN`,
-`ClientRequestPath`, `ClientRequestHost`, `EdgeStartTimestamp`,
-`ClientCountry` for `meetmeatthefair.com` across the 7/21 window.
+- **Account:** jtarboxme@gmail.com / "John Tarbox - Account" (`e6011e48b7014ef83c77e3c767dac6cf`).
+- **Zone:** `meetmeatthefair.com` (`56813c11d72ec3ddf2a9585bbc7f6956`), **plan = FREE.**
+- **Implication:** **Logpush (HTTP-requests dataset) is Enterprise-only → NOT available.** The project API token (`80cdaef3…`) also lacks `zone.analytics.read`. So the clean CF-native raw-UA capture is off the table regardless of token scope — which is why capture is done **in-repo**.
 
-**Token prerequisite:** the project's CF API token is D1-scoped only. Whichever
-option below is used needs a token (or dashboard session) with **Account
-Analytics / Logs** access — widen the token or perform the action in the
-dashboard directly.
+## Phase 1 — Capture per-request identity (SHIPPED, in-repo edge sampling)
 
-- **If on Enterprise → Logpush (best).** Dashboard → the zone → Analytics &
-  Logs → **Logpush** → create a job, dataset **HTTP requests**, destination the
-  existing **R2** bucket (`mmatf-vendor-assets`, or a new `mmatf-logs` bucket),
-  fields as listed above. Logpush HTTP-requests is Enterprise-only.
-- **If not Enterprise → the 7/22 Cowork watcher.** It is already scheduled to
-  "re-pull GA4 + grab CF UA logs". Confirm it has a log source that exposes
-  per-request UA/ASN (GraphQL Analytics `httpRequestsAdaptiveGroups` exposes
-  `clientRequestHTTPHost`, `userAgent`, `clientASNDescription` aggregations on
-  Pro/Biz — enough to surface the dominant UA/ASN on 7/21 even without full
-  Logpush). If neither is available on the plan, the only remaining capture is
-  the in-repo Worker-sampling fallback (deferred — see the A9 thread).
+`src/middleware.ts` samples **5%** of public page requests (the matcher's
+detail-page set: events/vendors/venues/blog/promoters) and writes UA + IP + ASN
+(`getCloudflareContext().cf.asn`) + path to the `request_samples` table
+(`drizzle/0130`), fire-and-forget via `ctx.waitUntil` (never blocks the
+response). Rows self-prune to ~60 days. See `src/lib/request-sampling.ts`. No
+plan upgrade or token change needed — it uses the existing D1 binding.
 
-**On 7/21, identify** the dominant `(userAgent, ASN, IP-or-range)` tuple hitting
-the fixed page block at identical counts. Record it below for Phase 2.
+> Coverage note: sampling rides the existing middleware matcher (detail pages),
+> not listing/home pages. A content crawler walking "unrelated pages" hits
+> detail URLs, so this should catch it; if the 7/21 read comes back empty,
+> broaden the matcher to include `/` and the listing routes and redeploy.
+
+**On / just after 7/21, read the fingerprint** (admin session or `X-Internal-Key`):
+
+```
+GET /api/admin/request-samples?since=2026-07-21&until=2026-07-22
+```
+
+Returns `fingerprints` grouped by `(asn, as_organization, user_agent)` ordered by
+count, plus `top_paths`. The bot = the high-count tuple hitting few distinct
+paths (counts are of the 5% sample → ×~20 for population). Record it for Phase 2:
 
 ```
 # Fill in after 7/21:
