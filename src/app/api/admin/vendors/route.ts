@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { vendors, users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createSlug } from "@/lib/utils";
@@ -12,13 +12,7 @@ import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { recomputeVendorCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 
-export async function GET(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const db = getCloudflareDb();
+export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const vendorsWithCounts = await getVendorsWithCounts(db);
     return NextResponse.json(vendorsWithCounts);
@@ -31,14 +25,9 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to fetch vendors" }, { status: 500 });
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   // Validate request body
   const validation = await validateRequestBody(request, vendorCreateSchema);
   if (!validation.success) {
@@ -47,7 +36,6 @@ export async function POST(request: NextRequest) {
 
   const data = validation.data;
 
-  const db = getCloudflareDb();
   try {
     const vendorId = crypto.randomUUID();
 
@@ -112,4 +100,4 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ error: "Failed to create vendor" }, { status: 500 });
   }
-}
+});
