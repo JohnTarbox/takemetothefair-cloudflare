@@ -8,7 +8,8 @@ import {
   setIndexNowPaused,
   BASE_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
-  AUTO_PAUSE_AFTER_MS,
+  AUTO_PAUSE_AFTER_429_STREAK,
+  AUTO_PAUSE_REASON,
   type BreakerKv,
 } from "../indexnow-breaker";
 
@@ -140,58 +141,77 @@ describe("armIndexNowCooldown / clearIndexNowCooldown", () => {
   });
 });
 
-describe("REL6 — auto-pause latch on a sustained 429 streak", () => {
+describe("REL6 — auto-pause latch on a 3-consecutive-429 streak (count-based)", () => {
   let kv: ReturnType<typeof makeKv>;
   beforeEach(() => {
     kv = makeKv();
   });
 
-  it("does NOT auto-pause while the streak is younger than the threshold", async () => {
-    const t0 = 1_000_000_000_000;
-    // Several 429s, but all within the first hour — well under AUTO_PAUSE_AFTER_MS.
-    const a = await armIndexNowCooldown(kv, null, t0);
+  it("does NOT auto-pause before the streak reaches the threshold", async () => {
+    const now = 1_000_000_000_000;
+    // Two 429s — one short of AUTO_PAUSE_AFTER_429_STREAK (=3). Elapsed time is
+    // irrelevant now; only the consecutive count matters.
+    const a = await armIndexNowCooldown(kv, null, now);
+    expect(a.consec).toBe(1);
     expect(a.autoPaused).toBe(false);
-    const b = await armIndexNowCooldown(kv, null, t0 + 30 * 60_000);
+    const b = await armIndexNowCooldown(kv, null, now + 5 * 3_600_000); // 5h later
+    expect(b.consec).toBe(2);
     expect(b.autoPaused).toBe(false);
     expect(kv.store.has("indexnow:paused")).toBe(false);
   });
 
-  it("auto-pauses exactly once after the streak crosses AUTO_PAUSE_AFTER_MS", async () => {
-    const t0 = 1_000_000_000_000;
-    await armIndexNowCooldown(kv, null, t0); // streak anchored at t0
-    const past = t0 + AUTO_PAUSE_AFTER_MS + 1;
-    const tripped = await armIndexNowCooldown(kv, null, past);
+  it("auto-pauses exactly once on the Nth consecutive 429, with the distinct reason", async () => {
+    const now = 1_000_000_000_000;
+    for (let i = 1; i < AUTO_PAUSE_AFTER_429_STREAK; i++) {
+      const r = await armIndexNowCooldown(kv, null, now);
+      expect(r.autoPaused).toBe(false);
+    }
+    const tripped = await armIndexNowCooldown(kv, null, now);
+    expect(tripped.consec).toBe(AUTO_PAUSE_AFTER_429_STREAK);
     expect(tripped.autoPaused).toBe(true);
-    expect(kv.store.get("indexnow:paused")).toContain("auto-paused");
+    expect(kv.store.get("indexnow:paused")).toMatch(new RegExp(`^${AUTO_PAUSE_REASON}`));
 
     // A subsequent arm (still paused) must NOT re-trip the latch.
-    const again = await armIndexNowCooldown(kv, null, past + 60_000);
+    const again = await armIndexNowCooldown(kv, null, now);
     expect(again.autoPaused).toBe(false);
   });
 
-  it("a 2xx in between resets the streak so the clock restarts", async () => {
-    const t0 = 1_000_000_000_000;
-    await armIndexNowCooldown(kv, null, t0);
-    await clearIndexNowCooldown(kv); // 2xx — streak wiped
-    expect(kv.store.has("indexnow:streak_started_at")).toBe(false);
+  it("a 2xx before the Nth strike resets the count so it does NOT pause", async () => {
+    const now = 1_000_000_000_000;
+    await armIndexNowCooldown(kv, null, now); // consec 1
+    await armIndexNowCooldown(kv, null, now); // consec 2
+    await clearIndexNowCooldown(kv); // 2xx — counter wiped
+    expect(kv.store.has("indexnow:consec_429")).toBe(false);
 
-    // New streak anchored at t0 + 5h; +2h later (=7h since t0, but only 2h of
-    // CONSECUTIVE 429s) must NOT auto-pause.
-    const restart = t0 + 5 * 3_600_000;
-    const a = await armIndexNowCooldown(kv, null, restart);
-    expect(a.autoPaused).toBe(false);
-    const b = await armIndexNowCooldown(kv, null, restart + 2 * 3_600_000);
+    // Fresh streak: two more 429s only reach consec 2 → no pause.
+    const a = await armIndexNowCooldown(kv, null, now);
+    expect(a.consec).toBe(1);
+    const b = await armIndexNowCooldown(kv, null, now);
+    expect(b.consec).toBe(2);
     expect(b.autoPaused).toBe(false);
     expect(kv.store.has("indexnow:paused")).toBe(false);
   });
 
   it("does not overwrite an existing operator pause note", async () => {
-    const t0 = 1_000_000_000_000;
+    const now = 1_000_000_000_000;
     await kv.put("indexnow:paused", "manual: paused by operator");
-    await armIndexNowCooldown(kv, null, t0);
-    const tripped = await armIndexNowCooldown(kv, null, t0 + AUTO_PAUSE_AFTER_MS + 1);
-    expect(tripped.autoPaused).toBe(false); // already paused → no transition
+    for (let i = 0; i < AUTO_PAUSE_AFTER_429_STREAK + 1; i++) {
+      const r = await armIndexNowCooldown(kv, null, now);
+      expect(r.autoPaused).toBe(false); // already paused → no transition
+    }
     expect(kv.store.get("indexnow:paused")).toBe("manual: paused by operator");
+  });
+
+  it("checkIndexNowBreaker surfaces the pause note so callers can classify it", async () => {
+    // auto-latch note → distinguishable; manual note → not.
+    await kv.put("indexnow:paused", `${AUTO_PAUSE_REASON} 2026-06-26: 3 consecutive 429s`);
+    const auto = await checkIndexNowBreaker(kv);
+    expect(auto.reason).toBe("paused");
+    expect(auto.note?.startsWith(AUTO_PAUSE_REASON)).toBe(true);
+
+    await kv.put("indexnow:paused", "manual: stop now");
+    const manual = await checkIndexNowBreaker(kv);
+    expect(manual.note?.startsWith(AUTO_PAUSE_REASON)).toBe(false);
   });
 });
 

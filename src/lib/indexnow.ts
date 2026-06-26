@@ -30,7 +30,8 @@ import {
   armIndexNowCooldown,
   checkIndexNowBreaker,
   clearIndexNowCooldown,
-  AUTO_PAUSE_AFTER_MS,
+  AUTO_PAUSE_AFTER_429_STREAK,
+  AUTO_PAUSE_REASON,
 } from "@/lib/indexnow-breaker";
 import { sendEmail } from "@/lib/email/send";
 import { logError } from "@/lib/logger";
@@ -327,10 +328,9 @@ function getRuntimeEnv(key: string): string | undefined {
  * either way the pause is already engaged in KV. Never throws.
  */
 async function sendIndexNowAutoPauseAlert(db: Db, consec: number): Promise<void> {
-  const hours = Math.round(AUTO_PAUSE_AFTER_MS / 3_600_000);
   const text = [
     `IndexNow has been AUTO-PAUSED after ${consec} consecutive 429 responses from Bing`,
-    `spanning at least ~${hours}h with no successful (2xx) submission in between.`,
+    `(threshold: ${AUTO_PAUSE_AFTER_429_STREAK}) with no successful (2xx) submission in between.`,
     ``,
     `The kill-switch "indexnow:paused" is now set in RATE_LIMIT_KV. No IndexNow`,
     `pings will be sent (create paths still queue deferred rows) until an operator`,
@@ -458,9 +458,15 @@ export async function pingIndexNow(
   const kv = getCloudflareRateLimitKv();
   const breaker = await checkIndexNowBreaker(kv);
   if (breaker.blocked) {
+    // REL6: record a DISTINCT status for the auto-429-streak latch vs a manual
+    // operator kill-switch (both surface reason "paused"), so the daily
+    // aggregate can tell "Bing penalized us and we latched" apart from "an
+    // operator paused us". Cooldown stays its own timestamped reason.
     const reason =
       breaker.reason === "paused"
-        ? "breaker_paused"
+        ? breaker.note?.startsWith(AUTO_PAUSE_REASON)
+          ? AUTO_PAUSE_REASON
+          : "breaker_paused"
         : `breaker_cooldown_until_${breaker.until ? new Date(breaker.until).toISOString() : "?"}`;
     console.warn(
       `[IndexNow] circuit breaker open (${reason}) — skipping ${filtered.length} URL(s)`

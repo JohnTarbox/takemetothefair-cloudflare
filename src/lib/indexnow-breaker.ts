@@ -33,26 +33,33 @@
 const PAUSE_KEY = "indexnow:paused";
 const COOLDOWN_KEY = "indexnow:cooldown_until";
 const CONSEC_KEY = "indexnow:consec_429";
-// REL6 (2026-06-16): epoch-ms when the current uninterrupted 429 streak began.
-// Set on the first 429 after a clear, preserved across subsequent 429s, and
-// deleted on any 2xx (clearIndexNowCooldown) — so it measures CONSECUTIVE
-// 429 time "with no 2xx in between".
-const STREAK_START_KEY = "indexnow:streak_started_at";
 
 /** First-429 cooldown. Matches Bing's observed ~15-min per-host window. */
 export const BASE_COOLDOWN_MS = 15 * 60 * 1000;
 /** Ceiling — converges to ~daily polling during a sustained penalty. */
 export const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 /**
- * REL6 auto-pause latch threshold. Once Bing has 429'd continuously for this
- * long (no 2xx in between), the breaker engages the operator kill-switch
- * automatically and signals the caller to email a human. NO self-healing —
- * the operator decides when to un-pause (Bing's penalty needs a quiet window
- * of ≥24–48h to decay; auto-resuming would just re-arm it). 6h is well past
- * the early escalation steps (15m→30m→1h→2h) and into the "this is sustained,
- * not a blip" zone.
+ * REL6 auto-pause latch threshold (count-based as of 2026-06-26). After this
+ * many CONSECUTIVE 429s with no 2xx in between, the breaker engages the operator
+ * kill-switch automatically and signals the caller to email a human. NO
+ * self-healing — the operator decides when to un-pause (Bing's penalty needs a
+ * quiet window of ≥24–48h to decay; auto-resuming just re-arms it).
+ *
+ * "Consecutive with no 2xx" is enforced by CONSEC_KEY alone: `armIndexNowCooldown`
+ * runs only on a real Bing 429 and `clearIndexNowCooldown` (a real 2xx) wipes the
+ * counter — skipped/paused submissions never touch it. At <~0.1% coincidence
+ * under batched ops a 3-streak is almost certainly a real penalty, so we latch
+ * FAST instead of probing for hours and re-arming Bing's block (what kept us
+ * stuck through both the 6/15 and 6/19 recovery attempts). Replaces the prior
+ * 6h-elapsed trigger.
  */
-export const AUTO_PAUSE_AFTER_MS = 6 * 60 * 60 * 1000;
+export const AUTO_PAUSE_AFTER_429_STREAK = 3;
+/**
+ * Stable, machine-readable prefix of the PAUSE_KEY value the auto-latch writes,
+ * so the ping skip-path can record a DISTINCT submission status for it rather
+ * than the ambiguous `breaker_paused` (which a manual kill-switch also yields).
+ */
+export const AUTO_PAUSE_REASON = "auto_paused_429_streak";
 
 /** Minimal KV surface used here — keeps the module testable with a fake. */
 export interface BreakerKv {
@@ -68,9 +75,15 @@ export interface BreakerState {
   reason: "paused" | "cooldown" | null;
   /** Cooldown expiry (epoch ms) when reason === "cooldown", else null. */
   until: number | null;
+  /**
+   * The PAUSE_KEY value when reason === "paused", else null. Starts with
+   * AUTO_PAUSE_REASON for the auto-429-streak latch; any other value is a manual
+   * operator kill-switch. Lets the caller record which one skipped the ping.
+   */
+  note: string | null;
 }
 
-const NOT_BLOCKED: BreakerState = { blocked: false, reason: null, until: null };
+const NOT_BLOCKED: BreakerState = { blocked: false, reason: null, until: null, note: null };
 
 /**
  * Read the breaker state. Pause wins over cooldown. Fails open on any error.
@@ -83,13 +96,13 @@ export async function checkIndexNowBreaker(
   if (!kv) return NOT_BLOCKED;
   try {
     const paused = await kv.get(PAUSE_KEY);
-    if (paused) return { blocked: true, reason: "paused", until: null };
+    if (paused) return { blocked: true, reason: "paused", until: null, note: paused };
 
     const raw = await kv.get(COOLDOWN_KEY);
     if (raw) {
       const until = Number(raw);
       if (Number.isFinite(until) && until > now) {
-        return { blocked: true, reason: "cooldown", until };
+        return { blocked: true, reason: "cooldown", until, note: null };
       }
     }
   } catch {
@@ -144,37 +157,26 @@ export async function armIndexNowCooldown(
     const until = now + cooldownMs;
     const ttlSeconds = Math.ceil(cooldownMs / 1000) + 60;
 
-    // Streak start: a brand-new streak (no prior consecutive 429) anchors at
-    // `now`; an ongoing streak keeps its original start so we measure TOTAL
-    // continuous-429 duration. A 2xx wipes it via clearIndexNowCooldown.
-    let streakStart = now;
-    if (prevConsec > 0) {
-      const s = Number(await kv.get(STREAK_START_KEY));
-      if (Number.isFinite(s) && s > 0) streakStart = s;
-    }
-
     // Keep the counter alive a bit longer than the cooldown so a probe right
-    // after expiry still escalates rather than resetting to step 1.
-    await kv.put(CONSEC_KEY, String(consec), { expirationTtl: Math.max(ttlSeconds * 2, 3600) });
+    // after expiry still escalates (and counts toward the latch) rather than
+    // resetting to step 1. TTL ≥ 2× the max cooldown so even a daily probe
+    // during a sustained penalty keeps the streak intact.
+    const consecTtl = Math.max(ttlSeconds * 2, Math.ceil(MAX_COOLDOWN_MS / 1000) * 2);
+    await kv.put(CONSEC_KEY, String(consec), { expirationTtl: consecTtl });
     await kv.put(COOLDOWN_KEY, String(until), { expirationTtl: ttlSeconds });
-    // Streak key must outlive even the 24h-capped cooldown so a daily probe
-    // doesn't look like a fresh streak — TTL = 2× the max cooldown.
-    await kv.put(STREAK_START_KEY, String(streakStart), {
-      expirationTtl: Math.ceil(MAX_COOLDOWN_MS / 1000) * 2,
-    });
 
-    // REL6 latch. Engage the operator kill-switch once the streak crosses the
-    // threshold; guard on "not already paused" so this transitions exactly
-    // once (while paused, the breaker skips all Bing contact, so arm() won't
-    // be reached again until an operator clears the pause).
+    // REL6 latch (count-based). CONSEC_KEY already means "consecutive 429s with
+    // no 2xx since the last success" (a 2xx wipes it via clearIndexNowCooldown),
+    // so the Nth strike trips the operator kill-switch. Guard on "not already
+    // paused" so this transitions exactly once — while paused the breaker skips
+    // all Bing contact, so arm() isn't reached again until an operator clears it.
     let autoPaused = false;
-    if (now - streakStart >= AUTO_PAUSE_AFTER_MS) {
+    if (consec >= AUTO_PAUSE_AFTER_429_STREAK) {
       const already = await kv.get(PAUSE_KEY);
       if (!already) {
-        const hours = Math.max(1, Math.round((now - streakStart) / 3_600_000));
         await kv.put(
           PAUSE_KEY,
-          `auto-paused ${new Date(now).toISOString()}: ${consec} consecutive 429s over ~${hours}h with no 2xx. Operator must clear to resume.`
+          `${AUTO_PAUSE_REASON} ${new Date(now).toISOString()}: ${consec} consecutive 429s from Bing with no 2xx since the last success. Operator must clear to resume.`
         );
         autoPaused = true;
       }
@@ -194,10 +196,10 @@ export async function clearIndexNowCooldown(kv: BreakerKv | null): Promise<void>
   if (!kv) return;
   try {
     await kv.delete(COOLDOWN_KEY);
+    // REL6: a 2xx ends the streak — wiping CONSEC_KEY both resets the cooldown
+    // escalation AND restarts the auto-pause count from zero ("no 2xx in
+    // between" is enforced here).
     await kv.delete(CONSEC_KEY);
-    // REL6: a 2xx ends the streak — wipe its start so the next 429 begins a
-    // fresh streak ("no 2xx in between" is enforced here).
-    await kv.delete(STREAK_START_KEY);
   } catch {
     /* best-effort */
   }
