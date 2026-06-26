@@ -14,9 +14,9 @@ export const dynamic = "force-dynamic";
  * is a thin proxy with auth + audit.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/api/with-auth";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { adminActions } from "@/lib/db/schema";
 
 const MCP_URL = "https://mcp.meetmeatthefair.com";
@@ -28,12 +28,7 @@ interface DecideBody {
   note?: unknown;
 }
 
-export async function POST(request: NextRequest) {
-  const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+export const POST = withAuth({ role: "ADMIN" }, async ({ request, db, session }) => {
   const body = (await request.json().catch(() => ({}))) as DecideBody;
   if (typeof body.messageRowId !== "string" || body.messageRowId.length === 0) {
     return NextResponse.json({ error: "messageRowId required" }, { status: 400 });
@@ -75,7 +70,6 @@ export async function POST(request: NextRequest) {
   }
 
   // Audit
-  const db = getCloudflareDb();
   await db.insert(adminActions).values({
     action: "inbound_email.decide",
     actorUserId: session.user.id,
@@ -86,4 +80,4 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({ ok: true });
-}
+});
