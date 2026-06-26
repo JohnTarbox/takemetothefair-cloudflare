@@ -1,8 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getAuthorizedSession } from "@/lib/api-auth";
-import { getCloudflareDb } from "@/lib/cloudflare";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { scanAll } from "@/lib/recommendations/engine";
 import { ALL_RULES } from "@/lib/recommendations/rules";
 
@@ -27,16 +25,12 @@ import { ALL_RULES } from "@/lib/recommendations/rules";
 const DEFAULT_CHUNK = 3;
 const MAX_CHUNK = ALL_RULES.length;
 
-export async function POST(request: Request) {
-  const authz = await getAuthorizedSession(request);
-  if (!authz.authorized) {
-    return NextResponse.json({ success: false, error: "unauthorized" }, { status: 401 });
-  }
-  const session = await auth();
-  if (session && session.user.role !== "ADMIN" && !authz.userId) {
-    return NextResponse.json({ success: false, error: "forbidden" }, { status: 403 });
-  }
-
+// Dual auth (admin session OR X-Internal-Key) via withAuthorized — the MCP
+// recommendations-scan workflow polls this. The prior hand-rolled gate had a
+// second 403 branch that was unreachable (getAuthorizedSession already rejects
+// a non-admin session at the first check), so this normalizes auth-fail to a
+// single 401.
+export const POST = withAuthorized(async ({ request, db }) => {
   const url = new URL(request.url);
   const cursor = Math.max(0, parseInt(url.searchParams.get("cursor") ?? "0", 10) || 0);
   const requestedChunk = parseInt(url.searchParams.get("chunk") ?? String(DEFAULT_CHUNK), 10);
@@ -46,7 +40,6 @@ export async function POST(request: Request) {
   );
 
   const slice = ALL_RULES.slice(cursor, cursor + chunk);
-  const db = getCloudflareDb();
   const result = await scanAll(db, slice);
 
   const nextCursor = cursor + slice.length;
@@ -72,4 +65,4 @@ export async function POST(request: Request) {
       ruleTimings,
     },
   });
-}
+});
