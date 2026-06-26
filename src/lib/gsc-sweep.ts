@@ -14,11 +14,12 @@
  * as Bing-sourced issues.
  */
 
-import { eq, and, gte, asc, desc, isNull, or } from "drizzle-orm";
+import { eq, and, gte, asc, desc, isNull, or, like, sql } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import {
   events,
   venues,
+  promoters,
   blogPosts,
   gscInspectionState,
   healthIssues,
@@ -32,6 +33,8 @@ import { publicEventWhere } from "@/lib/event-lifecycle";
 import { SITE_URL } from "@takemetothefair/constants";
 import { inspectUrl, ScApiError, ScConfigError, type ScEnv } from "@/lib/search-console";
 import { fingerprintFor } from "@/lib/site-health";
+import { summarizeRichResults } from "@/lib/gsc-rich-results";
+import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -102,6 +105,65 @@ interface SweepResult {
   errors: string[];
 }
 
+/**
+ * A10 — generic open/resolve for a single fingerprinted health issue. Used by
+ * the GSC_RICH_RESULT_FAIL path; the legacy GSC_INSPECTION_NON_OK path keeps
+ * its own inline block (untouched, to avoid regressing the coverage flow).
+ * `failing=false` closes any open issue for the fingerprint (no-op when none).
+ */
+async function recordHealthIssue(
+  db: Db,
+  opts: {
+    fp: string;
+    source: string;
+    issueType: string;
+    severity: string;
+    url: string;
+    message: string;
+    failing: boolean;
+    now: Date;
+  },
+  result: SweepResult
+): Promise<void> {
+  const { fp, source, issueType, severity, url, message, failing, now } = opts;
+  const [existing] = await db
+    .select()
+    .from(healthIssues)
+    .where(eq(healthIssues.fingerprint, fp))
+    .limit(1);
+
+  if (failing) {
+    if (existing && !existing.resolvedAt) {
+      await db
+        .update(healthIssues)
+        .set({ lastDetectedAt: now, severity, message })
+        .where(eq(healthIssues.id, existing.id));
+    } else if (existing) {
+      // Re-open a previously-resolved issue.
+      await db
+        .update(healthIssues)
+        .set({ lastDetectedAt: now, resolvedAt: null, severity, message })
+        .where(eq(healthIssues.id, existing.id));
+      result.newIssues++;
+    } else {
+      await db.insert(healthIssues).values({
+        fingerprint: fp,
+        source,
+        issueType,
+        severity,
+        url,
+        message,
+        firstDetectedAt: now,
+        lastDetectedAt: now,
+      });
+      result.newIssues++;
+    }
+  } else if (existing && !existing.resolvedAt) {
+    await db.update(healthIssues).set({ resolvedAt: now }).where(eq(healthIssues.id, existing.id));
+    result.resolvedIssues++;
+  }
+}
+
 /** Build the prioritized list of URLs to inspect this sweep. */
 export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
   const oneDayAgo = new Date(Date.now() - 86400 * 1000);
@@ -125,6 +187,88 @@ export async function pickUrls(db: Db, batchSize: number): Promise<string[]> {
     .limit(batchSize);
 
   const picked = new Set(stale.map((r) => r.url));
+
+  // Tier 1.5 (A10/A11, 2026-06-26): GUARANTEED per-page-type coverage. The
+  // sweep historically inspected almost only /events/ URLs (Tier 2/3 below are
+  // event-heavy), so the venue/vendor/promoter/blog "Crawled/Discovered –
+  // currently not indexed" defects (A11) were INVISIBLE in persisted data — all
+  // 38 GSC_INSPECTION_NON_OK rows were events. Reserve a slice for the
+  // least-recently-inspected indexable URL of EACH page type every run. The
+  // LEFT JOIN onto gsc_inspection_state sorts never-inspected entities first
+  // (SQLite ASC puts NULL `last_inspected_at` ahead), so coverage rotates.
+  // Runs BEFORE the early-return so a large Tier-1 backlog can't starve it.
+  const PER_TYPE = 10;
+  const addByPrefix = (prefix: string, rows: Array<{ slug: string }>) => {
+    for (const r of rows) picked.add(`${HOST}${prefix}${r.slug}`);
+  };
+
+  const venueSample = await db
+    .select({ slug: venues.slug })
+    .from(venues)
+    .leftJoin(
+      gscInspectionState,
+      eq(gscInspectionState.url, sql`${HOST} || '/venues/' || ${venues.slug}`)
+    )
+    .where(eq(venues.status, "ACTIVE"))
+    .orderBy(asc(gscInspectionState.lastInspectedAt))
+    .limit(PER_TYPE);
+  addByPrefix("/venues/", venueSample);
+
+  // Promoters are all public (no status column — see sitemap-promoters).
+  const promoterSample = await db
+    .select({ slug: promoters.slug })
+    .from(promoters)
+    .leftJoin(
+      gscInspectionState,
+      eq(gscInspectionState.url, sql`${HOST} || '/promoters/' || ${promoters.slug}`)
+    )
+    .orderBy(asc(gscInspectionState.lastInspectedAt))
+    .limit(PER_TYPE);
+  addByPrefix("/promoters/", promoterSample);
+
+  const blogSample = await db
+    .select({ slug: blogPosts.slug })
+    .from(blogPosts)
+    .leftJoin(
+      gscInspectionState,
+      eq(gscInspectionState.url, sql`${HOST} || '/blog/' || ${blogPosts.slug}`)
+    )
+    .where(eq(blogPosts.status, "PUBLISHED"))
+    .orderBy(asc(gscInspectionState.lastInspectedAt))
+    .limit(PER_TYPE);
+  addByPrefix("/blog/", blogSample);
+
+  const eventSample = await db
+    .select({ slug: events.slug })
+    .from(events)
+    .leftJoin(
+      gscInspectionState,
+      eq(gscInspectionState.url, sql`${HOST} || '/events/' || ${events.slug}`)
+    )
+    .where(publicEventWhere())
+    .orderBy(asc(gscInspectionState.lastInspectedAt))
+    .limit(PER_TYPE);
+  addByPrefix("/events/", eventSample);
+
+  // Vendors: reuse the sitemap's exact indexable gate so we never inspect a
+  // noindex vendor (false-positive noise). The tier filter runs in TS, so we
+  // can't ORDER BY inspection recency in SQL; instead pull the already-inspected
+  // vendor URLs (a LIKE scan — avoids the 100-param inArray cap) and sort
+  // never/oldest first in JS.
+  const indexableVendors = await getIndexableVendorRows(db);
+  if (indexableVendors.length > 0) {
+    const inspectedVendor = await db
+      .select({ url: gscInspectionState.url, last: gscInspectionState.lastInspectedAt })
+      .from(gscInspectionState)
+      .where(like(gscInspectionState.url, `${HOST}/vendors/%`));
+    const lastByUrl = new Map(inspectedVendor.map((r) => [r.url, r.last ? r.last.getTime() : 0]));
+    const vendorUrls = indexableVendors
+      .map((v) => `${HOST}/vendors/${v.slug}`)
+      .sort((a, b) => (lastByUrl.get(a) ?? 0) - (lastByUrl.get(b) ?? 0))
+      .slice(0, PER_TYPE);
+    for (const u of vendorUrls) picked.add(u);
+  }
+
   if (picked.size >= batchSize) return [...picked].slice(0, batchSize);
 
   // Tier 2: recently-published events
@@ -317,6 +461,27 @@ export async function runSweep(
           result.resolvedIssues++;
         }
       }
+
+      // A10 — the richResults half of the SAME inspection. K46 ("Missing field
+      // 'location'" on every event page, 360 GSC errors) lived here unseen for
+      // two months because the sweep persisted only coverageState. A FAIL/ERROR
+      // rich result becomes its own GSC_RICH_RESULT_FAIL health row (distinct
+      // fingerprint from the coverage row, so the two open/resolve independently).
+      const rr = summarizeRichResults(inspection.richResults);
+      await recordHealthIssue(
+        db,
+        {
+          fp: await fingerprintFor("GSC_URL_INSPECTION", "GSC_RICH_RESULT_FAIL", url),
+          source: "GSC_URL_INSPECTION",
+          issueType: "GSC_RICH_RESULT_FAIL",
+          severity: rr?.severity ?? "ERROR",
+          url,
+          message: rr?.message ?? "",
+          failing: rr?.failing ?? false,
+          now,
+        },
+        result
+      );
     } catch (error) {
       if (error instanceof ScConfigError) {
         result.errors.push(`config: ${error.message}`);

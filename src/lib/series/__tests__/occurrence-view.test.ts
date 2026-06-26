@@ -94,4 +94,13 @@ describe("toSchemaOccurrences", () => {
     expect(o.startDateIso).toBeNull();
     expect(o.endDateIso).toBeNull();
   });
+
+  it("passes the occurrence venue through for subEvent[].location (K46)", () => {
+    const venue = { name: "Newport Yachting Center", city: "Newport", state: "RI" };
+    const [withVenue] = toSchemaOccurrences([occ({ id: "x", venue })]);
+    expect(withVenue.venue).toEqual(venue);
+    // Absent venue normalises to null (→ "Location to be announced" downstream).
+    const [withoutVenue] = toSchemaOccurrences([occ({ id: "y" })]);
+    expect(withoutVenue.venue).toBeNull();
+  });
 });

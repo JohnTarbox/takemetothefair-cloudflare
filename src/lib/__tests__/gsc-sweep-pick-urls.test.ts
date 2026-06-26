@@ -17,7 +17,9 @@ type TestDb = ReturnType<typeof drizzle<typeof schema>>;
 
 const HOST = "https://meetmeatthefair.com";
 
-// Minimal columns pickUrls touches across its tiers.
+// Minimal columns pickUrls touches across its tiers. A10/A11 (2026-06-26) added
+// per-type guaranteed coverage (venues/promoters/blog/events/vendors) + the
+// shared indexable-vendor gate, so the harness now needs those tables/columns.
 const SCHEMA_SQL = `
   CREATE TABLE gsc_inspection_state (
     url TEXT PRIMARY KEY,
@@ -31,12 +33,46 @@ const SCHEMA_SQL = `
     slug TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'APPROVED',
     lifecycle_status TEXT NOT NULL DEFAULT 'SCHEDULED',
+    venue_id TEXT,
     updated_at INTEGER
   );
   CREATE TABLE venues (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'ACTIVE'
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    city TEXT,
+    state TEXT
+  );
+  CREATE TABLE promoters (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL,
+    updated_at INTEGER
+  );
+  CREATE TABLE vendors (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL,
+    updated_at INTEGER,
+    description TEXT,
+    website TEXT,
+    social_links TEXT,
+    city TEXT,
+    state TEXT,
+    address TEXT,
+    enhanced_profile INTEGER NOT NULL DEFAULT 0,
+    domain_hijacked INTEGER NOT NULL DEFAULT 0,
+    deleted_at INTEGER,
+    alias_of_vendor_id TEXT,
+    role TEXT,
+    display_override_permitted INTEGER NOT NULL DEFAULT 0,
+    display_mode TEXT,
+    brand_parent_vendor_id TEXT,
+    operator_parent_vendor_id TEXT,
+    default_child_display TEXT
+  );
+  CREATE TABLE event_vendors (
+    id TEXT PRIMARY KEY,
+    vendor_id TEXT NOT NULL,
+    event_id TEXT NOT NULL
   );
   CREATE TABLE blog_posts (
     id TEXT PRIMARY KEY,
@@ -112,5 +148,50 @@ describe("REL5 — pickUrls surfaces unresolved time_to_index_log URLs", () => {
     }
     const urls = await pickUrls(db as never, 4);
     expect(urls.length).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("A10/A11 — per-page-type guaranteed coverage", () => {
+  it("includes a venue, promoter, blog, event AND indexable vendor each run", async () => {
+    raw
+      .prepare(
+        `INSERT INTO events (id, slug, status, lifecycle_status) VALUES (?, ?, 'APPROVED', 'SCHEDULED')`
+      )
+      .run("e1", "an-event");
+    raw
+      .prepare(
+        `INSERT INTO venues (id, slug, status, city, state) VALUES (?, ?, 'ACTIVE', 'Skowhegan', 'ME')`
+      )
+      .run("v1", "a-venue");
+    raw.prepare(`INSERT INTO promoters (id, slug) VALUES (?, ?)`).run("p1", "a-promoter");
+    raw
+      .prepare(`INSERT INTO blog_posts (id, slug, status) VALUES (?, ?, 'PUBLISHED')`)
+      .run("b1", "a-post");
+    // An indexable vendor: enhanced_profile=1, not deleted/hijacked/aliased.
+    raw
+      .prepare(
+        `INSERT INTO vendors (id, slug, enhanced_profile, domain_hijacked, deleted_at, alias_of_vendor_id, role)
+         VALUES (?, ?, 1, 0, NULL, NULL, 'INDEPENDENT')`
+      )
+      .run("vd1", "a-vendor");
+
+    const urls = await pickUrls(db as never, 200);
+    expect(urls).toContain(`${HOST}/venues/a-venue`);
+    expect(urls).toContain(`${HOST}/promoters/a-promoter`);
+    expect(urls).toContain(`${HOST}/blog/a-post`);
+    expect(urls).toContain(`${HOST}/events/an-event`);
+    expect(urls).toContain(`${HOST}/vendors/a-vendor`);
+  });
+
+  it("excludes a non-indexable vendor (soft-deleted) from the sample", async () => {
+    raw
+      .prepare(
+        `INSERT INTO vendors (id, slug, enhanced_profile, domain_hijacked, deleted_at, role)
+         VALUES (?, ?, 1, 0, 1730000000, 'INDEPENDENT')`
+      )
+      .run("vd-del", "deleted-vendor");
+
+    const urls = await pickUrls(db as never, 200);
+    expect(urls).not.toContain(`${HOST}/vendors/deleted-vendor`);
   });
 });

@@ -17,6 +17,7 @@ import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventSeries, events, venues } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import type { PlaceVenue } from "@/lib/seo/place-jsonld";
 
 export interface LandingOccurrence {
   id: string;
@@ -24,8 +25,12 @@ export interface LandingOccurrence {
   name: string;
   startDate: Date | null;
   endDate: Date | null;
-  venueCity: string | null;
-  venueState: string | null;
+  /**
+   * K46 (2026-06-26) — full venue, nested so it threads straight into the
+   * EventSeries `subEvent[].location` (and the series-level location via the
+   * hero occurrence). Null when the occurrence has no venue.
+   */
+  venue: PlaceVenue | null;
 }
 
 export interface SeriesLanding {
@@ -55,19 +60,44 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
 
   if (!series) return null;
 
-  const occurrences = await db
+  const rows = await db
     .select({
       id: events.id,
       slug: events.slug,
       name: events.name,
       startDate: events.startDate,
       endDate: events.endDate,
+      venueName: venues.name,
+      venueAddress: venues.address,
       venueCity: venues.city,
       venueState: venues.state,
+      venueZip: venues.zip,
+      venueLat: venues.latitude,
+      venueLng: venues.longitude,
     })
     .from(events)
     .leftJoin(venues, eq(events.venueId, venues.id))
     .where(and(eq(events.seriesId, series.id), isPublicEventStatus()));
+
+  const occurrences: LandingOccurrence[] = rows.map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    startDate: r.startDate,
+    endDate: r.endDate,
+    // venueName is the leftJoin discriminator: null name ⇒ no venue row.
+    venue: r.venueName
+      ? {
+          name: r.venueName,
+          address: r.venueAddress,
+          city: r.venueCity,
+          state: r.venueState,
+          zip: r.venueZip,
+          latitude: r.venueLat,
+          longitude: r.venueLng,
+        }
+      : null,
+  }));
 
   return {
     series: {

@@ -17,6 +17,7 @@
  * venue-zone ISO dates; this module only shapes JSON-LD.
  */
 import { SITE_URL } from "@takemetothefair/constants";
+import { buildPlaceJsonLd, type PlaceVenue } from "@/lib/seo/place-jsonld";
 
 export interface SeriesForSchema {
   canonicalSlug: string;
@@ -24,6 +25,18 @@ export interface SeriesForSchema {
   description?: string | null;
   /** Absolute image URL (caller resolves; e.g. a cdn-cgi transform or og default). */
   imageUrl?: string | null;
+  /**
+   * K46 (2026-06-26) — representative venue for the series-level `location`
+   * (the caller passes the hero occurrence's venue). Null/undefined emits the
+   * "Location to be announced" Place so the required-field check still passes.
+   */
+  venue?: PlaceVenue | null;
+  /**
+   * K46 — series-level `startDate`/`endDate` (date-only ISO), from the hero
+   * occurrence. Omitted when the hero is undated.
+   */
+  startDateIso?: string | null;
+  endDateIso?: string | null;
 }
 
 export interface OccurrenceForSchema {
@@ -35,6 +48,12 @@ export interface OccurrenceForSchema {
   /** ISO 8601 start/end, already formatted in the venue zone by the caller. */
   startDateIso?: string | null;
   endDateIso?: string | null;
+  /**
+   * K46 (2026-06-26) — the occurrence's venue, emitted as `subEvent[].location`.
+   * Null/undefined emits "Location to be announced" so every subEvent carries a
+   * location (Google flags a subEvent Event without one).
+   */
+  venue?: PlaceVenue | null;
 }
 
 /** `/events/<canonical_slug>` — the year-agnostic series landing URL. */
@@ -64,6 +83,9 @@ function occurrenceNode(series: SeriesForSchema, occ: OccurrenceForSchema) {
   };
   if (occ.startDateIso) node.startDate = occ.startDateIso;
   if (occ.endDateIso) node.endDate = occ.endDateIso;
+  // K46 — every subEvent Event needs a `location` or Google Rich Results
+  // flags it. Falls back to "Location to be announced" when undated/venueless.
+  node.location = buildPlaceJsonLd(occ.venue ?? null);
   return node;
 }
 
@@ -81,6 +103,14 @@ export function buildEventSeriesJsonLd(
     name: series.name,
     url: seriesUrl(series.canonicalSlug),
   };
+  // K46 — top-level `location` (required by Google Rich Results; its absence
+  // was the 360-error "Missing field location" on every series page) plus
+  // `startDate`/`endDate` from the hero occurrence. location is always emitted
+  // (falls back to "Location to be announced") so the required field is never
+  // missing.
+  node.location = buildPlaceJsonLd(series.venue ?? null);
+  if (series.startDateIso) node.startDate = series.startDateIso;
+  if (series.endDateIso) node.endDate = series.endDateIso;
   if (series.description) node.description = series.description;
   if (series.imageUrl) node.image = series.imageUrl;
   if (occurrences.length > 0) {

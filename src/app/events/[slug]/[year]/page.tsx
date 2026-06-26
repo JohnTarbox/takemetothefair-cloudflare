@@ -13,7 +13,8 @@
  */
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import EventDetailPage, { generateMetadata as eventGenerateMetadata } from "../page";
+import EventDetailPage from "../page";
+import { buildEventMetadata } from "../event-detail-data";
 import { resolveOccurrenceSlug } from "@/lib/series/get-occurrence";
 
 export const revalidate = 300;
@@ -26,12 +27,19 @@ export async function generateMetadata({ params }: OccurrenceProps): Promise<Met
   const { slug, year } = await params;
   const occSlug = await resolveOccurrenceSlug(slug, year);
   if (!occSlug) return {};
-  return eventGenerateMetadata({ params: Promise.resolve({ slug: occSlug }) });
+  // K46 — asOccurrence forces the occurrence's Event-detail metadata (canonical
+  // /events/<series>/<year>), not the series-landing metadata. Without it a
+  // single-occurrence series whose canonical_slug == the occurrence slug would
+  // resolve back to the landing and emit a duplicate canonical.
+  return buildEventMetadata(occSlug, true);
 }
 
 export default async function OccurrencePage({ params }: OccurrenceProps) {
   const { slug, year } = await params;
   const occSlug = await resolveOccurrenceSlug(slug, year);
   if (!occSlug) notFound();
-  return <EventDetailPage params={Promise.resolve({ slug: occSlug })} />;
+  // K46 — render the occurrence Event detail (with superEvent), not the series
+  // landing, so each URL emits exactly one EventSeries block. Called as a plain
+  // function (not JSX) to pass the 2nd positional `asOccurrence` arg.
+  return EventDetailPage({ params: Promise.resolve({ slug: occSlug }) }, true);
 }

@@ -21,6 +21,16 @@ const occ = (over: Partial<OccurrenceForSchema> & { slug: string }): OccurrenceF
   ...over,
 });
 
+const venue = {
+  name: "Newport Yachting Center",
+  address: "4 Commercial Wharf",
+  city: "Newport",
+  state: "RI",
+  zip: "02840",
+  latitude: 41.486,
+  longitude: -71.313,
+};
+
 describe("series/occurrence URLs", () => {
   it("seriesUrl is the year-agnostic landing path", () => {
     expect(seriesUrl("newport-international-boat-show")).toBe(
@@ -86,6 +96,81 @@ describe("buildEventSeriesJsonLd", () => {
     );
     expect(rich.description).toBe("Annual boat show");
     expect(rich.image).toBe("https://img/x.jpg");
+  });
+});
+
+// K46 (2026-06-26) — the 360-error GSC defect: EventSeries + every subEvent
+// must carry a `location`, and the EventSeries must carry top-level dates.
+describe("K46 — location + dates", () => {
+  it("always emits a top-level location (falls back to 'Location to be announced')", () => {
+    const ld = buildEventSeriesJsonLd(series, []);
+    expect(ld.location).toMatchObject({ "@type": "Place", name: "Location to be announced" });
+  });
+
+  it("emits the series-level location from the (hero) venue + top-level dates", () => {
+    const ld = buildEventSeriesJsonLd(
+      { ...series, venue, startDateIso: "2026-09-17", endDateIso: "2026-09-20" },
+      []
+    );
+    expect(ld.startDate).toBe("2026-09-17");
+    expect(ld.endDate).toBe("2026-09-20");
+    expect(ld.location).toMatchObject({
+      "@type": "Place",
+      name: "Newport Yachting Center",
+      address: {
+        "@type": "PostalAddress",
+        streetAddress: "4 Commercial Wharf",
+        addressLocality: "Newport",
+        addressRegion: "RI",
+        postalCode: "02840",
+        addressCountry: "US",
+      },
+      geo: { "@type": "GeoCoordinates", latitude: 41.486, longitude: -71.313 },
+    });
+  });
+
+  it("omits top-level startDate/endDate when the series has none", () => {
+    const ld = buildEventSeriesJsonLd(series, []);
+    expect(ld).not.toHaveProperty("startDate");
+    expect(ld).not.toHaveProperty("endDate");
+  });
+
+  it("emits a location on every subEvent (from the occurrence's own venue)", () => {
+    const ld = buildEventSeriesJsonLd(series, [
+      occ({ slug: "newport-2025", year: 2025, venue }),
+      occ({ slug: "newport-2026", year: 2026 }), // no venue
+    ]);
+    const sub = ld.subEvent as Array<Record<string, unknown>>;
+    expect(sub[0].location).toMatchObject({
+      "@type": "Place",
+      name: "Newport Yachting Center",
+      address: { addressLocality: "Newport", addressRegion: "RI" },
+    });
+    // venueless occurrence still carries a Place so Google doesn't flag it.
+    expect(sub[1].location).toMatchObject({ "@type": "Place", name: "Location to be announced" });
+  });
+
+  it("uses displayVenueName so a street-address-named venue isn't shown raw", () => {
+    const streetVenue = {
+      name: "18 Spring Street",
+      address: "18 Spring Street",
+      city: "Newport",
+      state: "RI",
+    };
+    const ld = buildEventSeriesJsonLd({ ...series, venue: streetVenue }, []);
+    expect((ld.location as Record<string, unknown>).name).toBe("Event venue in Newport, RI");
+  });
+
+  it("drops undefined keys (geo, streetAddress) on JSON.stringify round-trip", () => {
+    // The real emission path is JSON.stringify(jsonLd); assert it omits the
+    // optional keys rather than serialising nulls.
+    const minimalVenue = { name: "Town Common", city: "Bondville", state: "VT" };
+    const ld = buildEventSeriesJsonLd({ ...series, venue: minimalVenue }, []);
+    const round = JSON.parse(JSON.stringify(ld));
+    expect(round.location).not.toHaveProperty("geo");
+    expect(round.location.address).not.toHaveProperty("streetAddress");
+    expect(round.location.address).not.toHaveProperty("postalCode");
+    expect(round.location.address.addressLocality).toBe("Bondville");
   });
 });
 

@@ -9,6 +9,7 @@
  * unit-tested in isolation (same pattern as the rest of src/lib/series/).
  */
 import type { OccurrenceForSchema } from "./series-schema-org";
+import type { PlaceVenue } from "@/lib/seo/place-jsonld";
 
 /** Minimal occurrence shape — a public, non-tombstone event under the series. */
 export interface OccurrenceRow {
@@ -17,6 +18,8 @@ export interface OccurrenceRow {
   name: string;
   startDate: Date | null;
   endDate: Date | null;
+  /** K46 — the occurrence's venue, threaded into `subEvent[].location`. */
+  venue?: PlaceVenue | null;
 }
 
 export interface OccurrenceView extends OccurrenceRow {
@@ -87,5 +90,6 @@ export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceFor
     name: o.name,
     startDateIso: o.startDate ? o.startDate.toISOString().slice(0, 10) : null,
     endDateIso: o.endDate ? o.endDate.toISOString().slice(0, 10) : null,
+    venue: o.venue ?? null,
   }));
 }
