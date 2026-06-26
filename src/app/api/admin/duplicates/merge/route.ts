@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { executeMerge } from "@/lib/duplicates/merge-operations";
 import type { DuplicateEntityType, MergeRequest } from "@/lib/duplicates/types";
 import { logError } from "@/lib/logger";
@@ -9,39 +8,19 @@ import { events } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
 import { differentEditionYears } from "@/lib/series/merge-year-guard";
 
-export async function POST(request: NextRequest) {
-  let db: ReturnType<typeof getCloudflareDb> | null = null;
+export const POST = withAuthorized(async ({ request, db, userId }) => {
   let body: (MergeRequest & { actorUserId?: string | null }) | null = null;
 
   try {
-    // K3 (analyst, 2026-05-31): accept INTERNAL_API_KEY in addition to
-    // admin session so the MCP-server `merge_events` tool can call this
-    // endpoint without a Next.js session cookie. Same pattern as
-    // /api/suggest-event/check-duplicate. When authenticated via the
-    // internal key the caller supplies actorUserId in the body (the
-    // MCP server has its own AuthContext.userId on the calling user);
-    // session callers ignore the body field and use session.user.id.
-    const internalKey = request.headers.get("x-internal-key");
-    const cfEnv = getCloudflareEnv() as unknown as { INTERNAL_API_KEY?: string };
-    const isInternal = !!(
-      internalKey &&
-      cfEnv.INTERNAL_API_KEY &&
-      internalKey === cfEnv.INTERNAL_API_KEY
-    );
-
-    let sessionActorUserId: string | null = null;
-    if (!isInternal) {
-      const session = await auth();
-      if (!session || session.user.role !== "ADMIN") {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-      sessionActorUserId = session.user.id;
-    }
-
-    db = getCloudflareDb();
+    // K3 (analyst, 2026-05-31): accepts an admin session OR INTERNAL_API_KEY
+    // so the MCP-server `merge_events` tool can call this without a Next.js
+    // session cookie — now gated via withAuthorized (constant-time). The actor
+    // id is the admin's session user id (withAuthorized's `userId`), or — for
+    // an internal-key caller (userId is null then) — the `actorUserId` the MCP
+    // server supplies in the body. Session callers ignore the body field.
     body = (await request.json()) as MergeRequest & { actorUserId?: string | null };
     const { type, primaryId, duplicateId } = body;
-    const actorUserId = isInternal ? (body.actorUserId ?? null) : sessionActorUserId;
+    const actorUserId = userId ?? body.actorUserId ?? null;
 
     if (!type || !["venues", "events", "vendors", "promoters"].includes(type)) {
       return NextResponse.json({ error: "Invalid or missing type parameter" }, { status: 400 });
@@ -124,4 +103,4 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: userMessage, isTimeout }, { status: isTimeout ? 503 : 500 });
   }
-}
+});
