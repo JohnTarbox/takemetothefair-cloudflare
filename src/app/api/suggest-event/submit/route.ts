@@ -301,6 +301,7 @@ export async function POST(request: NextRequest) {
       name: data.name,
       startDate: effectiveStartDate,
       endDate: effectiveEndDate,
+      venueId: resolvedVenueId,
       sourceUrl: data.sourceUrl ?? null,
       venueName: data.venueName ?? null,
       venueAddress: data.venueAddress ?? null,

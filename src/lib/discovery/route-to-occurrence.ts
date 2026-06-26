@@ -16,10 +16,11 @@
  * insert, behaviour unchanged. The only live effect pre-backfill is the
  * read-only findDuplicate query.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
-import { events, eventVendors } from "@/lib/db/schema";
+import { events, eventVendors, eventSeries } from "@/lib/db/schema";
 import { findDuplicate } from "@/lib/duplicates/find-duplicate";
+import { normalizeName } from "@/lib/duplicates/normalize-name";
 import { decideDiscoveryRouting } from "@takemetothefair/utils";
 import {
   createOccurrenceForSeries,
@@ -33,6 +34,8 @@ export interface RouteToOccurrenceInput {
   /** Incoming start date — the edition year is derived from it (UTC). */
   startDate: Date | null;
   endDate?: Date | null;
+  /** Resolved venue id of the incoming event — drives the cross-year series match. */
+  venueId?: string | null;
   sourceUrl?: string | null;
   venueName?: string | null;
   venueAddress?: string | null;
@@ -45,6 +48,44 @@ export type RouteToOccurrenceResult =
   | { routed: false }
   | { routed: true; result: CreateOccurrenceResult };
 
+/**
+ * Cross-year, DATE-WINDOW-FREE series match: find the unique series with an
+ * occurrence at `venueId` whose (series OR member-event) name normalizes to the
+ * incoming name. This is the piece findDuplicate can't do — its venue/name
+ * stages are ±7-day-windowed, so a different-YEAR edition only matches when it
+ * shares a `source_url` (exact_url). Returns the series id, or null when there's
+ * no match or it's ambiguous (≥2 series — never guess).
+ */
+async function matchSeriesByNameVenue(
+  db: Db,
+  name: string,
+  venueId: string
+): Promise<string | null> {
+  const norm = normalizeName(name);
+  if (!norm) return null;
+
+  const rows = await db
+    .select({
+      seriesId: events.seriesId,
+      seriesName: eventSeries.name,
+      eventName: events.name,
+    })
+    .from(events)
+    .innerJoin(eventSeries, eq(events.seriesId, eventSeries.id))
+    .where(and(eq(events.venueId, venueId), isNotNull(events.seriesId)));
+
+  const matched = new Set<string>();
+  for (const r of rows) {
+    if (!r.seriesId) continue;
+    if (normalizeName(r.seriesName) === norm || normalizeName(r.eventName) === norm) {
+      matched.add(r.seriesId);
+    }
+  }
+  // Unique match only — an ambiguous (≥2) match stays a standalone for an
+  // operator to disambiguate rather than auto-attaching to the wrong series.
+  return matched.size === 1 ? [...matched][0] : null;
+}
+
 export async function maybeRouteToOccurrence(
   db: Db,
   input: RouteToOccurrenceInput
@@ -53,6 +94,30 @@ export async function maybeRouteToOccurrence(
   if (!input.startDate) return { routed: false };
   const incomingYear = input.startDate.getUTCFullYear();
 
+  // 1) Cross-year series match by normalized-name + venue (no date window). This
+  // catches different-YEAR editions findDuplicate misses (cheshire-fair-nh-2027
+  // from a fresh source_url). createOccurrenceForSeries is year-bucketed
+  // idempotent, so `created` (a new edition) AND `occurrence_exists` (the edition
+  // already exists — don't mint a sibling) both mean "handled, skip standalone".
+  if (input.name && input.venueId) {
+    const seriesId = await matchSeriesByNameVenue(db, input.name, input.venueId);
+    if (seriesId) {
+      const result = await createOccurrenceForSeries(db, {
+        seriesId,
+        year: incomingYear,
+        overrides: { startDate: input.startDate, endDate: input.endDate ?? null },
+        actorUserId: input.actorUserId ?? null,
+        sourceName: "discovery-occurrence",
+        ingestionMethod: "community_suggestion",
+      });
+      if (result.created || result.reason === "occurrence_exists") {
+        return { routed: true, result };
+      }
+      // series_not_found (race) / promoter_required → fall through to findDuplicate.
+    }
+  }
+
+  // 2) findDuplicate fallback — exact_url cross-year + the matched-event routing.
   const dupe = await findDuplicate(db, {
     sourceUrl: input.sourceUrl ?? null,
     name: input.name ?? null,
