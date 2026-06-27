@@ -177,6 +177,48 @@ export async function runReport(
   return data;
 }
 
+export type Ga4DailyTotal = {
+  date: string; // YYYY-MM-DD
+  activeUsers: number;
+  sessions: number;
+  keyEvents: number;
+};
+
+/**
+ * A12 — GA4 daily site totals (active users / sessions / key events), the
+ * persistence feed behind the `ga4_daily_metrics` D1 table. Always fresh
+ * (skipCache) for the same reason as the GSC feed. GA4's `date` dimension comes
+ * back as `YYYYMMDD`; we reshape it to the `YYYY-MM-DD` the table stores.
+ */
+export async function getDailySiteTotals(
+  env: Ga4Env,
+  opts: { startDate: string; endDate: string }
+): Promise<Ga4DailyTotal[]> {
+  const data = await runReport(
+    env,
+    {
+      dateRanges: [{ startDate: opts.startDate, endDate: opts.endDate }],
+      dimensions: [{ name: "date" }],
+      metrics: [{ name: "activeUsers" }, { name: "sessions" }, { name: "keyEvents" }],
+      orderBys: [{ dimension: { dimensionName: "date" } }],
+      limit: 100000,
+    },
+    { skipCache: true }
+  );
+  return (data.rows ?? []).map((r) => {
+    const raw = r.dimensionValues?.[0]?.value ?? ""; // GA4 returns YYYYMMDD
+    const date =
+      raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : raw;
+    const m = r.metricValues ?? [];
+    return {
+      date,
+      activeUsers: Number(m[0]?.value ?? 0),
+      sessions: Number(m[1]?.value ?? 0),
+      keyEvents: Number(m[2]?.value ?? 0),
+    };
+  });
+}
+
 export type ActiveUsersDay = { date: string; users: number };
 export type TopPageRow = {
   path: string;

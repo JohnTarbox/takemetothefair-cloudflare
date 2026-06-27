@@ -738,6 +738,24 @@ async function runScheduledGa4LivenessCheck(env: Env): Promise<void> {
 }
 
 /**
+ * A12 — persist GSC + GA4 search-performance time-series to D1.
+ *
+ * Daily incremental upsert of the trailing window into `gsc_search_metrics`
+ * (date×query×page) + `ga4_daily_metrics` (daily site totals). The route
+ * re-upserts the last several days so GSC's retroactive revisions to recent
+ * dates are captured. The first-run ~16-month backfill is driven separately by
+ * scripts/gsc-backfill.ts, range-by-range, to stay within Worker limits.
+ */
+async function runScheduledGscMetricsSync(env: Env): Promise<void> {
+  await runMainAppSweep(env, "gsc-metrics sync", "/api/admin/analytics/gsc-metrics/sync", (r) => {
+    const gsc = (r.gsc ?? {}) as Record<string, unknown>;
+    const ga4 = (r.ga4 ?? {}) as Record<string, unknown>;
+    const bing = (r.bing ?? {}) as Record<string, unknown>;
+    return `gsc=${gsc.upserted ?? "?"} ga4=${ga4.upserted ?? "?"} bing=${bing.upserted ?? "?"} ok=${r.ok}`;
+  });
+}
+
+/**
  * Hourly drain of pending_search_pings (deferred IndexNow outbox).
  *
  * Bulk-ingest workflows pair `defer_search_ping: true` writes with an
@@ -1436,6 +1454,11 @@ export default {
         runScheduledGscSweep(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),
+        // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance
+        // time-series. Incremental daily upsert; first-run 16-month backfill
+        // is driven out-of-band by scripts/gsc-backfill.ts. Failsoft via
+        // runMainAppSweep (a sync failure logs, never crashes the batch).
+        runScheduledGscMetricsSync(env),
         createWorkflowOrLog(env, "event-date-drift", () =>
           env.EVENT_DATE_DRIFT.create({
             retention: { successRetention: "7 days", errorRetention: "7 days" },

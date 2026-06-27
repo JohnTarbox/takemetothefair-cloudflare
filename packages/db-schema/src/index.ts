@@ -1507,6 +1507,80 @@ export const gscMonthlySummary = sqliteTable(
   ]
 );
 
+// A12 (drizzle/0131, analyst 2026-06-26) — GSC Search Analytics time-series.
+// The live `searchAnalytics/query` feed (src/lib/search-console.ts) is fetched
+// per-request and never persisted, so there's no history to chart WoW movement
+// or attribute lifts to ships, and Google only retains ~16 months before a
+// window rolls off permanently. This table is the durable trend store: one row
+// per (date, query, page) per day, upserted daily by a cron (last few days are
+// re-upserted because GSC revises recent dates retroactively). Keep the live
+// tools as-is for ad-hoc; this table is for trend/history.
+//
+// `ctr`/`position` are stored as GSC returns them (ctr is clicks/impressions;
+// position is the avg). siteUrl scopes by property (the GSC account also holds
+// the Maine Cardworks property — mirror the gsc_monthly_summary scoping rule).
+export const gscSearchMetrics = sqliteTable(
+  "gsc_search_metrics",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    date: text("date").notNull(), // YYYY-MM-DD (GSC reporting day)
+    query: text("query").notNull(),
+    page: text("page").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    ctr: real("ctr").notNull().default(0),
+    position: real("position").notNull().default(0),
+    siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    // Conflict target for the daily upsert — re-running the sync (or the
+    // first-run backfill) over a date already present updates in place
+    // instead of forking a duplicate metric row.
+    uniqueIndex("idx_gsc_search_metrics_unique").on(t.siteUrl, t.date, t.query, t.page),
+    // Trend queries are "clicks-over-time for query X" and "... for page Y".
+    index("idx_gsc_search_metrics_query_date").on(t.query, t.date),
+    index("idx_gsc_search_metrics_page_date").on(t.page, t.date),
+    index("idx_gsc_search_metrics_date").on(t.date),
+  ]
+);
+
+// A12 sibling — GA4 daily site totals. GA4 also only lives in the GA4 product
+// today (src/lib/ga4.ts is all live per-request). One row per day so a single
+// query returns active-users / sessions / key-events over time without a live
+// Data API call. Kept deliberately coarse (site totals, not per-page) — the
+// per-page/per-event breakdowns stay live.
+export const ga4DailyMetrics = sqliteTable("ga4_daily_metrics", {
+  date: text("date").primaryKey(), // YYYY-MM-DD; one row per day, upsert target
+  activeUsers: integer("active_users").notNull().default(0),
+  sessions: integer("sessions").notNull().default(0),
+  keyEvents: integer("key_events").notNull().default(0),
+  property: text("property").notNull().default("ga4"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+// K50 (drizzle/0132, analyst 2026-06-26) — Bing daily traffic totals, the
+// durable counterpart to ga4_daily_metrics so GSC + Bing search-performance are
+// both queryable for trend history. Bing's GetRankAndTrafficStats returns only
+// daily site totals (impressions/clicks per day) — NOT query×page like GSC — so
+// this is a daily-totals sibling, not a query-grain table (the email's
+// suggested "bing_search_metrics" name implied a granularity the Bing API does
+// not expose). The API returns the full retained series in one call, so the
+// daily sync that upserts it also backfills — no separate first-run script.
+export const bingDailyMetrics = sqliteTable("bing_daily_metrics", {
+  date: text("date").primaryKey(), // YYYY-MM-DD; one row per day, upsert target
+  impressions: integer("impressions").notNull().default(0),
+  clicks: integer("clicks").notNull().default(0),
+  siteUrl: text("site_url").notNull().default("https://meetmeatthefair.com/"),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(

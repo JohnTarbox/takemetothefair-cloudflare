@@ -399,6 +399,111 @@ export async function getSiteScanIssues(
   });
 }
 
+// ── Daily traffic time-series (GetRankAndTrafficStats) ──────────────
+//
+// K50 — the per-day impressions/clicks series, the Bing counterpart to GSC's
+// getDailyClicks. GetQueryStats/GetPageStats give the query/page breakdowns but
+// not the daily site overview; this fills that gap. Cheap to persist alongside
+// the A12 GSC trend store (the analyst's "do for Bing what A12 does for GSC").
+
+export type BingTrafficStatsRow = {
+  date: string; // YYYY-MM-DD
+  impressions: number;
+  clicks: number;
+};
+
+export async function getTrafficStats(
+  env: BingEnv,
+  opts: { skipCache?: boolean } = {}
+): Promise<BingTrafficStatsRow[]> {
+  const cacheKey = `bing:traffic:${await hashRequest({ site: SITE_URL })}`;
+  return withCache(env, cacheKey, REPORT_CACHE_TTL, opts.skipCache ?? false, async () => {
+    const data = await bingFetch<unknown>(env, "GetRankAndTrafficStats");
+    const rows = extractRows<{
+      Date?: unknown;
+      Impressions?: number;
+      Clicks?: number;
+    }>(data);
+    return rows
+      .map((r) => {
+        const parsed = parseDateLoose(r.Date);
+        return {
+          date: parsed ? parsed.toISOString().slice(0, 10) : "",
+          impressions: r.Impressions ?? 0,
+          clicks: r.Clicks ?? 0,
+        };
+      })
+      .filter((r) => r.date);
+  });
+}
+
+// ── Backlinks / inbound links (GetLinkCounts) ───────────────────────
+//
+// K50 — site pages that have inbound links, with counts. Surfaces the
+// "site has only N referring domains" finding that previously came from a hand
+// export. `page` is Bing's pagination index (each page returns a fixed slice).
+
+export type BingBacklinkRow = {
+  url: string;
+  inboundLinks: number;
+};
+
+export async function getBacklinks(
+  env: BingEnv,
+  opts: { page?: number; skipCache?: boolean } = {}
+): Promise<BingBacklinkRow[]> {
+  const page = opts.page ?? 0;
+  const cacheKey = `bing:backlinks:${await hashRequest({ site: SITE_URL, page })}`;
+  return withCache(env, cacheKey, SCAN_CACHE_TTL, opts.skipCache ?? false, async () => {
+    const data = await bingFetch<unknown>(env, "GetLinkCounts", { query: { page } });
+    const rows = extractRows<{ Url?: string; Count?: number }>(data);
+    return rows.map((r) => ({ url: r.Url ?? "", inboundLinks: r.Count ?? 0 }));
+  });
+}
+
+// ── Bulk crawled / child-URL list (GetChildrenUrlInfo) ──────────────
+//
+// K50 — paginated index details for the URLs under a directory (default: site
+// root). GetUrlInfo is single-URL; this is the bulk list SEO-CRAWL1 used to find
+// the /register crawl-budget leak. `dir` is the directory to enumerate; `page`
+// is Bing's pagination index.
+
+export type BingCrawledUrlRow = {
+  url: string;
+  isPage: boolean | null;
+  lastCrawled: string | null;
+  discoveryDate: string | null;
+  totalChildUrlCount: number;
+};
+
+export async function getCrawledUrls(
+  env: BingEnv,
+  opts: { dir?: string; page?: number; skipCache?: boolean } = {}
+): Promise<BingCrawledUrlRow[]> {
+  const dir = opts.dir?.trim() || SITE_URL;
+  const page = opts.page ?? 0;
+  const cacheKey = `bing:crawled-urls:${await hashRequest({ dir, page })}`;
+  return withCache(env, cacheKey, SCAN_CACHE_TTL, opts.skipCache ?? false, async () => {
+    const data = await bingFetch<unknown>(env, "GetChildrenUrlInfo", {
+      query: { url: dir, page },
+    });
+    const rows = extractRows<{
+      Url?: string;
+      IsPage?: boolean;
+      LastCrawledDate?: unknown;
+      DiscoveryDate?: unknown;
+      TotalChildUrlCount?: number;
+    }>(data);
+    return rows.map((r) => ({
+      url: r.Url ?? "",
+      isPage: r.IsPage ?? null,
+      lastCrawled: parseDateLoose(r.LastCrawledDate)?.toISOString() ?? null,
+      discoveryDate: parseDateLoose(r.DiscoveryDate)?.toISOString() ?? null,
+      totalChildUrlCount: r.TotalChildUrlCount ?? 0,
+    }));
+  });
+}
+
 // ── URL inspection ─────────────────────────────────────────────────
 
 export type BingUrlInfo = {
