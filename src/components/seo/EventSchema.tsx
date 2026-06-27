@@ -173,6 +173,49 @@ export function EventSchema({
   const location = buildPlaceJsonLd(venue, stateCode);
 
   const hasDates = startDate && endDate;
+
+  // startDate fallback (2026-06-26): an event whose dates live ONLY in
+  // event_days — a null top-level start/end, common for single-day events built
+  // via the day grid — must STILL emit a top-level startDate, or Google Rich
+  // Results flags "Missing field startDate". The required field is on the parent
+  // Event; the dated subEvents below do NOT satisfy it. Mirrors the K46 location
+  // fix: always satisfy the required field. Derive the span from the day rows —
+  // earliest open → latest close as a precise wall-clock datetime (matching the
+  // subEvents); if no day captured hours, fall back to the bare calendar-date
+  // span (schema.org startDate accepts a Date as well as a DateTime).
+  const dayDerivedDates: { start: string; end: string } | undefined = (() => {
+    if (hasDates || !eventDays || eventDays.length === 0) return undefined;
+    const venueTz = venue?.timezone ?? undefined;
+    const withHours = eventDays.filter(
+      (d): d is EventDay & { openTime: string; closeTime: string } =>
+        !d.closed && d.openTime != null && d.closeTime != null
+    );
+    const starts = withHours
+      .map((d) => parseWallClockInVenueZone(d.date, d.openTime, venueTz))
+      .filter((x): x is Date => x != null);
+    const ends = withHours
+      .map((d) => parseWallClockInVenueZone(d.date, d.closeTime, venueTz))
+      .filter((x): x is Date => x != null);
+    if (starts.length > 0 && ends.length > 0) {
+      const minStart = starts.reduce((a, b) => (a < b ? a : b));
+      const maxEnd = ends.reduce((a, b) => (a > b ? a : b));
+      const start = venueTz
+        ? formatIsoInVenueZone(minStart, venueTz)
+        : formatIsoInVenueZone(minStart);
+      const end = venueTz ? formatIsoInVenueZone(maxEnd, venueTz) : formatIsoInVenueZone(maxEnd);
+      if (start && end) return { start, end };
+    }
+    // No captured hours — a bare calendar-date span still satisfies the field.
+    const sorted = eventDays
+      .map((d) => d.date)
+      .filter(Boolean)
+      .sort();
+    return sorted.length ? { start: sorted[0], end: sorted[sorted.length - 1] } : undefined;
+  })();
+  // Feeds both the eventStatus heuristic and the JSON-LD date emission, so a
+  // day-derived event reads as Scheduled (not Postponed) AND carries dates.
+  const hasEffectiveDates = !!hasDates || !!dayDerivedDates;
+
   const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;
   // Static OG fallback — `/api/og` dynamic generator removed 2026-06-04
   // to keep the main-app Worker under the 25 MiB Cloudflare bundle cap
@@ -193,7 +236,7 @@ export function EventSchema({
     : null;
   const eventStatus =
     lifecycleSchemaStatus ??
-    (!hasDates || datesConfirmed === false
+    (!hasEffectiveDates || datesConfirmed === false
       ? "https://schema.org/EventPostponed"
       : "https://schema.org/EventScheduled");
 
@@ -379,7 +422,9 @@ export function EventSchema({
           startDate: parseDateLoose(startDate)?.toISOString() ?? undefined,
           endDate: parseDateLoose(endDate)?.toISOString() ?? undefined,
         }
-      : {}),
+      : dayDerivedDates
+        ? { startDate: dayDerivedDates.start, endDate: dayDerivedDates.end }
+        : {}),
     image: resolvedImage,
     url,
     eventStatus,

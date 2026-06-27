@@ -327,3 +327,66 @@ describe("EventSchema subEvent.image per-occurrence (F2 / E.2b, 2026-06-09)", ()
     }
   });
 });
+
+// startDate fallback (2026-06-26) — an event whose dates live only in
+// event_days (null top-level start/end) must still emit a top-level startDate,
+// or Google flags "Missing field startDate". The Fitzwilliam Strawberry
+// Festival was the named-bug example: a single 13:00–16:00 day, null start_date.
+describe("startDate fallback from event_days", () => {
+  it("derives top-level start/end from a single day when start/end are null", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        startDate={null}
+        endDate={null}
+        eventDays={[{ date: "2026-06-26", openTime: "13:00", closeTime: "16:00" }]}
+      />
+    );
+    const ld = extractJsonLd(container) as Record<string, unknown>;
+    // 1:00 PM EDT in June = -04:00 — matches subEvent + the prod Fitzwilliam page.
+    expect(ld.startDate).toBe("2026-06-26T13:00:00-04:00");
+    expect(ld.endDate).toBe("2026-06-26T16:00:00-04:00");
+    // A day-derived event is Scheduled, not Postponed.
+    expect(ld.eventStatus).toBe("https://schema.org/EventScheduled");
+  });
+
+  it("spans earliest open → latest close across multiple days", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        startDate={null}
+        endDate={null}
+        eventDays={[
+          { date: "2026-07-16", openTime: "10:00", closeTime: "18:00" },
+          { date: "2026-07-15", openTime: "09:00", closeTime: "17:00" },
+        ]}
+      />
+    );
+    const ld = extractJsonLd(container) as Record<string, unknown>;
+    expect(ld.startDate).toBe("2026-07-15T09:00:00-04:00"); // earliest open
+    expect(ld.endDate).toBe("2026-07-16T18:00:00-04:00"); // latest close
+  });
+
+  it("falls back to the bare date span when no day captured hours", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        startDate={null}
+        endDate={null}
+        eventDays={[
+          { date: "2026-08-01", openTime: null, closeTime: null },
+          { date: "2026-08-03", openTime: null, closeTime: null },
+        ]}
+      />
+    );
+    const ld = extractJsonLd(container) as Record<string, unknown>;
+    expect(ld.startDate).toBe("2026-08-01");
+    expect(ld.endDate).toBe("2026-08-03");
+  });
+
+  it("emits no top-level startDate when there are neither dates nor days (unchanged)", () => {
+    const { container } = render(<EventSchema {...baseProps} startDate={null} endDate={null} />);
+    const ld = extractJsonLd(container) as Record<string, unknown>;
+    expect(ld.startDate).toBeUndefined();
+  });
+});
