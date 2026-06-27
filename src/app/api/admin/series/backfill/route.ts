@@ -35,6 +35,7 @@ import { isNull, isNotNull, count, and, eq, inArray, notInArray } from "drizzle-
 import { logError } from "@/lib/logger";
 import {
   planSeriesBackfill,
+  stripNameEditionSuffix,
   type GroupableEvent,
   type SeriesGroup,
 } from "@/lib/series/group-events";
@@ -272,7 +273,11 @@ async function commitBackfill(
       db.insert(eventSeries).values({
         id: seriesId,
         canonicalSlug: g.canonicalSlug,
-        name: d.name,
+        // A series spans editions — strip any trailing year/date the defaults
+        // member carried in its name (e.g. "... — 2026-09-19") so the series
+        // title isn't bound to one occurrence's date. The slug is already
+        // stemmed via slugStem in planSeriesBackfill.
+        name: stripNameEditionSuffix(d.name),
         venueId: d.venueId,
         promoterId: d.promoterId,
         recurrenceRule: d.recurrenceRule,
