@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   slugStem,
+  stripNameEditionSuffix,
   groupEvents,
   findVendorNameCollisions,
   findCanonicalSlugCollisions,
@@ -35,6 +36,34 @@ describe("slugStem", () => {
   it("does not strip a non-year 4-digit suffix", () => {
     expect(slugStem("route-66-rally")).toBe("route-66-rally");
     expect(slugStem("club-1234")).toBe("club-1234"); // 12xx is not 19xx/20xx
+  });
+  it("strips a full ISO date or year-month suffix (single dated occurrence)", () => {
+    expect(slugStem("burlington-summer-farmers-market-2026-09-19")).toBe(
+      "burlington-summer-farmers-market"
+    );
+    expect(slugStem("weekly-market-2026-09")).toBe("weekly-market");
+  });
+});
+
+describe("stripNameEditionSuffix", () => {
+  it("strips a trailing year (with or without a dash separator)", () => {
+    expect(stripNameEditionSuffix("Fryeburg Fair 2026")).toBe("Fryeburg Fair");
+    expect(stripNameEditionSuffix("Fryeburg Fair - 2026")).toBe("Fryeburg Fair");
+  });
+  it("strips a trailing em-dash full date (the Burlington case)", () => {
+    expect(stripNameEditionSuffix("Burlington Summer Farmers Market — 2026-09-19")).toBe(
+      "Burlington Summer Farmers Market"
+    );
+  });
+  it("leaves names with no trailing edition token unchanged", () => {
+    expect(stripNameEditionSuffix("Newport Boat Show")).toBe("Newport Boat Show");
+    expect(stripNameEditionSuffix("Route 66 Rally")).toBe("Route 66 Rally"); // 66 not a year
+  });
+  it("does not strip a year that isn't at the end", () => {
+    expect(stripNameEditionSuffix("Summer 2026 Kickoff")).toBe("Summer 2026 Kickoff");
+  });
+  it("returns the original when stripping would empty the name", () => {
+    expect(stripNameEditionSuffix("2026")).toBe("2026");
   });
 });
 
