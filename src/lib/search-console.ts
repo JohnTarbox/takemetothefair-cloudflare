@@ -598,6 +598,83 @@ export async function getDailyClicks(
   return rows;
 }
 
+export type SearchMetricRow = {
+  date: string; // YYYY-MM-DD
+  query: string;
+  page: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+};
+
+/**
+ * A12 — date × query × page rows for a window, the persistence feed behind the
+ * `gsc_search_metrics` D1 table (NOT the live widgets — those keep their own
+ * cached aggregations). Always fetches fresh (no KV cache): the daily cron and
+ * the first-run backfill both want ground truth, and a stale cache hit would
+ * persist wrong history.
+ *
+ * GSC caps a single `searchAnalytics/query` response at 25 000 rows, so this
+ * paginates via `startRow` until a short page (or `maxPages`) is hit. `maxPages`
+ * is a Worker-CPU/quota backstop — at MMATF's volume one or two pages per day-
+ * window is typical; the cap only matters for a wide backfill range.
+ */
+export async function getSearchMetricsByDateQueryPage(
+  env: ScEnv,
+  opts: { startDate: string; endDate: string; rowLimit?: number; maxPages?: number }
+): Promise<SearchMetricRow[]> {
+  const siteUrl = resolveSiteUrl(env);
+  const rowLimit = Math.max(1, Math.min(opts.rowLimit ?? 25000, 25000));
+  const maxPages = Math.max(1, Math.min(opts.maxPages ?? 20, 200));
+  const token = await getAccessToken(env, false);
+  const url = `${SC_API_BASE}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`;
+
+  const out: SearchMetricRow[] = [];
+  for (let pageIdx = 0; pageIdx < maxPages; pageIdx++) {
+    const body = {
+      startDate: opts.startDate,
+      endDate: opts.endDate,
+      dimensions: ["date", "query", "page"],
+      rowLimit,
+      startRow: pageIdx * rowLimit,
+    };
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      await recordScFailure("gsc-api", env, res.status, text.slice(0, 500), res.url);
+      throw new ScApiError(res.status, text.slice(0, 500));
+    }
+    const payload = (await res.json()) as { rows?: GscApiRow[] };
+    const rows = payload.rows ?? [];
+    for (const r of rows) {
+      out.push({
+        date: r.keys?.[0] ?? "",
+        query: r.keys?.[1] ?? "",
+        page: r.keys?.[2] ?? "",
+        clicks: r.clicks ?? 0,
+        impressions: r.impressions ?? 0,
+        ctr: r.ctr ?? 0,
+        position: r.position ?? 0,
+      });
+    }
+    if (rows.length < rowLimit) break; // last page
+  }
+  return out;
+}
+
 export type QueryPageRow = {
   path: string;
   clicks: number;
