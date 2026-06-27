@@ -703,7 +703,7 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_bing_site_scan_issues",
-    "Bing Site Scan results: list of detected SEO/accessibility issues with severity (Error/Warning/Notice), affected URL count, and per-issue URL lists. The single highest-value Bing diagnostic. Cached 60 minutes. Admin only.",
+    "Bing CRAWL issues (GetCrawlIssues): URLs where Bingbot hit 404 / blocked-by-robots / 5xx / DNS errors, grouped by type with severity + affected-URL lists. An empty list means no crawl errors were found (healthy), NOT a failure. NOTE: the BWT UI 'Site Scan' on-page SEO analysis (short metas / missing alt / H1 counts) is a SEPARATE product surface that Microsoft does NOT expose via the Webmaster API — it cannot be fetched here; read it from bing.com/webmasters. Cached 60 minutes. Admin only.",
     {
       refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
     },
@@ -804,6 +804,96 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
             {
               type: "text",
               text: error instanceof Error ? error.message : "Unknown Bing quota error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_traffic_stats",
+    "Bing daily impressions/clicks time-series (GetRankAndTrafficStats) — the Bing counterpart to GSC daily clicks. One row per day. Cached 15 minutes. Admin only.",
+    {
+      refresh: z.boolean().optional().describe("Bypass the 15-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/traffic-stats${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing traffic stats error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_backlinks",
+    "Bing inbound-link counts per site page (GetLinkCounts) — surfaces backlinks / referring pages. `page` is Bing's pagination index (0-based). Cached 60 minutes. Admin only.",
+    {
+      page: z.number().int().min(0).optional().describe("Pagination index (0-based)."),
+      refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.page) qs.set("page", String(params.page));
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/backlinks${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing backlinks error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "get_bing_crawled_urls",
+    "Bing bulk crawled-URL list for a directory (GetChildrenUrlInfo): per-URL indexed status, last-crawled + discovery dates, child counts. `dir` defaults to the site root; `page` is Bing's pagination index. This is the bulk list (GetUrlInfo is single-URL) used to find crawl-budget leaks. Cached 60 minutes. Admin only.",
+    {
+      dir: z.string().url().optional().describe("Directory URL to enumerate (default: site root)."),
+      page: z.number().int().min(0).optional().describe("Pagination index (0-based)."),
+      refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.dir) qs.set("dir", params.dir);
+        if (params.page) qs.set("page", String(params.page));
+        if (params.refresh) qs.set("refresh", "1");
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/bing/crawled-urls${qs.toString() ? `?${qs}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing crawled-urls error",
             },
           ],
           isError: true,
