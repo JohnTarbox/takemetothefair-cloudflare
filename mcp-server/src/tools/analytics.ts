@@ -902,6 +902,52 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     }
   );
 
+  server.tool(
+    "get_gsc_trend",
+    "GSC clicks/impressions/CTR/avg-position OVER TIME from the persisted trend store (gsc_search_metrics in D1) — NOT a live GSC call. Use this for history the live tools can't answer (GSC retains only ~16 months): WoW movement, attributing a lift to a ship, or deriving a milestone like '1.5K clicks/28d'. Optionally scope to an exact query and/or a page (full URL or a path like '/events/x'), and a date window. Returns a daily series + window totals (position is impression-weighted). Admin only.",
+    {
+      query: z.string().optional().describe("Exact GSC query to scope to."),
+      page: z
+        .string()
+        .optional()
+        .describe("Page to scope to — full URL (exact) or a path like '/events/x' (suffix match)."),
+      startDate: z
+        .string()
+        .regex(ISO_DATE_REGEX)
+        .optional()
+        .describe("Inclusive window start, ISO YYYY-MM-DD."),
+      endDate: z
+        .string()
+        .regex(ISO_DATE_REGEX)
+        .optional()
+        .describe("Inclusive window end, ISO YYYY-MM-DD."),
+    },
+    async (params) => {
+      try {
+        const qs = new URLSearchParams();
+        if (params.query) qs.set("query", params.query);
+        if (params.page) qs.set("page", params.page);
+        if (params.startDate) qs.set("startDate", params.startDate);
+        if (params.endDate) qs.set("endDate", params.endDate);
+        const q = qs.toString();
+        const data = await fetchAnalyticsJson(
+          `/api/admin/analytics/gsc-metrics/trend${q ? `?${q}` : ""}`
+        );
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown GSC trend error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // ── Site Health ───────────────────────────────────────────────────
 
   server.tool(
