@@ -87,11 +87,20 @@ export async function isAuthorized(request: Request): Promise<boolean> {
 /**
  * Check if request has admin auth, returning the session if available.
  * Useful when you need the session user info (e.g., authorId).
+ *
+ * `allowReadonlyBearer` (default true) controls whether the Claude read-only
+ * Bearer is accepted on safe methods. Pass `false` for endpoints that have
+ * read-shaped methods but real side effects (e.g. a GET that triggers an
+ * outbound fetch), so only an admin session or the internal key authorize.
  */
-export async function getAuthorizedSession(request: Request): Promise<{
+export async function getAuthorizedSession(
+  request: Request,
+  opts: { allowReadonlyBearer?: boolean } = {}
+): Promise<{
   authorized: boolean;
   userId?: string;
 }> {
+  const { allowReadonlyBearer = true } = opts;
   const session = await auth();
   if (session?.user?.role === "ADMIN") {
     return { authorized: true, userId: session.user.id };
@@ -99,7 +108,7 @@ export async function getAuthorizedSession(request: Request): Promise<{
 
   if (await internalKeyMatches(request)) return { authorized: true };
 
-  if (isSafeMethod(request.method) && (await bearerTokenMatches(request))) {
+  if (allowReadonlyBearer && isSafeMethod(request.method) && (await bearerTokenMatches(request))) {
     return { authorized: true };
   }
 

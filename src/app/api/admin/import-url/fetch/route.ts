@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
-import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { withAuthorized } from "@/lib/api/with-auth";
 import { extractTextFromHtml, extractMetadata } from "@/lib/url-import/html-parser";
 import {
   fetchStandard,
@@ -9,7 +9,7 @@ import {
   isBlockedSsrfHost,
   FETCH_TIMEOUT,
 } from "@takemetothefair/site-fetch";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 
 // The fetch-with-Browser-Rendering-escalation primitives (fetchStandard,
@@ -18,27 +18,18 @@ import { logError } from "@/lib/logger";
 // enrichment dispatcher can reuse the same A5 path. Behavior here is
 // unchanged — this route still drives the orchestration + logging inline.
 
-export async function GET(request: NextRequest) {
-  const db = getCloudflareDb();
-  // Accept admin session OR X-Internal-Key (MCP Worker calls this from the
-  // inbound-email handler to fetch URLs sent to submit@meetmeatthefair.com).
-  const internalKey = request.headers.get("x-internal-key");
+// Dual auth (admin session OR X-Internal-Key) via withAuthorized — the MCP
+// Worker calls this from the inbound-email handler to fetch URLs sent to
+// submit@meetmeatthefair.com. allowReadonlyBearer:false because this GET has a
+// real side effect (it triggers an outbound fetch + Browser Rendering), so the
+// read-only Claude token must NOT authorize it — only an admin session or the
+// internal key. Replaces the prior inline timing-unsafe `===` key check.
+export const GET = withAuthorized({ allowReadonlyBearer: false }, async ({ request, db }) => {
+  // Browser-Rendering credentials for the escalation path below.
   const cfEnv = getCloudflareEnv() as unknown as {
-    INTERNAL_API_KEY?: string;
     CLOUDFLARE_ACCOUNT_ID?: string;
     CLOUDFLARE_BROWSER_RENDERING_TOKEN?: string;
   };
-  const isInternal = !!(
-    internalKey &&
-    cfEnv.INTERNAL_API_KEY &&
-    internalKey === cfEnv.INTERNAL_API_KEY
-  );
-  if (!isInternal) {
-    const session = await auth();
-    if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
 
   const url = request.nextUrl.searchParams.get("url");
 
@@ -159,4 +150,4 @@ export async function GET(request: NextRequest) {
       { status: 200 }
     );
   }
-}
+});
