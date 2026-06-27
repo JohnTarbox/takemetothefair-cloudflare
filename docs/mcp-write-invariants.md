@@ -6,28 +6,32 @@
 > v2 write path may ship that can bypass one of these.
 >
 > **Executable counterpart:** `mcp-server/__tests__/mcp-write-invariants.test.ts`.
-> Each invariant below has a `describe` block there. If a block goes red, the
+> Invariants 1–5 each have a `describe` block there. If a block goes red, the
 > "How it's enforced" cell for that invariant is no longer true — treat it as a
-> release blocker, not a flaky test.
+> release blocker, not a flaky test. **Invariant 6 (K40) is a forward/design
+> invariant** — the EH3 P1 backfill embodies it, but it has no executable block
+> yet (the commit path is flag-gated off in prod); see its section for the
+> obligation the executable test must pin once the gate opens.
 
 The MCP server is a second write authority over the same D1 database the main
 app owns (see `CLAUDE.md` → "Runtime & Worker Topology"). Because two artifacts
 mutate the same rows, the guarantees a single app would get for free (you read
 back what you just wrote; a create is idempotent under retry) have to be stated
-and tested explicitly. These five are the ones we've been bitten by or that v2
+and tested explicitly. These six are the ones we've been bitten by or that v2
 will stress.
 
 ---
 
 ## Summary
 
-| #   | Invariant                                                                                                                                                                                   | How it's enforced                                                                                                                                                                      | Enforcement site                                                                                                                                                                                        | Test        |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| 1   | **Wrong-echo under concurrency** — a `create_*`/`update_*` tool returns the row it actually wrote, never a "global most-recent" row                                                         | Pre-fetch the target by its id (updates) or capture the inserted id at insert time (creates), then echo _that_ object — never a post-write `SELECT … ORDER BY created_at DESC LIMIT 1` | `admin.ts` `update_event_status` (pre-fetch by `event_id`, echo pre-fetched row); `admin.ts` `update_event` (new values built from params); `admin-create-or-link-vendor.ts` (echo captured `vendorId`) | invariant 1 |
-| 2   | **Idempotent `event_days` IDs** — repeated `create_event_day` for the same `(event_id, date)` does not fork a duplicate occurrence                                                          | Natural-key `(event_id, date)` existence check → idempotent no-op; otherwise a **deterministic** row id keyed on `(event_id, date)` + `ON CONFLICT DO NOTHING` as the race backstop    | `admin.ts` `create_event_day`                                                                                                                                                                           | invariant 2 |
-| 3   | **Citations on tracked-field event mutations** — when `update_event` changes a tracked field _and_ provenance is supplied, a citation row is written and the prior active one is superseded | Tracked-field allow-list (`CITATION_DENORM_FIELD_MAP`) gates citation inserts; auto-supersede of the prior `active` row for the same `(event, field, year)`                            | `admin-citations.ts` (`DENORM_FIELD_MAP`); `admin.ts` `update_event` citation block                                                                                                                     | invariant 3 |
-| 4   | **Date anchor: noon-UTC, never midnight** — every write that anchors a timestamp-typed event date lands at `12:00Z`, not `00:00Z`                                                           | `normalizeEventDate()` shifts bare `YYYY-MM-DD` / explicit-midnight inputs to noon UTC                                                                                                 | `packages/utils/src/event-dates.ts`; called by `admin.ts` `update_event` and `vendor.ts` `suggest_event`                                                                                                | invariant 4 |
-| 5   | **Merge preview before mutation** — `merge_events` (and any future merge tool) can produce a preview without committing                                                                     | `preview: true` routes to `/api/admin/duplicates/preview` (relationship counts + warnings) and returns before the committing `/api/admin/duplicates/merge` call                        | `admin-event-lifecycle.ts` `merge_events`                                                                                                                                                               | invariant 5 |
+| #   | Invariant                                                                                                                                                                                                                                                                    | How it's enforced                                                                                                                                                                                                                                                                 | Enforcement site                                                                                                                                                                                        | Test            |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| 1   | **Wrong-echo under concurrency** — a `create_*`/`update_*` tool returns the row it actually wrote, never a "global most-recent" row                                                                                                                                          | Pre-fetch the target by its id (updates) or capture the inserted id at insert time (creates), then echo _that_ object — never a post-write `SELECT … ORDER BY created_at DESC LIMIT 1`                                                                                            | `admin.ts` `update_event_status` (pre-fetch by `event_id`, echo pre-fetched row); `admin.ts` `update_event` (new values built from params); `admin-create-or-link-vendor.ts` (echo captured `vendorId`) | invariant 1     |
+| 2   | **Idempotent `event_days` IDs** — repeated `create_event_day` for the same `(event_id, date)` does not fork a duplicate occurrence                                                                                                                                           | Natural-key `(event_id, date)` existence check → idempotent no-op; otherwise a **deterministic** row id keyed on `(event_id, date)` + `ON CONFLICT DO NOTHING` as the race backstop                                                                                               | `admin.ts` `create_event_day`                                                                                                                                                                           | invariant 2     |
+| 3   | **Citations on tracked-field event mutations** — when `update_event` changes a tracked field _and_ provenance is supplied, a citation row is written and the prior active one is superseded                                                                                  | Tracked-field allow-list (`CITATION_DENORM_FIELD_MAP`) gates citation inserts; auto-supersede of the prior `active` row for the same `(event, field, year)`                                                                                                                       | `admin-citations.ts` (`DENORM_FIELD_MAP`); `admin.ts` `update_event` citation block                                                                                                                     | invariant 3     |
+| 4   | **Date anchor: noon-UTC, never midnight** — every write that anchors a timestamp-typed event date lands at `12:00Z`, not `00:00Z`                                                                                                                                            | `normalizeEventDate()` shifts bare `YYYY-MM-DD` / explicit-midnight inputs to noon UTC                                                                                                                                                                                            | `packages/utils/src/event-dates.ts`; called by `admin.ts` `update_event` and `vendor.ts` `suggest_event`                                                                                                | invariant 4     |
+| 5   | **Merge preview before mutation** — `merge_events` (and any future merge tool) can produce a preview without committing                                                                                                                                                      | `preview: true` routes to `/api/admin/duplicates/preview` (relationship counts + warnings) and returns before the committing `/api/admin/duplicates/merge` call                                                                                                                   | `admin-event-lifecycle.ts` `merge_events`                                                                                                                                                               | invariant 5     |
+| 6   | **Single-writer / idempotent / read-back-verified bulk mutations** — a bulk mutation over rows with UNIQUE identity columns runs as one coordinated writer, is re-runnable as a skip-if-exists no-op, and is verified by reading rows back rather than trusting write-counts | Commit is double-gated (an explicit `dry_run:false` **and** an env flag); the read set is filtered to still-unlinked rows so a re-run only touches what's left; groups whose series already exists are skipped; a UNIQUE-collision pre-check runs in the dry-run before any write | `app/api/admin/series/backfill/route.ts` `commitBackfill`; `lib/series/commit-selection.ts` `selectCommittableGroups`; `lib/series/group-events.ts` (`canonicalCollisions` pre-check)                   | _pending_ (K40) |
 
 ---
 
@@ -164,6 +168,66 @@ hits `…/merge`; a self-merge is rejected with no fetch at all.
 **v2 obligation.** Any future merge/bulk-mutation tool must offer a preview that
 makes zero mutations, and the preview path must be provably distinct from the
 commit path.
+
+## 6 — Single-writer / idempotent / read-back-verified bulk mutations
+
+**Guarantee.** A bulk mutation over rows that carry a UNIQUE identity column
+(the EH3 `event_series` backfill: `event_series.canonical_slug` is UNIQUE) must
+be safe to launch and safe to re-launch. Concretely it must be: **single-writer**
+(one coordinated pass, not N racing partial writers), **idempotent** (a second
+run is a skip-if-exists no-op, not a duplicate-forking second insert), and
+**read-back-verified** (success is judged by reading the rows back, not by
+trusting the count of statements the driver claims it ran).
+
+**Why this is its own invariant.** Invariants 1–5 each guard a single-row tool
+call. A bulk backfill is a different hazard class: it runs against thousands of
+rows in chunked `db.batch()` calls (D1 caps a batch), it is the kind of thing an
+operator re-runs after a partial failure, and a UNIQUE column means a careless
+re-insert doesn't silently duplicate — it **throws** mid-batch and leaves the
+mutation half-applied. The lesson (K40, from the EH3 series backfill) is that
+the three properties above are what make a half-applied bulk write recoverable.
+
+**How it's enforced** (`app/api/admin/series/backfill/route.ts`):
+
+- **Single-writer.** The commit path is double-gated: `dry_run` defaults `true`
+  (you must send `dry_run:false`), and the env flag `EH3_P1_BACKFILL_ENABLED`
+  must be `"true"` or the commit returns `423 Locked` and writes nothing. The
+  backfill is one server-side pass; there is no concurrent partial-writer mode.
+- **Idempotent.** The commit read set is filtered to `events.series_id IS NULL`,
+  so a re-run only ever considers rows not yet linked. `selectCommittableGroups`
+  (`lib/series/commit-selection.ts`) additionally **skips** any group whose
+  `canonical_slug` already exists in `event_series`. A re-run after a partial
+  apply therefore resumes exactly where it left off instead of re-inserting.
+- **Collision pre-check (read before write).** The dry-run surfaces
+  `canonical_collisions` — slug clashes a commit would trip the UNIQUE constraint
+  on — so they are resolved **before** the committing pass, not discovered
+  mid-batch.
+- **Reversible by manifest.** The single `admin_actions(action='event.series.backfill')`
+  row's payload IS the undo manifest (created series ids + linked member ids +
+  tombstone links); the commit mutates no slugs/dates/vendors, so undo is
+  "NULL the members' `series_id` and DELETE the created series rows."
+
+**The gap this invariant names.** The backfill is single-writer and idempotent
+today, but it currently judges success by the **manifest it built**, not by a
+**read-back** of the committed rows. The read-back-verify half of K40 is the
+forward obligation: before reporting success, re-select the affected identity
+columns and assert the rows landed (count + key match), so a batch that the
+driver reported as applied but that a UNIQUE throw rolled back cannot be reported
+as a clean commit.
+
+**Test (pending).** When `EH3_P1_BACKFILL_ENABLED` ships on, the executable
+block must pin: (a) a commit followed by an immediate second commit links zero
+additional members (idempotent re-run); (b) a pre-seeded conflicting
+`canonical_slug` is reported as a `canonical_collision` in the dry-run and is
+**skipped** (not thrown) by the commit; (c) the reported `committed_series` /
+`linked_members` counts match a fresh read-back `SELECT`, not just the in-memory
+manifest.
+
+**v2 obligation.** Any bulk-mutation surface (calendar v2 bulk edits, the EH3
+`create_occurrence` rollover absorption, recurrence backfills) must run
+single-writer, re-run as a skip-if-exists no-op, and verify by read-back. A bulk
+path that trusts driver write-counts over a read-back does not satisfy this
+invariant.
 
 ---
 
