@@ -21,6 +21,7 @@ import { registerAdminProblemReportTools } from "./tools/admin-problem-reports.j
 import { correlateProblemReportCore } from "./problem-reports/correlate.js";
 import { registerMergeEntitiesTools } from "./tools/admin-merge-entities.js";
 import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js";
+import { registerVendorRosterTools } from "./tools/admin-vendor-roster.js";
 import { registerSyndicationTools } from "./tools/admin-syndication.js";
 import { registerEnrichVendorTool } from "./tools/admin-enrich-vendor.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
@@ -285,6 +286,8 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerMergeEntitiesTools(this.server, db, auth);
         // EH1 Phase 1 (2026-06-05) — set_vendor_relationship + set_vendor_display_policy + set_vendor_alias.
         registerVendorHierarchyTools(this.server, db, auth);
+        // OPE-13 (2026-06-28) — set_vendor_roster_status (analyst sweep write path).
+        registerVendorRosterTools(this.server, db, auth);
         // SYN1 (2026-06-12) — syndication subscriber registry tools.
         registerSyndicationTools(this.server, db, auth);
         // I1 (2026-06-13) — synchronous one-off vendor enrichment trigger.
@@ -548,6 +551,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerAdminProblemReportTools(server, db);
       registerMergeEntitiesTools(server, db, auth);
       registerVendorHierarchyTools(server, db, auth);
+      registerVendorRosterTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
       registerSendTestEmailTool(server, db, auth, env);

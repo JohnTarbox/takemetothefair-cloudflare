@@ -275,6 +275,46 @@ export const EVENT_CATEGORIES = [
 ] as const;
 export type EventCategory = (typeof EVENT_CATEGORIES)[number];
 
+// ── OPE-13 vendor-roster rails ────────────────────────────────────
+//
+// Per-event roster-research lifecycle. NULL (absent here) = never
+// evaluated. NEEDS_RESEARCH is the enqueue state (set by the just-
+// occurred sweep); the other three are terminal states the research
+// worker writes via set_vendor_roster_status. NO_PUBLIC_LIST is the
+// "sticky dead-end" that makes the backfill converge; PARTIAL pairs
+// with events.vendor_roster_offset to resume an incomplete run.
+export const VENDOR_ROSTER_STATUS_VALUES = [
+  "NEEDS_RESEARCH",
+  "HAS_ROSTER",
+  "NO_PUBLIC_LIST",
+  "PARTIAL",
+] as const;
+export type VendorRosterStatus = (typeof VENDOR_ROSTER_STATUS_VALUES)[number];
+
+// "Producer-class" events — the big PRODUCED shows that publish a
+// web exhibitor directory worth backfilling (home/garden, boat/RV,
+// sportsman, trade, fiber, craft-festival, fairs). Deliberately
+// EXCLUDES recurring markets (Farmers/Flea/Holiday/Makers Market)
+// and one-off community gatherings, which almost never publish a
+// findable roster. This is the denominator for the roster coverage
+// metric (OPE-13 Part 3) — drawn from EVENT_CATEGORIES values so the
+// filter matches the JSON `events.categories` array by construction.
+export const PRODUCER_CLASS_CATEGORIES = [
+  "Agricultural Fair",
+  "Antique Show",
+  "Boat Show",
+  "Car Show",
+  "Craft Fair",
+  "Craft Show",
+  "Fair",
+  "Fiber Arts Festival",
+  "Garden Show",
+  "Gun Show",
+  "Home Show",
+  "Trade Show",
+] as const satisfies readonly EventCategory[];
+export type ProducerClassCategory = (typeof PRODUCER_CLASS_CATEGORIES)[number];
+
 // ── TAX1 Phase 1 — audience / access enums ────────────────────────
 //
 // Orthogonal to EVENT_CATEGORIES (what an event IS) and to vendor-

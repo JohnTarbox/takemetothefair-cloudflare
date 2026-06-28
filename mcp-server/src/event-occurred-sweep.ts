@@ -32,6 +32,8 @@ import type { Db } from "./db.js";
 /** Per-run bounds — keep the sweep within cron CPU/subrequest limits. */
 const TRANSITION_LIMIT = 200;
 const BACKFILL_LIMIT = 200;
+/** OPE-13 — per-run cap on the vendor-roster NEEDS_RESEARCH enqueue (Pass 3). */
+const ROSTER_ENQUEUE_LIMIT = 200;
 
 const SOURCE = "mcp/event-occurred-sweep";
 
@@ -39,11 +41,14 @@ export interface OccurredSweepResult {
   transitioned: number;
   rolledFromTransition: number;
   rolledFromBackfill: number;
+  /** OPE-13 — events seeded into the vendor-roster NEEDS_RESEARCH queue. */
+  rosterEnqueued: number;
   errors: number;
   /** True when a pass returned a full page (== LIMIT) — more rows remain and
    *  will be handled on the next daily run. Surfaces the otherwise-silent cap. */
   transitionLimitHit: boolean;
   backfillLimitHit: boolean;
+  rosterEnqueueLimitHit: boolean;
 }
 
 export async function runOccurredTransitionSweep(
@@ -55,9 +60,11 @@ export async function runOccurredTransitionSweep(
     transitioned: 0,
     rolledFromTransition: 0,
     rolledFromBackfill: 0,
+    rosterEnqueued: 0,
     errors: 0,
     transitionLimitHit: false,
     backfillLimitHit: false,
+    rosterEnqueueLimitHit: false,
   };
 
   // --- Pass 1: transition past-end APPROVED events to OCCURRED, then roll ----
@@ -198,14 +205,73 @@ export async function runOccurredTransitionSweep(
     }
   }
 
+  // --- Pass 3 (OPE-13): seed the vendor-roster NEEDS_RESEARCH queue ----------
+  // The "just-occurred trigger" from the playbook. Enqueues every OCCURRED event
+  // whose vendor_roster_status is still NULL (never evaluated) — which is BOTH
+  // the rows Pass 1 just transitioned this run AND the historical OCCURRED corpus
+  // from before the rails existed. Because Pass 1 leaves roster status untouched,
+  // a single bulk update here covers the new and backfill cases at once.
+  //
+  // Guard semantics: IS NULL only, so a researched terminal state
+  // (HAS_ROSTER / NO_PUBLIC_LIST / PARTIAL set by the research worker) is NEVER
+  // clobbered — the dead-end stays sticky and the system converges. Capped per
+  // run like the other passes; the remainder seeds over subsequent daily runs.
+  // Soft-deleted/merged tombstones (merged_into) are excluded. The worker's own
+  // pre-check (skip if list_event_vendors already populated) dedups events that
+  // happen to already carry links, so enqueuing on NULL is safe.
+  try {
+    const toEnqueue = await db
+      .select({ id: events.id })
+      .from(events)
+      .where(
+        and(
+          eq(events.lifecycleStatus, "OCCURRED"),
+          isNull(events.vendorRosterStatus),
+          isNull(events.mergedInto)
+        )
+      )
+      .limit(ROSTER_ENQUEUE_LIMIT);
+
+    if (toEnqueue.length === ROSTER_ENQUEUE_LIMIT) {
+      result.rosterEnqueueLimitHit = true;
+      await logError(db, {
+        level: "warn",
+        message: `[occurred-sweep] pass-3 hit roster-enqueue cap (${ROSTER_ENQUEUE_LIMIT}); remainder deferred to next run`,
+        source: SOURCE,
+      }).catch(() => {});
+    }
+
+    if (toEnqueue.length > 0) {
+      await db
+        .update(events)
+        .set({ vendorRosterStatus: "NEEDS_RESEARCH", updatedAt: now })
+        .where(
+          inArray(
+            events.id,
+            toEnqueue.map((e) => e.id)
+          )
+        );
+      result.rosterEnqueued = toEnqueue.length;
+    }
+  } catch (error) {
+    result.errors++;
+    await logError(db, {
+      message: "[occurred-sweep] pass-3 roster enqueue failed",
+      error,
+      source: SOURCE,
+    });
+  }
+
   // Heartbeat: one info-level row per run so a healthy sweep is distinguishable
   // from a silently-broken one (a sweep that never runs also writes nothing).
   // Mirrors the inbound-email stale-sweep heartbeat.
   console.log(
     `[occurred-sweep] transitioned=${result.transitioned} ` +
       `rolledFromTransition=${result.rolledFromTransition} ` +
-      `rolledFromBackfill=${result.rolledFromBackfill} errors=${result.errors} ` +
-      `transitionLimitHit=${result.transitionLimitHit} backfillLimitHit=${result.backfillLimitHit}`
+      `rolledFromBackfill=${result.rolledFromBackfill} rosterEnqueued=${result.rosterEnqueued} ` +
+      `errors=${result.errors} ` +
+      `transitionLimitHit=${result.transitionLimitHit} backfillLimitHit=${result.backfillLimitHit} ` +
+      `rosterEnqueueLimitHit=${result.rosterEnqueueLimitHit}`
   );
   await logError(db, {
     level: "info",
@@ -215,9 +281,11 @@ export async function runOccurredTransitionSweep(
       transitioned: result.transitioned,
       rolledFromTransition: result.rolledFromTransition,
       rolledFromBackfill: result.rolledFromBackfill,
+      rosterEnqueued: result.rosterEnqueued,
       errors: result.errors,
       transitionLimitHit: result.transitionLimitHit,
       backfillLimitHit: result.backfillLimitHit,
+      rosterEnqueueLimitHit: result.rosterEnqueueLimitHit,
     },
   }).catch(() => {});
 

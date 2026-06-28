@@ -430,6 +430,26 @@ export const events = sqliteTable(
     // dedup on ("highest version wins"); a venue edit must bump every affected
     // event, which is why it's a real column, not derivable from the outbox.
     syndicationVersion: integer("syndication_version").notNull().default(0),
+    // OPE-13 (vendor-roster rails) — persistent per-event roster-research state.
+    // The keystone of the vendor-roster backfill system: today the only signal
+    // is the list_event_vendors count, which can't tell "no public list exists"
+    // from "never researched", so every sweep re-researches the same dead-ends.
+    // NULL = never evaluated (the implicit pre-rails state for every existing
+    // row at deploy). The just-occurred sweep (mcp-server/src/event-occurred-
+    // sweep.ts) sets NEEDS_RESEARCH; the analyst research worker sets the
+    // terminal states via set_vendor_roster_status. NO_PUBLIC_LIST is what makes
+    // the process CONVERGE — a researched dead-end stays sticky instead of being
+    // re-tried. PARTIAL + vendorRosterOffset lets a capped/incomplete run resume
+    // exactly where it left off (e.g. the Foxboro 174-roster finished over two
+    // passes).
+    vendorRosterStatus: text("vendor_roster_status", {
+      enum: ["NEEDS_RESEARCH", "HAS_ROSTER", "NO_PUBLIC_LIST", "PARTIAL"],
+    }),
+    vendorRosterCheckedAt: integer("vendor_roster_checked_at", { mode: "timestamp" }),
+    vendorRosterSourceUrl: text("vendor_roster_source_url"),
+    // Resume point for PARTIAL rosters — the source-list offset the last run
+    // reached. Meaningful only when vendorRosterStatus = 'PARTIAL'.
+    vendorRosterOffset: integer("vendor_roster_offset"),
   },
   (table) => [
     index("idx_events_status_startdate").on(table.status, table.startDate),
@@ -462,6 +482,12 @@ export const events = sqliteTable(
     index("idx_events_flagged_for_review")
       .on(table.flaggedForReview)
       .where(sql`${table.flaggedForReview} = 1`),
+    // OPE-13 — partial index for the research-queue scan (analyst sweep drains
+    // NEEDS_RESEARCH) and the coverage metric. Most rows are NULL (never
+    // evaluated), so the partial keeps the index small and the queue read cheap.
+    index("idx_events_vendor_roster_status")
+      .on(table.vendorRosterStatus)
+      .where(sql`${table.vendorRosterStatus} IS NOT NULL`),
   ]
 );
 

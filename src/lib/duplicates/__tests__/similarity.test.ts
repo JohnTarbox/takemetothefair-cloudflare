@@ -11,6 +11,7 @@ import {
   getVenueComparisonString,
   getEventComparisonString,
   getVendorComparisonString,
+  normalizeVendorName,
   getPromoterComparisonString,
 } from "../similarity";
 
@@ -335,24 +336,66 @@ describe("getEventComparisonString", () => {
 });
 
 describe("getVendorComparisonString", () => {
-  it("returns business name when no type", () => {
+  // DQ6 (OPE-13): the business name is normalized (lower-cased, legal-form
+  // words stripped, &/dash/entity folded) BEFORE the type is appended, so
+  // punctuation/abbreviation variants compare equal at the ≥0.92 test.
+  it("normalizes the business name when no type ('Co' is a legal-form word)", () => {
     const vendor = { businessName: "Food Co" };
-    expect(getVendorComparisonString(vendor)).toBe("Food Co");
+    expect(getVendorComparisonString(vendor)).toBe("food");
   });
 
-  it("includes vendor type when provided", () => {
+  it("appends vendor type unchanged after the normalized name", () => {
     const vendor = { businessName: "Food Co", vendorType: "FOOD" };
-    expect(getVendorComparisonString(vendor)).toBe("Food Co FOOD");
+    expect(getVendorComparisonString(vendor)).toBe("food FOOD");
   });
 
   it("handles null vendor type", () => {
     const vendor = { businessName: "Food Co", vendorType: null };
-    expect(getVendorComparisonString(vendor)).toBe("Food Co");
+    expect(getVendorComparisonString(vendor)).toBe("food");
   });
 
   it("handles null business name", () => {
     const vendor = { businessName: null };
     expect(getVendorComparisonString(vendor)).toBe("unknown");
+  });
+});
+
+describe("normalizeVendorName (DQ6 / OPE-13)", () => {
+  it("folds '&' and the word 'and' to the same key", () => {
+    expect(normalizeVendorName("Earth Expo & Convention")).toBe(
+      normalizeVendorName("Earth Expo and Convention")
+    );
+  });
+
+  it("decodes the &amp; entity before folding", () => {
+    expect(normalizeVendorName("Earth Expo &amp; Co")).toBe(
+      normalizeVendorName("Earth Expo and Company")
+    );
+  });
+
+  it("normalizes dashes to spaces", () => {
+    expect(normalizeVendorName("Renewal-by-Andersen")).toBe(
+      normalizeVendorName("Renewal by Andersen")
+    );
+  });
+
+  it("strips trailing legal-form words (Co/Inc/LLC collapse to one identity)", () => {
+    expect(normalizeVendorName("Acme Co")).toBe("acme");
+    expect(normalizeVendorName("Acme Inc")).toBe("acme");
+    expect(normalizeVendorName("Acme LLC")).toBe("acme");
+  });
+
+  it("expands safe abbreviations", () => {
+    expect(normalizeVendorName("Smith Mfg")).toBe("smith manufacturing");
+  });
+
+  it("keeps a name that is ONLY a form word from vanishing", () => {
+    expect(normalizeVendorName("LLC")).toBe("llc");
+  });
+
+  it("returns empty string for null/empty input", () => {
+    expect(normalizeVendorName(null)).toBe("");
+    expect(normalizeVendorName("")).toBe("");
   });
 });
 
