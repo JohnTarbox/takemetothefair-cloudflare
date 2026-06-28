@@ -1184,4 +1184,34 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       };
     }
   );
+
+  // ── get_roster_coverage (OPE-13 Part 3) ────────────────────────
+  server.tool(
+    "get_roster_coverage",
+    [
+      "Vendor-roster coverage metric (OPE-13). For PAST producer-class events:",
+      "share with a roster (coveragePct), the NEEDS_RESEARCH queue size, the",
+      "NO_PUBLIC_LIST un-backfillable tail, PARTIAL count, and an 8-week",
+      "links-added trend. Use this to see how the vendor-roster backfill system",
+      "is converging over time. Read-only, admin only.",
+    ].join(" "),
+    {},
+    async () => {
+      try {
+        const data = await fetchAnalyticsJson("/api/admin/analytics/roster-coverage");
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error ? error.message : "Unknown error fetching roster coverage",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }

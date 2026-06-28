@@ -243,14 +243,90 @@ export function getEventComparisonString(event: {
   return parts.join(" ") || "unknown";
 }
 
+/**
+ * DQ6 (OPE-13) — corporate-form / abbreviation tokens stripped or expanded so
+ * punctuation and legal-form variants of one business collapse to one key.
+ * Whole-word matched against the punctuation-stripped, lower-cased token stream.
+ */
+const VENDOR_FORM_WORDS = new Set([
+  "llc",
+  "inc",
+  "incorporated",
+  "corp",
+  "corporation",
+  "co",
+  "company",
+  "ltd",
+  "lp",
+  "llp",
+]);
+const VENDOR_ABBREVIATION_MAP: Record<string, string> = {
+  assoc: "association",
+  assn: "association",
+  mfg: "manufacturing",
+  bros: "brothers",
+  intl: "international",
+};
+
+/**
+ * DQ6 (OPE-13) — pre-normalize a vendor business NAME before the generic
+ * normalizeString() pass, so the deterministic variants that today mint
+ * duplicates collapse to the same comparison key.
+ *
+ * normalizeString() alone DELETES "&" and dashes outright, so these diverge:
+ *   "Earth Expo & Convention"   → "earth expo  convention"
+ *   "Earth Expo and Convention" → "earth expo and convention"
+ *   "Renewal-by-Andersen"       → "renewalbyandersen"
+ *   "Renewal by Andersen"       → "renewal by andersen"
+ * and an undecoded "&amp;" leaves a phantom "amp" token.
+ *
+ * Folds applied (each is symmetric, so both candidate + target reduce alike):
+ *   1. &amp;/&#38;/&#x26; → &        (entity belt-and-suspenders; the schema
+ *                                     boundary already decodes, but legacy
+ *                                     rows may predate that)
+ *   2. & → " and "                   (unify ampersand with the spelled word)
+ *   3. any unicode dash → " "        (dashed and spaced forms tokenize alike)
+ *   4. drop trailing legal-form words (LLC/Inc/Corp/Co/Company/Ltd/…) — pure
+ *      legal-form markers, so "Acme Co" and "Acme Inc" match as one exhibitor
+ *   5. expand a small, unambiguous abbreviation set
+ *
+ * DELIBERATELY NOT done here: stripping descriptive/territory suffixes to fold
+ * "LeafFilter Gutter Protection" with "LeafFilter North of Massachusetts". Those
+ * are the SAME BRAND but different affiliate entities; collapsing them by string
+ * rules would over-merge unrelated vendors that merely share a first token. That
+ * grouping is judgment and belongs in the vendor-hierarchy / alias layer
+ * (set_vendor_alias / brand-parent, EH1), not the deterministic dedup rails.
+ */
+export function normalizeVendorName(name: string | null | undefined): string {
+  if (!name) return "";
+  let s = name.toLowerCase();
+  s = s.replace(/&amp;|&#0*38;|&#x0*26;/gi, "&");
+  s = s.replace(/&/g, " and ");
+  // Unicode dash family (hyphen-minus, ‐‑‒–—―, minus sign) → space.
+  s = s.replace(/[-‐-―−]+/g, " ");
+  let tokens = s
+    .split(/\s+/)
+    .map((t) => t.replace(/[^a-z0-9]/g, ""))
+    .filter(Boolean);
+  // Drop trailing legal-form words (handles stacked forms like "Foo Co LLC").
+  // Keep at least one token so a name that is ONLY a form word survives.
+  while (tokens.length > 1 && VENDOR_FORM_WORDS.has(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  tokens = tokens.map((t) => VENDOR_ABBREVIATION_MAP[t] ?? t);
+  return tokens.join(" ").trim();
+}
+
 export function getVendorComparisonString(vendor: {
   businessName: string | null;
   vendorType?: string | null;
 }): string {
   const parts: string[] = [];
-  if (vendor.businessName) parts.push(vendor.businessName);
+  // DQ6 (OPE-13) — normalize the business name first so &/and, dash, entity,
+  // and legal-form variants compare equal before the ≥0.92 similarity test.
+  if (vendor.businessName) parts.push(normalizeVendorName(vendor.businessName));
   if (vendor.vendorType) parts.push(vendor.vendorType);
-  return parts.join(" ") || "unknown";
+  return parts.join(" ").trim() || "unknown";
 }
 
 export function getPromoterComparisonString(promoter: { companyName: string | null }): string {

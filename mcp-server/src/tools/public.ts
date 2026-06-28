@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { eq, and, or, gte, lte, like, inArray, sql } from "drizzle-orm";
+import { eq, and, or, gte, lte, like, inArray, isNull, sql } from "drizzle-orm";
 import {
   events,
   venues,
@@ -278,6 +278,12 @@ export function registerPublicTools(server: McpServer, db: Db) {
           promoterName: promoters.companyName,
           promoterSlug: promoters.slug,
           promoterWebsite: promoters.website,
+          // OPE-13 — roster-research state, so the analyst sweep can read the
+          // current status before deciding whether to (re)research this event.
+          vendorRosterStatus: events.vendorRosterStatus,
+          vendorRosterCheckedAt: events.vendorRosterCheckedAt,
+          vendorRosterSourceUrl: events.vendorRosterSourceUrl,
+          vendorRosterOffset: events.vendorRosterOffset,
         })
         .from(events)
         .leftJoin(venues, eq(events.venueId, venues.id))
@@ -291,14 +297,18 @@ export function registerPublicTools(server: McpServer, db: Db) {
 
       const event = rows[0];
 
-      // Count approved/confirmed vendors
+      // Count approved/confirmed vendors. DQ6 (OPE-13): innerJoin vendors +
+      // isNull(deletedAt) so the count excludes soft-deleted vendors and stays
+      // consistent with what list_event_vendors actually returns.
       const vendorRows = await db
         .select({ id: eventVendors.id })
         .from(eventVendors)
+        .innerJoin(vendors, eq(eventVendors.vendorId, vendors.id))
         .where(
           and(
             eq(eventVendors.eventId, event.id),
-            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES])
+            inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
+            isNull(vendors.deletedAt)
           )
         );
 
@@ -348,6 +358,13 @@ export function registerPublicTools(server: McpServer, db: Db) {
             vendorCount: vendorRows.length,
             status: event.status,
             schedule: days.length > 0 ? days : null,
+            // OPE-13 — vendor-roster research state (null = never evaluated).
+            vendorRoster: {
+              status: event.vendorRosterStatus,
+              checkedAt: event.vendorRosterCheckedAt,
+              sourceUrl: event.vendorRosterSourceUrl,
+              offset: event.vendorRosterOffset,
+            },
           }),
         ],
       };
@@ -435,6 +452,13 @@ export function registerPublicTools(server: McpServer, db: Db) {
           and(
             eq(eventVendors.eventId, eventRows[0].id),
             inArray(eventVendors.status, [...PUBLIC_VENDOR_STATUSES]),
+            // DQ6 (OPE-13) — never surface soft-deleted vendors. The innerJoin
+            // alone would return links to vendors with deletedAt set (invisible
+            // everywhere else: their pages 410/301). Without this, a roster can
+            // show a business that was merged away or removed — the dangling-
+            // link symptom this task fixes at the source. Mirrors the
+            // isNull(vendors.deletedAt) guard in create_or_link_vendor.
+            isNull(vendors.deletedAt),
             ...(eventDayFilter ? [eventDayFilter] : [])
           )
         )

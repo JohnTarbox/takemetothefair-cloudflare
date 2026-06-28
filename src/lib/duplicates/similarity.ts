@@ -16,5 +16,6 @@ export {
   getVenueComparisonString,
   getEventComparisonString,
   getVendorComparisonString,
+  normalizeVendorName,
   getPromoterComparisonString,
 } from "@takemetothefair/utils";

@@ -164,7 +164,15 @@ const SCHEMA_SQL = `
     syndication_version INTEGER NOT NULL DEFAULT 0,
     -- EH3 P0 (drizzle/0127) — occurrence → series link (nullable, no default).
     -- Mirrored here so the WS2b schema-sync guard passes; no MCP tool writes it yet.
-    series_id TEXT
+    series_id TEXT,
+    -- OPE-13 (drizzle/0133) — vendor-roster research state (all nullable, no
+    -- default). Mirrored here so the schema-sync guard passes and every events
+    -- INSERT keeps working; written by set_vendor_roster_status + the
+    -- occurred-sweep NEEDS_RESEARCH enqueue, read by get_event_details.
+    vendor_roster_status TEXT,
+    vendor_roster_checked_at INTEGER,
+    vendor_roster_source_url TEXT,
+    vendor_roster_offset INTEGER
   );
 
   -- EH3 P0 (drizzle/0127) — series parent. Needed here once tools join it
