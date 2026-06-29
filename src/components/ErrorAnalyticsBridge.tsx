@@ -2,35 +2,9 @@
 
 import { useEffect } from "react";
 import { trackApiError } from "@/lib/analytics";
-
-type ClientErrorReport = {
-  message: string;
-  stack?: string;
-  url: string;
-  errorType: "window-error" | "unhandledrejection";
-  statusCode?: number;
-};
-
-function reportClientError(report: ClientErrorReport) {
-  try {
-    const body = JSON.stringify(report);
-    const endpoint = "/api/client-errors";
-    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
-      const blob = new Blob([body], { type: "application/json" });
-      if (navigator.sendBeacon(endpoint, blob)) return;
-    }
-    void fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      keepalive: true,
-    }).catch(() => {
-      // Fire-and-forget: never cascade errors from the error reporter itself
-    });
-  } catch {
-    // Ignore — never throw from the error handler
-  }
-}
+// OPE-25 — reporter extracted to a shared module so the React error boundaries
+// (app/error.tsx, app/global-error.tsx) report through the same path + dedup.
+import { reportClientError } from "@/lib/report-client-error";
 
 /**
  * Intercepts global unhandled errors and rejections, reporting them to

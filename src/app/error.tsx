@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { AlertTriangle, Home, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { reportClientError } from "@/lib/report-client-error";
 
 export default function Error({
   error,
@@ -28,6 +29,18 @@ export default function Error({
   useEffect(() => {
     // Log the error to an error reporting service
     console.error("Application error:", error);
+    // OPE-25 — render crashes caught by this boundary never fire window.onerror
+    // (the boundary swallows them), so without this they were invisible in
+    // error_logs. Report through the shared reporter (dedup-guarded). Next.js
+    // App Router boundaries don't expose errorInfo.componentStack — we send
+    // error.digest (the server-error correlation id) instead.
+    reportClientError({
+      message: error.message || "Unknown render error",
+      stack: error.stack,
+      url: window.location.href,
+      errorType: "react-error-boundary",
+      digest: error.digest,
+    });
   }, [error]);
 
   return (
