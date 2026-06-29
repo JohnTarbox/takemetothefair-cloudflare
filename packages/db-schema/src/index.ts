@@ -1891,6 +1891,20 @@ export const rosterResearchNoticeState = sqliteTable("roster_research_notice_sta
   lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
 });
 
+// OPE-17 (drizzle/0136, 2026-06-29) — debounce state for the inbound-email
+// human-triage exception-queue notice. Exact analog of rosterResearchNoticeState
+// (OPE-15): single row keyed by the constant NOTICE_KEY in
+// mcp-server/src/inbound-exception-notice.ts. Fires on the daily 06:00 sweep when
+// the count of true salvage candidates (inbound_emails status='failed',
+// resulting_event_id IS NULL, intent in new_event/submit) is non-empty AND
+// changed since the last notice. lastNoticeDate is a UTC YYYY-MM-DD string.
+export const inboundExceptionNoticeState = sqliteTable("inbound_exception_notice_state", {
+  id: text("id").primaryKey(),
+  lastNoticeDate: text("last_notice_date").notNull(),
+  lastQueueCount: integer("last_queue_count").notNull(),
+  lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
+});
+
 // §10.2 enrichment audit trail (drizzle/0056). Append-only; one row per
 // attempt (success or failure). source values: ai_workers | scraper |
 // manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of
