@@ -56,6 +56,7 @@
 
 import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
+import { reportClientError } from "@/lib/report-client-error";
 
 export default function GlobalError({
   error,
@@ -73,6 +74,17 @@ export default function GlobalError({
     // Layout-level errors are rarer than page-level. Log with a
     // distinctive prefix so log filters can pick them out.
     console.error("[global-error] root layout error:", error);
+    // OPE-25 — report root-layout boundary crashes to error_logs (own errorType
+    // so triage can tell layout-level from page-level). global-error renders
+    // ABOVE the root layout, but window + the fetch/sendBeacon path are still
+    // available in this client effect.
+    reportClientError({
+      message: error.message || "Unknown root-layout error",
+      stack: error.stack,
+      url: window.location.href,
+      errorType: "react-global-error",
+      digest: error.digest,
+    });
   }, [error]);
 
   return (

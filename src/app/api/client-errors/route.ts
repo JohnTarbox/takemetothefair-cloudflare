@@ -9,6 +9,9 @@ const MAX_BODY_BYTES = 16_000;
 const MAX_MESSAGE_CHARS = 4_000;
 const MAX_STACK_CHARS = 8_000;
 const MAX_URL_CHARS = 2_000;
+// OPE-25 — React error-boundary extras.
+const MAX_COMPONENT_STACK_CHARS = 8_000;
+const MAX_DIGEST_CHARS = 256;
 
 type ClientErrorPayload = {
   message?: unknown;
@@ -16,6 +19,9 @@ type ClientErrorPayload = {
   url?: unknown;
   errorType?: unknown;
   statusCode?: unknown;
+  // OPE-25 — sent by the React error boundaries (optional).
+  componentStack?: unknown;
+  digest?: unknown;
 };
 
 function truncate(value: string, max: number): string {
@@ -64,6 +70,17 @@ export async function POST(request: Request) {
     typeof payload.statusCode === "number" && Number.isFinite(payload.statusCode)
       ? payload.statusCode
       : undefined;
+  // OPE-25 — React error-boundary extras (optional). componentStack lands in
+  // context so a boundary that can supply it (Next.js App Router boundaries
+  // currently cannot) is persisted without further endpoint changes.
+  const componentStack =
+    typeof payload.componentStack === "string" && payload.componentStack.length > 0
+      ? truncate(payload.componentStack, MAX_COMPONENT_STACK_CHARS)
+      : undefined;
+  const digest =
+    typeof payload.digest === "string" && payload.digest.length > 0
+      ? truncate(payload.digest, MAX_DIGEST_CHARS)
+      : undefined;
 
   let pathname: string | undefined;
   if (url) {
@@ -90,7 +107,14 @@ export async function POST(request: Request) {
     error: stack,
     statusCode,
     request,
-    context: { errorType, pathname, reportedUrl: url, reportedStatusCode: statusCode },
+    context: {
+      errorType,
+      pathname,
+      reportedUrl: url,
+      reportedStatusCode: statusCode,
+      componentStack,
+      digest,
+    },
   });
 
   return new NextResponse(null, { status: 204 });
