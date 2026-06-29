@@ -18,6 +18,92 @@
  */
 import { SITE_URL } from "@takemetothefair/constants";
 import { buildPlaceJsonLd, type PlaceVenue } from "@/lib/seo/place-jsonld";
+import { LIFECYCLE_TO_SCHEMA_ORG, type EventLifecycle } from "@/lib/event-lifecycle";
+
+/**
+ * OPE-18 (2026-06-29) — parent-derivation discipline for the WARNING-set
+ * Google Event fields, applied to the EventSeries builder + every subEvent so
+ * this layer reaches parity with the single-Event builder (EventSchema.tsx,
+ * which already emits the full set). These helpers are pure and emit-when-known:
+ * a field is only added when its source is populated, so "top-level wins" holds
+ * by construction (a real value is never overwritten by a derived one).
+ *
+ * NOTE: the single-Event builder is the only one wired into a live page today;
+ * buildEventSeriesJsonLd is built ahead of the P2.3 page wiring. This parity is
+ * defensive — the EventSeries layer is compliant-by-construction the day it goes
+ * live, instead of surfacing one GSC "Missing field X" warning at a time.
+ */
+
+/** A schema.org Organization for `organizer` (derived from the promoter row). */
+export interface SchemaOrganizer {
+  name: string;
+  url?: string | null;
+  logoUrl?: string | null;
+}
+
+/** `eventStatus` from `lifecycle_status` via the shared map. Returns undefined
+ *  for past/unknown states (OCCURRED/NO_SHOW map to null) so the key is omitted
+ *  rather than emitted empty. */
+export function derivedEventStatus(lifecycleStatus?: string | null): string | undefined {
+  if (!lifecycleStatus) return undefined;
+  return LIFECYCLE_TO_SCHEMA_ORG[lifecycleStatus as EventLifecycle] ?? undefined;
+}
+
+/** `image` fallback chain (the OPE-18 default order, matching the brief):
+ *  event/occurrence image → venue hero → promoter logo → series image. First
+ *  non-empty wins; undefined when the whole chain is empty. */
+export function derivedImage(...candidates: Array<string | null | undefined>): string | undefined {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c;
+  }
+  return undefined;
+}
+
+/** `organizer` Organization node from a promoter-derived shape. */
+export function derivedOrganizer(
+  org?: SchemaOrganizer | null
+): Record<string, unknown> | undefined {
+  if (!org || !org.name) return undefined;
+  const node: Record<string, unknown> = { "@type": "Organization", name: org.name };
+  if (org.url) node.url = org.url;
+  if (org.logoUrl) node.logo = org.logoUrl;
+  return node;
+}
+
+/** `offers` from ticket URL + integer-cents price fields. Mirrors the
+ *  single-Event builder: AggregateOffer when min≠max, else a single Offer; both
+ *  InStock. Emitted only when at least one price is known. */
+export function derivedOffers(opts: {
+  ticketUrl?: string | null;
+  fallbackUrl?: string | null;
+  priceMinCents?: number | null;
+  priceMaxCents?: number | null;
+}): Record<string, unknown> | undefined {
+  const { ticketUrl, fallbackUrl, priceMinCents, priceMaxCents } = opts;
+  const hasMin = priceMinCents !== null && priceMinCents !== undefined;
+  const hasMax = priceMaxCents !== null && priceMaxCents !== undefined;
+  if (!hasMin && !hasMax) return undefined;
+  const min = hasMin ? priceMinCents! / 100 : null;
+  const max = hasMax ? priceMaxCents! / 100 : null;
+  const url = ticketUrl || fallbackUrl || undefined;
+  if (min !== null && max !== null && min !== max) {
+    return {
+      "@type": "AggregateOffer",
+      url,
+      lowPrice: min,
+      highPrice: max,
+      priceCurrency: "USD",
+      availability: "https://schema.org/InStock",
+    };
+  }
+  return {
+    "@type": "Offer",
+    url,
+    price: min ?? max ?? 0,
+    priceCurrency: "USD",
+    availability: "https://schema.org/InStock",
+  };
+}
 
 export interface SeriesForSchema {
   canonicalSlug: string;
@@ -37,6 +123,16 @@ export interface SeriesForSchema {
    */
   startDateIso?: string | null;
   endDateIso?: string | null;
+  /**
+   * OPE-18 — WARNING-set derivation sources (all optional; emit-when-known).
+   * `lifecycleStatus` (hero occurrence's) → `eventStatus`; `organizer` (the
+   * series promoter) → `organizer` and the subEvent organizer fallback;
+   * `promoterLogoUrl`/`venueImageUrl` feed the subEvent image fallback chain.
+   */
+  lifecycleStatus?: string | null;
+  organizer?: SchemaOrganizer | null;
+  promoterLogoUrl?: string | null;
+  venueImageUrl?: string | null;
 }
 
 export interface OccurrenceForSchema {
@@ -54,6 +150,18 @@ export interface OccurrenceForSchema {
    * location (Google flags a subEvent Event without one).
    */
   venue?: PlaceVenue | null;
+  /**
+   * OPE-18 — per-occurrence WARNING-set sources (all optional; emit-when-known).
+   * `lifecycleStatus` → subEvent `eventStatus`; `imageUrl` heads the image
+   * fallback chain; `description` → subEvent `description`; the ticket/price
+   * fields → subEvent `offers`.
+   */
+  lifecycleStatus?: string | null;
+  imageUrl?: string | null;
+  description?: string | null;
+  ticketUrl?: string | null;
+  ticketPriceMinCents?: number | null;
+  ticketPriceMaxCents?: number | null;
 }
 
 /** `/events/<canonical_slug>` — the year-agnostic series landing URL. */
@@ -86,6 +194,30 @@ function occurrenceNode(series: SeriesForSchema, occ: OccurrenceForSchema) {
   // K46 — every subEvent Event needs a `location` or Google Rich Results
   // flags it. Falls back to "Location to be announced" when undated/venueless.
   node.location = buildPlaceJsonLd(occ.venue ?? null);
+
+  // OPE-18 — WARNING-set parity on each subEvent (the nodes Google validates as
+  // Events). Each is emit-when-known so a real top-level value is never
+  // overwritten by a derived one.
+  const eventStatus = derivedEventStatus(occ.lifecycleStatus);
+  if (eventStatus) node.eventStatus = eventStatus;
+  if (occ.description) node.description = occ.description;
+  // image fallback chain: occurrence image → venue hero → promoter logo → series image.
+  const image = derivedImage(
+    occ.imageUrl,
+    series.venueImageUrl,
+    series.promoterLogoUrl,
+    series.imageUrl
+  );
+  if (image) node.image = image;
+  const organizer = derivedOrganizer(series.organizer);
+  if (organizer) node.organizer = organizer;
+  const offers = derivedOffers({
+    ticketUrl: occ.ticketUrl,
+    fallbackUrl: node.url as string,
+    priceMinCents: occ.ticketPriceMinCents,
+    priceMaxCents: occ.ticketPriceMaxCents,
+  });
+  if (offers) node.offers = offers;
   return node;
 }
 
@@ -113,6 +245,14 @@ export function buildEventSeriesJsonLd(
   if (series.endDateIso) node.endDate = series.endDateIso;
   if (series.description) node.description = series.description;
   if (series.imageUrl) node.image = series.imageUrl;
+  // OPE-18 — series-level WARNING-set parity. eventStatus from the hero
+  // occurrence's lifecycle; organizer from the series promoter. (offers/
+  // performer are per-occurrence concerns, not series-level — intentionally
+  // omitted here.)
+  const eventStatus = derivedEventStatus(series.lifecycleStatus);
+  if (eventStatus) node.eventStatus = eventStatus;
+  const organizer = derivedOrganizer(series.organizer);
+  if (organizer) node.organizer = organizer;
   if (occurrences.length > 0) {
     node.subEvent = occurrences.map((o) => occurrenceNode(series, o));
   }
