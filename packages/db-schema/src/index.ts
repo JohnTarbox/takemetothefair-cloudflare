@@ -1876,6 +1876,21 @@ export const standingFailureState = sqliteTable("standing_failure_state", {
   lastTotalCount: integer("last_total_count").notNull(),
 });
 
+// OPE-15 (drizzle/0134, 2026-06-29) — debounce state for the vendor-roster
+// research-queue notice. Single row, keyed by the constant NOTICE_KEY in
+// mcp-server/src/roster-research-notice.ts. The notice fires after the daily
+// 06:00 occurred-sweep enqueues producer-class NEEDS_RESEARCH events; this row
+// holds enough to gate it to ≤1/day AND only when the backlog CHANGED since the
+// last notice (don't nag on an unchanged queue). lastNoticeDate is a UTC
+// YYYY-MM-DD string (matches the once-per-day comparison); lastQueueCount is the
+// producer-class NEEDS_RESEARCH count at the last fire (the change-detector).
+export const rosterResearchNoticeState = sqliteTable("roster_research_notice_state", {
+  id: text("id").primaryKey(),
+  lastNoticeDate: text("last_notice_date").notNull(),
+  lastQueueCount: integer("last_queue_count").notNull(),
+  lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
+});
+
 // §10.2 enrichment audit trail (drizzle/0056). Append-only; one row per
 // attempt (success or failure). source values: ai_workers | scraper |
 // manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of

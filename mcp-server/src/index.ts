@@ -40,6 +40,7 @@ import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
+import { runRosterResearchNotice } from "./roster-research-notice.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
@@ -1523,7 +1524,15 @@ export default {
         // events into next year's TENTATIVE edition; Pass 2 backfills rolls for
         // already-OCCURRED recurring events. Cosmetic-failsoft by construction
         // (each row + each pass catches its own errors and logs to error_logs).
-        runOccurredTransitionSweep(getDb(env.DB)).then(() => undefined),
+        // OPE-15 (2026-06-29) — the research-queue notice is chained AFTER the
+        // sweep (not a sibling in this Promise.all) so it counts THIS run's
+        // Pass-3 enqueue. Server-side counts only; failsoft like the sweep.
+        // Tells the operator when the producer-class NEEDS_RESEARCH queue is
+        // non-empty so the interactive OPE-14 sweep can drain it (≤1/day,
+        // only on change). See mcp-server/src/roster-research-notice.ts.
+        runOccurredTransitionSweep(getDb(env.DB))
+          .then(() => runRosterResearchNotice(env))
+          .then(() => undefined),
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left
