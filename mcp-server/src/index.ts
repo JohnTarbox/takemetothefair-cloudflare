@@ -41,6 +41,7 @@ import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js"
 import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 import { runRosterResearchNotice } from "./roster-research-notice.js";
+import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
@@ -1533,6 +1534,13 @@ export default {
         runOccurredTransitionSweep(getDb(env.DB))
           .then(() => runRosterResearchNotice(env))
           .then(() => undefined),
+        // OPE-17 (2026-06-29) — inbound-email exception rails. Reconciles
+        // exception statuses (already-handled → salvaged; spam/unsubscribe →
+        // reversible rejected) then notifies the operator when the human-triage
+        // salvage queue is non-empty AND changed (≤1/day). Independent of the
+        // occurred-sweep, so it runs as its own failsoft sibling here. See
+        // mcp-server/src/inbound-exception-notice.ts.
+        runInboundExceptionNotice(env),
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left
