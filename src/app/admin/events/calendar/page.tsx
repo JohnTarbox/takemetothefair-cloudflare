@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { Calendar, ArrowLeft, Plus } from "lucide-react";
-import { eq, gte } from "drizzle-orm";
+import { gte, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, promoters } from "@/lib/db/schema";
@@ -27,17 +27,40 @@ async function getAllEvents() {
     const windowStart = new Date();
     windowStart.setDate(windowStart.getDate() - 90);
 
-    const results = await db
-      .select({ event: events, venue: venues, promoter: promoters })
-      .from(events)
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(gte(events.endDate, windowStart));
+    // Single-table select; venue + promoter are attached from batched lookups
+    // below. The former 3-table leftJoin returned a result row of events(71) +
+    // venues(32) + promoters(17) = 120 columns, over D1's hard 100-column
+    // result-set cap — the same outage shape as /api/admin/events (OPE-26).
+    const eventRows = await db.select().from(events).where(gte(events.endDate, windowStart));
 
-    return results.map((r) => ({
-      ...r.event,
-      venue: r.venue,
-      promoter: r.promoter,
+    if (eventRows.length === 0) return [];
+
+    const BATCH_SIZE = 50; // D1 bind-variable cap per statement
+
+    const venueIds = [
+      ...new Set(eventRows.map((e) => e.venueId).filter((id): id is string => id != null)),
+    ];
+    const venueMap = new Map<string, typeof venues.$inferSelect>();
+    for (let i = 0; i < venueIds.length; i += BATCH_SIZE) {
+      const batch = venueIds.slice(i, i + BATCH_SIZE);
+      const rows = await db.select().from(venues).where(inArray(venues.id, batch));
+      for (const v of rows) venueMap.set(v.id, v);
+    }
+
+    const promoterIds = [
+      ...new Set(eventRows.map((e) => e.promoterId).filter((id): id is string => id != null)),
+    ];
+    const promoterMap = new Map<string, typeof promoters.$inferSelect>();
+    for (let i = 0; i < promoterIds.length; i += BATCH_SIZE) {
+      const batch = promoterIds.slice(i, i + BATCH_SIZE);
+      const rows = await db.select().from(promoters).where(inArray(promoters.id, batch));
+      for (const p of rows) promoterMap.set(p.id, p);
+    }
+
+    return eventRows.map((e) => ({
+      ...e,
+      venue: e.venueId ? (venueMap.get(e.venueId) ?? null) : null,
+      promoter: e.promoterId ? (promoterMap.get(e.promoterId) ?? null) : null,
     }));
   } catch (e) {
     await logError(db, {

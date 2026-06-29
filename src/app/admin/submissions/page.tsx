@@ -38,17 +38,30 @@ export default function AdminSubmissionsPage() {
       const data: unknown = await res.json();
 
       // The endpoint returns an Event[] on success but an `{ error }` envelope
-      // on failure (401 when the admin session has expired, 500 on a DB error).
-      // Guard the shape: a non-OK status or a non-array body must degrade to a
-      // clean message, never reach the unconditional `.map` below — that throws
-      // `TypeError: e.map is not a function` and unwinds to the global error
-      // boundary (white-screen). See OPE-24.
+      // on failure. Guard the shape: a non-OK status or a non-array body must
+      // degrade to a clean message, never reach the unconditional `.map` below —
+      // that throws `TypeError: e.map is not a function` and unwinds to the
+      // global error boundary (white-screen). See OPE-24.
+      //
+      // Surface the REAL failure honestly: only a 401/403 is an auth problem.
+      // A 500 (e.g. the D1 "too many columns" outage in OPE-26) must NOT be
+      // mislabeled as "session expired" — that copy sent debugging down the
+      // wrong path. Log the actual status + server message so the failure is
+      // visible in the console even when the UI shows a friendly card.
       if (!res.ok || !Array.isArray(data)) {
-        const message =
+        const serverMessage =
           data && typeof data === "object" && "error" in data && typeof data.error === "string"
             ? data.error
-            : "Failed to load submissions";
-        setError(message);
+            : null;
+        console.error(
+          `Failed to fetch submissions: ${res.status} ${res.statusText}`,
+          serverMessage ?? data
+        );
+        if (res.status === 401 || res.status === 403) {
+          setError("Your admin session has expired. Please sign in again.");
+        } else {
+          setError(serverMessage ?? `Couldn't load submissions (server error ${res.status}).`);
+        }
         setSubmissions([]);
         return;
       }
@@ -57,7 +70,7 @@ export default function AdminSubmissionsPage() {
       setSubmissions(data as Event[]);
     } catch (error) {
       console.error("Failed to fetch submissions:", error);
-      setError("Failed to load submissions");
+      setError("Couldn't load submissions — the server may be unavailable.");
     } finally {
       setLoading(false);
     }
@@ -101,10 +114,6 @@ export default function AdminSubmissionsPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <p className="text-muted-foreground">{error}</p>
-            <p className="mt-2 text-sm text-muted-foreground">
-              This can happen if your admin session expired — try reloading the page or signing in
-              again.
-            </p>
             <Button type="button" variant="outline" className="mt-4" onClick={fetchSubmissions}>
               Retry
             </Button>

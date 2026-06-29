@@ -1,7 +1,10 @@
 #!/usr/bin/env tsx
 /**
- * Verify that no Drizzle `db.select()` (bare, no projection) over a join
- * chain sums to more than D1's 100-column result-row cap.
+ * Verify that no Drizzle select produces a result row wider than D1's
+ * 100-column cap. Two shapes are checked:
+ *   (a) bare `db.select()` over a join chain — sum the joined tables' columns;
+ *   (b) projected `db.select({ a: tableA, b: tableB })` whose values are
+ *       WHOLE-table references — sum those tables' columns (OPE-26 regression).
  *
  * Usage:
  *   npx tsx scripts/check-d1-100col-joins.ts
@@ -262,6 +265,105 @@ function lineNumberAt(src: string, offset: number): number {
   return line;
 }
 
+// ── 3b) Find projected selects that spread WHOLE tables ──────────────────
+//
+// `db.select({ a: tableA, b: tableB })` is a *projected* select, so the
+// bare-`.select()` regex above skips it — but if the projection VALUES are
+// whole-table references (`event: events`) it still pulls every column of
+// each table into the result row. A 3-table whole-table projection
+// (events 71 + venues 32 + promoters 17 = 120) silently re-crossed D1's
+// 100-column cap this way and 500'd /api/admin/events on every load (OPE-26).
+//
+// Here we brace-match the projection object, split its top-level entries, and
+// sum the columns of each value that is a bare whole-table reference — i.e.
+// `key: tableName` where `tableName` is a known schema table and is NOT
+// followed by `.column` (a single-column ref) or `(` (a function call like
+// `count()`). Scalar/expression projections each count as 1 result column.
+
+const PROJECTED_SELECT_RE = /\bdb\s*\.\s*select\s*\(\s*\{/g;
+
+function splitTopLevelCommas(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const c of body) {
+    if (c === "{" || c === "(" || c === "[") depth++;
+    else if (c === "}" || c === ")" || c === "]") depth--;
+    if (c === "," && depth === 0) {
+      parts.push(cur);
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
+function sumProjection(
+  body: string,
+  tableColCounts: Map<string, number>
+): { sum: number; tables: string[] } {
+  let sum = 0;
+  const tables: string[] = [];
+  for (const entry of splitTopLevelCommas(body)) {
+    const colonIdx = entry.indexOf(":");
+    if (colonIdx === -1) continue; // shorthand/spread — not a whole-table value
+    const value = entry.slice(colonIdx + 1).trim();
+    const m = value.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+    if (!m) {
+      sum += 1;
+      continue;
+    }
+    const ident = m[1];
+    const after = value.slice(ident.length).trimStart();
+    const isWholeTable =
+      tableColCounts.has(ident) && !after.startsWith(".") && !after.startsWith("(");
+    if (isWholeTable) {
+      const n = tableColCounts.get(ident)!;
+      sum += n;
+      tables.push(`${ident}(${n})`);
+    } else {
+      sum += 1; // single column / expression → one result column
+    }
+  }
+  return { sum, tables };
+}
+
+function findProjectedViolations(file: string, tableColCounts: Map<string, number>): Violation[] {
+  const src = readFileSync(file, "utf8");
+  const out: Violation[] = [];
+
+  for (const match of src.matchAll(PROJECTED_SELECT_RE)) {
+    const braceIdx = (match.index ?? 0) + match[0].length - 1; // position of "{"
+    let i = braceIdx + 1;
+    let depth = 1;
+    while (i < src.length && depth > 0) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      i++;
+    }
+    if (depth !== 0) continue; // unbalanced — give up
+
+    const body = src.slice(braceIdx + 1, i - 1);
+    const { sum, tables } = sumProjection(body, tableColCounts);
+
+    // Only of interest when the projection spreads at least one whole table;
+    // pure scalar projections are always safe.
+    if (tables.length === 0) continue;
+
+    const line = lineNumberAt(src, match.index ?? 0);
+    if (sum > HARD_LIMIT) {
+      out.push({ file, line, tables, sum, level: "error" });
+    } else if (sum > WARN_THRESHOLD) {
+      out.push({ file, line, tables, sum, level: "warn" });
+    }
+  }
+
+  return out;
+}
+
 // ── 4) Main ──────────────────────────────────────────────────────────────
 
 function main() {
@@ -298,6 +400,8 @@ function main() {
       }
       const violations = findViolations(file, tableColCounts);
       allViolations.push(...violations);
+      const projectedViolations = findProjectedViolations(file, tableColCounts);
+      allViolations.push(...projectedViolations);
     }
   }
 

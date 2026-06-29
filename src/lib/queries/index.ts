@@ -172,17 +172,14 @@ export async function getEventsWithRelations(
     conditions.push(upcomingEndPredicate(new Date()));
   }
 
-  // Get events with venue and promoter in a single query
-  let query = db
-    .select({
-      event: events,
-      venue: venues,
-      promoter: promoters,
-    })
-    .from(events)
-    .leftJoin(venues, eq(events.venueId, venues.id))
-    .leftJoin(promoters, eq(events.promoterId, promoters.id))
-    .orderBy(events.startDate);
+  // Fetch events with a SINGLE-TABLE select, then attach venue + promoter from
+  // separate batched queries below. Joining all three tables in one SELECT
+  // produced a result row of events(71) + venues(32) + promoters(17) = 120
+  // columns, which exceeds D1's hard 100-column result-set cap — D1 throws
+  // "too many columns in result set" and this endpoint 500'd on every load
+  // (OPE-26; same failure family as the June getEvent outage). This mirrors the
+  // batched-attach pattern already used below for submitter (users).
+  let query = db.select().from(events).orderBy(events.startDate);
 
   if (conditions.length > 0) {
     query = query.where(and(...conditions)) as typeof query;
@@ -200,6 +197,10 @@ export async function getEventsWithRelations(
 
   if (eventList.length === 0) return [];
 
+  // D1 caps bound variables per statement, so all id-set fetches below batch
+  // their inArray() lists at this size.
+  const BATCH_SIZE = 50;
+
   // Get vendor counts if needed
   let countMap = new Map<string, number>();
   if (includeVendorCounts) {
@@ -214,37 +215,53 @@ export async function getEventsWithRelations(
     countMap = new Map(vendorCounts.map((vc) => [vc.eventId, vc.count]));
   }
 
-  // Batch-fetch submitter user info for events with submittedByUserId
-  // D1 has a limit on SQL bind variables, so batch large arrays
+  // Batch-fetch venue rows for the events on this page (see column-cap note
+  // above). Full rows preserved so the returned shape is identical to the
+  // former leftJoin(venues).
+  const venueIds = [
+    ...new Set(eventList.map((e) => e.venueId).filter((id): id is string => id != null)),
+  ];
+  const venueMap = new Map<string, typeof venues.$inferSelect>();
+  for (let i = 0; i < venueIds.length; i += BATCH_SIZE) {
+    const batch = venueIds.slice(i, i + BATCH_SIZE);
+    const rows = await db.select().from(venues).where(inArray(venues.id, batch));
+    for (const v of rows) venueMap.set(v.id, v);
+  }
+
+  // Batch-fetch promoter rows for the events on this page (see column-cap note).
+  const promoterIds = [
+    ...new Set(eventList.map((e) => e.promoterId).filter((id): id is string => id != null)),
+  ];
+  const promoterMap = new Map<string, typeof promoters.$inferSelect>();
+  for (let i = 0; i < promoterIds.length; i += BATCH_SIZE) {
+    const batch = promoterIds.slice(i, i + BATCH_SIZE);
+    const rows = await db.select().from(promoters).where(inArray(promoters.id, batch));
+    for (const p of rows) promoterMap.set(p.id, p);
+  }
+
+  // Batch-fetch submitter user info for events with submittedByUserId.
   const submitterIds = [
-    ...new Set(
-      eventList.map((e) => e.event.submittedByUserId).filter((id): id is string => id != null)
-    ),
+    ...new Set(eventList.map((e) => e.submittedByUserId).filter((id): id is string => id != null)),
   ];
   const submitterMap = new Map<string, { name: string | null; email: string }>();
-  if (submitterIds.length > 0) {
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < submitterIds.length; i += BATCH_SIZE) {
-      const batch = submitterIds.slice(i, i + BATCH_SIZE);
-      const submitters = await db
-        .select({ id: users.id, name: users.name, email: users.email })
-        .from(users)
-        .where(inArray(users.id, batch));
-      for (const u of submitters) {
-        submitterMap.set(u.id, { name: u.name, email: u.email });
-      }
+  for (let i = 0; i < submitterIds.length; i += BATCH_SIZE) {
+    const batch = submitterIds.slice(i, i + BATCH_SIZE);
+    const submitters = await db
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(users)
+      .where(inArray(users.id, batch));
+    for (const u of submitters) {
+      submitterMap.set(u.id, { name: u.name, email: u.email });
     }
   }
 
-  // Combine events with their relations and counts
+  // Combine events with their relations and counts.
   return eventList.map((e) => ({
-    ...e.event,
-    venue: e.venue,
-    promoter: e.promoter,
-    submitter: e.event.submittedByUserId
-      ? submitterMap.get(e.event.submittedByUserId) || null
-      : null,
-    _count: { eventVendors: countMap.get(e.event.id) || 0 },
+    ...e,
+    venue: e.venueId ? (venueMap.get(e.venueId) ?? null) : null,
+    promoter: e.promoterId ? (promoterMap.get(e.promoterId) ?? null) : null,
+    submitter: e.submittedByUserId ? (submitterMap.get(e.submittedByUserId) ?? null) : null,
+    _count: { eventVendors: countMap.get(e.id) || 0 },
   }));
 }
 
