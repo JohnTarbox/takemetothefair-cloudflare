@@ -25,6 +25,7 @@ interface Event {
 export default function AdminSubmissionsPage() {
   const [submissions, setSubmissions] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState<string | null>(null);
 
   useEffect(() => {
@@ -34,10 +35,29 @@ export default function AdminSubmissionsPage() {
   const fetchSubmissions = async () => {
     try {
       const res = await fetch("/api/admin/events?status=PENDING");
-      const data = (await res.json()) as Event[];
-      setSubmissions(data);
+      const data: unknown = await res.json();
+
+      // The endpoint returns an Event[] on success but an `{ error }` envelope
+      // on failure (401 when the admin session has expired, 500 on a DB error).
+      // Guard the shape: a non-OK status or a non-array body must degrade to a
+      // clean message, never reach the unconditional `.map` below — that throws
+      // `TypeError: e.map is not a function` and unwinds to the global error
+      // boundary (white-screen). See OPE-24.
+      if (!res.ok || !Array.isArray(data)) {
+        const message =
+          data && typeof data === "object" && "error" in data && typeof data.error === "string"
+            ? data.error
+            : "Failed to load submissions";
+        setError(message);
+        setSubmissions([]);
+        return;
+      }
+
+      setError(null);
+      setSubmissions(data as Event[]);
     } catch (error) {
       console.error("Failed to fetch submissions:", error);
+      setError("Failed to load submissions");
     } finally {
       setLoading(false);
     }
@@ -77,7 +97,20 @@ export default function AdminSubmissionsPage() {
         </p>
       </div>
 
-      {submissions.length === 0 ? (
+      {error ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">{error}</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This can happen if your admin session expired — try reloading the page or signing in
+              again.
+            </p>
+            <Button type="button" variant="outline" className="mt-4" onClick={fetchSubmissions}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : submissions.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <p className="text-muted-foreground">No pending submissions</p>
