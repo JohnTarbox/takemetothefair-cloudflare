@@ -102,13 +102,79 @@ subs.forEach((sub, i) => {
   require_(`EventSeries.subEvent[${i}].startDate`, sub.startDate);
 });
 
+// ── OPE-18 — WARNING-set spot-check (advisory; never blocks the build) ───────
+// The Google-recommended Event fields (endDate, eventStatus, image, description,
+// organizer, offers). These are not required, so a miss is a CI-log WARNING, not
+// a failure — but surfacing them per build catches the K46/K48 "null on the
+// parent because the data lives in a child row" class before GSC does, one field
+// at a time. Driven by a FULLY-POPULATED EventSeries fixture so the builder's
+// WARNING-set wiring is exercised; genuinely-null source data on a real page is
+// expected and fine.
+const warnings: string[] = [];
+function warn_(label: string, cond: unknown) {
+  if (!cond) warnings.push(label);
+}
+
+const richSeries = buildEventSeriesJsonLd(
+  {
+    canonicalSlug: "skowhegan-state-fair",
+    name: "Skowhegan State Fair",
+    venue: VENUE,
+    startDateIso: "2026-08-13",
+    endDateIso: "2026-08-22",
+    description: "Maine's oldest agricultural fair.",
+    imageUrl: "https://cdn.meetmeatthefair.com/series/skowhegan.jpg",
+    lifecycleStatus: "SCHEDULED",
+    organizer: {
+      name: "Skowhegan State Fair Association",
+      url: "https://skowheganstatefair.com",
+      logoUrl: "https://cdn.meetmeatthefair.com/promoters/skowhegan-logo.png",
+    },
+  },
+  [
+    {
+      slug: "skowhegan-state-fair-2026",
+      year: 2026,
+      name: "Skowhegan State Fair",
+      startDateIso: "2026-08-13",
+      endDateIso: "2026-08-22",
+      venue: VENUE,
+      lifecycleStatus: "SCHEDULED",
+      description: "Ten days of agriculture, midway, and harness racing.",
+      imageUrl: "https://cdn.meetmeatthefair.com/events/skowhegan-2026.jpg",
+      ticketUrl: "https://skowheganstatefair.com/tickets",
+      ticketPriceMinCents: 1000,
+      ticketPriceMaxCents: 1500,
+    },
+  ]
+);
+
+const WARNING_FIELDS = ["endDate", "eventStatus", "image", "description", "organizer"] as const;
+for (const f of WARNING_FIELDS) {
+  warn_(`EventSeries.${f}`, richSeries[f] != null);
+}
+const richSubs = Array.isArray(richSeries.subEvent) ? (richSeries.subEvent as Json[]) : [];
+richSubs.forEach((sub, i) => {
+  for (const f of [...WARNING_FIELDS, "offers"] as const) {
+    warn_(`EventSeries.subEvent[${i}].${f}`, sub[f] != null);
+  }
+});
+
 if (failures.length > 0) {
   console.error("FAIL: event JSON-LD is missing required fields:");
   for (const f of failures) console.error(`  ✗ ${f}`);
   console.error("\nThese are required by Google Rich Results (Event → name, startDate, location).");
   process.exit(1);
 }
+if (warnings.length > 0) {
+  console.warn("WARN: event JSON-LD is missing recommended (WARNING-set) fields:");
+  for (const w of warnings) console.warn(`  ⚠ ${w}`);
+  console.warn(
+    "\nThese are Google-recommended (endDate, eventStatus, image, description, organizer, offers)."
+  );
+}
 console.log(
-  "OK: Place + EventSeries JSON-LD emit all required fields (name, startDate, location)."
+  "OK: Place + EventSeries JSON-LD emit all required fields (name, startDate, location)." +
+    (warnings.length === 0 ? " WARNING-set fields all present on the populated fixture." : "")
 );
 process.exit(0);
