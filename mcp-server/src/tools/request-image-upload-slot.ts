@@ -44,9 +44,15 @@ export function registerRequestImageUploadSlotTool(
     ].join(" "),
     {
       target_type: z
-        .enum(["event", "vendor", "venue"])
+        .enum(["event", "vendor", "venue", "promoter"])
         .describe("Which table to update. The slot can only upload to this target."),
       target_id: z.string().min(1).describe("UUID of the target row. Verified at slot-mint time."),
+      image_role: z
+        .enum(["logo", "hero"])
+        .optional()
+        .describe(
+          "Only for target_type 'promoter': which image to set — 'logo' (default, the small square avatar) or 'hero' (the full-bleed banner). Ignored for other targets."
+        ),
       caption: z
         .string()
         .max(200)
@@ -79,6 +85,7 @@ export function registerRequestImageUploadSlotTool(
           body: JSON.stringify({
             target_type: params.target_type,
             target_id: params.target_id,
+            image_role: params.image_role ?? null,
             caption: params.caption ?? null,
           }),
         };

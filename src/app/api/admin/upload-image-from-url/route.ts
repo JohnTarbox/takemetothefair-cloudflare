@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, vendors, venues } from "@/lib/db/schema";
+import { events, vendors, venues, promoters } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import { isBlockedSsrfHost } from "@takemetothefair/site-fetch";
@@ -134,6 +134,7 @@ export async function POST(request: NextRequest) {
     image_url?: unknown;
     target_type?: unknown;
     target_id?: unknown;
+    image_role?: unknown;
     caption?: unknown;
   };
   try {
@@ -146,10 +147,12 @@ export async function POST(request: NextRequest) {
   const targetType = body.target_type as PipelineTargetType | undefined;
   const targetId = typeof body.target_id === "string" ? body.target_id : "";
   const caption = typeof body.caption === "string" ? body.caption : null;
+  // OPE-33 — promoter logo-vs-hero target (ignored for other types).
+  const imageRole: "logo" | "hero" = body.image_role === "hero" ? "hero" : "logo";
 
-  if (!targetType || !["event", "vendor", "venue"].includes(targetType)) {
+  if (!targetType || !["event", "vendor", "venue", "promoter"].includes(targetType)) {
     return NextResponse.json(
-      { error: "Missing or invalid 'target_type' (must be event / vendor / venue)" },
+      { error: "Missing or invalid 'target_type' (must be event / vendor / venue / promoter)" },
       { status: 400 }
     );
   }
@@ -173,6 +176,12 @@ export async function POST(request: NextRequest) {
     targetExists = rows.length > 0;
   } else if (targetType === "vendor") {
     const rows = await db.select({ id: vendors.id }).from(vendors).where(eq(vendors.id, targetId));
+    targetExists = rows.length > 0;
+  } else if (targetType === "promoter") {
+    const rows = await db
+      .select({ id: promoters.id })
+      .from(promoters)
+      .where(eq(promoters.id, targetId));
     targetExists = rows.length > 0;
   } else {
     const rows = await db.select({ id: venues.id }).from(venues).where(eq(venues.id, targetId));
@@ -254,6 +263,7 @@ export async function POST(request: NextRequest) {
     fileName,
     targetType,
     targetId,
+    imageRole,
     caption,
     actorId,
     uploadSource: "upload_image_from_url",

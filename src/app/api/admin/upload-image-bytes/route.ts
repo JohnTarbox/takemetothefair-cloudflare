@@ -33,7 +33,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
-import { events, vendors, venues } from "@/lib/db/schema";
+import { events, vendors, venues, promoters } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import {
@@ -87,13 +87,15 @@ export async function POST(request: NextRequest) {
   const targetType = formData.get("target_type") as PipelineTargetType | null;
   const targetId = formData.get("target_id") as string | null;
   const caption = (formData.get("caption") as string | null) || null;
+  // OPE-33 — promoter logo-vs-hero target (ignored for other types).
+  const imageRole: "logo" | "hero" = formData.get("image_role") === "hero" ? "hero" : "logo";
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing 'file' field" }, { status: 400 });
   }
-  if (!targetType || !["event", "vendor", "venue"].includes(targetType)) {
+  if (!targetType || !["event", "vendor", "venue", "promoter"].includes(targetType)) {
     return NextResponse.json(
-      { error: "Missing or invalid 'target_type' (must be event / vendor / venue)" },
+      { error: "Missing or invalid 'target_type' (must be event / vendor / venue / promoter)" },
       { status: 400 }
     );
   }
@@ -131,6 +133,12 @@ export async function POST(request: NextRequest) {
   } else if (targetType === "vendor") {
     const rows = await db.select({ id: vendors.id }).from(vendors).where(eq(vendors.id, targetId));
     targetExists = rows.length > 0;
+  } else if (targetType === "promoter") {
+    const rows = await db
+      .select({ id: promoters.id })
+      .from(promoters)
+      .where(eq(promoters.id, targetId));
+    targetExists = rows.length > 0;
   } else {
     const rows = await db.select({ id: venues.id }).from(venues).where(eq(venues.id, targetId));
     targetExists = rows.length > 0;
@@ -146,6 +154,7 @@ export async function POST(request: NextRequest) {
     fileName: file.name,
     targetType,
     targetId,
+    imageRole,
     caption,
     actorId,
     uploadSource: "upload_image_bytes",

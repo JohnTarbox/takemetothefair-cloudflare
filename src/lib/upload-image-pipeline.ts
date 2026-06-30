@@ -32,7 +32,7 @@ import { eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 
 import * as schema from "@/lib/db/schema";
-import { events, vendors, venues } from "@/lib/db/schema";
+import { events, vendors, venues, promoters } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
 import { recomputeEventCompleteness } from "@/lib/completeness";
 import {
@@ -61,7 +61,14 @@ export const PIPELINE_ALLOWED_TYPES = new Set([
 export const PIPELINE_MAX_BYTES = 10 * 1024 * 1024;
 const PHASE2B_SKIP_BELOW_BYTES = 50 * 1024;
 
-export type PipelineTargetType = "event" | "vendor" | "venue";
+export type PipelineTargetType = "event" | "vendor" | "venue" | "promoter";
+
+/**
+ * OPE-33/OPE-34 — which promoter image column a `promoter` upload targets. Only
+ * consulted for `target_type: "promoter"` (the other targets have one image
+ * column each). Default "logo" → `promoters.logo_url`; "hero" → `hero_image_url`.
+ */
+export type PipelineImageRole = "logo" | "hero";
 
 export interface PipelineEnv {
   VENDOR_ASSETS?: R2Bucket;
@@ -73,6 +80,9 @@ export interface RunPipelineArgs {
   fileName: string;
   targetType: PipelineTargetType;
   targetId: string;
+  /** OPE-33 — for `target_type: "promoter"`, selects logo_url vs hero_image_url.
+   *  Ignored for other targets. Defaults to "logo". */
+  imageRole?: PipelineImageRole;
   caption: string | null;
   actorId: string;
   /** Free-text source label written to R2 customMetadata.source so the
@@ -112,7 +122,7 @@ export interface PipelineResponseBody {
   content_type: string;
   target_type: PipelineTargetType;
   target_id: string;
-  image_column: "imageUrl" | "logoUrl";
+  image_column: "imageUrl" | "logoUrl" | "heroImageUrl";
   bytes_stored: number;
   bytes_removed_by_exif_strip: number;
   exif_segments_stripped: number;
@@ -189,6 +199,7 @@ export function detectMagicBytes(buf: Uint8Array): string | null {
  * errors are caught + logged + returned as PipelineFailure.
  */
 export async function runUploadPipeline(args: RunPipelineArgs): Promise<PipelineResult> {
+  const imageRole: PipelineImageRole = args.imageRole ?? "logo";
   const { db, env, targetType, targetId, caption, actorId, uploadSource, fileName, declaredType } =
     args;
   let bytes = args.bytes;
@@ -226,7 +237,16 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
     };
   }
 
-  const imageColumn: "imageUrl" | "logoUrl" = targetType === "vendor" ? "logoUrl" : "imageUrl";
+  // OPE-33 — vendor → logoUrl; promoter → logoUrl or heroImageUrl per imageRole;
+  // event/venue → imageUrl.
+  const imageColumn: "imageUrl" | "logoUrl" | "heroImageUrl" =
+    targetType === "vendor"
+      ? "logoUrl"
+      : targetType === "promoter"
+        ? imageRole === "hero"
+          ? "heroImageUrl"
+          : "logoUrl"
+        : "imageUrl";
 
   // Phase 2a EXIF strip (JPEG only)
   let bytesRemovedByExifStrip = 0;
@@ -241,8 +261,16 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
   }
 
   const keyPrefix =
-    targetType === "event" ? "events" : targetType === "vendor" ? "vendors" : "venues";
-  const fileKind = targetType === "vendor" ? "logo" : "image";
+    targetType === "event"
+      ? "events"
+      : targetType === "vendor"
+        ? "vendors"
+        : targetType === "promoter"
+          ? "promoters"
+          : "venues";
+  // OPE-33 — promoter uploads land under promoters/<id>/{logo|hero}-<ts>.
+  const fileKind =
+    targetType === "vendor" ? "logo" : targetType === "promoter" ? imageRole : "image";
   const timestamp = Date.now();
   const baseKey = `${keyPrefix}/${targetId}/${fileKind}-${timestamp}`;
   const originalKey = `${baseKey}.${ext}`;
@@ -351,6 +379,13 @@ export async function runUploadPipeline(args: RunPipelineArgs): Promise<Pipeline
       await recomputeEventCompleteness(db, targetId);
     } else if (targetType === "vendor") {
       await db.update(vendors).set({ logoUrl: url }).where(eq(vendors.id, targetId));
+    } else if (targetType === "promoter") {
+      // OPE-33 — write the role-selected column (logo_url default, hero_image_url
+      // when imageRole === "hero", per OPE-34's two promoter image fields).
+      await db
+        .update(promoters)
+        .set(imageColumn === "heroImageUrl" ? { heroImageUrl: url } : { logoUrl: url })
+        .where(eq(promoters.id, targetId));
     } else {
       await db.update(venues).set({ imageUrl: url }).where(eq(venues.id, targetId));
     }
