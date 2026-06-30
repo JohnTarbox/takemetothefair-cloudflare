@@ -6,9 +6,9 @@
  * and the K27 rollover all funnel through here. Pure field-inheritance stays in
  * create-occurrence-core.ts; this module owns the lookup + idempotency + insert.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Database } from "@/lib/db";
-import { events, eventSeries, adminActions } from "@/lib/db/schema";
+import { events, eventSeries, eventDays, adminActions } from "@/lib/db/schema";
 import { createSlug, appendSlugSegment, unsafeSlug } from "@takemetothefair/utils";
 import {
   inheritSeriesDefaults,
@@ -32,7 +32,18 @@ export interface CreateOccurrenceInput {
 
 export type CreateOccurrenceResult =
   | { created: false; reason: "series_not_found"; year: number }
-  | { created: false; reason: "occurrence_exists"; existingEventId: string; year: number }
+  | {
+      created: false;
+      reason: "occurrence_exists";
+      existingEventId: string;
+      year: number;
+      /**
+       * OPE-28 — for a sub-annual (FREQ=MONTHLY/WEEKLY/DAILY) series, true when
+       * the incoming date was attached as a NEW event_day on the existing
+       * year-occurrence (false = that date was already present / not sub-annual).
+       */
+      attachedEventDay?: boolean;
+    }
   | { created: false; reason: "promoter_required"; year: number }
   | { created: true; occurrenceId: string; slug: string; year: number };
 
@@ -41,6 +52,65 @@ function siblingYear(startDate: Date | null, slug: string): number | null {
   if (startDate) return new Date(startDate).getUTCFullYear();
   const m = slug.match(/-(\d{4})$/);
   return m ? Number.parseInt(m[1], 10) : null;
+}
+
+/** UTC `YYYY-MM-DD` key for an event_days row. */
+function utcDateKey(d: Date): string {
+  return new Date(d).toISOString().slice(0, 10);
+}
+
+/** A sub-annual series (monthly/weekly/daily) legitimately has multiple dates
+ *  within one year, so a same-year hit is a NEW DATE — not a duplicate. */
+function isSubAnnual(recurrenceRule: string | null): boolean {
+  return /FREQ=(MONTHLY|WEEKLY|DAILY)/i.test(recurrenceRule ?? "");
+}
+
+/**
+ * OPE-28 — attach `date` as an event_day to an existing sub-annual occurrence,
+ * idempotently. Returns true when a new day row was inserted, false when that
+ * date was already present. Also flips the occurrence to discontinuous_dates and
+ * widens its end_date when the new date extends the range.
+ */
+async function attachDateAsEventDay(
+  db: Db,
+  occurrenceId: string,
+  currentEndDate: Date | null,
+  date: Date,
+  actorUserId: string | null
+): Promise<boolean> {
+  const dateKey = utcDateKey(date);
+  const existing = await db
+    .select({ id: eventDays.id })
+    .from(eventDays)
+    .where(and(eq(eventDays.eventId, occurrenceId), eq(eventDays.date, dateKey)))
+    .limit(1);
+  if (existing.length > 0) return false; // idempotent — that date is already a day
+
+  const now = new Date();
+  await db.insert(eventDays).values({
+    id: crypto.randomUUID(),
+    eventId: occurrenceId,
+    date: dateKey,
+    createdAt: now,
+  });
+  await db
+    .update(events)
+    .set({
+      discontinuousDates: true,
+      // Widen the visible range only when the new date is later than the current end.
+      endDate: currentEndDate && currentEndDate >= date ? currentEndDate : date,
+      updatedAt: now,
+    })
+    .where(eq(events.id, occurrenceId));
+  await db.insert(adminActions).values({
+    action: "event.occurrence_day_attached",
+    actorUserId,
+    targetType: "event",
+    targetId: occurrenceId,
+    payloadJson: JSON.stringify({ date: dateKey, via: "discovery-occurrence" }),
+    createdAt: now,
+  });
+  return true;
 }
 
 /**
@@ -75,13 +145,39 @@ export async function createOccurrenceForSeries(
 
   if (!series) return { created: false, reason: "series_not_found", year };
 
-  // Year-bucketed idempotency: refuse if this series already has `year`.
+  // Year-bucketed idempotency: one occurrence per series per year.
   const siblings = await db
-    .select({ id: events.id, slug: events.slug, startDate: events.startDate })
+    .select({
+      id: events.id,
+      slug: events.slug,
+      startDate: events.startDate,
+      endDate: events.endDate,
+    })
     .from(events)
     .where(eq(events.seriesId, seriesId));
   const clash = siblings.find((s) => siblingYear(s.startDate ?? null, s.slug) === year);
   if (clash) {
+    // OPE-28 — for a sub-annual series (FREQ=MONTHLY/WEEKLY), a same-year hit is
+    // a NEW DATE of the existing year-occurrence, not a duplicate: attach it as
+    // an event_day rather than dropping it (the bug that minted month-suffixed
+    // siblings). Annual series keep the no-op (a same-year hit is a true dupe).
+    const incomingStart = input.overrides?.startDate ?? null;
+    if (isSubAnnual(series.recurrenceRule) && incomingStart) {
+      const attachedEventDay = await attachDateAsEventDay(
+        db,
+        clash.id,
+        clash.endDate ?? null,
+        incomingStart,
+        input.actorUserId ?? null
+      );
+      return {
+        created: false,
+        reason: "occurrence_exists",
+        existingEventId: clash.id,
+        year,
+        attachedEventDay,
+      };
+    }
     return { created: false, reason: "occurrence_exists", existingEventId: clash.id, year };
   }
 
