@@ -150,6 +150,10 @@ export const promoters = sqliteTable("promoters", {
   website: text("website"),
   socialLinks: text("social_links"),
   logoUrl: text("logo_url"),
+  // OPE-34 (drizzle/0138, 2026-06-30) — full-bleed hero/banner for the promoter
+  // detail page, distinct from the small square `logo_url`. Rendered object-cover
+  // with focal-point crop (image_focal_x/y below). NULL = no hero band.
+  heroImageUrl: text("hero_image_url"),
   city: text("city"),
   state: text("state"),
   contactEmail: text("contact_email"),
@@ -157,8 +161,8 @@ export const promoters = sqliteTable("promoters", {
   verified: integer("verified", { mode: "boolean" }).default(false),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
-  // IMG1 §1b Phase 1 — applies to logo_url for promoters (square-ish, but
-  // operators may want focal-point on non-square uploads). See events table.
+  // IMG1 §1b Phase 1 — focal point for crops. Applies to both logo_url and the
+  // OPE-34 hero_image_url (operators may want focal-point on wide hero uploads).
   imageFocalX: real("image_focal_x").notNull().default(0.5),
   imageFocalY: real("image_focal_y").notNull().default(0.5),
 });
