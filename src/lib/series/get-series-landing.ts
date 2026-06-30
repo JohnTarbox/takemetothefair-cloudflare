@@ -15,10 +15,11 @@ import { cache } from "react";
 import { eq, and } from "drizzle-orm";
 import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { eventSeries, events, venues } from "@/lib/db/schema";
+import { eventSeries, events, venues, promoters } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { pickHeroOccurrence } from "@/lib/series/occurrence-view";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
+import type { SchemaOrganizer } from "@/lib/series/series-schema-org";
 
 export interface LandingOccurrence {
   id: string;
@@ -34,6 +35,18 @@ export interface LandingOccurrence {
   venue: PlaceVenue | null;
   /** OPE-27 — the occurrence's `events.image_url`, for series hero inheritance. */
   imageUrl: string | null;
+  /**
+   * OPE-18 — per-occurrence JSON-LD WARNING-set sources, fed into each subEvent
+   * via toSchemaOccurrences: `lifecycleStatus` → `eventStatus`; `description` →
+   * subEvent `description`; ticket fields → subEvent `offers`. The builder was
+   * already capable; these were simply never selected/plumbed (PR #605 wired the
+   * builder but not the data), so the live series pages emitted none of them.
+   */
+  lifecycleStatus: string | null;
+  description: string | null;
+  ticketUrl: string | null;
+  ticketPriceMinCents: number | null;
+  ticketPriceMaxCents: number | null;
 }
 
 export interface SeriesLanding {
@@ -42,6 +55,12 @@ export interface SeriesLanding {
     name: string;
     description: string | null;
     imageUrl: string | null;
+    /**
+     * OPE-18 — the series promoter as a schema.org organizer (drives the
+     * EventSeries `organizer` and the subEvent organizer fallback). Null when
+     * the series has no promoter.
+     */
+    organizer: SchemaOrganizer | null;
   };
   occurrences: LandingOccurrence[];
 }
@@ -49,6 +68,9 @@ export interface SeriesLanding {
 export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLanding | null> => {
   const db = getCloudflareDb();
 
+  // OPE-18 — leftJoin the series promoter so the EventSeries JSON-LD can emit
+  // `organizer` (projected select of named columns, NOT whole-table spreads, so
+  // it stays well under D1's 100-column result cap — see OPE-26).
   const [series] = await db
     .select({
       id: eventSeries.id,
@@ -56,8 +78,12 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       name: eventSeries.name,
       description: eventSeries.description,
       imageUrl: eventSeries.imageUrl,
+      promoterCompanyName: promoters.companyName,
+      promoterWebsite: promoters.website,
+      promoterLogoUrl: promoters.logoUrl,
     })
     .from(eventSeries)
+    .leftJoin(promoters, eq(eventSeries.promoterId, promoters.id))
     .where(eq(eventSeries.canonicalSlug, unsafeSlug(slug)))
     .limit(1);
 
@@ -71,6 +97,12 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       startDate: events.startDate,
       endDate: events.endDate,
       imageUrl: events.imageUrl,
+      // OPE-18 — WARNING-set derivation sources, per occurrence.
+      lifecycleStatus: events.lifecycleStatus,
+      description: events.description,
+      ticketUrl: events.ticketUrl,
+      ticketPriceMinCents: events.ticketPriceMinCents,
+      ticketPriceMaxCents: events.ticketPriceMaxCents,
       venueName: venues.name,
       venueAddress: venues.address,
       venueCity: venues.city,
@@ -90,6 +122,11 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     startDate: r.startDate,
     endDate: r.endDate,
     imageUrl: r.imageUrl,
+    lifecycleStatus: r.lifecycleStatus,
+    description: r.description,
+    ticketUrl: r.ticketUrl,
+    ticketPriceMinCents: r.ticketPriceMinCents,
+    ticketPriceMaxCents: r.ticketPriceMaxCents,
     // venueName is the leftJoin discriminator: null name ⇒ no venue row.
     venue: r.venueName
       ? {
@@ -115,12 +152,23 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
   const heroImageUrl = pickHeroOccurrence(occurrences, new Date())?.imageUrl ?? null;
   const effectiveImageUrl = series.imageUrl ?? heroImageUrl;
 
+  // OPE-18 — series organizer from the joined promoter (emit-when-known: null
+  // promoter ⇒ no organizer, rather than a fabricated one).
+  const organizer: SchemaOrganizer | null = series.promoterCompanyName
+    ? {
+        name: series.promoterCompanyName,
+        url: series.promoterWebsite ?? null,
+        logoUrl: series.promoterLogoUrl ?? null,
+      }
+    : null;
+
   return {
     series: {
       canonicalSlug: series.canonicalSlug,
       name: series.name,
       description: series.description,
       imageUrl: effectiveImageUrl,
+      organizer,
     },
     occurrences,
   };
