@@ -30,8 +30,6 @@ import { selectHomepageBlogPosts } from "@/lib/blog/homepage-ranking";
 
 import type { Metadata } from "next";
 
-export const revalidate = 300; // Cache for 5 minutes
-
 export const metadata: Metadata = {
   title: "Meet Me at the Fair - Discover Local Fairs, Festivals & Events in New England",
   description:
@@ -268,6 +266,10 @@ async function getRecentBlogPosts() {
   }
 }
 
+// The homepage renders per request (live "this week" events + weighted blog
+// ranking that reads view_count as it accrues). force-dynamic OVERRIDES any
+// `revalidate` — do NOT re-add `export const revalidate`; it would be dead,
+// misleading code (the page is not ISR-cached).
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
