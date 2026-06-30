@@ -20,6 +20,12 @@ export interface OccurrenceRow {
   endDate: Date | null;
   /** K46 — the occurrence's venue, threaded into `subEvent[].location`. */
   venue?: PlaceVenue | null;
+  /**
+   * OPE-27 — the occurrence's own `events.image_url`. Lets the series landing
+   * inherit a hero image from its hero occurrence when the `event_series` row
+   * has none (`event_series.image_url` is commonly NULL after backfill).
+   */
+  imageUrl?: string | null;
 }
 
 export interface OccurrenceView extends OccurrenceRow {

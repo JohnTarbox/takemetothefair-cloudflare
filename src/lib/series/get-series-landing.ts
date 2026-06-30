@@ -17,6 +17,7 @@ import { unsafeSlug } from "@takemetothefair/utils";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { eventSeries, events, venues } from "@/lib/db/schema";
 import { isPublicEventStatus } from "@/lib/event-status";
+import { pickHeroOccurrence } from "@/lib/series/occurrence-view";
 import type { PlaceVenue } from "@/lib/seo/place-jsonld";
 
 export interface LandingOccurrence {
@@ -31,6 +32,8 @@ export interface LandingOccurrence {
    * hero occurrence). Null when the occurrence has no venue.
    */
   venue: PlaceVenue | null;
+  /** OPE-27 — the occurrence's `events.image_url`, for series hero inheritance. */
+  imageUrl: string | null;
 }
 
 export interface SeriesLanding {
@@ -67,6 +70,7 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       name: events.name,
       startDate: events.startDate,
       endDate: events.endDate,
+      imageUrl: events.imageUrl,
       venueName: venues.name,
       venueAddress: venues.address,
       venueCity: venues.city,
@@ -85,6 +89,7 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
     name: r.name,
     startDate: r.startDate,
     endDate: r.endDate,
+    imageUrl: r.imageUrl,
     // venueName is the leftJoin discriminator: null name ⇒ no venue row.
     venue: r.venueName
       ? {
@@ -99,12 +104,23 @@ export const getSeriesLanding = cache(async (slug: string): Promise<SeriesLandin
       : null,
   }));
 
+  // OPE-27 — read-time hero-image inheritance. The series landing's image
+  // (og:image/twitter, the EventSeries JSON-LD, and the on-page hero) all read
+  // `series.imageUrl`, which is commonly NULL because the P1 backfill seeds the
+  // `event_series` row from an image-less member. When it's NULL, fall back to
+  // the hero occurrence's own image so the landing reflects the same photo as
+  // its occurrence — instead of og-default.png. A deliberately-set series image
+  // still wins. Self-heals on the existing 300s ISR; no write-path propagation
+  // or on-demand revalidation needed (the repo uses neither).
+  const heroImageUrl = pickHeroOccurrence(occurrences, new Date())?.imageUrl ?? null;
+  const effectiveImageUrl = series.imageUrl ?? heroImageUrl;
+
   return {
     series: {
       canonicalSlug: series.canonicalSlug,
       name: series.name,
       description: series.description,
-      imageUrl: series.imageUrl,
+      imageUrl: effectiveImageUrl,
     },
     occurrences,
   };
