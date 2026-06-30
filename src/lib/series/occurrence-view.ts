@@ -26,6 +26,16 @@ export interface OccurrenceRow {
    * has none (`event_series.image_url` is commonly NULL after backfill).
    */
   imageUrl?: string | null;
+  /**
+   * OPE-18 — JSON-LD WARNING-set sources, threaded into each subEvent by
+   * toSchemaOccurrences: `lifecycleStatus` → `eventStatus`, `description` →
+   * subEvent `description`, ticket fields → subEvent `offers`.
+   */
+  lifecycleStatus?: string | null;
+  description?: string | null;
+  ticketUrl?: string | null;
+  ticketPriceMinCents?: number | null;
+  ticketPriceMaxCents?: number | null;
 }
 
 export interface OccurrenceView extends OccurrenceRow {
@@ -97,5 +107,12 @@ export function toSchemaOccurrences(occurrences: OccurrenceRow[]): OccurrenceFor
     startDateIso: o.startDate ? o.startDate.toISOString().slice(0, 10) : null,
     endDateIso: o.endDate ? o.endDate.toISOString().slice(0, 10) : null,
     venue: o.venue ?? null,
+    // OPE-18 — pass the WARNING-set sources through to the builder (emit-when-known).
+    imageUrl: o.imageUrl ?? null,
+    lifecycleStatus: o.lifecycleStatus ?? null,
+    description: o.description ?? null,
+    ticketUrl: o.ticketUrl ?? null,
+    ticketPriceMinCents: o.ticketPriceMinCents ?? null,
+    ticketPriceMaxCents: o.ticketPriceMaxCents ?? null,
   }));
 }

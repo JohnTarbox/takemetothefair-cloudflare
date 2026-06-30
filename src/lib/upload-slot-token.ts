@@ -32,11 +32,16 @@ const KV_PREFIX = "upload-slot:";
 const TOKEN_BYTES = 24;
 const MAX_BYTES_DEFAULT = 10 * 1024 * 1024;
 
-export type UploadTargetType = "event" | "vendor" | "venue";
+export type UploadTargetType = "event" | "vendor" | "venue" | "promoter";
+
+/** OPE-33 — for a `promoter` slot, which image column the upload writes. */
+export type UploadImageRole = "logo" | "hero";
 
 export interface UploadSlotClaims {
   targetType: UploadTargetType;
   targetId: string;
+  /** OPE-33 — promoter logo-vs-hero target; null/omitted for other targets. */
+  imageRole?: UploadImageRole | null;
   maxBytes: number;
   issuedAt: number;
   issuedBy: string;
@@ -46,6 +51,7 @@ export interface UploadSlotClaims {
 export interface IssueUploadSlotArgs {
   targetType: UploadTargetType;
   targetId: string;
+  imageRole?: UploadImageRole | null;
   issuedBy: string;
   caption?: string | null;
   maxBytes?: number;
@@ -76,6 +82,7 @@ export async function issueUploadSlot(
   const claims: UploadSlotClaims = {
     targetType: args.targetType,
     targetId: args.targetId,
+    imageRole: args.imageRole ?? null,
     maxBytes,
     issuedAt,
     issuedBy: args.issuedBy,
@@ -119,7 +126,7 @@ export async function consumeUploadSlot(
     const parsed = JSON.parse(raw) as Partial<UploadSlotClaims>;
     if (
       typeof parsed.targetType !== "string" ||
-      !["event", "vendor", "venue"].includes(parsed.targetType) ||
+      !["event", "vendor", "venue", "promoter"].includes(parsed.targetType) ||
       typeof parsed.targetId !== "string" ||
       typeof parsed.maxBytes !== "number" ||
       typeof parsed.issuedAt !== "number" ||

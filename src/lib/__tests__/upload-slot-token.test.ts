@@ -168,7 +168,8 @@ describe("upload-slot-token", () => {
       kv._setRaw(
         `${__testing.KV_PREFIX}bad-type-aaaaaaaa`,
         JSON.stringify({
-          targetType: "promoter",
+          // "promoter" became valid in OPE-33 — use a genuinely-unknown type here.
+          targetType: "spaceship",
           targetId: "x",
           maxBytes: 100,
           issuedAt: Date.now(),
@@ -176,6 +177,17 @@ describe("upload-slot-token", () => {
         })
       );
       expect(await consumeUploadSlot(kv, "bad-type-aaaaaaaa")).toBeNull();
+    });
+
+    it("round-trips a promoter slot with its imageRole (OPE-33)", async () => {
+      const issued = await issueUploadSlot(kv, {
+        targetType: "promoter",
+        targetId: "promoter-1",
+        imageRole: "hero",
+        issuedBy: "admin",
+      });
+      const claims = await consumeUploadSlot(kv, issued.token);
+      expect(claims).toMatchObject({ targetType: "promoter", imageRole: "hero" });
     });
   });
 

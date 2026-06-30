@@ -216,6 +216,20 @@ export function EventSchema({
   // day-derived event reads as Scheduled (not Postponed) AND carries dates.
   const hasEffectiveDates = !!hasDates || !!dayDerivedDates;
 
+  // OPE-32 — resolve the effective start/end: top-level column, else the
+  // event_days-derived span (the K48 fallback above). A Schema.org Event without
+  // startDate is invalid, so when NO date is derivable (top-level null AND no
+  // event_days — the 11 genuinely-dateless TENTATIVE events), SUPPRESS the whole
+  // Event node instead of emitting a dateless one that GSC flags "Missing field
+  // startDate". The human-readable page is unaffected — this is JSON-LD only.
+  const resolvedStartDate =
+    (startDate ? (parseDateLoose(startDate)?.toISOString() ?? undefined) : undefined) ??
+    dayDerivedDates?.start;
+  const resolvedEndDate =
+    (endDate ? (parseDateLoose(endDate)?.toISOString() ?? undefined) : undefined) ??
+    dayDerivedDates?.end;
+  if (!resolvedStartDate) return null;
+
   const validFromDate = createdAt ? new Date(createdAt).toISOString() : undefined;
   // Static OG fallback — `/api/og` dynamic generator removed 2026-06-04
   // to keep the main-app Worker under the 25 MiB Cloudflare bundle cap
@@ -414,17 +428,10 @@ export function EventSchema({
     // EH3 P2.3b — superEvent → the parent EventSeries (occurrences only).
     ...(superEvent ? { superEvent } : {}),
     description: description || `${name} - a fair and community event.`,
-    ...(hasDates
-      ? {
-          // Defensive: parseDateLoose returns null on Invalid Date instead of
-          // throwing on .toISOString() — protects the SSR render against bad
-          // input from upstream.
-          startDate: parseDateLoose(startDate)?.toISOString() ?? undefined,
-          endDate: parseDateLoose(endDate)?.toISOString() ?? undefined,
-        }
-      : dayDerivedDates
-        ? { startDate: dayDerivedDates.start, endDate: dayDerivedDates.end }
-        : {}),
+    // OPE-32 — emit the resolved start (guaranteed present; the node is
+    // suppressed above when it isn't) and the resolved end when known.
+    startDate: resolvedStartDate,
+    ...(resolvedEndDate ? { endDate: resolvedEndDate } : {}),
     image: resolvedImage,
     url,
     eventStatus,

@@ -62,11 +62,17 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
           "MIME type of the image. Server verifies magic bytes match — a misdeclared SVG-as-JPEG is rejected."
         ),
       target_type: z
-        .enum(["event", "vendor", "venue"])
+        .enum(["event", "vendor", "venue", "promoter"])
         .describe(
           "Which table to update. Determines the R2 key prefix + which column gets the URL."
         ),
       target_id: z.string().min(1).describe("UUID of the target row."),
+      image_role: z
+        .enum(["logo", "hero"])
+        .optional()
+        .describe(
+          "Only for target_type 'promoter': 'logo' (default, small square avatar) or 'hero' (full-bleed banner). Ignored for other targets."
+        ),
       caption: z
         .string()
         .max(200)
@@ -128,6 +134,7 @@ export function registerUploadImageBytesTool(server: McpServer, auth: AuthContex
       formData.append("file", blob, filename);
       formData.append("target_type", params.target_type);
       formData.append("target_id", params.target_id);
+      if (params.image_role) formData.append("image_role", params.image_role);
       if (params.caption) formData.append("caption", params.caption);
 
       let response: Response;

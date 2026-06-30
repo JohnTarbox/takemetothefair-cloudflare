@@ -47,6 +47,14 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
       venue: hero?.venue ?? null,
       startDateIso: hero?.startDate ? hero.startDate.toISOString().slice(0, 10) : null,
       endDateIso: hero?.endDate ? hero.endDate.toISOString().slice(0, 10) : null,
+      // OPE-18 — series-level WARNING-set sources: eventStatus from the hero
+      // occurrence's lifecycle; organizer (+ logo fallback for subEvent images)
+      // from the series promoter. The builder already emitted these when given
+      // the data; before this they were never passed, so live series pages
+      // carried no eventStatus/organizer.
+      lifecycleStatus: hero?.lifecycleStatus ?? null,
+      organizer: series.organizer,
+      promoterLogoUrl: series.organizer?.logoUrl ?? null,
     },
     toSchemaOccurrences(occurrences)
   );
@@ -82,13 +90,17 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-10">
-      <script
-        type="application/ld+json"
-        // Escape `<` so a series name/description containing `</script>` can't
-        // break out of the JSON-LD block (defense beyond EventSchema's plain
-        // stringify; series text is first-party but cheap to harden).
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
-      />
+      {/* OPE-32 — jsonLd is null when no startDate is derivable for the series;
+          emit no EventSeries structured data rather than an invalid dateless node. */}
+      {jsonLd ? (
+        <script
+          type="application/ld+json"
+          // Escape `<` so a series name/description containing `</script>` can't
+          // break out of the JSON-LD block (defense beyond EventSchema's plain
+          // stringify; series text is first-party but cheap to harden).
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+        />
+      ) : null}
 
       <header className="mb-8">
         {heroImage ? (

@@ -30,7 +30,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { internalKeyMatches } from "@/lib/api-auth";
 import { getCloudflareDb, getCloudflareRateLimitKv } from "@/lib/cloudflare";
-import { events, vendors, venues } from "@/lib/db/schema";
+import { events, vendors, venues, promoters } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { logError } from "@/lib/logger";
 import {
@@ -43,6 +43,7 @@ import { issueUploadSlot } from "@/lib/upload-slot-token";
 interface SlotRequestBody {
   target_type?: string;
   target_id?: string;
+  image_role?: string | null;
   caption?: string | null;
 }
 
@@ -80,10 +81,12 @@ export async function POST(request: NextRequest) {
   const targetType = body.target_type as PipelineTargetType | undefined;
   const targetId = body.target_id;
   const caption = typeof body.caption === "string" ? body.caption.slice(0, 200) : null;
+  // OPE-33 — promoter logo-vs-hero target, fixed into the slot at mint time.
+  const imageRole: "logo" | "hero" = body.image_role === "hero" ? "hero" : "logo";
 
-  if (!targetType || !["event", "vendor", "venue"].includes(targetType)) {
+  if (!targetType || !["event", "vendor", "venue", "promoter"].includes(targetType)) {
     return NextResponse.json(
-      { error: "Missing or invalid 'target_type' (must be event / vendor / venue)" },
+      { error: "Missing or invalid 'target_type' (must be event / vendor / venue / promoter)" },
       { status: 400 }
     );
   }
@@ -98,6 +101,12 @@ export async function POST(request: NextRequest) {
     targetExists = rows.length > 0;
   } else if (targetType === "vendor") {
     const rows = await db.select({ id: vendors.id }).from(vendors).where(eq(vendors.id, targetId));
+    targetExists = rows.length > 0;
+  } else if (targetType === "promoter") {
+    const rows = await db
+      .select({ id: promoters.id })
+      .from(promoters)
+      .where(eq(promoters.id, targetId));
     targetExists = rows.length > 0;
   } else {
     const rows = await db.select({ id: venues.id }).from(venues).where(eq(venues.id, targetId));
@@ -123,6 +132,7 @@ export async function POST(request: NextRequest) {
   const slot = await issueUploadSlot(kv, {
     targetType,
     targetId,
+    imageRole,
     issuedBy: actorId,
     caption,
     maxBytes: PIPELINE_MAX_BYTES,
