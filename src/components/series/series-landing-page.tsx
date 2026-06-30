@@ -18,6 +18,9 @@ import {
 import { buildEventSeriesJsonLd } from "@/lib/series/series-schema-org";
 import type { SeriesLanding, LandingOccurrence } from "@/lib/series/get-series-landing";
 import { formatDateRange } from "@/lib/utils";
+import { cdnImage } from "@/lib/cdn-image";
+
+const HERO_WIDTHS = [400, 800, 1200, 1600];
 
 function venueLabel(o: LandingOccurrence): string {
   return [o.venue?.city, o.venue?.state].filter(Boolean).join(", ");
@@ -25,6 +28,9 @@ function venueLabel(o: LandingOccurrence): string {
 
 export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; now: Date }) {
   const { series, occurrences } = landing;
+  // OPE-27 — effective series image (already resolved in getSeriesLanding to fall
+  // back to the hero occurrence when the series row has none).
+  const heroImage = series.imageUrl;
   const { current, past } = partitionOccurrences(occurrences, now);
   const byId = new Map(occurrences.map((o) => [o.id, o]));
 
@@ -85,6 +91,44 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
       />
 
       <header className="mb-8">
+        {heroImage ? (
+          // OPE-27 — series hero, inherited from the hero occurrence when the
+          // series row has no image. Above the fold ⇒ eager + fetchpriority high;
+          // the aspect-ratio box reserves layout so there's no CLS.
+          <div className="mb-5 aspect-[16/9] overflow-hidden rounded-xl bg-secondary/5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cdnImage(heroImage, {
+                width: 1200,
+                height: 675,
+                fit: "cover",
+                gravity: "auto",
+                format: "auto",
+                quality: 80,
+                onerror: "redirect",
+              })}
+              srcSet={HERO_WIDTHS.map(
+                (w) =>
+                  `${cdnImage(heroImage, {
+                    width: w,
+                    height: Math.round((w * 9) / 16),
+                    fit: "cover",
+                    gravity: "auto",
+                    format: "auto",
+                    quality: 80,
+                    onerror: "redirect",
+                  })} ${w}w`
+              ).join(", ")}
+              sizes="(max-width: 768px) 100vw, 768px"
+              width={1200}
+              height={675}
+              alt={series.name}
+              fetchPriority="high"
+              decoding="async"
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ) : null}
         <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
           Event series
         </div>
