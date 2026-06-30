@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatDateRange } from "@/lib/utils";
+import { getIngestionProvenance } from "@/lib/ingestion-provenance";
 
 interface Event {
   id: string;
@@ -20,6 +21,9 @@ interface Event {
   submitter: { name: string | null; email: string } | null;
   suggesterEmail: string | null;
   sourceName: string | null;
+  // OPE-29 — drives the provenance badge that tells bot-found events apart from
+  // human submissions (the admin events API returns the full event row).
+  ingestionMethod: string | null;
 }
 
 export default function AdminSubmissionsPage() {
@@ -127,74 +131,81 @@ export default function AdminSubmissionsPage() {
         </Card>
       ) : (
         <div className="space-y-6">
-          {submissions.map((event) => (
-            <Card key={event.id}>
-              <CardHeader className="flex flex-row items-start justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-foreground">{event.name}</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Submitted by{" "}
-                    {event.submitter?.name ||
-                      event.submitter?.email ||
-                      event.suggesterEmail ||
-                      event.sourceName ||
-                      event.promoter?.companyName ||
-                      "Unknown"}{" "}
-                    on {formatDate(event.createdAt)}
-                  </p>
-                </div>
-                <Badge variant="warning">Pending Review</Badge>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {submissions.map((event) => {
+            // OPE-29 — bot-found vs human-submitted, from ingestion_method.
+            const provenance = getIngestionProvenance(event.ingestionMethod);
+            return (
+              <Card key={event.id}>
+                <CardHeader className="flex flex-row items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-foreground">Venue</p>
-                    <p className="text-muted-foreground">
-                      {event.venue
-                        ? `${event.venue.name}, ${event.venue.city}, ${event.venue.state}`
-                        : "No venue assigned"}
+                    <h2 className="text-lg font-semibold text-foreground">{event.name}</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {provenance.kind === "bot" ? "Found by" : "Submitted by"}{" "}
+                      {event.submitter?.name ||
+                        event.submitter?.email ||
+                        event.suggesterEmail ||
+                        event.sourceName ||
+                        event.promoter?.companyName ||
+                        "Unknown"}{" "}
+                      on {formatDate(event.createdAt)}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Dates</p>
-                    <p className="text-muted-foreground">
-                      {formatDateRange(event.startDate, event.endDate)}
-                    </p>
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <Badge variant="warning">Pending Review</Badge>
+                    <Badge variant={provenance.variant}>{provenance.label}</Badge>
                   </div>
-                </div>
-                {event.description && (
-                  <div className="mb-4">
-                    <p className="text-sm font-medium text-foreground">Description</p>
-                    <p className="text-muted-foreground line-clamp-3">{event.description}</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Venue</p>
+                      <p className="text-muted-foreground">
+                        {event.venue
+                          ? `${event.venue.name}, ${event.venue.city}, ${event.venue.state}`
+                          : "No venue assigned"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Dates</p>
+                      <p className="text-muted-foreground">
+                        {formatDateRange(event.startDate, event.endDate)}
+                      </p>
+                    </div>
                   </div>
-                )}
-                <div className="flex items-center gap-3 pt-4 border-t border-border">
-                  <Button
-                    onClick={() => handleAction(event.id, "approve")}
-                    disabled={processing === event.id}
-                    isLoading={processing === event.id}
-                  >
-                    <Check className="w-4 h-4 mr-2" />
-                    Approve
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => handleAction(event.id, "reject")}
-                    disabled={processing === event.id}
-                  >
-                    <X className="w-4 h-4 mr-2" />
-                    Reject
-                  </Button>
-                  <a href={`/admin/events/${event.id}/edit`}>
-                    <Button variant="outline">
-                      <Eye className="w-4 h-4 mr-2" />
-                      Review
+                  {event.description && (
+                    <div className="mb-4">
+                      <p className="text-sm font-medium text-foreground">Description</p>
+                      <p className="text-muted-foreground line-clamp-3">{event.description}</p>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-3 pt-4 border-t border-border">
+                    <Button
+                      onClick={() => handleAction(event.id, "approve")}
+                      disabled={processing === event.id}
+                      isLoading={processing === event.id}
+                    >
+                      <Check className="w-4 h-4 mr-2" />
+                      Approve
                     </Button>
-                  </a>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                    <Button
+                      variant="danger"
+                      onClick={() => handleAction(event.id, "reject")}
+                      disabled={processing === event.id}
+                    >
+                      <X className="w-4 h-4 mr-2" />
+                      Reject
+                    </Button>
+                    <a href={`/admin/events/${event.id}/edit`}>
+                      <Button variant="outline">
+                        <Eye className="w-4 h-4 mr-2" />
+                        Review
+                      </Button>
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
