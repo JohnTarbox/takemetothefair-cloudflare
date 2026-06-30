@@ -183,13 +183,20 @@ export function occurrenceUrl(
     : `${SITE_URL}/events/${canonicalSlug}/${year}`;
 }
 
-function occurrenceNode(series: SeriesForSchema, occ: OccurrenceForSchema) {
+function occurrenceNode(
+  series: SeriesForSchema,
+  occ: OccurrenceForSchema
+): Record<string, unknown> | null {
+  // OPE-32 — a subEvent Event without startDate is invalid structured data
+  // (GSC "Missing field startDate"). Drop the dateless occurrence node entirely
+  // rather than emit it; the caller filters these out of the subEvent[] array.
+  if (!occ.startDateIso) return null;
   const node: Record<string, unknown> = {
     "@type": "Event",
     name: occ.name,
     url: occurrenceUrl(series.canonicalSlug, occ.year, occ.slug),
   };
-  if (occ.startDateIso) node.startDate = occ.startDateIso;
+  node.startDate = occ.startDateIso;
   if (occ.endDateIso) node.endDate = occ.endDateIso;
   // K46 — every subEvent Event needs a `location` or Google Rich Results
   // flags it. Falls back to "Location to be announced" when undated/venueless.
@@ -228,7 +235,12 @@ function occurrenceNode(series: SeriesForSchema, occ: OccurrenceForSchema) {
 export function buildEventSeriesJsonLd(
   series: SeriesForSchema,
   occurrences: OccurrenceForSchema[]
-): Record<string, unknown> {
+): Record<string, unknown> | null {
+  // OPE-32 — suppress the EventSeries node when no startDate is derivable for it
+  // (no dated occurrence anchors the series — the genuinely-dateless TENTATIVE
+  // case). Google requires startDate; a dateless EventSeries is invalid, so emit
+  // nothing rather than an invalid node. The caller renders no JSON-LD on null.
+  if (!series.startDateIso) return null;
   const node: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "EventSeries",
@@ -253,8 +265,13 @@ export function buildEventSeriesJsonLd(
   if (eventStatus) node.eventStatus = eventStatus;
   const organizer = derivedOrganizer(series.organizer);
   if (organizer) node.organizer = organizer;
-  if (occurrences.length > 0) {
-    node.subEvent = occurrences.map((o) => occurrenceNode(series, o));
+  // OPE-32 — emit only the dated occurrences as subEvents; a dateless subEvent
+  // Event node is invalid (occurrenceNode returns null for those).
+  const subEvents = occurrences
+    .map((o) => occurrenceNode(series, o))
+    .filter((n): n is Record<string, unknown> => n !== null);
+  if (subEvents.length > 0) {
+    node.subEvent = subEvents;
   }
   return node;
 }

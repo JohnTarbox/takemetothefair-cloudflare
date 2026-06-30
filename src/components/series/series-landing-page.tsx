@@ -90,13 +90,17 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-10">
-      <script
-        type="application/ld+json"
-        // Escape `<` so a series name/description containing `</script>` can't
-        // break out of the JSON-LD block (defense beyond EventSchema's plain
-        // stringify; series text is first-party but cheap to harden).
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
-      />
+      {/* OPE-32 — jsonLd is null when no startDate is derivable for the series;
+          emit no EventSeries structured data rather than an invalid dateless node. */}
+      {jsonLd ? (
+        <script
+          type="application/ld+json"
+          // Escape `<` so a series name/description containing `</script>` can't
+          // break out of the JSON-LD block (defense beyond EventSchema's plain
+          // stringify; series text is first-party but cheap to harden).
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+        />
+      ) : null}
 
       <header className="mb-8">
         {heroImage ? (
