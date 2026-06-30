@@ -3824,6 +3824,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .describe("Vertical focal point for logo/hero crops, 0–1. Default 0.5."),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
       verified: z.boolean().optional().describe("Verified status"),
+      // OPE-31 — producer-wide roster-publishing behavior. Set false for a
+      // producer that never publishes a public exhibitor roster; the
+      // occurred-sweep then auto-sets their new events to NO_PUBLIC_LIST instead
+      // of grinding them through NEEDS_RESEARCH research passes.
+      vendor_roster_publishes_lists: z
+        .boolean()
+        .optional()
+        .describe(
+          "Whether this producer ever publishes a public exhibitor roster. Set false to auto-mark their future events NO_PUBLIC_LIST (skip research)."
+        ),
       defer_search_ping: z
         .boolean()
         .optional()
@@ -3859,6 +3869,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         },
         { param: "social_links", column: "socialLinks" },
         { param: "verified", column: "verified" },
+        { param: "vendor_roster_publishes_lists", column: "vendorRosterPublishesLists" },
       ];
 
       const updates: Record<string, unknown> = {};

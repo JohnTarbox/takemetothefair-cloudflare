@@ -47,6 +47,11 @@ function lifecycleOf(id: string): string {
   return db.select({ l: events.lifecycleStatus }).from(events).where(eq(events.id, id)).all()[0].l;
 }
 
+function rosterStatusOf(id: string): string | null {
+  return db.select({ s: events.vendorRosterStatus }).from(events).where(eq(events.id, id)).all()[0]
+    .s;
+}
+
 describe("runOccurredTransitionSweep — Pass 1 transition + roll", () => {
   it("transitions past-end APPROVED events to OCCURRED and rolls recurring ones", async () => {
     seed({
@@ -183,6 +188,47 @@ describe("runOccurredTransitionSweep — observability", () => {
     );
     expect(warned).toBe(true);
     spy.mockRestore();
+  });
+});
+
+describe("runOccurredTransitionSweep — Pass 3 producer NO_PUBLIC_LIST (OPE-31)", () => {
+  it("routes events under a never-publishes producer straight to NO_PUBLIC_LIST", async () => {
+    db.insert(promoters)
+      .values({
+        id: "promoter-noplist",
+        companyName: "No Roster Producer",
+        slug: unsafeSlug("no-roster-producer"),
+        vendorRosterPublishesLists: false,
+      })
+      .run();
+    // One event under the flagged producer, one under the normal one (control).
+    seed({ id: "flagged", slug: "flagged-2026", promoterId: "promoter-noplist" });
+    seed({ id: "normal", slug: "normal-2026" }); // promoter-1 — no flag
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    // Both transition APPROVED → OCCURRED in Pass 1; Pass 3 then diverges by flag.
+    expect(rosterStatusOf("flagged")).toBe("NO_PUBLIC_LIST");
+    expect(rosterStatusOf("normal")).toBe("NEEDS_RESEARCH");
+    expect(res.rosterNoPublicList).toBe(1);
+    expect(res.rosterEnqueued).toBe(1);
+  });
+
+  it("a NULL flag (unknown) keeps today's NEEDS_RESEARCH behavior", async () => {
+    db.insert(promoters)
+      .values({
+        id: "promoter-unknown",
+        companyName: "Unknown Producer",
+        slug: unsafeSlug("unknown-producer"),
+        // vendorRosterPublishesLists left NULL
+      })
+      .run();
+    seed({ id: "unk", slug: "unk-2026", promoterId: "promoter-unknown" });
+
+    const res = await runOccurredTransitionSweep(db, { now: NOW });
+
+    expect(rosterStatusOf("unk")).toBe("NEEDS_RESEARCH");
+    expect(res.rosterNoPublicList).toBe(0);
   });
 });
 
