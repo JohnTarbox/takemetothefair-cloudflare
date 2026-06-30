@@ -1,0 +1,14 @@
+-- OPE-34 (2026-06-30) — promoter hero/banner image, separate from the small
+-- square logo. The promoter detail page (/promoters/[slug]) gets a full-bleed
+-- hero band rendered object-cover with focal-point crop (reusing the existing
+-- promoters.image_focal_x / image_focal_y columns); logo_url stays the small
+-- avatar. NULL = no hero band (graceful fallback to the current header layout).
+--
+-- Additive, nullable column — no backfill, safe to apply online.
+--
+-- Data note (operator/analyst task, NOT this migration): the Gibson Center
+-- promoter currently has its wide craft-fair photo in logo_url as a workaround;
+-- after this ships, re-point that photo to hero_image_url and put a real logo
+-- (or nothing) in logo_url. Left as a data task so the migration stays
+-- schema-only.
+ALTER TABLE promoters ADD COLUMN hero_image_url text;

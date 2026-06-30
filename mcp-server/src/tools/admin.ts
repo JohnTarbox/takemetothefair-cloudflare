@@ -3775,20 +3775,28 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       state: z.string().optional().describe("State (2-letter code)"),
       contact_email: z.string().optional().describe("Contact email"),
       contact_phone: z.string().optional().describe("Contact phone"),
-      logo_url: z.string().optional().describe("Logo image URL"),
-      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url.
+      logo_url: z.string().optional().describe("Logo image URL (small square avatar)"),
+      // OPE-34 — full-bleed hero/banner for the promoter detail page, distinct
+      // from the small square logo_url.
+      hero_image_url: z
+        .string()
+        .optional()
+        .describe(
+          "Full-bleed hero/banner image URL for the promoter detail page (object-cover, focal-point cropped). Separate from logo_url; omit to leave unchanged."
+        ),
+      // IMG1 §1b Phase 1 — per-image focal point. Applies to logo_url + hero_image_url.
       image_focal_x: z
         .number()
         .min(0)
         .max(1)
         .optional()
-        .describe("Horizontal focal point for logo crops, 0–1. Default 0.5."),
+        .describe("Horizontal focal point for logo/hero crops, 0–1. Default 0.5."),
       image_focal_y: z
         .number()
         .min(0)
         .max(1)
         .optional()
-        .describe("Vertical focal point for logo crops, 0–1. Default 0.5."),
+        .describe("Vertical focal point for logo/hero crops, 0–1. Default 0.5."),
       social_links: z.string().optional().describe("Social media links (JSON string)"),
       verified: z.boolean().optional().describe("Verified status"),
       defer_search_ping: z
@@ -3812,6 +3820,7 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         { param: "contact_email", column: "contactEmail" },
         { param: "contact_phone", column: "contactPhone" },
         { param: "logo_url", column: "logoUrl" },
+        { param: "hero_image_url", column: "heroImageUrl" },
         // IMG1 §1b Phase 1 — clamp defense-in-depth.
         {
           param: "image_focal_x",

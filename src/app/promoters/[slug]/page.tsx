@@ -38,7 +38,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { unsafeSlug } from "@/lib/utils";
-import { cdnImage, OG_EVENT } from "@/lib/cdn-image";
+import { cdnImage, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
 
 export const revalidate = 300; // 5-minute ISR
 
@@ -214,6 +214,45 @@ export default async function PromoterDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
+            {promoter.heroImageUrl &&
+              (() => {
+                // OPE-34 — full-bleed promoter hero band (separate from the small
+                // square logo below). object-cover with a focal-point crop from
+                // image_focal_x/y (focalPointGravity returns undefined at the 0.5
+                // default, so unframed images pay zero cache-key cost). Above the
+                // fold → eager + fetchpriority high; the aspect box reserves
+                // layout (no CLS). NULL hero → this whole block is skipped, so
+                // existing promoters keep the current header-only layout.
+                const gravity = focalPointGravity(promoter.imageFocalX, promoter.imageFocalY);
+                const widths = [400, 800, 1200, 1600, 2048];
+                const opts = (w: number) => ({
+                  width: w,
+                  height: Math.round((w * 9) / 21),
+                  fit: "cover" as const,
+                  gravity,
+                  format: "auto" as const,
+                  quality: 80,
+                  onerror: "redirect" as const,
+                });
+                const heroSrcSet = widths
+                  .map((w) => `${cdnImage(promoter.heroImageUrl!, opts(w))} ${w}w`)
+                  .join(", ");
+                return (
+                  <div className="aspect-[21/9] w-full overflow-hidden rounded-xl bg-muted">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={cdnImage(promoter.heroImageUrl, opts(1600))}
+                      srcSet={heroSrcSet}
+                      sizes="(max-width: 1024px) 100vw, 66vw"
+                      alt={`${promoter.companyName} banner`}
+                      fetchPriority="high"
+                      loading="eager"
+                      decoding="async"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                );
+              })()}
             <div className="flex items-start gap-4">
               {promoter.logoUrl && (
                 <div className="w-24 h-24 rounded-lg overflow-hidden bg-muted border border-border relative shrink-0">

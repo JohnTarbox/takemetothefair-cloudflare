@@ -77,7 +77,10 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER,
     image_focal_x REAL NOT NULL DEFAULT 0.5,
-    image_focal_y REAL NOT NULL DEFAULT 0.5
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
+    -- OPE-34 (drizzle/0138) — promoter hero/banner; the drizzle schema now
+    -- selects this column, so the hand-written test table must include it.
+    hero_image_url TEXT
   );
 
   CREATE TABLE events (
