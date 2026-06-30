@@ -79,6 +79,9 @@ const series = buildEventSeriesJsonLd(
     },
   ]
 );
+// OPE-32 — a dated series must still emit a node (and carry startDate below).
+require_("EventSeries node emitted for a dated series", series !== null);
+if (!series) throw new Error("dated EventSeries fixture was unexpectedly suppressed");
 const sLoc = asObj(series.location);
 const sAddr = asObj(sLoc.address);
 require_("EventSeries.name", series.name);
@@ -149,6 +152,7 @@ const richSeries = buildEventSeriesJsonLd(
   ]
 );
 
+if (!richSeries) throw new Error("dated rich EventSeries fixture was unexpectedly suppressed");
 const WARNING_FIELDS = ["endDate", "eventStatus", "image", "description", "organizer"] as const;
 for (const f of WARNING_FIELDS) {
   warn_(`EventSeries.${f}`, richSeries[f] != null);
@@ -159,6 +163,38 @@ richSubs.forEach((sub, i) => {
     warn_(`EventSeries.subEvent[${i}].${f}`, sub[f] != null);
   }
 });
+
+// ── OPE-32 — dateless suppression (the invariant: emitted ⇒ has startDate) ───
+// A genuinely-dateless series (no startDateIso, no dated occurrence) must emit
+// NOTHING rather than an invalid Event/EventSeries node. A dated series still
+// emits, dropping only its dateless subEvents.
+const datelessSeries = buildEventSeriesJsonLd(
+  { canonicalSlug: "tbd-fair", name: "TBD Fair", venue: VENUE },
+  [{ slug: "tbd-fair", year: null, name: "TBD Fair", venue: VENUE }]
+);
+require_("EventSeries suppressed when no startDate (OPE-32)", datelessSeries === null);
+
+const mixedSeries = buildEventSeriesJsonLd(
+  { canonicalSlug: "mixed-fair", name: "Mixed Fair", venue: VENUE, startDateIso: "2026-08-13" },
+  [
+    {
+      slug: "mixed-2026",
+      year: 2026,
+      name: "Mixed 2026",
+      startDateIso: "2026-08-13",
+      venue: VENUE,
+    },
+    { slug: "mixed-tbd", year: null, name: "Mixed TBD", venue: VENUE },
+  ]
+);
+require_("Dated EventSeries still emitted (OPE-32)", mixedSeries !== null);
+if (mixedSeries) {
+  const mSubs = Array.isArray(mixedSeries.subEvent) ? (mixedSeries.subEvent as Json[]) : [];
+  require_("Dateless subEvent dropped (OPE-32)", mSubs.length === 1);
+  mSubs.forEach((sub) =>
+    require_("Emitted subEvent carries startDate (OPE-32)", sub.startDate != null)
+  );
+}
 
 if (failures.length > 0) {
   console.error("FAIL: event JSON-LD is missing required fields:");

@@ -384,9 +384,11 @@ describe("startDate fallback from event_days", () => {
     expect(ld.endDate).toBe("2026-08-03");
   });
 
-  it("emits no top-level startDate when there are neither dates nor days (unchanged)", () => {
+  it("suppresses the entire Event JSON-LD when there are neither dates nor days (OPE-32)", () => {
+    // A Schema.org Event without startDate is invalid; rather than emit a
+    // dateless node (GSC "Missing field startDate"), the component renders
+    // nothing. The human-readable page is unaffected — JSON-LD only.
     const { container } = render(<EventSchema {...baseProps} startDate={null} endDate={null} />);
-    const ld = extractJsonLd(container) as Record<string, unknown>;
-    expect(ld.startDate).toBeUndefined();
+    expect(container.querySelector('script[type="application/ld+json"]')).toBeNull();
   });
 });

@@ -17,11 +17,18 @@ const SITE = "https://meetmeatthefair.com";
 const series: SeriesForSchema = {
   canonicalSlug: "newport-international-boat-show",
   name: "Newport International Boat Show",
+  // OPE-32 — a dated series so the suppression guard doesn't fire in the
+  // structural tests below; dateless suppression has its own describe block.
+  startDateIso: "2025-09-11",
+  endDateIso: "2025-09-14",
 };
 
 const occ = (over: Partial<OccurrenceForSchema> & { slug: string }): OccurrenceForSchema => ({
   year: 2025,
   name: "Newport International Boat Show",
+  // OPE-32 — dated by default (the normal case; a dateless subEvent is now
+  // dropped). Tests that want a dateless occurrence override `startDateIso: null`.
+  startDateIso: "2025-09-11",
   ...over,
 });
 
@@ -33,6 +40,15 @@ const venue = {
   zip: "02840",
   latitude: 41.486,
   longitude: -71.313,
+};
+
+// OPE-32 — the structural tests build DATED series, so the suppression guard
+// never fires; this wrapper asserts non-null and narrows the type for them.
+// (Dateless suppression has its own describe block using the raw builder.)
+const buildSeries = (s: SeriesForSchema, o: OccurrenceForSchema[]): Record<string, unknown> => {
+  const ld = buildEventSeriesJsonLd(s, o);
+  if (!ld) throw new Error("expected a non-null EventSeries (dated fixture)");
+  return ld;
 };
 
 describe("series/occurrence URLs", () => {
@@ -55,7 +71,7 @@ describe("series/occurrence URLs", () => {
 
 describe("buildEventSeriesJsonLd", () => {
   it("emits a top-level EventSeries with @context and url", () => {
-    const ld = buildEventSeriesJsonLd(series, []);
+    const ld = buildSeries(series, []);
     expect(ld["@context"]).toBe("https://schema.org");
     expect(ld["@type"]).toBe("EventSeries");
     expect(ld.name).toBe("Newport International Boat Show");
@@ -63,11 +79,11 @@ describe("buildEventSeriesJsonLd", () => {
   });
 
   it("omits subEvent entirely when there are no occurrences", () => {
-    expect(buildEventSeriesJsonLd(series, [])).not.toHaveProperty("subEvent");
+    expect(buildSeries(series, [])).not.toHaveProperty("subEvent");
   });
 
   it("builds subEvent nodes with Option-A occurrence URLs + dates", () => {
-    const ld = buildEventSeriesJsonLd(series, [
+    const ld = buildSeries(series, [
       occ({
         slug: "newport-2025",
         year: 2025,
@@ -84,17 +100,18 @@ describe("buildEventSeriesJsonLd", () => {
       startDate: "2025-09-11",
       endDate: "2025-09-14",
     });
-    // second occurrence has no dates → those keys are absent
-    expect(sub[1]).not.toHaveProperty("startDate");
+    // second occurrence: dated (default startDate), no endDate
+    expect(sub[1].startDate).toBe("2025-09-11");
+    expect(sub[1]).not.toHaveProperty("endDate");
     expect(sub[1].url).toBe(`${SITE}/events/newport-international-boat-show/2026`);
   });
 
   it("includes description and image only when present", () => {
-    const bare = buildEventSeriesJsonLd(series, []);
+    const bare = buildSeries(series, []);
     expect(bare).not.toHaveProperty("description");
     expect(bare).not.toHaveProperty("image");
 
-    const rich = buildEventSeriesJsonLd(
+    const rich = buildSeries(
       { ...series, description: "Annual boat show", imageUrl: "https://img/x.jpg" },
       []
     );
@@ -107,12 +124,12 @@ describe("buildEventSeriesJsonLd", () => {
 // must carry a `location`, and the EventSeries must carry top-level dates.
 describe("K46 — location + dates", () => {
   it("always emits a top-level location (falls back to 'Location to be announced')", () => {
-    const ld = buildEventSeriesJsonLd(series, []);
+    const ld = buildSeries(series, []);
     expect(ld.location).toMatchObject({ "@type": "Place", name: "Location to be announced" });
   });
 
   it("emits the series-level location from the (hero) venue + top-level dates", () => {
-    const ld = buildEventSeriesJsonLd(
+    const ld = buildSeries(
       { ...series, venue, startDateIso: "2026-09-17", endDateIso: "2026-09-20" },
       []
     );
@@ -133,14 +150,14 @@ describe("K46 — location + dates", () => {
     });
   });
 
-  it("omits top-level startDate/endDate when the series has none", () => {
-    const ld = buildEventSeriesJsonLd(series, []);
-    expect(ld).not.toHaveProperty("startDate");
+  it("emits top-level endDate only when present (startDate is always present on an emitted node)", () => {
+    const ld = buildSeries({ ...series, endDateIso: null }, []);
+    expect(ld.startDate).toBe("2025-09-11");
     expect(ld).not.toHaveProperty("endDate");
   });
 
   it("emits a location on every subEvent (from the occurrence's own venue)", () => {
-    const ld = buildEventSeriesJsonLd(series, [
+    const ld = buildSeries(series, [
       occ({ slug: "newport-2025", year: 2025, venue }),
       occ({ slug: "newport-2026", year: 2026 }), // no venue
     ]);
@@ -161,7 +178,7 @@ describe("K46 — location + dates", () => {
       city: "Newport",
       state: "RI",
     };
-    const ld = buildEventSeriesJsonLd({ ...series, venue: streetVenue }, []);
+    const ld = buildSeries({ ...series, venue: streetVenue }, []);
     expect((ld.location as Record<string, unknown>).name).toBe("Event venue in Newport, RI");
   });
 
@@ -169,7 +186,7 @@ describe("K46 — location + dates", () => {
     // The real emission path is JSON.stringify(jsonLd); assert it omits the
     // optional keys rather than serialising nulls.
     const minimalVenue = { name: "Town Common", city: "Bondville", state: "VT" };
-    const ld = buildEventSeriesJsonLd({ ...series, venue: minimalVenue }, []);
+    const ld = buildSeries({ ...series, venue: minimalVenue }, []);
     const round = JSON.parse(JSON.stringify(ld));
     expect(round.location).not.toHaveProperty("geo");
     expect(round.location.address).not.toHaveProperty("streetAddress");
@@ -248,10 +265,9 @@ describe("OPE-18 — WARNING-set parity on subEvents + series", () => {
   });
 
   it("emits eventStatus/image/description/organizer/offers on each subEvent when known", () => {
-    const ld = buildEventSeriesJsonLd(
-      { ...series, organizer: { name: "Newport Shows", url: "https://ns" } },
-      [richOcc]
-    );
+    const ld = buildSeries({ ...series, organizer: { name: "Newport Shows", url: "https://ns" } }, [
+      richOcc,
+    ]);
     const sub = (ld.subEvent as Array<Record<string, unknown>>)[0];
     expect(sub.eventStatus).toBe("https://schema.org/EventScheduled");
     expect(sub.image).toBe("https://img/occ.jpg");
@@ -261,7 +277,7 @@ describe("OPE-18 — WARNING-set parity on subEvents + series", () => {
   });
 
   it("image fallback chain: occurrence image → venue hero → promoter logo → series image", () => {
-    const ld = buildEventSeriesJsonLd(
+    const ld = buildSeries(
       {
         ...series,
         venueImageUrl: "https://venue.jpg",
@@ -275,7 +291,7 @@ describe("OPE-18 — WARNING-set parity on subEvents + series", () => {
   });
 
   it("omits WARNING-set keys on a subEvent with no source data (no empty emits)", () => {
-    const ld = buildEventSeriesJsonLd(series, [occ({ slug: "bare", year: 2025 })]);
+    const ld = buildSeries(series, [occ({ slug: "bare", year: 2025 })]);
     const sub = (ld.subEvent as Array<Record<string, unknown>>)[0];
     expect(sub).not.toHaveProperty("eventStatus");
     expect(sub).not.toHaveProperty("image");
@@ -284,7 +300,7 @@ describe("OPE-18 — WARNING-set parity on subEvents + series", () => {
   });
 
   it("emits series-level eventStatus + organizer; top-level image still wins", () => {
-    const ld = buildEventSeriesJsonLd(
+    const ld = buildSeries(
       {
         ...series,
         lifecycleStatus: "POSTPONED",
@@ -309,5 +325,46 @@ describe("buildSuperEventRef", () => {
       url: `${SITE}/events/newport-international-boat-show`,
     });
     expect(ref).not.toHaveProperty("@context");
+  });
+});
+
+// OPE-32 (2026-06-30) — suppress the Event/EventSeries node when no startDate is
+// derivable, rather than emitting an invalid dateless node (GSC "Missing field
+// startDate"). The invariant: an emitted node always carries startDate.
+describe("OPE-32 — dateless suppression", () => {
+  it("returns null for a series with no startDate (genuinely dateless)", () => {
+    expect(
+      buildEventSeriesJsonLd({ ...series, startDateIso: null, endDateIso: null }, [])
+    ).toBeNull();
+  });
+
+  it("still emits a dated series, and every emitted node carries startDate", () => {
+    const ld = buildSeries({ ...series, startDateIso: "2026-09-17", endDateIso: "2026-09-20" }, [
+      occ({
+        slug: "newport-2026",
+        year: 2026,
+        startDateIso: "2026-09-17",
+        endDateIso: "2026-09-20",
+      }),
+    ]);
+    expect(ld.startDate).toBe("2026-09-17");
+    const sub = ld.subEvent as Array<Record<string, unknown>>;
+    expect(sub).toHaveLength(1);
+    expect(sub[0].startDate).toBe("2026-09-17");
+  });
+
+  it("drops dateless subEvents but keeps the dated ones", () => {
+    const ld = buildSeries(series, [
+      occ({ slug: "dated", year: 2025, startDateIso: "2025-09-11" }),
+      occ({ slug: "tbd", year: null, startDateIso: null }), // no startDate → dropped
+    ]);
+    const sub = ld.subEvent as Array<Record<string, unknown>>;
+    expect(sub).toHaveLength(1);
+    expect(sub[0].url).toBe(`${SITE}/events/newport-international-boat-show/2025`);
+  });
+
+  it("omits subEvent entirely when every occurrence is dateless", () => {
+    const ld = buildSeries(series, [occ({ slug: "tbd", year: null, startDateIso: null })]);
+    expect(ld).not.toHaveProperty("subEvent");
   });
 });
