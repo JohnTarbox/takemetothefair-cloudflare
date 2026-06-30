@@ -161,6 +161,13 @@ export const promoters = sqliteTable("promoters", {
   // operators may want focal-point on non-square uploads). See events table.
   imageFocalX: real("image_focal_x").notNull().default(0.5),
   imageFocalY: real("image_focal_y").notNull().default(0.5),
+  // OPE-31 (drizzle/0139, 2026-06-30) — producer-wide roster-publishing behavior.
+  //   NULL  = unknown / not assessed (default; events research as NEEDS_RESEARCH)
+  //   true  = this producer publishes exhibitor rosters (research normally)
+  //   false = this producer NEVER publishes a public roster — the occurred-sweep
+  //           auto-sets its events to NO_PUBLIC_LIST instead of NEEDS_RESEARCH,
+  //           so research passes stop grinding the same producer-wide dead-end.
+  vendorRosterPublishesLists: integer("vendor_roster_publishes_lists", { mode: "boolean" }),
 });
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the

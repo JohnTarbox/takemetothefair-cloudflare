@@ -77,7 +77,11 @@ const SCHEMA_SQL = `
     created_at INTEGER,
     updated_at INTEGER,
     image_focal_x REAL NOT NULL DEFAULT 0.5,
-    image_focal_y REAL NOT NULL DEFAULT 0.5
+    image_focal_y REAL NOT NULL DEFAULT 0.5,
+    -- OPE-31 (drizzle/0139) — producer-wide roster-publishing flag. Pass 3 of
+    -- the occurred-sweep joins promoters and reads this, so the test schema
+    -- needs the column.
+    vendor_roster_publishes_lists INTEGER
   );
 
   CREATE TABLE events (

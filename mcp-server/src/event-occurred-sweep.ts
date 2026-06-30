@@ -24,7 +24,7 @@
  *     idempotent, so this is safe even if the exclusion misses.
  */
 import { eq, and, or, inArray, lt, isNull, isNotNull } from "drizzle-orm";
-import { events, adminActions } from "./schema.js";
+import { events, adminActions, promoters } from "./schema.js";
 import { rolloverEventIfRecurring } from "./event-rollover.js";
 import { logError } from "./logger.js";
 import type { Db } from "./db.js";
@@ -43,6 +43,9 @@ export interface OccurredSweepResult {
   rolledFromBackfill: number;
   /** OPE-13 — events seeded into the vendor-roster NEEDS_RESEARCH queue. */
   rosterEnqueued: number;
+  /** OPE-31 — events seeded straight to NO_PUBLIC_LIST because their producer is
+   *  flagged vendor_roster_publishes_lists = false (never publishes a roster). */
+  rosterNoPublicList: number;
   errors: number;
   /** True when a pass returned a full page (== LIMIT) — more rows remain and
    *  will be handled on the next daily run. Surfaces the otherwise-silent cap. */
@@ -61,6 +64,7 @@ export async function runOccurredTransitionSweep(
     rolledFromTransition: 0,
     rolledFromBackfill: 0,
     rosterEnqueued: 0,
+    rosterNoPublicList: 0,
     errors: 0,
     transitionLimitHit: false,
     backfillLimitHit: false,
@@ -221,8 +225,14 @@ export async function runOccurredTransitionSweep(
   // happen to already carry links, so enqueuing on NULL is safe.
   try {
     const toEnqueue = await db
-      .select({ id: events.id })
+      .select({
+        id: events.id,
+        // OPE-31 — producer's roster-publishing flag (leftJoin promoters).
+        // false ⇒ this producer never publishes a roster → NO_PUBLIC_LIST.
+        publishesLists: promoters.vendorRosterPublishesLists,
+      })
       .from(events)
+      .leftJoin(promoters, eq(events.promoterId, promoters.id))
       .where(
         and(
           eq(events.lifecycleStatus, "OCCURRED"),
@@ -241,17 +251,27 @@ export async function runOccurredTransitionSweep(
       }).catch(() => {});
     }
 
-    if (toEnqueue.length > 0) {
+    // OPE-31 — producers flagged "never publishes a roster" skip the research
+    // queue: their events go straight to NO_PUBLIC_LIST so passes don't re-grind
+    // the same producer-wide dead-end. Only an explicit `false` diverts; NULL
+    // (unknown) and `true` keep today's NEEDS_RESEARCH behavior.
+    const noPublicListIds = toEnqueue.filter((e) => e.publishesLists === false).map((e) => e.id);
+    const needsResearchIds = toEnqueue.filter((e) => e.publishesLists !== false).map((e) => e.id);
+
+    if (noPublicListIds.length > 0) {
+      await db
+        .update(events)
+        .set({ vendorRosterStatus: "NO_PUBLIC_LIST", updatedAt: now })
+        .where(inArray(events.id, noPublicListIds));
+      result.rosterNoPublicList = noPublicListIds.length;
+    }
+
+    if (needsResearchIds.length > 0) {
       await db
         .update(events)
         .set({ vendorRosterStatus: "NEEDS_RESEARCH", updatedAt: now })
-        .where(
-          inArray(
-            events.id,
-            toEnqueue.map((e) => e.id)
-          )
-        );
-      result.rosterEnqueued = toEnqueue.length;
+        .where(inArray(events.id, needsResearchIds));
+      result.rosterEnqueued = needsResearchIds.length;
     }
   } catch (error) {
     result.errors++;
