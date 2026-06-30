@@ -165,6 +165,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ to
     fileName,
     targetType: claims.targetType,
     targetId: claims.targetId,
+    imageRole: claims.imageRole ?? "logo",
     caption: effectiveCaption,
     actorId: claims.issuedBy,
     uploadSource: "upload_image_slot",

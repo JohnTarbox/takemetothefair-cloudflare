@@ -1707,9 +1707,11 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // writes vendors.logo_url / venues.image_url. Closes the painful
   // "download bytes -> base64 -> upload_image_bytes" path for images >100KB.
   const uploadImageFromUrl = async (
-    targetType: "vendor" | "venue",
+    targetType: "vendor" | "venue" | "promoter",
     targetId: string,
-    imageUrl: string
+    imageUrl: string,
+    // OPE-33 — promoter logo-vs-hero target; ignored for vendor/venue.
+    imageRole?: "logo" | "hero"
   ) => {
     if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
       return {
@@ -1725,7 +1727,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
 
     // Upfront existence check — clearer error than the route's 404, and saves
     // an outbound image fetch on a mistyped id.
-    const table = targetType === "vendor" ? vendors : venues;
+    const table =
+      targetType === "vendor" ? vendors : targetType === "promoter" ? promoters : venues;
     const [row] = await db
       .select({ id: table.id })
       .from(table)
@@ -1746,7 +1749,12 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           "Content-Type": "application/json",
           "X-Internal-Key": env.INTERNAL_API_KEY,
         },
-        body: JSON.stringify({ image_url: imageUrl, target_type: targetType, target_id: targetId }),
+        body: JSON.stringify({
+          image_url: imageUrl,
+          target_type: targetType,
+          target_id: targetId,
+          image_role: imageRole ?? null,
+        }),
       });
     } catch (err) {
       return {
@@ -1820,6 +1828,23 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       image_url: z.string().url().describe("Publicly fetchable URL of the source image."),
     },
     async (params) => uploadImageFromUrl("venue", params.venue_id, params.image_url)
+  );
+
+  server.tool(
+    "upload_promoter_image_from_url",
+    "Fetch an image from a public URL and store it on cdn.meetmeatthefair.com, then set the promoter's logo (logo_url) or hero banner (hero_image_url). The main app SSRF-guards + fetches + optimizes (EXIF strip, auto-orient, resize, WebP). Use this instead of update_promoter(logo_url=/hero_image_url=...) when the source isn't on a stable host, or instead of upload_image_bytes for images >100KB. Max 5MB; allowed types: jpg, png, webp, svg. Admin only.",
+    {
+      promoter_id: z.string().describe("Promoter ID (UUID) to attach the image to."),
+      image_url: z.string().url().describe("Publicly fetchable URL of the source image."),
+      image_role: z
+        .enum(["logo", "hero"])
+        .optional()
+        .describe(
+          "Which promoter image to set: 'logo' (default, the small square avatar) or 'hero' (the full-bleed banner shown at the top of the promoter page)."
+        ),
+    },
+    async (params) =>
+      uploadImageFromUrl("promoter", params.promoter_id, params.image_url, params.image_role)
   );
 
   // ── list_event_vendors_admin ───────────────────────────────────
