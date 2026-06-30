@@ -103,4 +103,33 @@ describe("toSchemaOccurrences", () => {
     const [withoutVenue] = toSchemaOccurrences([occ({ id: "y" })]);
     expect(withoutVenue.venue).toBeNull();
   });
+
+  it("threads the WARNING-set sources through to the subEvent inputs (OPE-18)", () => {
+    const [o] = toSchemaOccurrences([
+      occ({
+        id: "x",
+        imageUrl: "https://cdn/img.webp",
+        lifecycleStatus: "SCHEDULED",
+        description: "A coin show.",
+        ticketUrl: "https://tix",
+        ticketPriceMinCents: 500,
+        ticketPriceMaxCents: 1000,
+      }),
+    ]);
+    expect(o).toMatchObject({
+      imageUrl: "https://cdn/img.webp",
+      lifecycleStatus: "SCHEDULED",
+      description: "A coin show.",
+      ticketUrl: "https://tix",
+      ticketPriceMinCents: 500,
+      ticketPriceMaxCents: 1000,
+    });
+  });
+
+  it("normalises absent WARNING-set sources to null (emit-when-known)", () => {
+    const [o] = toSchemaOccurrences([occ({ id: "y" })]);
+    expect(o.lifecycleStatus).toBeNull();
+    expect(o.description).toBeNull();
+    expect(o.ticketPriceMinCents).toBeNull();
+  });
 });

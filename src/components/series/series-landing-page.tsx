@@ -47,6 +47,14 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
       venue: hero?.venue ?? null,
       startDateIso: hero?.startDate ? hero.startDate.toISOString().slice(0, 10) : null,
       endDateIso: hero?.endDate ? hero.endDate.toISOString().slice(0, 10) : null,
+      // OPE-18 — series-level WARNING-set sources: eventStatus from the hero
+      // occurrence's lifecycle; organizer (+ logo fallback for subEvent images)
+      // from the series promoter. The builder already emitted these when given
+      // the data; before this they were never passed, so live series pages
+      // carried no eventStatus/organizer.
+      lifecycleStatus: hero?.lifecycleStatus ?? null,
+      organizer: series.organizer,
+      promoterLogoUrl: series.organizer?.logoUrl ?? null,
     },
     toSchemaOccurrences(occurrences)
   );
