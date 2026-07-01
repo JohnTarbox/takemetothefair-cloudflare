@@ -117,6 +117,21 @@ function buildStaticUrls(): SitemapUrl[] {
       changeFrequency: "weekly",
       priority: 0.8,
     },
+    // OPE-40 — crawlable browse directories (A–Z + by state). Each index page
+    // links every letter + state page, which link every detail page, so these
+    // two URLs seed the shallow reachability tree for crawlers.
+    {
+      url: `${SITEMAP_BASE_URL}/vendors/browse`,
+      lastModified: NOW(),
+      changeFrequency: "weekly",
+      priority: 0.7,
+    },
+    {
+      url: `${SITEMAP_BASE_URL}/venues/browse`,
+      lastModified: NOW(),
+      changeFrequency: "weekly",
+      priority: 0.7,
+    },
     {
       url: `${SITEMAP_BASE_URL}/promoters`,
       lastModified: NOW(),

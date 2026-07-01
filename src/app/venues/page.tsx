@@ -257,6 +257,13 @@ export default async function VenuesPage({
             </span>
           )}
         </p>
+        {/* OPE-40 — crawlable path to every venue (A–Z / by state), so detail
+            pages are reachable without deep ?page=N pagination. */}
+        <p className="mt-3">
+          <Link href="/venues/browse" className="font-medium text-navy hover:underline">
+            Browse all venues A–Z or by state →
+          </Link>
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">

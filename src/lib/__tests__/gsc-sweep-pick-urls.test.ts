@@ -52,6 +52,8 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL,
     updated_at INTEGER,
+    business_name TEXT,
+    display_name TEXT,
     description TEXT,
     website TEXT,
     social_links TEXT,
