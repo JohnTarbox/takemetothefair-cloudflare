@@ -62,6 +62,7 @@ import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
 import { registerEnrichmentReviewTools } from "./admin-enrichment-review.js";
+import { registerPromoterEnrichmentReviewTools } from "./admin-promoter-enrichment-review.js";
 import { registerFlushPendingSearchPingsTool } from "./admin-flush-pending-search-pings.js";
 import { registerResubmitIndexNowTool } from "./admin-resubmit-indexnow.js";
 import { registerSitemapResubmitTool } from "./admin-sitemap-resubmit.js";
@@ -120,6 +121,10 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
   // I1 (2026-06-13) — review surface for staged vendor-enrichment proposals:
   // list_enrichment_candidates + review_enrichment_candidate.
   registerEnrichmentReviewTools(server, db, auth, env);
+
+  // OPE-36 — review surface for staged promoter pre-extraction proposals:
+  // list_promoter_enrichment_candidates + review_promoter_enrichment_candidate.
+  registerPromoterEnrichmentReviewTools(server, db, auth, env);
 
   // Outbox drainer for the defer_search_ping flag — fires one batched
   // IndexNow call instead of N inline pings after a bulk ingestion run.

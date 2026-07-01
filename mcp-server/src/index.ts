@@ -24,6 +24,7 @@ import { registerVendorHierarchyTools } from "./tools/admin-vendor-hierarchy.js"
 import { registerVendorRosterTools } from "./tools/admin-vendor-roster.js";
 import { registerSyndicationTools } from "./tools/admin-syndication.js";
 import { registerEnrichVendorTool } from "./tools/admin-enrich-vendor.js";
+import { registerEnrichPromoterTool } from "./tools/admin-enrich-promoter.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
 import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
@@ -89,6 +90,9 @@ interface Env {
   // I1 (2026-06-13) — vendor-enrichment jobs. Producer (nightly cron selector +
   // enrich_vendor tool) and consumer (handleEnrichmentBatch) both bound here.
   VENDOR_ENRICHMENT?: Queue;
+  // OPE-36 (2026-07-01) — promoter-enrichment jobs. Producer (nightly selector +
+  // enrich_promoter tool) and consumer (handlePromoterEnrichmentBatch) bound here.
+  PROMOTER_ENRICHMENT?: Queue;
   // I1 — Browser-Rendering REST credentials for the enrichment fetch path.
   // Account id is a [vars] entry; the token is a secret (same value the main
   // app holds). When the token is unset the BR escalation no-ops cleanly.
@@ -294,6 +298,7 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerSyndicationTools(this.server, db, auth);
         // I1 (2026-06-13) — synchronous one-off vendor enrichment trigger.
         registerEnrichVendorTool(this.server, db, auth, this.env);
+        registerEnrichPromoterTool(this.server, db, auth, this.env);
         // K31 (2026-06-21) — send_vendor_email (claim invites + outreach).
         registerSendVendorEmailTool(this.server, db, auth, this.env);
         // K32 (2026-06-21) — send_test_email (no-side-effects deliverability test).
@@ -555,6 +560,7 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerVendorHierarchyTools(server, db, auth);
       registerVendorRosterTools(server, db, auth);
       registerEnrichVendorTool(server, db, auth, env);
+      registerEnrichPromoterTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
       registerSendTestEmailTool(server, db, auth, env);
       registerAnalyticsTools(server, auth, env);
@@ -1301,6 +1307,11 @@ import { handleSyndicationBatch } from "./syndication/dispatch.js";
 import type { SyndicationChangeMessage } from "@takemetothefair/utils";
 import { handleEnrichmentBatch, type VendorEnrichmentMessage } from "./enrichment/dispatch.js";
 import { runScheduledVendorEnrichment } from "./enrichment/select-candidates.js";
+import {
+  handlePromoterEnrichmentBatch,
+  type PromoterEnrichmentMessage,
+} from "./enrichment/promoter-dispatch.js";
+import { runScheduledPromoterEnrichment } from "./enrichment/promoter-select.js";
 
 type EmailJobMessage = Parameters<typeof handleEmailBatch>[0]["messages"][number]["body"];
 type IndexNowMessage = Parameters<typeof handleIndexNowBatch>[0]["messages"][number]["body"];
@@ -1343,6 +1354,12 @@ export default {
       // extract fill-empty-only contact fields, stage proposals (dry-run) or
       // auto-merge un-flagged fills (Phase 2). Per-message ack/retry.
       await handleEnrichmentBatch(batch as MessageBatch<VendorEnrichmentMessage>, env);
+      return;
+    }
+    if (batch.queue === "promoter-enrichment") {
+      // OPE-36 — per-promoter pre-extraction: fetch site, stage fill-empty-only
+      // candidates (dry-run) or auto-apply confident fills. Per-message ack/retry.
+      await handlePromoterEnrichmentBatch(batch as MessageBatch<PromoterEnrichmentMessage>, env);
       return;
     }
     // Unknown queue — log to D1 so it's queryable later (silent acking
@@ -1441,6 +1458,16 @@ export default {
         .randomUUID()
         .slice(0, 8)}`;
       ctx.waitUntil(runScheduledVendorEnrichment(env, jobRunId, controller.scheduledTime));
+      return;
+    }
+    if (controller.cron === "0 8 * * *") {
+      // OPE-36 — nightly promoter-enrichment sweep (staggered 1h after vendors).
+      // Selects ≤50 NEEDS_ENRICHMENT promoters, enqueues one job each; the queue
+      // consumer does the fetch + extract + stage. Candidate-only by default.
+      const jobRunId = `promoter-cron-${new Date(controller.scheduledTime)
+        .toISOString()
+        .slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
+      ctx.waitUntil(runScheduledPromoterEnrichment(env, jobRunId, controller.scheduledTime));
       return;
     }
     // Default daily branch (covers "0 6 * * *" and any future daily crons).
