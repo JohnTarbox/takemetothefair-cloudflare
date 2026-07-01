@@ -53,7 +53,11 @@ import {
   eventDayOutboxStatements,
   enqueueSyndicationChange,
 } from "../syndication/outbox.js";
-import { PRIMARY_AUDIENCE, PUBLIC_ACCESS } from "@takemetothefair/constants";
+import {
+  PRIMARY_AUDIENCE,
+  PUBLIC_ACCESS,
+  computePromoterEnrichment,
+} from "@takemetothefair/constants";
 import { dollarsToCents } from "../helpers.js";
 import { notifyApprovalIfNeeded } from "../approval-notification.js";
 import { registerCreateOrLinkVendorTool } from "./admin-create-or-link-vendor.js";
@@ -3737,6 +3741,16 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
       // Create promoter record
       const promoterId = crypto.randomUUID();
 
+      // OPE-35 — seed enrichment rails from the create fields. hero_image_url and
+      // social_links aren't settable via create_promoter, so they start uncovered.
+      const enrichment = computePromoterEnrichment({
+        website: params.website ?? null,
+        logoUrl: params.logo_url ?? null,
+        description: params.description ?? null,
+        contactEmail: params.contact_email ?? null,
+        contactPhone: params.contact_phone ?? null,
+      });
+
       await db.insert(promoters).values({
         id: promoterId,
         userId,
@@ -3757,6 +3771,8 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         state: params.state ? params.state.toUpperCase() : null,
         contactEmail: params.contact_email ?? null,
         contactPhone: params.contact_phone ?? null,
+        enrichmentStatus: enrichment.status,
+        enrichmentCoverage: enrichment.coverageJson,
       });
 
       // IndexNow: ping the new public promoter URL. Round 6 (PR #66) shipped
@@ -3957,6 +3973,24 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
           previousValues[field] = (promoter as Record<string, unknown>)[mapping.column];
         }
       }
+
+      // OPE-35 — recompute enrichment status/coverage from the merged final
+      // values (current row overlaid with this patch). Preserve IN_PROGRESS /
+      // BLOCKED sticky states unless the edit now completes coverage.
+      const enrichment = computePromoterEnrichment(
+        {
+          website: (updates.website ?? promoter.website) as string | null,
+          heroImageUrl: (updates.heroImageUrl ?? promoter.heroImageUrl) as string | null,
+          logoUrl: (updates.logoUrl ?? promoter.logoUrl) as string | null,
+          description: (updates.description ?? promoter.description) as string | null,
+          socialLinks: (updates.socialLinks ?? promoter.socialLinks) as string | null,
+          contactEmail: (updates.contactEmail ?? promoter.contactEmail) as string | null,
+          contactPhone: (updates.contactPhone ?? promoter.contactPhone) as string | null,
+        },
+        promoter.enrichmentStatus
+      );
+      updates.enrichmentStatus = enrichment.status;
+      updates.enrichmentCoverage = enrichment.coverageJson;
 
       await db.update(promoters).set(updates).where(eq(promoters.id, promoter.id));
 

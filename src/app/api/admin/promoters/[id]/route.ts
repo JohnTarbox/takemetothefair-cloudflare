@@ -8,6 +8,7 @@ import { createSlug } from "@/lib/utils";
 import { promoterUpdateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
+import { computePromoterEnrichment } from "@takemetothefair/constants";
 
 export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request, db, params }) => {
   const { id } = params;
@@ -63,12 +64,9 @@ export const PATCH = withAuth<{ id: string }>(
     const data = validation.data;
 
     try {
-      // Read prior slug so we can ping IndexNow for both old + new on rename.
-      const [prior] = await db
-        .select({ slug: promoters.slug })
-        .from(promoters)
-        .where(eq(promoters.id, id))
-        .limit(1);
+      // Read the prior row: its slug (IndexNow old+new on rename) and its current
+      // field values (OPE-35 — needed to recompute enrichment from the merge).
+      const [prior] = await db.select().from(promoters).where(eq(promoters.id, id)).limit(1);
 
       const updateData: Record<string, unknown> = { updatedAt: new Date() };
       if (data.companyName) {
@@ -86,6 +84,23 @@ export const PATCH = withAuth<{ id: string }>(
         updateData.imageFocalY = Math.max(0, Math.min(1, data.imageFocalY));
       }
       if (data.verified !== undefined) updateData.verified = data.verified;
+
+      // OPE-35 — recompute enrichment from the merged final values. hero/contact/
+      // socials aren't editable via this API, so they carry over from `prior`.
+      const enrichment = computePromoterEnrichment(
+        {
+          website: (updateData.website ?? prior?.website) as string | null,
+          heroImageUrl: prior?.heroImageUrl ?? null,
+          logoUrl: (updateData.logoUrl ?? prior?.logoUrl) as string | null,
+          description: (updateData.description ?? prior?.description) as string | null,
+          socialLinks: prior?.socialLinks ?? null,
+          contactEmail: prior?.contactEmail ?? null,
+          contactPhone: prior?.contactPhone ?? null,
+        },
+        prior?.enrichmentStatus
+      );
+      updateData.enrichmentStatus = enrichment.status;
+      updateData.enrichmentCoverage = enrichment.coverageJson;
 
       await db.update(promoters).set(updateData).where(eq(promoters.id, id));
 
