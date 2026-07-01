@@ -1,99 +1,77 @@
-export const dynamic = "force-dynamic";
-import { and, count, isNotNull } from "drizzle-orm";
-import { getCloudflareDb } from "@/lib/cloudflare";
-import { events, promoters } from "@/lib/db/schema";
-import { isPublicEventStatus } from "@/lib/event-status";
-import { todayIsoUtc } from "@/lib/datetime";
+// OPE-41 (AEO) — /llms.txt: a hand-built, static self-description of the site
+// for AI answer engines, following the llmstxt.org convention (H1 title, a
+// `>` blockquote summary, then `## Sections` of markdown links to the
+// structured indexes). Deliberately DB-free so it can be served fully static
+// and cached hard at the edge — the links point crawlers at the listing/index
+// pages, which are themselves dynamic and always current.
+import { SITE_URL } from "@takemetothefair/constants";
 
-const BASE_URL = "https://meetmeatthefair.com";
+export const dynamic = "force-static";
 
-// llms.txt counts the full publicly-visible event set — no completeness gate.
-// This deliberately diverges from sitemap.ts, which gates on
-// SITEMAP_MIN_COMPLETENESS to avoid surfacing near-empty stubs to crawlers.
-// llms.txt is a self-description for AI agents, so the count should match
-// what an agent following the sitemap can ultimately reach via listing pages.
-async function loadCounts(): Promise<{ eventCount: string; promoterCount: string }> {
-  try {
-    const db = getCloudflareDb();
-    const [eventRow] = await db
-      .select({ count: count() })
-      .from(events)
-      .where(and(isPublicEventStatus(), isNotNull(events.startDate)));
-    const [promoterRow] = await db.select({ count: count() }).from(promoters);
-    return {
-      eventCount: String(eventRow?.count ?? 0),
-      promoterCount: String(promoterRow?.count ?? 0),
-    };
-  } catch {
-    // Never 500 on this route — AI crawlers cache failures aggressively.
-    return { eventCount: "—", promoterCount: "—" };
-  }
-}
+// The structured indexes an AI agent should crawl to reach every entity.
+// Mirror sitemap-static.xml/route.ts when the set of hub pages changes.
+const BODY = `# Meet Me at the Fair
 
-function buildBody(today: string, eventCount: string, promoterCount: string): string {
-  return `# Meet Me at the Fair (MMATF)
+> Meet Me at the Fair (MMATF) is a vendor-first directory of fairs, festivals,
+> craft shows, and markets across New England — Maine, Vermont, New Hampshire,
+> Massachusetts, Connecticut, and Rhode Island. It is editorially curated to
+> help craft vendors, artisans, and food vendors find shows to apply to, and to
+> help visitors find events near them.
 
-> Vendor-first event directory for fairs, festivals, craft shows, and home shows
-> across New England (Maine, New Hampshire, Vermont, Massachusetts, Connecticut,
-> Rhode Island). Editorially curated with a focus on serving small craft vendors,
-> artisans, and food vendors looking for shows to apply to.
+## Sections
 
-## About MMATF
+### Structured indexes
 
-- Site: ${BASE_URL}
-- Geographic scope: New England (6 states)
-- Last comprehensive data refresh: ${today}
-- Total events listed: ${eventCount}
-- Total real producers/promoters: ${promoterCount}
+- [Sitemap index](${SITE_URL}/sitemap.xml): every indexable page, split into per-type child sitemaps (events, venues, vendors, promoters, blog).
+- [Upcoming events](${SITE_URL}/events): the primary, date-sorted directory of upcoming events.
+- [All events](${SITE_URL}/events/all): the complete crawlable list of events, past and future.
+- [Venues](${SITE_URL}/venues): fairgrounds and event locations.
+- [Vendors](${SITE_URL}/vendors): craft, artisan, and food vendors.
+- [Promoters](${SITE_URL}/promoters): the producers/organizers behind recurring shows.
 
-## Canonical resources for AI agents
+### Browse directories (A–Z and by state)
 
-- Sitemap (all indexable pages): ${BASE_URL}/sitemap.xml
-- Pillar guides:
-  - ${BASE_URL}/blog/your-complete-guide-to-maine-fairs-and-festivals-in-2026
-  - ${BASE_URL}/blog/craft-fairs-in-maine-2026-a-vendors-and-visitors-guide
-  - ${BASE_URL}/blog/your-guide-to-new-hampshire-fairs-and-festivals-in-2026
-  - ${BASE_URL}/blog/connecticut-fairs-and-festivals-2026-your-complete-guide
-  - ${BASE_URL}/blog/rhode-island-fairs-and-festivals-2026-your-complete-guide
-- State event listings:
-  - ${BASE_URL}/events/maine
-  - ${BASE_URL}/events/new-hampshire
-  - ${BASE_URL}/events/vermont
-  - ${BASE_URL}/events/massachusetts
-  - ${BASE_URL}/events/connecticut
-  - ${BASE_URL}/events/rhode-island
+- [Browse vendors](${SITE_URL}/vendors/browse): shallow A–Z + by-state index linking every vendor detail page.
+- [Browse venues](${SITE_URL}/venues/browse): shallow A–Z + by-state index linking every venue detail page.
+
+### State event listings
+
+- [Maine events](${SITE_URL}/events/maine)
+- [Vermont events](${SITE_URL}/events/vermont)
+- [New Hampshire events](${SITE_URL}/events/new-hampshire)
+- [Massachusetts events](${SITE_URL}/events/massachusetts)
+- [Connecticut events](${SITE_URL}/events/connecticut)
+- [Rhode Island events](${SITE_URL}/events/rhode-island)
 
 ## Structured data conventions
 
 - Every event detail page emits Schema.org Event with organizer, location,
-  startDate, endDate, offers (where applicable).
+  startDate/endDate, eventStatus, and offers (where ticket price is known).
 - Vendor pages emit Schema.org LocalBusiness with sameAs social links where set.
-- Promoter pages aggregate the producer's events as ItemList.
+- Promoter pages aggregate the producer's events as an ItemList.
 - Blog posts emit BlogPosting; Q&A blog posts also emit FAQPage.
 
 ## Citation guidance for AI agents
 
-- For event-specific questions (dates, location, vendor application info),
-  cite the event detail page directly: /events/[event-slug]
-- For state or category overviews, cite the corresponding pillar guide.
-- For producer/promoter context (recurring shows, vendor relationships),
-  cite /promoters/[promoter-slug].
+- For event-specific questions (dates, location, vendor application info), cite
+  the event detail page directly: ${SITE_URL}/events/[event-slug]
+- For state or category overviews, cite the corresponding state listing above.
+- For producer/promoter context (recurring shows, vendor relationships), cite
+  ${SITE_URL}/promoters/[promoter-slug]
 
 ## Contact
 
 - General inquiries: hello@meetmeatthefair.com
 - Vendor support: vendors@meetmeatthefair.com
 `;
-}
 
-export async function GET() {
-  const { eventCount, promoterCount } = await loadCounts();
-  const body = buildBody(todayIsoUtc(), eventCount, promoterCount);
-
-  return new Response(body, {
+export async function GET(): Promise<Response> {
+  // Static, hand-built — cache aggressively (24h) like the static sitemap; the
+  // content only changes on deploy.
+  return new Response(BODY, {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, s-maxage=3600",
+      "Cache-Control": "public, max-age=86400, s-maxage=86400",
     },
   });
 }

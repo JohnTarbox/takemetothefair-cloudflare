@@ -120,6 +120,122 @@ describe("EventSchema lifecycle → eventStatus mapping", () => {
   });
 });
 
+// offers emission (OPE-41) — price is stored in integer CENTS and converted
+// to dollars for JSON-LD. offers is OMITTED entirely when no price is known
+// (emitting a zero/empty offer is worse than none for rich results), and
+// suppressed for events closed to the public.
+describe("EventSchema offers", () => {
+  it("emits an Offer with dollars from ticketPriceMinCents (cents → dollars)", () => {
+    const { container } = render(<EventSchema {...baseProps} ticketPriceMinCents={1400} />);
+    const ld = extractJsonLd(container);
+    expect(ld.offers).toMatchObject({
+      "@type": "Offer",
+      price: 14,
+      priceCurrency: "USD",
+      availability: "https://schema.org/InStock",
+    });
+  });
+
+  it("uses ticketUrl for the offer url when provided, else the event url", () => {
+    const withTicket = render(
+      <EventSchema
+        {...baseProps}
+        ticketPriceMinCents={1000}
+        ticketUrl="https://tickets.example.com/x"
+      />
+    );
+    expect((extractJsonLd(withTicket.container).offers as { url: string }).url).toBe(
+      "https://tickets.example.com/x"
+    );
+
+    const withoutTicket = render(<EventSchema {...baseProps} ticketPriceMinCents={1000} />);
+    expect((extractJsonLd(withoutTicket.container).offers as { url: string }).url).toBe(
+      baseProps.url
+    );
+  });
+
+  it("emits an AggregateOffer with lowPrice/highPrice when min and max differ", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} ticketPriceMinCents={500} ticketPriceMaxCents={2500} />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.offers).toMatchObject({
+      "@type": "AggregateOffer",
+      lowPrice: 5,
+      highPrice: 25,
+      priceCurrency: "USD",
+      availability: "https://schema.org/InStock",
+    });
+  });
+
+  it("emits a single Offer (not Aggregate) when min and max are equal", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} ticketPriceMinCents={1200} ticketPriceMaxCents={1200} />
+    );
+    const ld = extractJsonLd(container);
+    expect((ld.offers as { "@type": string })["@type"]).toBe("Offer");
+    expect((ld.offers as { price: number }).price).toBe(12);
+  });
+
+  it("emits price 0 for an explicitly free event and flags isAccessibleForFree", () => {
+    const { container } = render(<EventSchema {...baseProps} ticketPriceMinCents={0} />);
+    const ld = extractJsonLd(container);
+    expect((ld.offers as { price: number }).price).toBe(0);
+    expect(ld.isAccessibleForFree).toBe(true);
+  });
+
+  it("OMITS offers entirely when no ticket price is known", () => {
+    const { container } = render(<EventSchema {...baseProps} />);
+    const ld = extractJsonLd(container);
+    expect(ld.offers).toBeUndefined();
+    // No price → also no free-admission signal.
+    expect(ld.isAccessibleForFree).toBeUndefined();
+  });
+
+  it("suppresses offers for events closed to the public even when priced", () => {
+    const { container } = render(
+      <EventSchema {...baseProps} ticketPriceMinCents={1400} publicAccess="CLOSED" />
+    );
+    const ld = extractJsonLd(container);
+    expect(ld.offers).toBeUndefined();
+  });
+});
+
+// Structural invariants (OPE-41): exactly one Event JSON-LD block per render,
+// and the OPE-32 suppression invariant is preserved.
+describe("EventSchema single-block + suppression invariants", () => {
+  it("emits exactly one <script type=application/ld+json> Event block", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        ticketPriceMinCents={500}
+        ticketPriceMaxCents={2500}
+        lifecycleStatus="SCHEDULED"
+        vendors={[{ name: "Acme", url: "/acme" }]}
+      />
+    );
+    const scripts = container.querySelectorAll('script[type="application/ld+json"]');
+    expect(scripts).toHaveLength(1);
+    const ld = JSON.parse(scripts[0].innerHTML) as Record<string, unknown>;
+    // Single top-level Event object (not an array / @graph of multiple events).
+    expect(Array.isArray(ld)).toBe(false);
+    expect(ld["@type"]).toBeDefined();
+  });
+
+  it("still suppresses the whole node when no startDate is derivable (invariant unchanged)", () => {
+    const { container } = render(
+      <EventSchema
+        {...baseProps}
+        startDate={null}
+        endDate={null}
+        ticketPriceMinCents={1400}
+        lifecycleStatus="SCHEDULED"
+      />
+    );
+    expect(container.querySelector('script[type="application/ld+json"]')).toBeNull();
+  });
+});
+
 // participationType split (drizzle/0071, 2026-05-16 analyst spec)
 describe("EventSchema participationType performer/sponsor split", () => {
   it("EXHIBITOR vendors only → performer populated, sponsor omitted", () => {
