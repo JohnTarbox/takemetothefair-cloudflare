@@ -187,6 +187,9 @@ export const promoters = sqliteTable("promoters", {
   enrichmentBlockedReason: text("enrichment_blocked_reason", {
     enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
   }),
+  // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
+  // (success OR fail). The nightly selector prefers never-attempted, then stale.
+  enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
 });
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the
@@ -2003,6 +2006,51 @@ export const vendorEnrichmentCandidates = sqliteTable(
     // Partial unique: at most one OPEN proposal per (vendor, field).
     uniqueIndex("idx_vec_pending_field")
       .on(t.vendorId, t.proposedField)
+      .where(sql`${t.decision} = 'pending'`),
+  ]
+);
+
+// OPE-36 (drizzle/0141) — promoter analog of vendor_enrichment_candidates.
+// The pre-extraction job proposes fill-empty-only values pulled from a
+// promoter's own website; confident ones auto-apply (auto_merged), the rest
+// wait as `pending` for the interactive drain to approve/reject.
+export const promoterEnrichmentCandidates = sqliteTable(
+  "promoter_enrichment_candidates",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    promoterId: text("promoter_id").notNull(),
+    // Groups one cron run's proposals; synchronous enrich_promoter uses 'manual-<uuid>'.
+    jobRunId: text("job_run_id").notNull(),
+    // hero | logo | description | social_links | contact_email | contact_phone
+    proposedField: text("proposed_field").notNull(),
+    // Promoter's value at proposal time — NULL under fill-empty-only, kept for audit.
+    currentValue: text("current_value"),
+    proposedValue: text("proposed_value").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    // 'jsonld' | 'og-image' | 'mailto' | 'tel' | 'social-link' | 'regex'
+    extractionMethod: text("extraction_method").notNull(),
+    // 'standard' | 'browser-rendering'
+    fetchMethod: text("fetch_method"),
+    confidence: real("confidence").notNull().default(0),
+    // JSON array of safety-rule flag strings, e.g. ['domain_mismatch'].
+    flags: text("flags").notNull().default("[]"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+    reviewedBy: text("reviewed_by"),
+    // pending | approved | rejected | auto_merged
+    decision: text("decision", {
+      enum: ["pending", "approved", "rejected", "auto_merged"],
+    })
+      .notNull()
+      .default("pending"),
+  },
+  (t) => [
+    index("idx_pec_promoter").on(t.promoterId),
+    index("idx_pec_decision").on(t.decision),
+    index("idx_pec_job_run").on(t.jobRunId),
+    // Partial unique: at most one OPEN proposal per (promoter, field).
+    uniqueIndex("idx_pec_pending_field")
+      .on(t.promoterId, t.proposedField)
       .where(sql`${t.decision} = 'pending'`),
   ]
 );

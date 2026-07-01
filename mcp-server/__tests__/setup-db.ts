@@ -90,7 +90,9 @@ const SCHEMA_SQL = `
     enrichment_status TEXT,
     enrichment_coverage TEXT,
     last_enriched_at INTEGER,
-    enrichment_blocked_reason TEXT
+    enrichment_blocked_reason TEXT,
+    -- OPE-36 (drizzle/0141) — pre-extraction last-attempt marker.
+    enrichment_attempted_at INTEGER
   );
 
   CREATE TABLE events (
@@ -515,6 +517,27 @@ const SCHEMA_SQL = `
   );
   CREATE UNIQUE INDEX idx_vec_pending_field
     ON vendor_enrichment_candidates (vendor_id, proposed_field)
+    WHERE decision = 'pending';
+
+  CREATE TABLE promoter_enrichment_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    promoter_id TEXT NOT NULL,
+    job_run_id TEXT NOT NULL,
+    proposed_field TEXT NOT NULL,
+    current_value TEXT,
+    proposed_value TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    extraction_method TEXT NOT NULL,
+    fetch_method TEXT,
+    confidence REAL NOT NULL DEFAULT 0,
+    flags TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    reviewed_at INTEGER,
+    reviewed_by TEXT,
+    decision TEXT NOT NULL DEFAULT 'pending'
+  );
+  CREATE UNIQUE INDEX idx_pec_pending_field
+    ON promoter_enrichment_candidates (promoter_id, proposed_field)
     WHERE decision = 'pending';
 
   CREATE TABLE url_domain_classifications (
