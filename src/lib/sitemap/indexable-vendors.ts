@@ -26,6 +26,10 @@ export interface IndexableVendorRow {
   slug: string;
   /** seconds-epoch (raw column value), or null. */
   updatedAt: number | null;
+  /** OPE-40 — for the crawlable A–Z/by-state browse directory. `state` also
+   *  lives in `fields`, but name isn't in the tier fields, so surface both here. */
+  businessName: string;
+  displayName: string | null;
   fields: VendorTierFields;
   tier: ReturnType<typeof getVendorTier>;
 }
@@ -38,6 +42,8 @@ export async function getIndexableVendorRows(db: Db): Promise<IndexableVendorRow
   const rows = await db.all<{
     slug: string;
     updatedAt: number | null;
+    businessName: string;
+    displayName: string | null;
     description: string | null;
     website: string | null;
     socialLinks: string | null;
@@ -52,6 +58,8 @@ export async function getIndexableVendorRows(db: Db): Promise<IndexableVendorRow
     SELECT
       v.slug AS slug,
       v.updated_at AS updatedAt,
+      v.business_name AS businessName,
+      v.display_name AS displayName,
       v.description AS description,
       v.website AS website,
       v.social_links AS socialLinks,
@@ -162,6 +170,13 @@ export async function getIndexableVendorRows(db: Db): Promise<IndexableVendorRow
       // vendors, but if criteria drift between SQL and TS, the TS check
       // wins so we never emit a row inconsistent with the noindex meta.
       .filter(({ tier }) => isIndexableTier(tier))
-      .map(({ row, fields, tier }) => ({ slug: row.slug, updatedAt: row.updatedAt, fields, tier }))
+      .map(({ row, fields, tier }) => ({
+        slug: row.slug,
+        updatedAt: row.updatedAt,
+        businessName: row.businessName,
+        displayName: row.displayName,
+        fields,
+        tier,
+      }))
   );
 }

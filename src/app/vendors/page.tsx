@@ -555,6 +555,13 @@ export default async function VendorsPage({
             </span>
           )}
         </p>
+        {/* OPE-40 — crawlable path to every vendor (A–Z / by state), so detail
+            pages are reachable without deep ?page=N pagination. */}
+        <p className="mt-3">
+          <Link href="/vendors/browse" className="font-medium text-navy hover:underline">
+            Browse all vendors A–Z or by state →
+          </Link>
+        </p>
       </div>
 
       <FeaturedVendorsSection vendors={featuredVendors} />
