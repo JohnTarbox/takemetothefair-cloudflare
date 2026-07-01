@@ -76,7 +76,7 @@ export type EnrichmentStatus = "success" | "failure" | "skipped";
 export async function logEnrichment(
   db: Db,
   p: {
-    targetType: "vendor" | "event";
+    targetType: "vendor" | "event" | "promoter";
     targetId: string;
     source: EnrichmentSource;
     status: EnrichmentStatus;
