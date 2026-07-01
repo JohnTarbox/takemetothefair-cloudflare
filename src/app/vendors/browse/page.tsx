@@ -8,6 +8,7 @@ import {
   BROWSE_LETTERS,
   stateLabel,
   stateSlug,
+  letterToken,
 } from "@/lib/browse/directory";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 
@@ -19,11 +20,6 @@ export const metadata: Metadata = {
     "Browse every fair, festival, and market vendor alphabetically or by state. A complete directory of vendors on Meet Me at the Fair.",
   alternates: { canonical: "/vendors/browse" },
 };
-
-/** URL token for a first-letter bucket: "A".."Z" -> "a".."z", "#" -> "other". */
-export function letterToken(bucket: string): string {
-  return bucket === "#" ? "other" : bucket.toLowerCase();
-}
 
 export default async function VendorBrowseIndexPage() {
   const db = getCloudflareDb();

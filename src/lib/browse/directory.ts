@@ -117,6 +117,11 @@ export function stateSlug(code: string): string {
   return code.trim().toLowerCase();
 }
 
+/** URL token for a first-letter bucket: "A".."Z" -> "a".."z", "#" -> "other". */
+export function letterToken(bucket: string): string {
+  return bucket === "#" ? "other" : bucket.toLowerCase();
+}
+
 /**
  * Every index-eligible vendor as a browse entry (same public gate as the
  * vendor sitemap, so we never surface a noindex page). Name = display override
