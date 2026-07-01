@@ -10,7 +10,9 @@
  */
 import { getIndexableVendorRows } from "@/lib/sitemap/indexable-vendors";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
+import { eq } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
+import { venues } from "@/lib/db/schema";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -135,5 +137,19 @@ export async function getVendorBrowseEntries(db: Db): Promise<BrowseEntry[]> {
       name: (r.displayName ?? r.businessName ?? "").trim() || r.businessName,
       state: r.fields.state ?? null,
     }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Every active venue as a browse entry. Mirrors the venues sitemap's gate
+ * (status = 'ACTIVE'), so browse and sitemap stay in lock-step. Sorted by name.
+ */
+export async function getVenueBrowseEntries(db: Db): Promise<BrowseEntry[]> {
+  const rows = await db
+    .select({ slug: venues.slug, name: venues.name, state: venues.state })
+    .from(venues)
+    .where(eq(venues.status, "ACTIVE"));
+  return rows
+    .map((r) => ({ slug: r.slug, name: r.name, state: r.state ?? null }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
