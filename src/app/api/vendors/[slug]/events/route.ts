@@ -1,95 +1,20 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { vendors, eventVendors, events, venues } from "@/lib/db/schema";
-import { eq, and, asc } from "drizzle-orm";
-import { isPublicVendorStatus } from "@/lib/vendor-status";
-import { isPublicEventStatus } from "@/lib/event-status";
+import { getVendorEventsData } from "@/lib/vendors/vendor-events";
 import { logError } from "@/lib/logger";
-import { unsafeSlug } from "@/lib/utils";
 
+// Thin wrapper over the shared loader (OPE-40) — the /vendors/[slug]/events page
+// now SSRs the same data, so both go through getVendorEventsData.
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const db = getCloudflareDb();
   try {
     const { slug } = await params;
-
-    // Get vendor by slug
-    const vendorResults = await db
-      .select({
-        id: vendors.id,
-        businessName: vendors.businessName,
-        // EH2.1 — surface brand display_name override for the vendor-events
-        // page H1 + JSON-LD ItemListSchema name.
-        displayName: vendors.displayName,
-        slug: vendors.slug,
-      })
-      .from(vendors)
-      .where(eq(vendors.slug, unsafeSlug(slug)))
-      .limit(1);
-
-    if (vendorResults.length === 0) {
+    const data = await getVendorEventsData(db, slug);
+    if (!data) {
       return NextResponse.json({ error: "Vendor not found" }, { status: 404 });
     }
-
-    const vendor = vendorResults[0];
-
-    // Get approved events for this vendor
-    const eventResults = await db
-      .select({
-        id: events.id,
-        name: events.name,
-        slug: events.slug,
-        description: events.description,
-        startDate: events.startDate,
-        endDate: events.endDate,
-        imageUrl: events.imageUrl,
-        categories: events.categories,
-        venueName: venues.name,
-        venueCity: venues.city,
-        venueState: venues.state,
-        venueAddress: venues.address,
-        venueZip: venues.zip,
-        venueTimezone: venues.timezone,
-      })
-      .from(eventVendors)
-      .leftJoin(events, eq(eventVendors.eventId, events.id))
-      .leftJoin(venues, eq(events.venueId, venues.id))
-      .where(
-        and(eq(eventVendors.vendorId, vendor.id), isPublicVendorStatus(), isPublicEventStatus())
-      )
-      .orderBy(asc(events.startDate));
-
-    // Format events with venue info
-    const formattedEvents = eventResults
-      .filter((e) => e.id !== null)
-      .map((e) => ({
-        id: e.id,
-        name: e.name,
-        slug: e.slug,
-        description: e.description,
-        startDate: e.startDate,
-        endDate: e.endDate,
-        imageUrl: e.imageUrl,
-        categories: parseCategories(e.categories),
-        venue: {
-          name: e.venueName || "Unknown Venue",
-          city: e.venueCity || "",
-          state: e.venueState || "",
-          address: e.venueAddress,
-          zip: e.venueZip,
-          timezone: e.venueTimezone || "America/New_York",
-        },
-      }));
-
-    return NextResponse.json({
-      vendor: {
-        id: vendor.id,
-        businessName: vendor.businessName,
-        displayName: vendor.displayName,
-        slug: vendor.slug,
-      },
-      events: formattedEvents,
-    });
+    return NextResponse.json(data);
   } catch (error) {
     await logError(db, {
       message: "Error fetching vendor events",
@@ -99,18 +24,4 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     });
     return NextResponse.json({ error: "Failed to fetch events" }, { status: 500 });
   }
-}
-
-function parseCategories(categories: unknown): string[] {
-  if (!categories) return [];
-  if (Array.isArray(categories)) return categories;
-  if (typeof categories === "string") {
-    try {
-      const parsed = JSON.parse(categories);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
 }
