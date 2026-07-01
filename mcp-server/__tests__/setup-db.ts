@@ -770,6 +770,15 @@ const SCHEMA_SQL = `
     ON syndication_subscriptions (subscriber_id, event_id);
   CREATE INDEX idx_syndication_subscriptions_event
     ON syndication_subscriptions (event_id);
+
+  -- OPE-37 (drizzle/0142) — promoter-enrichment notice debounce state. The
+  -- notice module reads/upserts this single-row table, so the test schema needs it.
+  CREATE TABLE promoter_enrichment_notice_state (
+    id TEXT PRIMARY KEY,
+    last_notice_date TEXT NOT NULL,
+    last_queue_count INTEGER NOT NULL,
+    last_notified_at INTEGER NOT NULL
+  );
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {
