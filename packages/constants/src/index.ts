@@ -346,3 +346,126 @@ export const VENDOR_STATUS_TRANSITIONS: Record<EventVendorStatus, EventVendorSta
   WITHDRAWN: ["APPLIED", "INTERESTED"],
   CANCELLED: ["INVITED"],
 };
+
+// ── OPE-35 promoter-enrichment rails ──────────────────────────────
+//
+// Per-promoter enrichment lifecycle — the promoter analog of the
+// vendor-roster rails (VENDOR_ROSTER_STATUS_VALUES above). NULL (absent)
+// = never assessed. NEEDS_ENRICHMENT is the enqueue state (set by the
+// create/update hook when a website exists but a target field is empty);
+// ENRICHED/NO_SOURCE are derived-terminal; IN_PROGRESS/BLOCKED are
+// agent/operator-owned "sticky" states the enqueue hook preserves.
+export const PROMOTER_ENRICHMENT_STATUS_VALUES = [
+  "NEEDS_ENRICHMENT",
+  "IN_PROGRESS",
+  "ENRICHED",
+  "NO_SOURCE",
+  "BLOCKED",
+] as const;
+export type PromoterEnrichmentStatus = (typeof PROMOTER_ENRICHMENT_STATUS_VALUES)[number];
+
+// The five enrichment target fields tracked in `promoters.enrichment_coverage`
+// (a JSON snapshot of which are filled). Fill-rate metrics aggregate these.
+export const PROMOTER_ENRICHMENT_FIELDS = [
+  "hero",
+  "logo",
+  "description",
+  "socials",
+  "contact",
+] as const;
+export type PromoterEnrichmentField = (typeof PROMOTER_ENRICHMENT_FIELDS)[number];
+
+// Why a NEEDS_ENRICHMENT promoter can't be drained — set alongside BLOCKED.
+export const PROMOTER_ENRICHMENT_BLOCKED_REASONS = [
+  "js_gated",
+  "host_gated",
+  "parked",
+  "hijacked",
+  "no_image",
+  "stale",
+  "rate_limited",
+] as const;
+export type PromoterEnrichmentBlockedReason = (typeof PROMOTER_ENRICHMENT_BLOCKED_REASONS)[number];
+
+export type PromoterEnrichmentCoverage = Record<PromoterEnrichmentField, boolean>;
+
+export interface PromoterEnrichmentInput {
+  website?: string | null;
+  heroImageUrl?: string | null;
+  logoUrl?: string | null;
+  description?: string | null;
+  socialLinks?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+}
+
+export interface PromoterEnrichmentResult {
+  status: PromoterEnrichmentStatus;
+  coverage: PromoterEnrichmentCoverage;
+  /** JSON string for direct write to `promoters.enrichment_coverage`. */
+  coverageJson: string;
+}
+
+function enrichmentHasText(v: string | null | undefined): boolean {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+function enrichmentHasSocials(v: string | null | undefined): boolean {
+  if (!enrichmentHasText(v)) return false;
+  const t = v!.trim();
+  // social_links is a JSON string; empty containers / literal null count as absent.
+  return t !== "[]" && t !== "{}" && t.toLowerCase() !== "null";
+}
+
+/**
+ * A description counts as "missing" for enrichment when it's blank OR an
+ * auto-generated placeholder, so curated descriptions aren't re-queued but
+ * boilerplate ones are (OPE-35 note). Conservative by design — the auto-
+ * generated promoter descriptions produced this session took the shape
+ * "Event organizer." / "<Name> is an event organizer."
+ */
+export function isPlaceholderDescription(desc: string | null | undefined): boolean {
+  if (!enrichmentHasText(desc)) return true;
+  const d = desc!.trim();
+  if (/^event organizer\.?$/i.test(d)) return true;
+  if (/\bis an event organizer\b/i.test(d) && d.length < 60) return true;
+  return false;
+}
+
+/**
+ * Derive a promoter's enrichment status + per-field coverage from its fields.
+ * Pure — the single source of truth for the create/update enqueue hook (OPE-35).
+ *
+ * - all five fields covered → ENRICHED (even if it was IN_PROGRESS/BLOCKED)
+ * - no website → NO_SOURCE (nothing to enrich from)
+ * - IN_PROGRESS/BLOCKED preserved on edits that don't complete coverage
+ *   (mirrors vendor-roster not overwriting terminal states on re-sweep)
+ * - otherwise → NEEDS_ENRICHMENT
+ */
+export function computePromoterEnrichment(
+  p: PromoterEnrichmentInput,
+  currentStatus?: PromoterEnrichmentStatus | null
+): PromoterEnrichmentResult {
+  const coverage: PromoterEnrichmentCoverage = {
+    hero: enrichmentHasText(p.heroImageUrl),
+    logo: enrichmentHasText(p.logoUrl),
+    description: !isPlaceholderDescription(p.description),
+    socials: enrichmentHasSocials(p.socialLinks),
+    contact: enrichmentHasText(p.contactEmail) || enrichmentHasText(p.contactPhone),
+  };
+  const allCovered = PROMOTER_ENRICHMENT_FIELDS.every((f) => coverage[f]);
+  const hasWebsite = enrichmentHasText(p.website);
+
+  let status: PromoterEnrichmentStatus;
+  if (allCovered) {
+    status = "ENRICHED";
+  } else if (!hasWebsite) {
+    status = "NO_SOURCE";
+  } else if (currentStatus === "IN_PROGRESS" || currentStatus === "BLOCKED") {
+    status = currentStatus;
+  } else {
+    status = "NEEDS_ENRICHMENT";
+  }
+
+  return { status, coverage, coverageJson: JSON.stringify(coverage) };
+}

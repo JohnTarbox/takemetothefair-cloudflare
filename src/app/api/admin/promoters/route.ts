@@ -9,6 +9,7 @@ import { promoterCreateSchema, validateRequestBody } from "@/lib/validations";
 import { logError } from "@/lib/logger";
 import { indexNowUrlFor } from "@/lib/indexnow";
 import { enqueueIndexNow } from "@/lib/queues/producers";
+import { computePromoterEnrichment } from "@takemetothefair/constants";
 
 export const GET = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
@@ -37,6 +38,15 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
   try {
     const promoterId = crypto.randomUUID();
 
+    // OPE-35 — seed enrichment rails from the create fields (this API doesn't
+    // accept hero/contact, so those start uncovered).
+    const enrichment = computePromoterEnrichment({
+      website: data.website ?? null,
+      logoUrl: data.logoUrl ?? null,
+      socialLinks: data.socialLinks ?? null,
+      description: data.description ?? null,
+    });
+
     await db.insert(promoters).values({
       id: promoterId,
       userId: data.userId || null,
@@ -47,6 +57,8 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       socialLinks: data.socialLinks,
       logoUrl: data.logoUrl,
       verified: data.verified,
+      enrichmentStatus: enrichment.status,
+      enrichmentCoverage: enrichment.coverageJson,
     });
 
     // Update user role to PROMOTER only if a user is linked

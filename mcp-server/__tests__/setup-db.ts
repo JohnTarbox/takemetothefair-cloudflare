@@ -84,7 +84,13 @@ const SCHEMA_SQL = `
     -- OPE-31 (drizzle/0139) — producer-wide roster-publishing flag. Pass 3 of
     -- the occurred-sweep joins promoters and reads this, so the test schema
     -- needs the column.
-    vendor_roster_publishes_lists INTEGER
+    vendor_roster_publishes_lists INTEGER,
+    -- OPE-35 (drizzle/0140) — promoter-enrichment rails. The create/update tools
+    -- write enrichment_status + enrichment_coverage, so the test table needs them.
+    enrichment_status TEXT,
+    enrichment_coverage TEXT,
+    last_enriched_at INTEGER,
+    enrichment_blocked_reason TEXT
   );
 
   CREATE TABLE events (

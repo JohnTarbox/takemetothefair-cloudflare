@@ -1214,4 +1214,36 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
       }
     }
   );
+
+  // ── get_promoter_enrichment_coverage (OPE-35 Part 3) ───────────
+  server.tool(
+    "get_promoter_enrichment_coverage",
+    [
+      "Promoter-enrichment coverage metric (OPE-35). Per-field fill rates",
+      "(hero/logo/description/socials/contact), the enrichment-status breakdown",
+      "(NEEDS_ENRICHMENT/IN_PROGRESS/ENRICHED/NO_SOURCE/BLOCKED + unassessed),",
+      "and the NEEDS_ENRICHMENT queue depth the enrichment drain pulls from.",
+      "Use this to track how promoter enrichment is converging. Read-only, admin only.",
+    ].join(" "),
+    {},
+    async () => {
+      try {
+        const data = await fetchAnalyticsJson("/api/admin/analytics/promoter-enrichment-coverage");
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error fetching promoter enrichment coverage",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
 }

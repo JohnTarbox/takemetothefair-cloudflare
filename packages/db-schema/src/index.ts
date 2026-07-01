@@ -172,6 +172,21 @@ export const promoters = sqliteTable("promoters", {
   //           auto-sets its events to NO_PUBLIC_LIST instead of NEEDS_RESEARCH,
   //           so research passes stop grinding the same producer-wide dead-end.
   vendorRosterPublishesLists: integer("vendor_roster_publishes_lists", { mode: "boolean" }),
+  // OPE-35 (drizzle/0140, 2026-07-01) — promoter-enrichment rails, the promoter
+  // analog of the vendor-roster rails. NULL enrichment_status = never assessed.
+  // Set by the create/update enqueue hook (computePromoterEnrichment): website
+  // present + any target field empty → NEEDS_ENRICHMENT. IN_PROGRESS/BLOCKED are
+  // agent/operator-owned; ENRICHED/NO_SOURCE are derived-terminal.
+  enrichmentStatus: text("enrichment_status", {
+    enum: ["NEEDS_ENRICHMENT", "IN_PROGRESS", "ENRICHED", "NO_SOURCE", "BLOCKED"],
+  }),
+  // JSON snapshot of which target fields are filled: {hero,logo,description,socials,contact}.
+  enrichmentCoverage: text("enrichment_coverage"),
+  lastEnrichedAt: integer("last_enriched_at", { mode: "timestamp" }),
+  // Why a NEEDS_ENRICHMENT promoter can't be drained; set alongside BLOCKED.
+  enrichmentBlockedReason: text("enrichment_blocked_reason", {
+    enum: ["js_gated", "host_gated", "parked", "hijacked", "no_image", "stale", "rate_limited"],
+  }),
 });
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the
