@@ -1215,15 +1215,19 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
     }
   );
 
-  // ── get_promoter_enrichment_coverage (OPE-35 Part 3) ───────────
+  // ── get_promoter_enrichment_coverage (OPE-35 Part 3 + OPE-38) ──
   server.tool(
     "get_promoter_enrichment_coverage",
     [
-      "Promoter-enrichment coverage metric (OPE-35). Per-field fill rates",
-      "(hero/logo/description/socials/contact), the enrichment-status breakdown",
-      "(NEEDS_ENRICHMENT/IN_PROGRESS/ENRICHED/NO_SOURCE/BLOCKED + unassessed),",
-      "and the NEEDS_ENRICHMENT queue depth the enrichment drain pulls from.",
-      "Use this to track how promoter enrichment is converging. Read-only, admin only.",
+      "Promoter-enrichment coverage + flywheel telemetry (OPE-35/OPE-38). Per-field",
+      "fill rates (hero/logo/description/socials/contact), the enrichment-status",
+      "breakdown (NEEDS_ENRICHMENT/IN_PROGRESS/ENRICHED/NO_SOURCE/BLOCKED + unassessed),",
+      "the NEEDS_ENRICHMENT queue depth, plus OPE-38 flywheel metrics: `autoApply`",
+      "(auto-apply share = auto_merged / (auto_merged + approved)), `blocked`",
+      "(blocked-rate grouped by enrichment_blocked_reason), `candidatesTrend`",
+      "(candidates created per week), and `ruleAgreement` (per field+method agreement",
+      "% with a `promotable` flag). Use this to track how promoter enrichment is",
+      "converging and which extraction rules are safe to auto-apply. Read-only, admin only.",
     ].join(" "),
     {},
     async () => {
@@ -1239,6 +1243,54 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
                 error instanceof Error
                   ? error.message
                   : "Unknown error fetching promoter enrichment coverage",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // ── get_promoter_enrichment_rule_agreement (OPE-38) ────────────
+  server.tool(
+    "get_promoter_enrichment_rule_agreement",
+    [
+      "Promoter-enrichment rule-agreement view (OPE-38). For each",
+      "(proposed_field, extraction_method) pair, over settled candidates",
+      "(approved/rejected/auto_merged), returns agreements (approved+auto_merged),",
+      "disagreements (rejected), agreementPct, sampleSize, and a `promotable` flag",
+      "(agreement ≥95% over ≥20 decisions). Use this to decide which extraction",
+      "rules are reliable enough to raise to auto-apply. Sorted by sample size.",
+      "Read-only, admin only.",
+    ].join(" "),
+    {},
+    async () => {
+      try {
+        const data = (await fetchAnalyticsJson(
+          "/api/admin/analytics/promoter-enrichment-coverage"
+        )) as {
+          generatedAt?: string;
+          ruleAgreement?: unknown;
+          autoApply?: unknown;
+        };
+        return {
+          content: [
+            jsonContent({
+              generatedAt: data.generatedAt,
+              autoApply: data.autoApply,
+              ruleAgreement: data.ruleAgreement ?? [],
+            }),
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                error instanceof Error
+                  ? error.message
+                  : "Unknown error fetching promoter enrichment rule agreement",
             },
           ],
           isError: true,
