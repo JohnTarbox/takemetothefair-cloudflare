@@ -43,6 +43,7 @@ import { runScheduledStalePageRadar } from "./goodwill/stale-page-radar.js";
 import { runOccurredTransitionSweep } from "./event-occurred-sweep.js";
 import { runRosterResearchNotice } from "./roster-research-notice.js";
 import { runInboundExceptionNotice } from "./inbound-exception-notice.js";
+import { runPromoterEnrichmentNotice } from "./promoter-enrichment-notice.js";
 import { runScheduledSelfConsistencyCron } from "./goodwill/self-consistency-cron.js";
 import { runScheduledGoodwillHealthCanary } from "./goodwill/health-canary.js";
 import { runScheduledHoldoutSampling } from "./goodwill/holdout-sampling.js";
@@ -1568,6 +1569,12 @@ export default {
         // occurred-sweep, so it runs as its own failsoft sibling here. See
         // mcp-server/src/inbound-exception-notice.ts.
         runInboundExceptionNotice(env),
+        // OPE-37 (2026-07-01) — promoter-enrichment queue notice. Promoter analog
+        // of OPE-15/OPE-17: notifies the operator when the promoter
+        // NEEDS_ENRICHMENT queue (OPE-35 rails) is non-empty AND changed (≤1/day).
+        // Independent failsoft sibling — counts the whole promoters corpus, not
+        // this run's enqueue. See mcp-server/src/promoter-enrichment-notice.ts.
+        runPromoterEnrichmentNotice(env),
         // A3.2 / K43 (2026-06-25) — nightly blog-link integrity audit. Sweeps
         // every PUBLISHED post and reports internal /events,/vendors,/venues,
         // /blog links that no longer resolve (drift a slug rename/merge left

@@ -1934,6 +1934,21 @@ export const inboundExceptionNoticeState = sqliteTable("inbound_exception_notice
   lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
 });
 
+// OPE-37 (drizzle/0142, 2026-07-01) — debounce state for the promoter-enrichment
+// NEEDS_ENRICHMENT-queue notice. Exact analog of rosterResearchNoticeState
+// (OPE-15) and inboundExceptionNoticeState (OPE-17): single row keyed by the
+// constant NOTICE_KEY in mcp-server/src/promoter-enrichment-notice.ts. Fires on
+// the daily 06:00 sweep when the count of promoters with
+// enrichment_status='NEEDS_ENRICHMENT' is non-empty AND changed since the last
+// notice. lastNoticeDate is a UTC YYYY-MM-DD string; lastQueueCount is the
+// NEEDS_ENRICHMENT count at the last fire (the change-detector).
+export const promoterEnrichmentNoticeState = sqliteTable("promoter_enrichment_notice_state", {
+  id: text("id").primaryKey(),
+  lastNoticeDate: text("last_notice_date").notNull(),
+  lastQueueCount: integer("last_queue_count").notNull(),
+  lastNotifiedAt: integer("last_notified_at", { mode: "timestamp" }).notNull(),
+});
+
 // §10.2 enrichment audit trail (drizzle/0056). Append-only; one row per
 // attempt (success or failure). source values: ai_workers | scraper |
 // manual_admin | vendor_self | mcp_create. fieldsChanged is JSON array of
