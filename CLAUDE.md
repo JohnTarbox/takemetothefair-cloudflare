@@ -94,6 +94,10 @@ npm run db:seed                # Seed local database
 npm run db:studio              # Open Drizzle Studio
 ```
 
+**Bulk mutations (backfills, data-moving migrations, one-shot rewrites):** follow
+`docs/bulk-mutation-discipline.md` — single-writer · idempotent · read-back-verified
+· rollback-planned. Cite it from any PR that ships a bulk mutation.
+
 ## Critical: OpenNext (Workers) runtime — do NOT declare `runtime = "edge"`
 
 Post-OpenNext (2026-06-10), the entire Next.js app runs on the Cloudflare **Workers**
