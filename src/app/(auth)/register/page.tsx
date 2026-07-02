@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { FormErrorSummary } from "@/components/ui/form-error-summary";
-import { trackEvent } from "@/lib/analytics";
+import { trackEvent, trackClaimView } from "@/lib/analytics";
 import { type FieldErrors, validateAll, validateField } from "@/lib/validations/field-errors";
 
 // Client-side schema mirrors the server registerSchema but adds the
@@ -94,6 +94,17 @@ function RegisterForm() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [isLoading, setIsLoading] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+
+  // OPE-66 — claim-funnel entry. Fire once on mount when this signup arrives
+  // from a "Claim this listing" CTA (claim= present + a vendor/promoter role).
+  // Mirrored server-side to claim_view_server in /api/analytics/track.
+  useEffect(() => {
+    if (!claimSlug) return;
+    const normalizedRole = defaultRole.toUpperCase();
+    if (normalizedRole !== "VENDOR" && normalizedRole !== "PROMOTER") return;
+    trackClaimView(normalizedRole, claimSlug);
+    // Fire once per claim landing; claimSlug/defaultRole are stable per mount.
+  }, [claimSlug, defaultRole]);
 
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string>("");

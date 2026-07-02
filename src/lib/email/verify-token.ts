@@ -1,7 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import { users, verificationTokens } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
-import { approvePendingEmailMatchClaims } from "@/lib/claims/resolve-claim-at-signup";
+import {
+  approvePendingEmailMatchClaims,
+  type ClaimEntityType,
+} from "@/lib/claims/resolve-claim-at-signup";
 import type { Database } from "@/lib/db";
 
 /**
@@ -14,7 +17,16 @@ import type { Database } from "@/lib/db";
 export async function validateAndConsumeVerificationToken(
   db: ReturnType<typeof getCloudflareDb>,
   token: string
-): Promise<{ ok: true; email: string } | { ok: false; reason: "not_found" | "expired" }> {
+): Promise<
+  | {
+      ok: true;
+      email: string;
+      /** Claims auto-approved by this verification (rung-1 email match) — the
+       *  verify-email surface fires claim_completed_server for each (OPE-66). */
+      approvedClaims: Array<{ entityType: ClaimEntityType; entitySlug: string }>;
+    }
+  | { ok: false; reason: "not_found" | "expired" }
+> {
   const record = await db.query.verificationTokens.findFirst({
     where: eq(verificationTokens.token, token),
   });
@@ -51,6 +63,7 @@ export async function validateAndConsumeVerificationToken(
   // claims this user made at signup (resolveClaimAtSignup deferred them here).
   // Best-effort: a failure must NOT block email verification itself — the claim
   // simply stays PENDING (recoverable via the evidence flow / re-verify).
+  let approvedClaims: Array<{ entityType: ClaimEntityType; entitySlug: string }> = [];
   try {
     const [u] = await db
       .select({ id: users.id })
@@ -58,11 +71,16 @@ export async function validateAndConsumeVerificationToken(
       .where(eq(users.email, record.identifier))
       .limit(1);
     if (u) {
-      await approvePendingEmailMatchClaims(db as unknown as Database, u.id, record.identifier);
+      const res = await approvePendingEmailMatchClaims(
+        db as unknown as Database,
+        u.id,
+        record.identifier
+      );
+      approvedClaims = res.approvedClaims;
     }
   } catch {
     // swallow — verification succeeded; claim approval is retryable out-of-band.
   }
 
-  return { ok: true, email: record.identifier };
+  return { ok: true, email: record.identifier, approvedClaims };
 }

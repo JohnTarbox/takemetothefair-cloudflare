@@ -502,3 +502,25 @@ export function trackNewsletterConfirm() {
   trackEvent("newsletter_confirm", { category: "conversion", label: "newsletter" });
   sendBeacon("newsletter_confirm", "conversion", {});
 }
+
+// ── OPE-66 (2026-07-02) — claim-funnel entry ─────────────────────────────────
+//
+// The register page fires this once on mount when the signup originates from a
+// "Claim this listing" CTA (claim= param present). The beacon drives the
+// server-side Measurement Protocol mirror in /api/analytics/track, which
+// re-emits it as `claim_view_server` (ad-block-resilient). The three deeper
+// funnel conversions (account_created / verification_attempted / completed)
+// fire from pure server routes, so this is the only client-triggered step.
+// entity_type / entity_id / method land as GA4 custom dimensions — see
+// docs/ope66-ga4-custom-dimensions.md.
+
+export function trackClaimView(entityType: "VENDOR" | "PROMOTER", entitySlug: string) {
+  const params = {
+    category: "funnel" as const,
+    label: `${entityType}:${entitySlug}`,
+    entity_type: entityType,
+    entity_slug: entitySlug,
+  };
+  trackEvent("claim_view", params);
+  sendBeacon("claim_view", "funnel", { entityType, entitySlug });
+}

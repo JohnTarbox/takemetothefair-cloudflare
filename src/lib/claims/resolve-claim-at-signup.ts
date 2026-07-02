@@ -196,8 +196,14 @@ export async function approvePendingEmailMatchClaims(
   db: Database,
   userId: string,
   verifiedEmail: string
-): Promise<{ approved: number }> {
+): Promise<{
+  approved: number;
+  /** Slugs of the entities whose claims were approved on this call — for OPE-66
+   *  claim_completed_server GA4 events fired by the verify-email surface. */
+  approvedClaims: Array<{ entityType: ClaimEntityType; entitySlug: string }>;
+}> {
   const now = new Date();
+  const approvedClaims: Array<{ entityType: ClaimEntityType; entitySlug: string }> = [];
   const pending = await db
     .select({
       id: entityClaims.id,
@@ -219,17 +225,25 @@ export async function approvePendingEmailMatchClaims(
     const entityType = claim.entityType;
     const role = entityType === "VENDOR" ? "VENDOR" : "PROMOTER";
 
-    let entity: { claimed: boolean; contactEmail: string | null } | undefined;
+    let entity: { claimed: boolean; contactEmail: string | null; slug: string } | undefined;
     if (entityType === "VENDOR") {
       const [row] = await db
-        .select({ claimed: vendors.claimed, contactEmail: vendors.contactEmail })
+        .select({
+          claimed: vendors.claimed,
+          contactEmail: vendors.contactEmail,
+          slug: vendors.slug,
+        })
         .from(vendors)
         .where(eq(vendors.id, claim.entityId))
         .limit(1);
       entity = row;
     } else {
       const [row] = await db
-        .select({ claimed: promoters.claimed, contactEmail: promoters.contactEmail })
+        .select({
+          claimed: promoters.claimed,
+          contactEmail: promoters.contactEmail,
+          slug: promoters.slug,
+        })
         .from(promoters)
         .where(eq(promoters.id, claim.entityId))
         .limit(1);
@@ -274,7 +288,8 @@ export async function approvePendingEmailMatchClaims(
       .set({ status: "APPROVED", decidedAt: now, decidedBy: userId })
       .where(eq(entityClaims.id, claim.id));
     approved++;
+    approvedClaims.push({ entityType, entitySlug: entity.slug });
   }
 
-  return { approved };
+  return { approved, approvedClaims };
 }
