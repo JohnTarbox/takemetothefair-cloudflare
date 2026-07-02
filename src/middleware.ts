@@ -16,6 +16,7 @@ import {
   promoterSlugHistory,
 } from "@/lib/db/schema";
 import { isPubliclyVisible, publicEventWhere, type EventLifecycle } from "@/lib/event-lifecycle";
+import { getHelpArticle } from "@/lib/help-articles";
 import { unsafeSlug } from "@/lib/utils";
 import { shouldSample, writeRequestSample } from "@/lib/request-sampling";
 
@@ -83,6 +84,11 @@ export const config = {
     // instead of 301-redirecting.
     "/venues/:slug",
     "/promoters/:slug",
+    // Raw-markdown twin of a help article — `/help/<slug>.md` (OPE-62). App
+    // Router can't express this as a dynamic route (see the handler comment),
+    // so middleware serves it, matching only the `.md` shape so regular
+    // `/help/<slug>` HTML pages don't invoke middleware.
+    "/help/:file([^/]+\\.md)",
     // Admin pages + admin API routes — for the Claude read-only Bearer
     // method gate. Matcher does NOT cover /admin or /api/admin themselves
     // (only `/<seg>/*` shapes), so the gate doesn't fire for the listing
@@ -140,6 +146,32 @@ async function bearerMatchesEnv(
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // ── /help/<slug>.md — raw-markdown twin of a help article (OPE-62) ──────
+  // App Router can't express `/help/<slug>.md` as a dynamic route: Next 15
+  // treats a `[slug].md` folder as a LITERAL static path (it never lands in
+  // routesManifest.dynamicRoutes), and a bare `[slug]` segment is already the
+  // help *page*. So we serve the markdown here, before routing — the same
+  // technique the IndexNow keyfile uses below. HELP_ARTICLES is a static
+  // import (no DB), so this needs no Cloudflare env and runs even in
+  // `next build`. The matcher restricts this branch to the `.md` shape.
+  if (pathname.startsWith("/help/") && pathname.endsWith(".md")) {
+    const slug = pathname.slice("/help/".length, -".md".length);
+    const article = getHelpArticle(slug);
+    if (!article) {
+      return new NextResponse("Not found", {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+    return new NextResponse(article.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Cache-Control": "public, max-age=86400, s-maxage=86400",
+      },
+    });
+  }
 
   let env: Record<string, unknown> | null = null;
   try {

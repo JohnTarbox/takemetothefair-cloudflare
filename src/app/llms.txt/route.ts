@@ -5,8 +5,17 @@
 // and cached hard at the edge — the links point crawlers at the listing/index
 // pages, which are themselves dynamic and always current.
 import { SITE_URL } from "@takemetothefair/constants";
+import { HELP_ARTICLES } from "@/lib/help-articles";
 
 export const dynamic = "force-static";
+
+// The `/help` hub + one markdown link per help article, generated from the
+// static HELP_ARTICLES registry at module load so a new help article shows up
+// in /llms.txt automatically. Interpolated into the static BODY below (the
+// route stays force-static — HELP_ARTICLES is a compile-time constant, no I/O).
+const HELP_LINKS = HELP_ARTICLES.map(
+  (a) => `- [${a.title}](${SITE_URL}/help/${a.slug}): ${a.description}`
+).join("\n");
 
 // The structured indexes an AI agent should crawl to reach every entity.
 // Mirror sitemap-static.xml/route.ts when the set of hub pages changes.
@@ -42,6 +51,11 @@ const BODY = `# Meet Me at the Fair
 - [Massachusetts events](${SITE_URL}/events/massachusetts)
 - [Connecticut events](${SITE_URL}/events/connecticut)
 - [Rhode Island events](${SITE_URL}/events/rhode-island)
+
+### Help
+
+- [Help center](${SITE_URL}/help): guides for fairgoers, vendors, promoters, and developers, plus an FAQ and glossary. Each article is also available as raw markdown at ${SITE_URL}/help/<slug>.md.
+${HELP_LINKS}
 
 ## Structured data conventions
 
