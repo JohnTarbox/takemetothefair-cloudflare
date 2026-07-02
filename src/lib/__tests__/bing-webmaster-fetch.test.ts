@@ -86,4 +86,39 @@ describe("getCrawledUrls (GetChildrenUrlInfo)", () => {
     const rows = await getCrawledUrls(ENV, { skipCache: true });
     expect(rows).toEqual([]);
   });
+
+  it("uses POST with the {siteUrl,url,page} body (GetChildrenUrlInfo is POST-only)", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ d: [] }), { status: 200 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await getCrawledUrls(ENV, { skipCache: true, dir: "https://meetmeatthefair.com/" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("GetChildrenUrlInfo");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      url: "https://meetmeatthefair.com/",
+      page: 0,
+    });
+  });
+
+  it("returns [] when Bing NPEs with ErrorCode 2 (no crawl-children data) instead of throwing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              ErrorCode: 2,
+              Message: "ERROR!!! Object reference not set to an instance of an object.",
+            }),
+            { status: 400 }
+          )
+      )
+    );
+    const rows = await getCrawledUrls(ENV, { skipCache: true });
+    expect(rows).toEqual([]);
+  });
 });

@@ -484,9 +484,23 @@ export async function getCrawledUrls(
   const page = opts.page ?? 0;
   const cacheKey = `bing:crawled-urls:${await hashRequest({ dir, page })}`;
   return withCache(env, cacheKey, SCAN_CACHE_TTL, opts.skipCache ?? false, async () => {
-    const data = await bingFetch<unknown>(env, "GetChildrenUrlInfo", {
-      query: { url: dir, page },
-    });
+    // OPE-51 (live-verified 2026-07-02): GetChildrenUrlInfo is POST-only — a GET
+    // returns 405 (surfaces as the reported 5xx). Bing also throws an internal
+    // null-ref (ErrorCode 2 / HTTP 400 "Object reference not set…") when it has
+    // no crawl-children dataset for the site; treat that as an empty result
+    // rather than a hard error so the tool degrades cleanly.
+    let data: unknown;
+    try {
+      data = await bingFetch<unknown>(env, "GetChildrenUrlInfo", {
+        method: "POST",
+        body: { siteUrl: SITE_URL, url: dir, page },
+      });
+    } catch (e) {
+      if (e instanceof BingApiError && /object reference not set/i.test(e.detail)) {
+        return [];
+      }
+      throw e;
+    }
     const rows = extractRows<{
       Url?: string;
       IsPage?: boolean;
