@@ -76,6 +76,7 @@ import {
   submitFreeTextExtract,
   submitCheckDuplicate,
   submitEvent,
+  stripSignature,
 } from "../email-handlers/submit.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
@@ -86,6 +87,16 @@ export type InboundEmailParams = {
   messageRowId: string;
   intent: EmailIntent;
 };
+
+/**
+ * OPE-55 Phase 1 — a single event-shaped SOURCE for the unified
+ * multi-source fan-out. Either the email's body prose (`body`) or one
+ * body-linked URL (`url`). The submit pipeline builds a list of these
+ * (URLs first, body last — see runSubmitPipeline) and fans out over them
+ * so an email carrying events across BOTH a URL and its body text yields
+ * every distinct event, not just one branch's.
+ */
+type SubmitSource = { kind: "body"; text: string } | { kind: "url"; url: string };
 
 type Env = {
   DB: D1Database;
@@ -667,6 +678,51 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     );
 
     const subject = rowSnapshot.subject ?? "";
+
+    // ───── OPE-55 Phase 1: unified multi-source fan-out ─────────────
+    // Historically the three branches below were MUTUALLY EXCLUSIVE:
+    // a URL present dropped the body text; multi_url dropped free-text;
+    // no-URL dropped any link. So an email carrying the same/related
+    // events across a URL AND its body only ever surfaced one branch's
+    // events. Generalize: extract every event-shaped signal from the
+    // body prose AND every body-linked URL, dedup across them, and create
+    // all surviving unique events.
+    //
+    // Sources = every URL from extractAllUrls (ordered first) + an
+    // optional body-text pseudo-source (ordered LAST). URL-first ordering
+    // is deliberate: the richer, provenance-carrying URL event is created
+    // first so an identical body-prose candidate collapses against it via
+    // the DB-backed dedup round-trip (cross-source dedup for free) — and
+    // the surviving row keeps its sourceUrl rather than the body's url:"".
+    //
+    // We engage the unified path ONLY when there are >= 2 sources (body
+    // WITH >= 1 URL) AND the classifier did NOT flag free_text. The
+    // free_text override (GH #244) is preserved: when the classifier said
+    // "prose only," trust it over a stray signature href and let the
+    // body-only B2 path below run. Pure single-source cases (exactly one
+    // URL, or body only) fall through to the EXISTING fast paths so their
+    // behavior/replies/tests are byte-for-byte unchanged.
+    const bodyTextRaw = rowSnapshot.bodyTextExcerpt ?? "";
+    const isFreeTextIntent = rowSnapshot.classifiedSubIntent === "free_text";
+    const bodyHasSubstance = stripSignature(bodyTextRaw).trim().length > 20;
+    const bodyUrls = extractAllUrls(bodyTextRaw, "", 10);
+    if (!isFreeTextIntent && bodyHasSubstance && bodyUrls.length >= 1) {
+      const sources: SubmitSource[] = [
+        ...bodyUrls.map((url): SubmitSource => ({ kind: "url", url })),
+        { kind: "body", text: bodyTextRaw },
+      ];
+      const overflowed = bodyUrls.length >= 10;
+      return await this.runMultiSourcePipeline(
+        step,
+        sources,
+        subject,
+        rowSnapshot.fromAddress,
+        rowSnapshot.attachmentCount > 0,
+        overflowed,
+        bodyTextRaw,
+        messageRowId
+      );
+    }
 
     // B1 multi-URL branch — classifier flagged the email as containing
     // multiple distinct event URLs. Fan out sequentially: each URL runs
@@ -1263,6 +1319,258 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       resultingEventId: firstCreatedEventId,
       fetchMethod,
       extractionMethod: extracted.extractionMethod,
+    };
+  }
+
+  /**
+   * OPE-55 Phase 1 — unified multi-source fan-out. Generalizes
+   * runMultiUrlPipeline (N URLs) to a HETEROGENEOUS source list: the
+   * email body prose PLUS every body-linked URL. Called from
+   * runSubmitPipeline when there are >= 2 sources (body + >= 1 URL) and
+   * the classifier didn't flag free_text.
+   *
+   * Two phases:
+   *
+   *   Phase A — extraction. Walk the sources SEQUENTIALLY, each leg its
+   *   own step.do checkpoint (URL: `submit/multi[i]/fetch-url` +
+   *   `.../ai-extract`; body: `submit/bodytext/extract`). A URL's fetch
+   *   or extract failure is recorded and surfaced to the sender (a linked
+   *   page we couldn't use is worth mentioning). The body pseudo-source
+   *   failing (or extracting no event — a polite one-liner accompanying a
+   *   link) is SWALLOWED: it simply contributes zero candidates, so the
+   *   common "here's my link, thanks!" email still resolves to the single
+   *   URL reply below. Body candidates additionally pass the B2 min-field
+   *   gate (name + startDate|venueName) so prose noise doesn't create thin
+   *   events; URL candidates are trusted as in the existing URL paths. A
+   *   source that extracts >1 events contributes one candidate per event.
+   *
+   *   Phase B — N=1 collapse. When the sources produced exactly ONE
+   *   candidate and no URL source failed, route it through the existing
+   *   single-event tail (submitExtractedEvent) so the rich reply tiers
+   *   (HIGH/MEDIUM/LOW confidence, already-exists, ok-medium-dup,
+   *   correction-form widget, seed-discovery) are identical to a plain
+   *   single-source submission. This keeps the ubiquitous "one URL + a
+   *   sentence of body" shape on the exact reply it gets today.
+   *
+   *   Phase C — fan out. Process every candidate SEQUENTIALLY through the
+   *   dedup-then-submit pair (each its own step.do). Sequential order +
+   *   the DB-backed submitCheckDuplicate gives cross-source dedup for
+   *   free: once URL₁'s event is created, an identical body candidate
+   *   dedups against the now-existing row. Per-item step isolation means a
+   *   failing candidate drops only itself. Aggregated into the existing
+   *   ok-multi reply. resulting_event_id = first created event id (mirrors
+   *   the other fan-outs' admin jump-link behavior).
+   */
+  private async runMultiSourcePipeline(
+    step: WorkflowStep,
+    sources: SubmitSource[],
+    subject: string,
+    fromAddress: string,
+    hasAttachments: boolean,
+    overflowed: boolean,
+    // Passed to each URL source's submitExtract so the AI's two-section
+    // prompt can prefer body dates over the linked page's (analyst D1).
+    emailBody: string,
+    messageRowId: string
+  ): Promise<HandlerResult> {
+    interface SourceCandidate {
+      // Single-event-shaped (events = [event]); url carries provenance
+      // ("" for body-sourced events → submitEvent omits sourceUrl).
+      extracted: import("../email-handlers/submit.js").SubmitExtractResult;
+      fetchMethod: "standard" | "browser-rendering" | null;
+    }
+    interface SourceFailure {
+      url: string;
+      kind: "fetch-failed" | "extract-failed";
+    }
+    const candidates: SourceCandidate[] = [];
+    const sourceFailures: SourceFailure[] = [];
+
+    // ── Phase A: extract candidate events from every source. ──────────
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+      if (source.kind === "body") {
+        try {
+          const extracted = await step.do(
+            "submit/bodytext/extract",
+            {
+              retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+              timeout: "30 seconds",
+            },
+            () => submitFreeTextExtract(this.env, source.text)
+          );
+          for (const ev of extracted.events) {
+            // Same minimum-fields gate the B2 free-text path applies, so a
+            // body that extracts a near-empty event (name only) contributes
+            // nothing rather than a thin PENDING row.
+            const hasMinFields = !!ev.name && (!!ev.startDate || !!ev.venueName);
+            if (!hasMinFields) continue;
+            candidates.push({
+              extracted: { ...extracted, event: ev, events: [ev] },
+              fetchMethod: null,
+            });
+          }
+        } catch {
+          // No usable event in the prose — expected for accompanying text.
+          // Swallowed by design (see Phase A docblock).
+        }
+        continue;
+      }
+      // URL source: fetch then AI-extract, each its own checkpoint.
+      const labelPrefix = `submit/multi[${i}]`;
+      let fetched: import("../email-handlers/submit.js").SubmitFetchResult;
+      try {
+        fetched = await step.do(
+          `${labelPrefix}/fetch-url`,
+          {
+            retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+            timeout: "30 seconds",
+          },
+          () => submitFetch(this.env, source.url)
+        );
+      } catch {
+        sourceFailures.push({ url: source.url, kind: "fetch-failed" });
+        continue;
+      }
+      try {
+        const extracted = await step.do(
+          `${labelPrefix}/ai-extract`,
+          {
+            retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
+            timeout: "30 seconds",
+          },
+          () => submitExtract(this.env, fetched, emailBody)
+        );
+        for (const ev of extracted.events) {
+          candidates.push({
+            extracted: { ...extracted, event: ev, events: [ev] },
+            fetchMethod: fetched.fetchMethod,
+          });
+        }
+      } catch {
+        sourceFailures.push({ url: source.url, kind: "extract-failed" });
+      }
+    }
+
+    // ── Phase B: N=1 collapse → existing single-event rich reply. ─────
+    if (candidates.length === 1 && sourceFailures.length === 0) {
+      const only = candidates[0];
+      return await this.submitExtractedEvent(
+        step,
+        only.extracted,
+        subject,
+        fromAddress,
+        hasAttachments,
+        only.fetchMethod,
+        messageRowId
+      );
+    }
+
+    // ── Phase C: fan out over every candidate, dedup-then-submit. ─────
+    interface SourceOutcome {
+      kind: "created" | "already-exists" | "submit-failed" | "extract-failed" | "fetch-failed";
+      eventName?: string;
+      eventSlug?: string;
+      url?: string;
+    }
+    const outcomes: SourceOutcome[] = [];
+    let firstCreatedEventId: string | null = null;
+
+    for (let i = 0; i < candidates.length; i++) {
+      const { extracted } = candidates[i];
+      const sourceUrl = extracted.url; // "" for body-sourced events
+      const labelPrefix = `submit/source-event[${i}]`;
+      try {
+        const dedup = await step.do(
+          `${labelPrefix}/check-duplicate`,
+          { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+          () => submitCheckDuplicate(this.env, extracted)
+        );
+        if (dedup.isDuplicate && dedup.existingEventSlug) {
+          outcomes.push({
+            kind: "already-exists",
+            eventName: dedup.existingEventName ?? extracted.event.name,
+            eventSlug: dedup.existingEventSlug,
+            url: sourceUrl || undefined,
+          });
+          continue;
+        }
+        const submitted = await step.do(
+          `${labelPrefix}/submit-event`,
+          {
+            retries: { limit: 3, delay: "5 seconds", backoff: "exponential" },
+            timeout: "15 seconds",
+          },
+          () => submitEvent(this.env, extracted, fromAddress)
+        );
+        outcomes.push({
+          kind: "created",
+          eventName: submitted.eventName,
+          eventSlug: submitted.slug,
+          url: sourceUrl || undefined,
+        });
+        if (!firstCreatedEventId) firstCreatedEventId = submitted.id;
+      } catch (err) {
+        // Per-candidate failure degrades gracefully — the others still run.
+        const msg = err instanceof Error ? err.message : String(err);
+        outcomes.push({
+          kind: msg.startsWith("submit-") ? "submit-failed" : "extract-failed",
+          eventName: extracted.event.name || `Event ${i + 1}`,
+          url: sourceUrl || undefined,
+        });
+        await logError(getDb(this.env.DB), {
+          source: "mcp:workflow:multi-source-fanout",
+          message: `submit failed for source-event ${i + 1}/${candidates.length}: ${msg}`,
+          error: err,
+        });
+      }
+    }
+
+    // Fold the URL source-level failures (fetch/extract) in as bullets so
+    // the sender sees which linked pages we couldn't use.
+    for (const f of sourceFailures) {
+      outcomes.push({ kind: f.kind, url: f.url });
+    }
+
+    // Reuse the ok-multi template's bullet shape (same glyphs as the other
+    // fan-outs — buildReply HTML-escapes them safely).
+    const resultsText = outcomes
+      .map((o) => {
+        switch (o.kind) {
+          case "created":
+            return `✅ "${o.eventName}" — pending review`;
+          case "already-exists":
+            return `✅ "${o.eventName}" — already in our directory: https://meetmeatthefair.com/events/${o.eventSlug}`;
+          case "extract-failed":
+            return o.url
+              ? `❌ Couldn't extract event details from ${o.url}`
+              : `❌ Couldn't save "${o.eventName}" — our team will follow up`;
+          case "fetch-failed":
+            return `❌ Couldn't fetch ${o.url}`;
+          case "submit-failed":
+            return o.url
+              ? `❌ Extracted event from ${o.url} but couldn't save it — our team will follow up`
+              : `❌ Couldn't save "${o.eventName}" — our team will follow up`;
+        }
+      })
+      .join("\n");
+
+    return {
+      replyKind: "ok-multi",
+      replyParams: {
+        subject,
+        eventCount: outcomes.length,
+        resultsText,
+        hasAttachments,
+        overflowed,
+      },
+      status: "replied",
+      resultingEventId: firstCreatedEventId,
+      // Mixed body + URL sources may have used different fetch paths; leave
+      // the parent row's fetch_method null (same posture as runMultiUrl-
+      // Pipeline). Per-source paths are visible in the step-output trail.
+      fetchMethod: null,
+      extractionMethod: "ai",
     };
   }
 

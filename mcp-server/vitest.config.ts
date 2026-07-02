@@ -11,6 +11,10 @@ export default defineConfig({
       // module. Under node-pool unit tests we substitute a stub with the
       // same NonRetryableError shape so submit.ts's import resolves.
       "cloudflare:workflows": resolve(__dirname, "__tests__/_mocks/cloudflare-workflows.ts"),
+      // Same rationale for `cloudflare:workers` — the workers runtime
+      // provides WorkflowEntrypoint as a virtual module; under node-pool
+      // unit tests we substitute a stub so workflow classes import.
+      "cloudflare:workers": resolve(__dirname, "__tests__/_mocks/cloudflare-workers.ts"),
     },
   },
 });
