@@ -8,8 +8,10 @@ export const dynamic = "force-dynamic";
  * For each vendor with deleted_at < now - 30 days:
  *   - Delete content_links rows targeting this vendor (polymorphic, no FK)
  *   - Delete recommendation_items rows targeting this vendor (polymorphic, no FK)
- *   - DELETE FROM vendors → CASCADE removes event_vendors, vendor_claim_tokens,
- *     vendor_slug_history (all have ON DELETE CASCADE)
+ *   - DELETE FROM vendors → CASCADE removes event_vendors, vendor_slug_history
+ *     (both have ON DELETE CASCADE). NOTE (OPE-63): the old vendor_claim_tokens
+ *     table is now the polymorphic claim_tokens with NO FK to vendors, so its
+ *     rows no longer cascade — harmless here (0 tokens have ever been issued).
  *   - SET NULL on any other vendor's redirect_to_vendor_id pointing here
  *     (per migration 0053 ON DELETE SET NULL policy)
  *   - Audit log row (action='vendor.purge', actor=null for system-driven)
@@ -68,8 +70,9 @@ export async function POST(request: Request) {
         )
         .returning({ id: recommendationItems.id });
 
-      // FK CASCADE handles: event_vendors, vendor_claim_tokens, vendor_slug_history.
+      // FK CASCADE handles: event_vendors, vendor_slug_history.
       // FK SET NULL handles: any other vendor's redirect_to_vendor_id pointing here.
+      // (claim_tokens is polymorphic post-OPE-63 — no FK, no cascade; 0 rows.)
       await db.delete(vendors).where(eq(vendors.id, v.id));
 
       await db.insert(adminActions).values({

@@ -51,12 +51,14 @@ describe("createClaimToken", () => {
     expect(result.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 24 * 60 * 60 * 1000 + 1000);
     expect(insertCalls).toHaveLength(1);
     const inserted = insertCalls[0] as {
-      vendorId: string;
+      entityType: string;
+      entityId: string;
       userId: string;
       tokenHash: string;
       expiresAt: Date;
     };
-    expect(inserted.vendorId).toBe("vendor-1");
+    expect(inserted.entityType).toBe("VENDOR");
+    expect(inserted.entityId).toBe("vendor-1");
     expect(inserted.userId).toBe("user-1");
     expect(inserted.tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(inserted.tokenHash).not.toBe(result.rawToken); // hash != raw
@@ -88,7 +90,8 @@ describe("consumeClaimToken", () => {
     limitResults.push([
       {
         id: "tok-1",
-        vendorId: "v",
+        entityType: "VENDOR",
+        entityId: "v",
         userId: "u",
         tokenHash: "h",
         createdAt: new Date(),
@@ -106,7 +109,8 @@ describe("consumeClaimToken", () => {
     limitResults.push([
       {
         id: "tok-1",
-        vendorId: "vendor-1",
+        entityType: "VENDOR",
+        entityId: "vendor-1",
         userId: "user-1",
         tokenHash: "h",
         createdAt: new Date(),
@@ -125,7 +129,8 @@ describe("consumeClaimToken", () => {
     limitResults.push([
       {
         id: "tok-1",
-        vendorId: "vendor-1",
+        entityType: "VENDOR",
+        entityId: "vendor-1",
         userId: "user-1",
         tokenHash: "h",
         createdAt: new Date(),

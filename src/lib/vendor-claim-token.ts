@@ -2,9 +2,9 @@
 // exists in the verification email URL; we store its SHA-256 hex digest
 // so a database compromise can't be used to impersonate a vendor.
 
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import { vendorClaimTokens, vendors } from "@/lib/db/schema";
+import { claimTokens, vendors } from "@/lib/db/schema";
 
 const TOKEN_BYTE_LENGTH = 32;
 const TOKEN_TTL_SECONDS = 24 * 60 * 60;
@@ -37,8 +37,9 @@ export async function createClaimToken(
   const tokenHash = await sha256Hex(rawToken);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + TOKEN_TTL_SECONDS * 1000);
-  await db.insert(vendorClaimTokens).values({
-    vendorId: args.vendorId,
+  await db.insert(claimTokens).values({
+    entityType: "VENDOR",
+    entityId: args.vendorId,
     userId: args.userId,
     tokenHash,
     createdAt: now,
@@ -57,15 +58,17 @@ export type ClaimTokenValidation =
  */
 export async function consumeClaimToken(db: Db, rawToken: string): Promise<ClaimTokenValidation> {
   const tokenHash = await sha256Hex(rawToken);
+  // claim_tokens is polymorphic (OPE-63); this helper only ever handles VENDOR
+  // tokens, so scope the lookup to entity_type = 'VENDOR'.
   const [record] = await db
     .select()
-    .from(vendorClaimTokens)
-    .where(eq(vendorClaimTokens.tokenHash, tokenHash))
+    .from(claimTokens)
+    .where(and(eq(claimTokens.tokenHash, tokenHash), eq(claimTokens.entityType, "VENDOR")))
     .limit(1);
   if (!record) return { ok: false, reason: "not_found" };
   // Opportunistic sweep of expired rows for THIS token's hash window.
   if (record.expiresAt.getTime() < Date.now()) {
-    await db.delete(vendorClaimTokens).where(eq(vendorClaimTokens.tokenHash, tokenHash));
+    await db.delete(claimTokens).where(eq(claimTokens.tokenHash, tokenHash));
     return { ok: false, reason: "expired" };
   }
   // Verify the vendor still exists and the user still owns it (defence
@@ -73,15 +76,15 @@ export async function consumeClaimToken(db: Db, rawToken: string): Promise<Claim
   const [vendor] = await db
     .select({ id: vendors.id, userId: vendors.userId, claimed: vendors.claimed })
     .from(vendors)
-    .where(eq(vendors.id, record.vendorId))
+    .where(eq(vendors.id, record.entityId))
     .limit(1);
   if (!vendor || vendor.userId !== record.userId) {
-    await db.delete(vendorClaimTokens).where(eq(vendorClaimTokens.tokenHash, tokenHash));
+    await db.delete(claimTokens).where(eq(claimTokens.tokenHash, tokenHash));
     return { ok: false, reason: "not_found" };
   }
   // Single-use: delete on consume.
-  await db.delete(vendorClaimTokens).where(eq(vendorClaimTokens.tokenHash, tokenHash));
-  return { ok: true, vendorId: record.vendorId, userId: record.userId };
+  await db.delete(claimTokens).where(eq(claimTokens.tokenHash, tokenHash));
+  return { ok: true, vendorId: record.entityId, userId: record.userId };
 }
 
 /**
@@ -91,9 +94,9 @@ export async function consumeClaimToken(db: Db, rawToken: string): Promise<Claim
  */
 export async function sweepExpiredClaimTokens(db: Db): Promise<number> {
   const result = await db
-    .delete(vendorClaimTokens)
-    .where(lt(vendorClaimTokens.expiresAt, new Date()))
-    .returning({ id: vendorClaimTokens.id });
+    .delete(claimTokens)
+    .where(and(eq(claimTokens.entityType, "VENDOR"), lt(claimTokens.expiresAt, new Date())))
+    .returning({ id: claimTokens.id });
   return result.length;
 }
 
