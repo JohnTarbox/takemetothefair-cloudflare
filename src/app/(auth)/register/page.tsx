@@ -73,11 +73,13 @@ function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const defaultRole = searchParams.get("role") || "USER";
-  // Pre-fill from /vendors/[slug] "Claim this listing" CTA. The register
-  // POST forwards `claimVendorSlug` so the API can transfer ownership of
-  // the placeholder vendor row instead of inserting a duplicate.
+  // Pre-fill from a public "Claim this listing" CTA (/vendors/[slug] or
+  // /promoters/[slug]). The register POST forwards `claimSlug`; the API
+  // resolves the claim SAFELY post-signup (email-match → approved, else logged
+  // PENDING for evidence — never an unverified auto-transfer).
   const prefilledBusinessName = searchParams.get("businessName") || "";
-  const claimVendorSlug = searchParams.get("claim") || "";
+  const prefilledCompanyName = searchParams.get("companyName") || "";
+  const claimSlug = searchParams.get("claim") || "";
 
   const [formData, setFormData] = useState({
     email: "",
@@ -85,7 +87,7 @@ function RegisterForm() {
     confirmPassword: "",
     name: "",
     role: defaultRole.toUpperCase(),
-    companyName: "",
+    companyName: prefilledCompanyName,
     businessName: prefilledBusinessName,
   });
   const [error, setError] = useState("");
@@ -204,12 +206,23 @@ function RegisterForm() {
           role: formData.role,
           companyName: formData.companyName,
           businessName: formData.businessName,
-          claimVendorSlug: claimVendorSlug || undefined,
+          claimSlug: claimSlug || undefined,
           turnstileToken: turnstileToken || undefined,
         }),
       });
 
-      const data = (await response.json()) as { error?: string; retryAfter?: number };
+      const data = (await response.json()) as {
+        error?: string;
+        retryAfter?: number;
+        claim?: {
+          outcome:
+            | "approved"
+            | "pending_verification"
+            | "needs_evidence"
+            | "already_claimed"
+            | "entity_not_found";
+        };
+      };
 
       if (!response.ok) {
         // Handle rate limiting
@@ -237,15 +250,48 @@ function RegisterForm() {
         trackEvent("sign_up", { category: "conversion", label: "email" });
         // Role-aware first-run: send vendors and promoters to their
         // highest-leverage setup surface instead of a generic dashboard.
-        // Vendors arriving via the public "Claim this listing" CTA get a
-        // claim=<slug> hint so the welcome banner / claim widget can
-        // surface "you've taken ownership of <slug>".
-        const firstRunTarget =
-          formData.role === "VENDOR"
-            ? `/vendor/profile?welcome=1${claimVendorSlug ? `&claim=${encodeURIComponent(claimVendorSlug)}` : ""}`
-            : formData.role === "PROMOTER"
-              ? "/promoter/events/new?welcome=1"
-              : "/dashboard?welcome=1";
+        //
+        // Claim-funnel signups (claimSlug present) route by the SERVER's claim
+        // outcome — the client never decides ownership:
+        //   approved       → success surface (reuses the ?claimed=1 widget)
+        //   already_claimed → dispute surface (?claim_error=already_claimed)
+        //   needs_evidence → the "verify another way" evidence page
+        //   entity_not_found → fall through to the normal first-run surface
+        const entityPath = formData.role === "PROMOTER" ? "promoter" : "vendor";
+        const claimOutcome = data.claim?.outcome;
+        let firstRunTarget: string;
+        if (claimSlug && claimOutcome) {
+          const successBase =
+            formData.role === "PROMOTER" ? "/promoter/events/new?welcome=1" : "/vendor/profile";
+          if (claimOutcome === "approved") {
+            firstRunTarget =
+              formData.role === "PROMOTER"
+                ? `${successBase}&claimed=1`
+                : `${successBase}?claimed=1`;
+          } else if (claimOutcome === "already_claimed") {
+            firstRunTarget =
+              formData.role === "PROMOTER"
+                ? `${successBase}&claim_error=already_claimed`
+                : `${successBase}?claim_error=already_claimed`;
+          } else if (claimOutcome === "pending_verification") {
+            // Account email matched the listing's contact address, but the
+            // claim is granted only AFTER the user clicks the verification link
+            // (proof of inbox control). The verify page explains this; evidence
+            // is the fallback if they can't access that inbox.
+            firstRunTarget = `/claim/verify/${entityPath}/${encodeURIComponent(claimSlug)}?method=email`;
+          } else if (claimOutcome === "needs_evidence") {
+            firstRunTarget = `/claim/verify/${entityPath}/${encodeURIComponent(claimSlug)}`;
+          } else {
+            firstRunTarget = successBase.includes("?") ? successBase : `${successBase}?welcome=1`;
+          }
+        } else {
+          firstRunTarget =
+            formData.role === "VENDOR"
+              ? "/vendor/profile?welcome=1"
+              : formData.role === "PROMOTER"
+                ? "/promoter/events/new?welcome=1"
+                : "/dashboard?welcome=1";
+        }
         router.push(firstRunTarget);
         router.refresh();
       }
