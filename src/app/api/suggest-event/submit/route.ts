@@ -19,6 +19,7 @@ import { classifySource } from "@/lib/source-classification";
 import { pingIndexNow, indexNowUrlFor } from "@/lib/indexnow";
 import { autoLinkVenue, deriveStateFromText } from "@/lib/venue-matching";
 import { normalizeEventDate } from "@/lib/event-dates";
+import { areDatesContiguous } from "@takemetothefair/utils";
 import { maybeRouteToOccurrence } from "@/lib/discovery/route-to-occurrence";
 import { submitEventSchema } from "./schema";
 
@@ -269,9 +270,20 @@ export async function POST(request: NextRequest) {
             }))
           : null;
 
+    // OPE-47 (2026-07): derive the discontinuous flag from ACTUAL date
+    // contiguity, not a bare day count. Previously any event with ≥2
+    // event_days was marked discontinuous — which over-flagged a genuinely
+    // consecutive multi-day run (a 3-day fair) and stripped its "Daily:"
+    // label, and under-flagging arose elsewhere for the same reason. The
+    // stored flag is now exactly `!areDatesContiguous(dates)` so it agrees
+    // with the display's "Daily:" gate (isContiguousDaily) by construction.
+    // An explicit submitter-set discontinuousDates=true is still honored as
+    // an override.
+    const generatedDayDates =
+      effectiveEventDays !== null ? effectiveEventDays.map((d) => d.date) : [];
     const finalDiscontinuous =
       data.discontinuousDates === true ||
-      (effectiveEventDays !== null && effectiveEventDays.length >= 2);
+      (generatedDayDates.length >= 2 && !areDatesContiguous(generatedDayDates));
 
     // DQ4 (2026-06-08): when any event_day row lands without hours,
     // flag the parent event for operator triage. The /admin/events?flagged=1

@@ -202,6 +202,47 @@ describe("invariant 2 — create_event_day is idempotent on (event_id, date)", (
   });
 });
 
+// ── OPE-47: create_event_day keeps events.discontinuous_dates in contiguity-sync
+// Building a schedule day-by-day must set discontinuous_dates from ACTUAL date
+// contiguity, so DailyScheduleDisplay's "Daily:" gate and the stored flag agree.
+// This was the true under-flagging source: a Saturdays-only market built via
+// create_event_day used to stay at the create-time default (0) and render
+// "Daily:".
+
+describe("OPE-47 — create_event_day recomputes discontinuous_dates from contiguity", () => {
+  beforeEach(() => {
+    seedPromoter();
+    seedEvent({
+      id: "evt-cadence",
+      name: "Cadence Market",
+      slug: "cadence-market",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+    });
+  });
+
+  function discontinuousFlag(id: string): number | null {
+    const row = db.select().from(events).where(eq(events.id, id)).all()[0];
+    return (row.discontinuousDates as number | null) ?? null;
+  }
+
+  it("sets discontinuous_dates=1 once a second, non-consecutive day (weekly) is added", async () => {
+    await server.invoke("create_event_day", { event_id: "evt-cadence", date: "2026-06-06" });
+    // One day so far → flag untouched (still the create-time default 0).
+    expect(discontinuousFlag("evt-cadence")).toBeFalsy();
+
+    await server.invoke("create_event_day", { event_id: "evt-cadence", date: "2026-06-13" });
+    // Two Saturdays a week apart → non-consecutive → discontinuous.
+    expect(discontinuousFlag("evt-cadence")).toBeTruthy();
+  });
+
+  it("leaves discontinuous_dates=0 for a genuinely contiguous multi-day run", async () => {
+    await server.invoke("create_event_day", { event_id: "evt-cadence", date: "2026-07-04" });
+    await server.invoke("create_event_day", { event_id: "evt-cadence", date: "2026-07-05" });
+    await server.invoke("create_event_day", { event_id: "evt-cadence", date: "2026-07-06" });
+    expect(discontinuousFlag("evt-cadence")).toBeFalsy();
+  });
+});
+
 // ── Invariant 3: citations on tracked-field event mutations ────────────────
 // When update_event changes a tracked field AND provenance is supplied, a
 // citation row is written and any prior active citation for the same
