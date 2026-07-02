@@ -190,6 +190,14 @@ export const promoters = sqliteTable("promoters", {
   // OPE-36 (drizzle/0141) — last time the pre-extraction job tried this promoter
   // (success OR fail). The nightly selector prefers never-attempted, then stale.
   enrichmentAttemptedAt: integer("enrichment_attempted_at", { mode: "timestamp" }),
+  // OPE-63 (drizzle/0144, 2026-07-02) — promoter claim state, parity with the
+  // vendors.claimed/claimedAt/claimedBy trio (see vendors table). `claimed` =
+  // a user has confirmed ownership of this promoter (drives the claim program +
+  // the PROMOTER role grant). Distinct from `user_id`, which merely links an
+  // owning account. Set by approvePromoterClaim (OPE-63) / the claim wizard.
+  claimed: integer("claimed", { mode: "boolean" }).notNull().default(false),
+  claimedAt: integer("claimed_at", { mode: "timestamp" }),
+  claimedBy: text("claimed_by").references(() => users.id, { onDelete: "set null" }),
 });
 
 // Event series — EH3 P0 (drizzle/0127, 2026-06-21). Thin parent table: the
@@ -714,18 +722,56 @@ export const vendors = sqliteTable("vendors", {
   imageFocalY: real("image_focal_y").notNull().default(0.5),
 });
 
-// Vendor self-serve claim verification tokens (drizzle/0050).
-// SHA-256 hash of the raw token is stored; raw token only exists in
-// the verification email URL parameter.
-export const vendorClaimTokens = sqliteTable(
-  "vendor_claim_tokens",
+// Entity claims — OPE-63 (drizzle/0144, 2026-07-02). The KEYSTONE claim-program
+// table. One row per attempt by a user to claim an entity (vendor, promoter, or
+// venue). `entity_id` is POLYMORPHIC — it references vendors.id / promoters.id /
+// venues.id depending on `entity_type`, so there is intentionally NO foreign key
+// (an FK can only target one table). Rung of the claim ladder is captured by
+// `method`; `evidence` holds free text / JSON for the EVIDENCE (rung-4) path.
+export const entityClaims = sqliteTable(
+  "entity_claims",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    vendorId: text("vendor_id")
+    entityType: text("entity_type", { enum: ["VENDOR", "PROMOTER", "VENUE"] }).notNull(),
+    entityId: text("entity_id").notNull(), // polymorphic — NO FK (see comment above)
+    userId: text("user_id")
       .notNull()
-      .references(() => vendors.id, { onDelete: "cascade" }),
+      .references(() => users.id, { onDelete: "cascade" }),
+    method: text("method", {
+      enum: ["EMAIL_MATCH", "DOMAIN_MATCH", "INVITE_TOKEN", "EVIDENCE", "ADMIN"],
+    }).notNull(),
+    status: text("status", { enum: ["PENDING", "APPROVED", "REJECTED", "DISPUTED"] })
+      .notNull()
+      .default("PENDING"),
+    evidence: text("evidence"), // free text / JSON for rung-4 proof
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    decidedAt: integer("decided_at", { mode: "timestamp" }),
+    decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => ({
+    entityIdx: index("idx_entity_claims_entity").on(t.entityType, t.entityId),
+    userIdx: index("idx_entity_claims_user").on(t.userId),
+    statusIdx: index("idx_entity_claims_status").on(t.status),
+  })
+);
+
+// Self-serve claim verification tokens — OPE-63 (drizzle/0144). Generalized from
+// the old `vendor_claim_tokens` (drizzle/0050) to cover any claimable entity via
+// the polymorphic (entity_type, entity_id) pair — NO FK, same reasoning as
+// entity_claims. SHA-256 hash of the raw token is stored; the raw token only ever
+// exists in the verification email URL parameter.
+export const claimTokens = sqliteTable(
+  "claim_tokens",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    entityType: text("entity_type", { enum: ["VENDOR", "PROMOTER", "VENUE"] }).notNull(),
+    entityId: text("entity_id").notNull(), // polymorphic — NO FK
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -734,8 +780,8 @@ export const vendorClaimTokens = sqliteTable(
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   },
   (t) => ({
-    vendorIdx: index("idx_vendor_claim_tokens_vendor").on(t.vendorId),
-    expiresIdx: index("idx_vendor_claim_tokens_expires").on(t.expiresAt),
+    entityIdx: index("idx_claim_tokens_entity").on(t.entityType, t.entityId),
+    expiresIdx: index("idx_claim_tokens_expires").on(t.expiresAt),
   })
 );
 

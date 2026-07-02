@@ -92,7 +92,13 @@ const SCHEMA_SQL = `
     last_enriched_at INTEGER,
     enrichment_blocked_reason TEXT,
     -- OPE-36 (drizzle/0141) — pre-extraction last-attempt marker.
-    enrichment_attempted_at INTEGER
+    enrichment_attempted_at INTEGER,
+    -- OPE-63 (drizzle/0144) — promoter claim state (parity with vendors.claimed
+    -- trio). approvePromoterClaim writes claimed/claimed_at/claimed_by, and the
+    -- WS2b schema-sync guard covers promoters, so these are required here.
+    claimed INTEGER NOT NULL DEFAULT 0,
+    claimed_at INTEGER,
+    claimed_by TEXT
   );
 
   CREATE TABLE events (
@@ -790,6 +796,53 @@ const SCHEMA_SQL = `
     last_queue_count INTEGER NOT NULL,
     last_notified_at INTEGER NOT NULL
   );
+
+  -- user_roles — the multi-role grant table (packages/db-schema userRoles).
+  -- approvePromoterClaim (OPE-63) grants the PROMOTER role here, and the
+  -- admin-claim-approval vendor path grants VENDOR. The unique (user_id, role)
+  -- index backs the idempotent onConflictDoNothing grant.
+  CREATE TABLE user_roles (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    granted_by TEXT
+  );
+  CREATE UNIQUE INDEX user_roles_user_role_unique ON user_roles (user_id, role);
+  CREATE INDEX idx_user_roles_user_id ON user_roles (user_id);
+  CREATE INDEX idx_user_roles_role ON user_roles (role);
+
+  -- OPE-63 (drizzle/0144) — claim-program KEYSTONE. entity_id is polymorphic
+  -- (no FK). approvePromoterClaim + the claim wizard/queue tools write here.
+  CREATE TABLE entity_claims (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    method TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    evidence TEXT,
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER,
+    decided_by TEXT
+  );
+  CREATE INDEX idx_entity_claims_entity ON entity_claims (entity_type, entity_id);
+  CREATE INDEX idx_entity_claims_user ON entity_claims (user_id);
+  CREATE INDEX idx_entity_claims_status ON entity_claims (status);
+
+  -- OPE-63 (drizzle/0144) — generalized self-serve claim tokens (was
+  -- vendor_claim_tokens). Polymorphic (entity_type, entity_id), no FK.
+  CREATE TABLE claim_tokens (
+    id TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+  CREATE INDEX idx_claim_tokens_entity ON claim_tokens (entity_type, entity_id);
+  CREATE INDEX idx_claim_tokens_expires ON claim_tokens (expires_at);
 `;
 
 export function createTestDb(): { db: TestDb; raw: Database.Database } {

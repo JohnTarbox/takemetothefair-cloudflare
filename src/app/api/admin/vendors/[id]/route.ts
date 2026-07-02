@@ -853,9 +853,10 @@ export const DELETE = withAuthorized<{ id: string }>(async ({ request, db, userI
         and(eq(recommendationItems.targetType, "vendor"), eq(recommendationItems.targetId, id))
       );
 
-    // FK-cascade-deleted on the vendors row: event_vendors, vendor_claim_tokens,
-    // vendor_slug_history. Other vendors with redirect_to_vendor_id pointing
-    // here get SET NULL on their redirect (per migration 0053 ON DELETE policy).
+    // FK-cascade-deleted on the vendors row: event_vendors, vendor_slug_history.
+    // (claim_tokens is polymorphic post-OPE-63 — no FK, no cascade; 0 rows.)
+    // Other vendors with redirect_to_vendor_id pointing here get SET NULL on
+    // their redirect (per migration 0053 ON DELETE policy).
     await db.delete(vendors).where(eq(vendors.id, id));
 
     const [auditRow] = await db
