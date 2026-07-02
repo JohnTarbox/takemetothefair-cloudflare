@@ -106,42 +106,58 @@ async function loadLeaderboard(): Promise<LeaderboardRow[]> {
   const vendorIds = contactable.map((v) => v.id);
   const vendorSlugs = contactable.map((v) => v.slug as unknown as string);
 
-  // Phase 2: event participation counts. One GROUP BY on the join
-  // table; the ~29-row vendor set times a few hundred event_vendors
-  // rows is bounded, no LIMIT needed.
-  const eventCountRows = await db
-    .select({
-      vendorId: eventVendors.vendorId,
-      count: sql<number>`COUNT(*)`,
-    })
-    .from(eventVendors)
-    .where(inArray(eventVendors.vendorId, vendorIds))
-    .groupBy(eventVendors.vendorId);
-  const eventCountByVendor = new Map(eventCountRows.map((r) => [r.vendorId, Number(r.count ?? 0)]));
+  // OPE-58: chunk every id/slug IN(...) filter under D1's 100 bound-parameter
+  // cap. This page was written assuming ~29 contactable vendors, but the set
+  // has since grown past 100 (214 vendors now have contact_email — OPE-59), so
+  // the previously-unchunked inArray/IN queries overflowed D1's limit and threw
+  // "too many SQL variables", surfacing as the Server-Components render crash.
+  // Chunks are disjoint vendor/slug sets grouped independently, so concatenating
+  // the per-chunk rows never double-counts. See docs/bulk-mutation-discipline.md.
+  const CHUNK = 90;
+  const chunk = <T,>(arr: T[]): T[][] => {
+    const out: T[][] = [];
+    for (let i = 0; i < arr.length; i += CHUNK) out.push(arr.slice(i, i + CHUNK));
+    return out;
+  };
+
+  // Phase 2: event participation counts. One GROUP BY per id-chunk on the join
+  // table; rows merge (each vendor appears in exactly one chunk).
+  const eventCountByVendor = new Map<string, number>();
+  for (const ids of chunk(vendorIds)) {
+    const rows = await db
+      .select({ vendorId: eventVendors.vendorId, count: sql<number>`COUNT(*)` })
+      .from(eventVendors)
+      .where(inArray(eventVendors.vendorId, ids))
+      .groupBy(eventVendors.vendorId);
+    for (const r of rows) eventCountByVendor.set(r.vendorId, Number(r.count ?? 0));
+  }
 
   // Phase 3: detail-page view counts. analytics_events stores
   // view_vendor_detail beacons (src/lib/analytics.ts:44) with
   // properties.vendorSlug. json_extract on the SQLite side filters
   // first, then COUNT() per slug. json_valid() guards against the
   // malformed-properties row poisoning the query.
-  const viewCountRows = await db
-    .select({
-      slug: sql<string>`json_extract(${analyticsEvents.properties}, '$.vendorSlug')`,
-      count: sql<number>`COUNT(*)`,
-    })
-    .from(analyticsEvents)
-    .where(
-      and(
-        eq(analyticsEvents.eventName, "view_vendor_detail"),
-        sql`json_valid(${analyticsEvents.properties})`,
-        sql`json_extract(${analyticsEvents.properties}, '$.vendorSlug') IN (${sql.join(
-          vendorSlugs.map((s) => sql`${s}`),
-          sql`, `
-        )})`
+  const viewCountBySlug = new Map<string, number>();
+  for (const slugs of chunk(vendorSlugs)) {
+    const rows = await db
+      .select({
+        slug: sql<string>`json_extract(${analyticsEvents.properties}, '$.vendorSlug')`,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(analyticsEvents)
+      .where(
+        and(
+          eq(analyticsEvents.eventName, "view_vendor_detail"),
+          sql`json_valid(${analyticsEvents.properties})`,
+          sql`json_extract(${analyticsEvents.properties}, '$.vendorSlug') IN (${sql.join(
+            slugs.map((s) => sql`${s}`),
+            sql`, `
+          )})`
+        )
       )
-    )
-    .groupBy(sql`json_extract(${analyticsEvents.properties}, '$.vendorSlug')`);
-  const viewCountBySlug = new Map(viewCountRows.map((r) => [r.slug, Number(r.count ?? 0)]));
+      .groupBy(sql`json_extract(${analyticsEvents.properties}, '$.vendorSlug')`);
+    for (const r of rows) viewCountBySlug.set(r.slug, Number(r.count ?? 0));
+  }
 
   // Phase 4 (analyst J1, 2026-05-29 PM): outreach attempts per vendor.
   // Count of attempts + last attempt timestamp + last outcome surface on
@@ -150,40 +166,43 @@ async function loadLeaderboard(): Promise<LeaderboardRow[]> {
   // outcomes accumulate, a prior_claim_outcome_signal can roll into the
   // composite score (analyst's future note); v1 just surfaces the
   // history without scoring it.
-  const outreachRows = await db
-    .select({
-      vendorId: vendorOutreachAttempts.vendorId,
-      count: sql<number>`COUNT(*)`,
-      lastAttemptAt: sql<number>`MAX(${vendorOutreachAttempts.attemptStartedAt})`,
-    })
-    .from(vendorOutreachAttempts)
-    .where(inArray(vendorOutreachAttempts.vendorId, vendorIds))
-    .groupBy(vendorOutreachAttempts.vendorId);
-  const outreachByVendor = new Map(
-    outreachRows.map((r) => [
-      r.vendorId,
-      {
+  const outreachByVendor = new Map<string, { count: number; lastAttemptAt: Date | null }>();
+  for (const ids of chunk(vendorIds)) {
+    const rows = await db
+      .select({
+        vendorId: vendorOutreachAttempts.vendorId,
+        count: sql<number>`COUNT(*)`,
+        lastAttemptAt: sql<number>`MAX(${vendorOutreachAttempts.attemptStartedAt})`,
+      })
+      .from(vendorOutreachAttempts)
+      .where(inArray(vendorOutreachAttempts.vendorId, ids))
+      .groupBy(vendorOutreachAttempts.vendorId);
+    for (const r of rows) {
+      outreachByVendor.set(r.vendorId, {
         count: Number(r.count ?? 0),
         lastAttemptAt: r.lastAttemptAt ? new Date(Number(r.lastAttemptAt) * 1000) : null,
-      },
-    ])
-  );
+      });
+    }
+  }
 
   // Secondary lookup: outcome of each vendor's MOST-RECENT attempt.
   // Subquery would be cleaner in raw SQL but Drizzle's grouped-then-
-  // joined shape is awkward; two-pass is fine at ~29 vendors.
-  const lastOutcomeRows =
-    vendorIds.length === 0
-      ? []
-      : await db
-          .select({
-            vendorId: vendorOutreachAttempts.vendorId,
-            outcome: vendorOutreachAttempts.outcome,
-            attemptStartedAt: vendorOutreachAttempts.attemptStartedAt,
-          })
-          .from(vendorOutreachAttempts)
-          .where(inArray(vendorOutreachAttempts.vendorId, vendorIds))
-          .orderBy(desc(vendorOutreachAttempts.attemptStartedAt));
+  // joined shape is awkward; two-pass is fine at this cohort size.
+  // Only vendorId + outcome are needed; DESC(attemptStartedAt) stays in-query so
+  // the first row per vendor is its most-recent attempt. Each vendor lives in
+  // exactly one chunk, so per-chunk ordering is sufficient (no cross-chunk merge).
+  const lastOutcomeRows: { vendorId: string; outcome: string | null }[] = [];
+  for (const ids of chunk(vendorIds)) {
+    const rows = await db
+      .select({
+        vendorId: vendorOutreachAttempts.vendorId,
+        outcome: vendorOutreachAttempts.outcome,
+      })
+      .from(vendorOutreachAttempts)
+      .where(inArray(vendorOutreachAttempts.vendorId, ids))
+      .orderBy(desc(vendorOutreachAttempts.attemptStartedAt));
+    lastOutcomeRows.push(...rows);
+  }
   const lastOutcomeByVendor = new Map<string, string | null>();
   for (const row of lastOutcomeRows) {
     // First row per vendor wins because we ordered DESC by attempt time.
