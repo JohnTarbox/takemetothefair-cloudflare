@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import type { NextRequest } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { logError } from "@/lib/logger";
 import { getCloudflareDb } from "@/lib/cloudflare";
@@ -19,13 +20,26 @@ import { getCloudflareDb } from "@/lib/cloudflare";
  * the broadest abuse surface. This proxy holds the key server-side
  * and returns the image bytes, so the key never crosses the wire.
  *
- * Cache strategy:
+ * Cache strategy (OPE-46):
  *   Static maps for a given (lat, lng, zoom, size, scale) are
- *   deterministic — we can long-cache aggressively. The response
- *   sets `Cache-Control: public, max-age=31536000, immutable` so
- *   Cloudflare's edge holds the bytes for a year per unique URL.
- *   Per-event coords change rarely; cache hit rate should be ~100%
- *   after the first print of each event.
+ *   deterministic — we long-cache aggressively. Two layers:
+ *     1. Workers Cache API (`caches.default`) — the load-bearing one.
+ *        A live probe (2026-07-02) confirmed the immutable
+ *        `Cache-Control` header alone did NOT edge-cache this route
+ *        (`cf-cache-status` absent, Google re-hit every request),
+ *        because the OpenNext Worker fronts the whole zone and
+ *        *generates* the response — the CDN cache never sees it. So
+ *        we explicitly `match`/`put` in the Worker's own edge cache,
+ *        keyed on a NORMALISED (lat,lng,zoom,w,h,scale) URL so every
+ *        event at the same venue shares one entry. On a hit we serve
+ *        the stored PNG and never call Google.
+ *     2. The `Cache-Control: public, max-age=31536000, immutable`
+ *        header (kept) — lets any front CDN/Cache Rule cache too.
+ *   Observability: `x-cache: HIT|MISS` is set on every 200 so the
+ *   cache can be verified with a live probe (the Cache API a Worker
+ *   manages is orthogonal to `cf-cache-status`, which only the front
+ *   CDN layer emits). Caching is best-effort: any Cache API failure
+ *   falls through to a direct Google fetch (current behaviour).
  *
  * Failure mode:
  *   If the API key is missing OR Google returns 4xx/5xx, the route
@@ -88,6 +102,40 @@ export async function GET(request: NextRequest) {
   const scaleRaw = readNumberParam(params, "scale", 2) ?? 2;
   const scale = scaleRaw === 1 ? 1 : 2;
 
+  // OPE-46 edge cache — build a NORMALISED cache key so param order and
+  // coordinate-string formatting can't fragment the per-venue entry
+  // (every event at a venue passes identical venue coords → one entry;
+  // e.g. the 40 Vermont Farmers Food Center events share one render).
+  const cacheKeyUrl = new URL(request.url);
+  cacheKeyUrl.search = "";
+  cacheKeyUrl.searchParams.set("lat", String(lat));
+  cacheKeyUrl.searchParams.set("lng", String(lng));
+  cacheKeyUrl.searchParams.set("zoom", String(zoom));
+  cacheKeyUrl.searchParams.set("w", String(w));
+  cacheKeyUrl.searchParams.set("h", String(h));
+  cacheKeyUrl.searchParams.set("scale", String(scale));
+  const cacheKey = new Request(cacheKeyUrl.toString(), { method: "GET" });
+
+  // Cloudflare Workers edge cache. `caches.default` isn't part of the web
+  // `CacheStorage` type, hence the cast; and the global is absent outside
+  // the Workers runtime (e.g. under vitest), hence the typeof guard.
+  // Best-effort throughout: if the Cache API is unavailable or throws, we
+  // fall through to a direct Google fetch (the pre-OPE-46 behaviour).
+  const edgeCache =
+    typeof caches !== "undefined" ? (caches as unknown as { default?: Cache }).default : undefined;
+  if (edgeCache) {
+    try {
+      const hit = await edgeCache.match(cacheKey);
+      if (hit) {
+        const headers = new Headers(hit.headers);
+        headers.set("x-cache", "HIT");
+        return new Response(hit.body, { status: hit.status, headers });
+      }
+    } catch {
+      // cache read failed; continue to origin fetch
+    }
+  }
+
   const env = getCloudflareEnv();
   const apiKey = (env as { GOOGLE_MAPS_API_KEY?: string }).GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
@@ -143,16 +191,28 @@ export async function GET(request: NextRequest) {
       } catch {}
       return new Response("upstream error", { status: 404 });
     }
-    // Pass through the bytes + content-type, override the cache
-    // header to our long-immutable policy. CF edge handles fan-out
-    // from then on.
+    // Buffer the bytes so we can both store a copy in the edge cache and
+    // return one. (A static-map PNG at scale=2 640×320 is tens of KB.)
     const contentType = resp.headers.get("content-type") ?? "image/png";
-    return new Response(resp.body, {
+    const bytes = await resp.arrayBuffer();
+    const baseHeaders = {
+      "Content-Type": contentType,
+      "Cache-Control": "public, max-age=31536000, immutable",
+    };
+    // Store a clean copy (no x-cache header) under the normalised key.
+    // waitUntil so the write never blocks the response; best-effort — a
+    // put failure just means this render is recomputed next time.
+    if (edgeCache) {
+      try {
+        const store = new Response(bytes, { status: 200, headers: baseHeaders });
+        getCloudflareContext().ctx.waitUntil(edgeCache.put(cacheKey, store));
+      } catch {
+        // no CF ctx (e.g. tests) or put unsupported; skip caching
+      }
+    }
+    return new Response(bytes, {
       status: 200,
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
+      headers: { ...baseHeaders, "x-cache": "MISS" },
     });
   } catch (e) {
     try {
