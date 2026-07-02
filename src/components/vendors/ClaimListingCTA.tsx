@@ -50,7 +50,7 @@ export function ClaimListingCTA({
           {eligibleForDirectClaim ? (
             <DirectClaimButton vendorSlug={vendorSlug} vendorId={vendorId} />
           ) : (
-            <Link href={fallbackHref} className="mt-3 inline-block">
+            <Link href={fallbackHref} rel="nofollow" className="mt-3 inline-block">
               <Button size="sm">Claim this free listing</Button>
             </Link>
           )}
