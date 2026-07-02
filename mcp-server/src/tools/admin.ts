@@ -46,7 +46,7 @@ import {
 import type { Db } from "../db.js";
 import type { AuthContext } from "../auth.js";
 import { loadClassifications, gateUrlForField } from "../url-classification.js";
-import { evaluateGates, normalizeEventDate } from "@takemetothefair/utils";
+import { areDatesContiguous, evaluateGates, normalizeEventDate } from "@takemetothefair/utils";
 import {
   eventOutboxStatements,
   venueOutboxStatements,
@@ -4208,12 +4208,27 @@ export function registerAdminTools(server: McpServer, db: Db, auth: AuthContext,
         .from(eventDays)
         .where(eq(eventDays.eventId, params.event_id));
       const { publicStartDate, publicEndDate } = computePublicDates(allDays);
+
+      // OPE-47 (2026-07): keep events.discontinuous_dates in sync as days are
+      // added one at a time. This tool was the true under-flagging source —
+      // building a Saturdays-only market day-by-day left the event at the
+      // create-time default (discontinuous=0), so DailyScheduleDisplay wrongly
+      // rendered "Daily:". Once ≥2 days exist we recompute the flag from ACTUAL
+      // contiguity (`!areDatesContiguous`), the same rule the display's
+      // isContiguousDaily gate uses. With <2 days we leave the flag alone so a
+      // season-span event (discontinuous=1, no per-date rows yet) isn't cleared
+      // by its first day landing.
+      const allDayDates = allDays.map((d) => d.date);
+      const discontinuousUpdate =
+        allDayDates.length >= 2 ? { discontinuousDates: !areDatesContiguous(allDayDates) } : {};
+
       await db
         .update(events)
         .set({
           publicStartDate,
           publicEndDate,
           updatedAt: new Date(),
+          ...discontinuousUpdate,
           ...(hoursUnknown ? { flaggedForReview: 1 } : {}),
         })
         .where(eq(events.id, params.event_id));

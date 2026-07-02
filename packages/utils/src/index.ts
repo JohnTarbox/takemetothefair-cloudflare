@@ -426,3 +426,9 @@ export * from "./discovery-routing";
 // K36 (2026-06-25): stateless one-click unsubscribe tokens. Shared so the MCP
 // Worker (footer render) and the main app (/unsubscribe verify) agree.
 export * from "./email-unsubscribe";
+
+// OPE-47 (2026-07): single source of truth for date contiguity. Shared so the
+// "Daily:" display label (DailyScheduleDisplay) and every ingest path that sets
+// events.discontinuous_dates compute consecutiveness the same way — the flag is
+// just `!areDatesContiguous(dates)`, so display and storage never disagree.
+export * from "./date-contiguity";

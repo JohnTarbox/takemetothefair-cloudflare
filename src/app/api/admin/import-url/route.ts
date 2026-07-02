@@ -13,6 +13,7 @@ import { recomputeEventCompleteness } from "@/lib/completeness";
 import { logEnrichment } from "@/lib/enrichment-log";
 import { parseDateOnly } from "@/lib/datetime";
 import { normalizeEventDate } from "@/lib/event-dates";
+import { areDatesContiguous } from "@takemetothefair/utils";
 import { getCloudflareEnv } from "@/lib/cloudflare";
 import { geocodeAddress } from "@/lib/google-maps";
 import { loadClassifications, gateUrlForField } from "@/lib/url-classification";
@@ -215,7 +216,12 @@ export const POST = withAuth({ role: "ADMIN" }, async ({ request, db }) => {
       publicStartDate: startDate,
       publicEndDate: endDate,
       datesConfirmed: event.datesConfirmed ?? startDate !== null,
-      discontinuousDates: hasSpecificDates || false,
+      // OPE-47 (2026-07): a specificDates list is discontinuous ONLY when the
+      // dates aren't a gap-free daily run — a cadence-expanded weekly market
+      // (every Saturday) → true; a contiguous multi-day fair the AI happened
+      // to enumerate day-by-day → false, so it keeps its "Daily:" label. Same
+      // `!areDatesContiguous` rule the display uses, so flag and label agree.
+      discontinuousDates: hasSpecificDates ? !areDatesContiguous(event.specificDates!) : false,
       categories: JSON.stringify(
         Array.isArray(event.categories) && event.categories.length > 0
           ? event.categories

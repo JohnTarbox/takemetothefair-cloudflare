@@ -5,6 +5,7 @@ import { Clock, ChevronDown, ChevronRight } from "lucide-react";
 import type { EventDay } from "@/types";
 import { formatDateOnly, parseDateOnly } from "@/lib/datetime";
 import { cadenceLabel, findNextUpcoming, inferCadence } from "@/lib/recurring-display";
+import { areDatesContiguous } from "@takemetothefair/utils";
 
 interface DailyScheduleDisplayProps {
   days: EventDay[];
@@ -82,20 +83,15 @@ function allHoursUnknown(days: EventDay[]): boolean {
  *  a Saturdays-only market ingested as a single span with
  *  discontinuous_dates=0 was rendering "Daily:" despite week-long gaps. A
  *  closed day inside the range also breaks the run (it's not open daily).
- *  parseDateOnly anchors each date to midnight UTC, so the delta is an exact
- *  multiple of 86_400_000 ms regardless of viewer timezone. */
+ *
+ *  OPE-47 (2026-07) — the contiguity math now lives in the shared, pure
+ *  `areDatesContiguous` helper in @takemetothefair/utils so this display
+ *  label and the ingest paths that set `events.discontinuous_dates` agree by
+ *  construction (the stored flag is `!areDatesContiguous(dates)`). This
+ *  wrapper keeps the EventDay-shaped call site and passes only the OPEN days'
+ *  dates through. */
 export function isContiguousDaily(openDays: EventDay[]): boolean {
-  if (openDays.length <= 1) return true;
-  const dates = openDays.map((d) => d.date).sort((a, b) => a.localeCompare(b));
-  for (let i = 1; i < dates.length; i++) {
-    const prev = parseDateOnly(dates[i - 1]);
-    const curr = parseDateOnly(dates[i]);
-    // Unparseable date → can't verify contiguity; fall back to the detailed
-    // view rather than risk a wrong "Daily:" label.
-    if (!prev || !curr) return false;
-    if (Math.round((curr.getTime() - prev.getTime()) / 86_400_000) !== 1) return false;
-  }
-  return true;
+  return areDatesContiguous(openDays.map((d) => d.date));
 }
 
 export function DailyScheduleDisplay({
