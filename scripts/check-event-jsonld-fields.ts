@@ -24,6 +24,8 @@
  */
 import { buildPlaceJsonLd } from "../src/lib/seo/place-jsonld";
 import { buildEventSeriesJsonLd } from "../src/lib/series/series-schema-org";
+import { extractHelpFaqItems } from "../src/lib/help-faq";
+import { HELP_ARTICLES } from "../src/lib/help-articles";
 
 const failures: string[] = [];
 function require_(label: string, cond: unknown) {
@@ -196,6 +198,48 @@ if (mixedSeries) {
   );
 }
 
+// ── OPE-62 — Help-page JSON-LD (FAQPage on /help/faq + Article on task guides) ─
+// Same K46 discipline as the Event schema above: never ship JSON-LD without a
+// deploy-time field check. The /help/faq page renders <FAQPageSchema
+// items={extractHelpFaqItems(faqBody)} />, so we assert that parse produces a
+// non-degenerate, fully-populated FAQPage. A malformed FAQ body (heading shape
+// drift, empty answers) fails the build here rather than shipping empty/invalid
+// FAQPage JSON-LD.
+const faqArticle = HELP_ARTICLES.find((a) => a.slug === "faq");
+require_("Help `faq` article exists", faqArticle);
+const helpFaqItems = faqArticle ? extractHelpFaqItems(faqArticle.body) : [];
+require_("Help FAQPage has >=3 items (FAQ_MIN_ITEMS)", helpFaqItems.length >= 3);
+helpFaqItems.forEach((item, i) => {
+  require_(
+    `Help FAQPage.mainEntity[${i}].name (question populated)`,
+    typeof item.question === "string" && item.question.trim().length > 0
+  );
+  require_(
+    `Help FAQPage.mainEntity[${i}].acceptedAnswer.text (answer populated)`,
+    typeof item.answer === "string" && item.answer.trim().length > 0
+  );
+});
+
+// Task-guide help articles render <ArticleSchema headline={title}
+// description={description} …/>. Assert a representative task guide carries a
+// non-empty Article headline + description (the two Article fields we emit).
+const taskGuideCategories = new Set([
+  "For Fairgoers",
+  "For Vendors & Exhibitors",
+  "For Promoters",
+  "Developers",
+]);
+const taskGuide = HELP_ARTICLES.find((a) => taskGuideCategories.has(a.category));
+require_("A task-guide help article exists", taskGuide);
+require_(
+  "Help Article.headline (title populated)",
+  typeof taskGuide?.title === "string" && taskGuide.title.trim().length > 0
+);
+require_(
+  "Help Article.description (populated)",
+  typeof taskGuide?.description === "string" && taskGuide.description.trim().length > 0
+);
+
 if (failures.length > 0) {
   console.error("FAIL: event JSON-LD is missing required fields:");
   for (const f of failures) console.error(`  ✗ ${f}`);
@@ -210,7 +254,8 @@ if (warnings.length > 0) {
   );
 }
 console.log(
-  "OK: Place + EventSeries JSON-LD emit all required fields (name, startDate, location)." +
+  "OK: Place + EventSeries JSON-LD emit all required fields (name, startDate, location); " +
+    `Help FAQPage has ${helpFaqItems.length} populated Q&A pairs + task-guide Article headline/description present.` +
     (warnings.length === 0 ? " WARNING-set fields all present on the populated fixture." : "")
 );
 process.exit(0);

@@ -2,9 +2,21 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MarkdownContent } from "@/components/blog/markdown-content";
+import { ArticleSchema } from "@/components/seo/ArticleSchema";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
+import { FAQPageSchema } from "@/components/seo/FAQPageSchema";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
+import { extractHelpFaqItems } from "@/lib/help-faq";
 import { HELP_ARTICLES, getHelpArticle } from "@/lib/help-articles";
+
+// Task-guide categories emit Article JSON-LD. The FAQ + Glossary articles and
+// the "For Venues" placeholder are handled separately (FAQPage) or not at all.
+const TASK_GUIDE_CATEGORIES = new Set([
+  "For Fairgoers",
+  "For Vendors & Exhibitors",
+  "For Promoters",
+  "Developers",
+]);
 
 export const revalidate = 86400;
 
@@ -48,6 +60,8 @@ export default async function HelpArticlePage({ params }: Props) {
   }
 
   const url = `https://meetmeatthefair.com/help/${article.slug}`;
+  const isFaq = article.slug === "faq";
+  const isTaskGuide = TASK_GUIDE_CATEGORIES.has(article.category);
 
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
@@ -63,6 +77,10 @@ export default async function HelpArticlePage({ params }: Props) {
         description={article.description}
         url={url}
       />
+      {isFaq && <FAQPageSchema items={extractHelpFaqItems(article.body)} />}
+      {isTaskGuide && (
+        <ArticleSchema headline={article.title} description={article.description} url={url} />
+      )}
 
       <nav className="mb-6 text-sm text-muted-foreground">
         <Link href="/help" className="text-royal underline hover:text-royal/80">

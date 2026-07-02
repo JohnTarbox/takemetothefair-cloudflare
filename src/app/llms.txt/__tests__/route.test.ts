@@ -38,6 +38,17 @@ describe("/llms.txt route", () => {
     }
   });
 
+  it("includes the OPE-62 Help section with the hub + known help article links", async () => {
+    const body = await (await GET()).text();
+    const base = "https://meetmeatthefair.com";
+    expect(body).toContain("### Help");
+    expect(body).toContain(`${base}/help)`);
+    // A stable, known help slug (the FAQ article).
+    expect(body).toContain(`${base}/help/faq)`);
+    // Another known task-guide slug.
+    expect(body).toContain(`${base}/help/find-events-near-you)`);
+  });
+
   it("links every New England state hub", async () => {
     const body = await (await GET()).text();
     const base = "https://meetmeatthefair.com";
