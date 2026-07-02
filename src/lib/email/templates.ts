@@ -136,6 +136,51 @@ export function promoterBlogMentionTemplate(args: {
 }
 
 /**
+ * OPE-65 — factual claim-decision notice sent to the claimant when an admin
+ * approves or rejects their claim in the /admin/claims review queue. No
+ * marketing copy: it states the outcome and the next step.
+ *
+ *   - approved: confirms they can now manage the listing + a link to the portal
+ *   - rejected: states it wasn't approved, the reason, and how to follow up
+ */
+export function claimDecisionTemplate(args: {
+  entityName: string;
+  decision: "approved" | "rejected";
+  reason?: string;
+  manageUrl?: string;
+}): { subject: string; html: string; text: string } {
+  const escape = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const name = escape(args.entityName);
+
+  if (args.decision === "approved") {
+    const html = baseLayout({
+      heading: "Your claim was approved",
+      body: `<p style="margin:0 0 12px;">Your claim for <strong>${name}</strong> was approved — you can now manage the listing.</p>
+<p style="margin:0 0 12px;">Sign in to update details, photos, and contact information any time.</p>`,
+      cta: args.manageUrl ? { url: args.manageUrl, label: "Manage your listing" } : undefined,
+    });
+    const text = `Your claim for "${args.entityName}" was approved — you can now manage the listing.${
+      args.manageUrl ? `\n\nManage it here:\n${args.manageUrl}` : ""
+    }`;
+    return { subject: `Your claim for ${args.entityName} was approved`, html, text };
+  }
+
+  const reasonBlock = args.reason
+    ? `<p style="margin:0 0 12px;"><strong>Reason:</strong> ${escape(args.reason)}</p>`
+    : "";
+  const html = baseLayout({
+    heading: "Your claim wasn't approved",
+    body: `<p style="margin:0 0 12px;">Your claim for <strong>${name}</strong> wasn't approved.</p>
+${reasonBlock}
+<p style="margin:0 0 12px;">If you believe this is a mistake, reply to this email with additional evidence that you represent this business and we'll take another look.</p>`,
+  });
+  const reasonText = args.reason ? `\n\nReason: ${args.reason}` : "";
+  const text = `Your claim for "${args.entityName}" wasn't approved.${reasonText}\n\nIf you believe this is a mistake, reply to this email with additional evidence that you represent this business and we'll take another look.`;
+  return { subject: `Your claim for ${args.entityName} wasn't approved`, html, text };
+}
+
+/**
  * Newsletter double opt-in confirmation. Sent once on signup; link
  * expires in 24h. The CAN-SPAM / GDPR posture is "we don't add you to
  * the list until you click" — until confirmed, the row sits with
