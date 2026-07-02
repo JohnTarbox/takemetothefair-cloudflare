@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { WebPageSchema } from "@/components/seo/WebPageSchema";
-import { HELP_ARTICLES } from "@/lib/help-articles";
+import { HELP_ARTICLES, HELP_SECTIONS } from "@/lib/help-articles";
 
 export const revalidate = 86400;
 
@@ -22,11 +22,16 @@ export const metadata: Metadata = {
 };
 
 export default function HelpPage() {
-  // Group articles by category so the hub stays organized as more are added.
+  // Group articles by category, then render sections in the explicit
+  // audience-first order defined by HELP_SECTIONS (don't rely on object-key
+  // insertion order). A section with no articles is skipped.
   const byCategory = HELP_ARTICLES.reduce<Record<string, typeof HELP_ARTICLES>>((acc, article) => {
     (acc[article.category] ??= []).push(article);
     return acc;
   }, {});
+  const orderedSections = HELP_SECTIONS.map(
+    (category) => [category, byCategory[category] ?? []] as const
+  ).filter(([, articles]) => articles.length > 0);
 
   return (
     <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 py-12">
@@ -36,13 +41,14 @@ export default function HelpPage() {
         url="https://meetmeatthefair.com/help"
       />
 
-      <h1 className="text-4xl font-bold text-foreground mb-3">Help</h1>
+      <h1 className="text-4xl font-bold text-foreground mb-3">Help Center</h1>
       <p className="text-lg text-muted-foreground mb-10">
-        Guides and documentation for using Meet Me at the Fair — for fairgoers, vendors, promoters,
-        and developers.
+        Guides organized by who you are. Whether you&apos;re a fairgoer planning a weekend, a vendor
+        or exhibitor claiming your listing, a promoter running events, or a developer syndicating
+        our data, start with your section below — or check the FAQ and glossary.
       </p>
 
-      {Object.entries(byCategory).map(([category, articles]) => (
+      {orderedSections.map(([category, articles]) => (
         <section key={category} className="mb-10">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-4">
             {category}

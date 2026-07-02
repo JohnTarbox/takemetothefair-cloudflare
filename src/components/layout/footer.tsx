@@ -19,6 +19,7 @@ export function Footer() {
       { name: "Vendors", href: "/vendors" },
       { name: "Blog", href: "/blog" },
       { name: "Suggest an Event", href: "/suggest-event" },
+      { name: "Help", href: "/help" },
     ],
     forBusiness: [
       { name: "For Promoters", href: "/for-promoters" },

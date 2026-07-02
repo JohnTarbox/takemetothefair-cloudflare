@@ -5,6 +5,7 @@ import { events, venues, vendors, blogPosts } from "@/lib/db/schema";
 import { and, gte, eq, inArray, isNull, sql, desc } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { withErrorHandler } from "@/lib/api-handler";
+import { searchHelpArticles } from "@/lib/help-articles";
 import { sanitizeLikeInput } from "@/lib/utils";
 import { logError } from "@/lib/logger";
 import {
@@ -20,7 +21,7 @@ import {
 // mirrored client-side as `maxLength` (defense in depth).
 const MAX_QUERY_LENGTH = 100;
 
-const EMPTY_RESPONSE = { events: [], venues: [], vendors: [], blogPosts: [] };
+const EMPTY_RESPONSE = { events: [], venues: [], vendors: [], blogPosts: [], help: [] };
 
 export const GET = withErrorHandler(async (request: Request) => {
   const url = new URL(request.url);
@@ -266,6 +267,10 @@ export const GET = withErrorHandler(async (request: Request) => {
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
+  // Help articles are a static in-memory TS array (HELP_ARTICLES), not D1, so
+  // this is a synchronous substring match — no query, no Promise.allSettled slot.
+  const helpResults = searchHelpArticles(q);
+
   return NextResponse.json({
     events: eventResults.map((e) => ({
       name: e.name,
@@ -277,5 +282,6 @@ export const GET = withErrorHandler(async (request: Request) => {
     venues: venueResults,
     vendors: dedupedVendors,
     blogPosts: blogResults,
+    help: helpResults,
   });
 }, "api/search");
