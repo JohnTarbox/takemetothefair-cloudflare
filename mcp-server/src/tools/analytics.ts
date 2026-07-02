@@ -1034,6 +1034,55 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
   );
 
   server.tool(
+    "resolve_site_health_issue",
+    "Explicitly resolve (close) a site health issue — the durable counterpart to snooze, for defects you've actually fixed. Use the fingerprint from get_site_health_issues. If the tiered sweep re-detects the same defect later it will re-open the row automatically. Admin only.",
+    {
+      fingerprint: z.string().min(8).describe("Issue fingerprint from get_site_health_issues"),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [{ type: "text", text: "Resolve requires MAIN_APP_URL and INTERNAL_API_KEY." }],
+          isError: true,
+        };
+      }
+      try {
+        const response = await fetch(`${env.MAIN_APP_URL}/api/admin/site-health/resolve`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Key": env.INTERNAL_API_KEY,
+          },
+          body: JSON.stringify(params),
+        });
+        const data = (await response.json()) as Record<string, unknown>;
+        if (!response.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Resolve failed (${response.status}): ${JSON.stringify(data)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown resolve error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
     "get_first_party_events",
     "Query first-party analytics events stored in D1. Includes server-side admin actions (event_status_change, vendor_status_change) and beacon-captured client events (outbound_application_click, outbound_ticket_click, filter_applied, internal_search_performed). Filter by category or event name; default window is the last 30 days. Admin only.",
     {

@@ -295,6 +295,20 @@ export async function unsnoozeIssue(db: Db, fingerprint: string): Promise<void> 
   await db.delete(healthIssueSnoozes).where(eq(healthIssueSnoozes.fingerprint, fingerprint));
 }
 
+/** Explicitly resolve an open issue — stamps resolvedAt on the matching open
+ *  row. Pairs snooze (temporary mute) with a durable "this is handled" action.
+ *  If the tiered sweep re-detects the same defect it re-opens the row via
+ *  recordHealthIssue (resolvedAt back to null), so a resolve is safe even if
+ *  the underlying problem later recurs. No-op when the fingerprint has no open
+ *  row. */
+export async function resolveIssue(db: Db, fingerprint: string): Promise<void> {
+  const now = new Date();
+  await db
+    .update(healthIssues)
+    .set({ resolvedAt: now })
+    .where(and(eq(healthIssues.fingerprint, fingerprint), isNull(healthIssues.resolvedAt)));
+}
+
 /** Compute fingerprint for an external caller (API route / MCP tool). */
 export { fingerprintFor };
 
@@ -302,7 +316,6 @@ export { fingerprintFor };
 // are used. The drizzle helpers below are imported for the eventual gsc-sweep
 // integration in this file; remove if/when the sweep grows its own module.
 void or;
-void and;
 void sql;
 void gte;
 void gscInspectionState;
