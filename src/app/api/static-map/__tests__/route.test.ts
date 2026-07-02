@@ -12,13 +12,32 @@ vi.mock("@/lib/logger", () => ({
   logError: vi.fn(async () => {}),
 }));
 
+// OPE-46: the route calls getCloudflareContext().ctx.waitUntil for the
+// best-effort edge-cache write. Mock it so the write runs inline.
+vi.mock("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: () => ({ ctx: { waitUntil: (p: Promise<unknown>) => p } }),
+}));
+
 // Captured fetch mock so each test can inspect what URL the route built
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 
+// OPE-46 edge cache — a Map-backed stand-in for `caches.default`. match
+// clones (like the real Cache API) so each hit gets an independent body.
+const cacheStore = new Map<string, Response>();
+vi.stubGlobal("caches", {
+  default: {
+    match: vi.fn(async (req: Request) => cacheStore.get(req.url)?.clone()),
+    put: vi.fn(async (req: Request, resp: Response) => {
+      cacheStore.set(req.url, resp);
+    }),
+  },
+});
+
 describe("/api/static-map proxy", () => {
   beforeEach(() => {
     fetchMock.mockReset();
+    cacheStore.clear();
   });
 
   it("rejects requests missing lat/lng", async () => {
@@ -140,5 +159,54 @@ describe("/api/static-map proxy", () => {
     // <img> renders alt text + the print sheet still has the QR + address
     // fallback for directions.
     expect(res.status).toBe(404);
+  });
+
+  it("caches the render: a second identical request is a HIT with no second Google fetch", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Blob(["fake png"]), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      })
+    );
+    const { GET } = await import("../route");
+    const url = "https://test/api/static-map?lat=44&lng=-70&zoom=15&w=640&h=320&scale=2";
+
+    const first = await GET(new Request(url) as unknown as Parameters<typeof GET>[0]);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("x-cache")).toBe("MISS");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const second = await GET(new Request(url) as unknown as Parameters<typeof GET>[0]);
+    expect(second.status).toBe(200);
+    expect(second.headers.get("x-cache")).toBe("HIT");
+    expect(second.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    // Served from the edge cache — Google was NOT called a second time.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes the cache key: differently-ordered params + trailing-zero coords share one entry", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(new Blob(["fake png"]), {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      })
+    );
+    const { GET } = await import("../route");
+    await GET(
+      new Request(
+        "https://test/api/static-map?lat=44&lng=-70&zoom=15&w=640&h=320&scale=2"
+      ) as unknown as Parameters<typeof GET>[0]
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Same values, different param order + trailing-zero formatting. The
+    // route normalizes (String(Number) + fixed order) → same cache entry.
+    const reordered = await GET(
+      new Request(
+        "https://test/api/static-map?scale=2&h=320&w=640&zoom=15&lng=-70.0&lat=44.00"
+      ) as unknown as Parameters<typeof GET>[0]
+    );
+    expect(reordered.headers.get("x-cache")).toBe("HIT");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
