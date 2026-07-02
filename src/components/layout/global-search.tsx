@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Calendar, MapPin, Store, FileText, X } from "lucide-react";
+import { Search, Calendar, MapPin, Store, FileText, HelpCircle, X } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
 import { trackEvent, trackSearchResults, trackZeroResults } from "@/lib/analytics";
 import { displayVenueName } from "@/lib/venue-display";
@@ -17,6 +17,7 @@ interface SearchResults {
     vendorType: string | null;
   }[];
   blogPosts: { title: string; slug: string; excerpt: string | null }[];
+  help: { slug: string; title: string; category: string }[];
 }
 
 /** Fires a zero-results analytics event once when mounted */
@@ -48,7 +49,11 @@ export function GlobalSearch() {
       const data: SearchResults = await res.json();
       setResults(data);
       const total =
-        data.events.length + data.venues.length + data.vendors.length + data.blogPosts.length;
+        data.events.length +
+        data.venues.length +
+        data.vendors.length +
+        data.blogPosts.length +
+        (data.help?.length ?? 0);
       trackSearchResults(q, total);
     } catch {
       setResults(null);
@@ -101,7 +106,8 @@ export function GlobalSearch() {
     (results.events.length > 0 ||
       results.venues.length > 0 ||
       results.vendors.length > 0 ||
-      results.blogPosts.length > 0);
+      results.blogPosts.length > 0 ||
+      (results.help?.length ?? 0) > 0);
 
   if (!open) {
     // U7 (2026-06-07) — migrated trigger to IconButton. Primitive enforces
@@ -262,6 +268,24 @@ export function GlobalSearch() {
                     >
                       <FileText className="w-4 h-4 text-purple-600 flex-shrink-0" />
                       <span className="text-sm text-foreground truncate">{post.title}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {(results!.help?.length ?? 0) > 0 && (
+                <div>
+                  <div className="px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider border-t border-border mt-1">
+                    Help
+                  </div>
+                  {results!.help.map((article) => (
+                    <button
+                      key={article.slug}
+                      onClick={() => navigate(`/help/${article.slug}`)}
+                      className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-3 transition-colors"
+                    >
+                      <HelpCircle className="w-4 h-4 text-royal flex-shrink-0" />
+                      <span className="text-sm text-foreground truncate">{article.title}</span>
                     </button>
                   ))}
                 </div>

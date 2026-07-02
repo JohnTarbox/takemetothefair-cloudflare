@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
-import { Calendar, MapPin, Store, FileText, Search } from "lucide-react";
+import { Calendar, MapPin, Store, FileText, HelpCircle, Search } from "lucide-react";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { events, venues, vendors, blogPosts, users } from "@/lib/db/schema";
 import { and, eq, sql, desc, inArray, isNull } from "drizzle-orm";
@@ -16,6 +16,7 @@ import { formatDateRange, sanitizeLikeInput } from "@/lib/utils";
 import { formatDateMedium } from "@/lib/datetime";
 import { Card } from "@/components/ui/card";
 import { extractFirstImage } from "@/lib/markdown-utils";
+import { searchHelpArticles } from "@/lib/help-articles";
 import { logError } from "@/lib/logger";
 
 export const metadata: Metadata = {
@@ -272,8 +273,16 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
 
+  // Help articles are a static in-memory TS array (HELP_ARTICLES), not D1, so
+  // this is a synchronous substring match — no query, no allSettled slot.
+  const helpResults = searchHelpArticles(q, 12);
+
   const totalResults =
-    eventResults.length + venueResults.length + vendorResults.length + blogResults.length;
+    eventResults.length +
+    venueResults.length +
+    vendorResults.length +
+    blogResults.length +
+    helpResults.length;
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
@@ -417,6 +426,26 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
                     {vendor.vendorType && (
                       <p className="text-sm text-muted-foreground mt-1">{vendor.vendorType}</p>
                     )}
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Help */}
+        {helpResults.length > 0 && (
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <HelpCircle className="w-5 h-5 text-royal" />
+              <h2 className="text-xl font-semibold text-navy">Help ({helpResults.length})</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {helpResults.map((article) => (
+                <Link key={article.slug} href={`/help/${article.slug}`}>
+                  <Card className="p-4 hover:shadow-md transition-shadow h-full">
+                    <h3 className="font-medium text-navy">{article.title}</h3>
+                    <p className="text-sm text-muted-foreground mt-1">{article.category}</p>
                   </Card>
                 </Link>
               ))}
