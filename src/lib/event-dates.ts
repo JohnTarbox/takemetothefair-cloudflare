@@ -17,7 +17,7 @@
  * stored-anchor-precedes-actual-end-time gap without a per-row join.
  */
 import { sql, gte, type SQL } from "drizzle-orm";
-import { events } from "@/lib/db/schema";
+import { events, eventDays } from "@/lib/db/schema";
 
 export { normalizeEventDate } from "@takemetothefair/utils";
 
@@ -85,4 +85,52 @@ export function whenWindowEnd(when: string | undefined, from: Date = new Date())
 export function upcomingEndPredicateRaw(now: Date): SQL {
   const cutoffSec = Math.floor((now.getTime() - UPCOMING_END_GRACE_MS) / 1000);
   return sql`${events.endDate} >= ${cutoffSec}`;
+}
+
+/** Format a Date as a UTC "YYYY-MM-DD" day string (matches `event_days.date`). */
+export function utcDateStr(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * OPE-48 — refinement predicate for the "Happening This Week" homepage module
+ * and the `/events?when=week|weekend` filter (which its "See all" links to, so
+ * the two MUST agree).
+ *
+ * An event qualifies only when it EITHER:
+ *   (a) has a non-closed `event_days` row whose date is within the window
+ *       [today, windowEnd) — i.e. a real occurrence happens this week; OR
+ *   (b) has NO `event_days` rows at all — a simple single/multi-day event, left
+ *       to the caller's existing start/end-date span filters unchanged.
+ *
+ * This EXCLUDES season-long recurring events (a wide start/end span PLUS a set
+ * of scheduled `event_days`) whose next actual occurrence is beyond the window
+ * — the bug where "Artisans' Market in Unity" (next day Jul 18) leaked into the
+ * Jul 2–5 module because its Apr→Dec span trivially overlapped the week.
+ *
+ * `event_days.date` is TEXT "YYYY-MM-DD", so we compare against day strings:
+ *   - `>= today` — a past occurrence earlier this week does NOT qualify, keeping
+ *     the label consistent with the card's next-upcoming date.
+ *   - `< windowEnd` — windowEnd is 00:00 UTC of the Monday after the coming
+ *     Sunday (see `whenWindowEnd`), so "< Monday" means "through Sunday".
+ *
+ * Layered ON TOP of the caller's existing predicates (it never loosens them),
+ * so events without `event_days` behave exactly as before — zero regression to
+ * single-day events.
+ */
+export function hasOccurrenceInWindowOrUndated(now: Date, windowEnd: Date): SQL {
+  const startStr = utcDateStr(now);
+  const endStr = utcDateStr(windowEnd);
+  return sql`(
+    EXISTS (
+      SELECT 1 FROM ${eventDays}
+      WHERE ${eventDays.eventId} = ${events.id}
+        AND ${eventDays.date} >= ${startStr}
+        AND ${eventDays.date} < ${endStr}
+        AND COALESCE(${eventDays.closed}, 0) = 0
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM ${eventDays} WHERE ${eventDays.eventId} = ${events.id}
+    )
+  )`;
 }

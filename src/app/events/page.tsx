@@ -5,7 +5,11 @@ import { Search, Filter, Store, Heart, X } from "lucide-react";
 import { EventsView } from "@/components/events/events-view";
 import { CalendarSSR } from "@/components/events/calendar-ssr";
 import { isCal1SsrMonthEnabled, isCal2ViewsEnabled } from "@/lib/flags";
-import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
+import {
+  upcomingEndPredicate,
+  whenWindowEnd,
+  hasOccurrenceInWindowOrUndated,
+} from "@/lib/event-dates";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import {
   events,
@@ -196,6 +200,14 @@ async function getEvents(
     const whenEnd = whenWindowEnd(searchParams.when);
     if (whenEnd) {
       conditions.push(lte(events.startDate, whenEnd));
+      // OPE-48 — for week/weekend, additionally require an actual event_days
+      // occurrence within the window (or no event_days at all), so a season-long
+      // recurring event whose next day is weeks out doesn't leak in. Keeps this
+      // surface in agreement with the homepage "Happening This Week" module that
+      // links here via "See all". (month keeps the plain 30-day start cap.)
+      if (searchParams.when === "week" || searchParams.when === "weekend") {
+        conditions.push(hasOccurrenceInWindowOrUndated(new Date(), whenEnd));
+      }
     }
 
     if (searchParams.query) {

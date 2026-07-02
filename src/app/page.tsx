@@ -19,7 +19,11 @@ import {
 import { and, gte, eq, count, lte, sql, inArray } from "drizzle-orm";
 import { isPublicEventStatus } from "@/lib/event-status";
 import { eventJoinProjection } from "@/lib/db/event-join-projection";
-import { upcomingEndPredicate, whenWindowEnd } from "@/lib/event-dates";
+import {
+  upcomingEndPredicate,
+  whenWindowEnd,
+  hasOccurrenceInWindowOrUndated,
+} from "@/lib/event-dates";
 import { attachEventDayDates } from "@/lib/event-days-attach";
 import { BlogPostCard } from "@/components/blog/blog-post-card";
 import { extractFirstImage } from "@/lib/markdown-utils";
@@ -122,7 +126,16 @@ async function getWeekEvents() {
       .from(events)
       .leftJoin(venues, eq(events.venueId, venues.id))
       .leftJoin(promoters, eq(events.promoterId, promoters.id))
-      .where(and(isPublicEventStatus(), gte(events.endDate, now), lte(events.startDate, horizon)))
+      .where(
+        and(
+          isPublicEventStatus(),
+          gte(events.endDate, now),
+          lte(events.startDate, horizon),
+          // OPE-48 — exclude season-long recurring events whose next actual
+          // event_days occurrence is beyond this week (label/date agreement).
+          hasOccurrenceInWindowOrUndated(now, horizon)
+        )
+      )
       .orderBy(events.startDate)
       .limit(24);
     // Cast the narrow venue/promoter projection back to full row types so
