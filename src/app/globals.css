@@ -133,6 +133,7 @@
   --amber-bg-fg: 31 26 10;
   --cream: 250 247 242;
   --terracotta: 217 119 87;
+  --terracotta-fg: 166 85 50; /* small-label terracotta on cream: 4.95:1 AA (base --terracotta is 2.9:1 — display/large-text only) */
   --terracotta-light: 245 217 205;
   --stone-50: 245 241 234;
   --stone-100: 235 229 218;
@@ -271,6 +272,7 @@
   --amber-bg-fg: 255 243 214; /* on --amber-light (dark in dark theme): 13:1 AAA */
   --cream: 21 23 28; /* page-bg role flips with theme — matches --background */
   --terracotta: 232 145 117; /* lifted — matches --accent dark */
+  --terracotta-fg: 232 145 117; /* small-label: on dark bg 7.5:1 AAA — no darkening needed in dark mode */
   --terracotta-light: 61 38 32; /* warm-dark backdrop */
   --stone-50: 35 38 46; /* matches --muted dark */
   --stone-100: 42 45 53; /* matches --border dark */

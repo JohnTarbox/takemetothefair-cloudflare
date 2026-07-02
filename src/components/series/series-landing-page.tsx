@@ -141,7 +141,7 @@ export function SeriesLandingPage({ landing, now }: { landing: SeriesLanding; no
             />
           </div>
         ) : null}
-        <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+        <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta-fg">
           Event series
         </div>
         <h1 className="mt-1 font-display text-3xl font-bold text-secondary">{series.name}</h1>

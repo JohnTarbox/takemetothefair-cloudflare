@@ -315,7 +315,7 @@ export default async function HomePage() {
             }
           >
             <div>
-              <span className="mb-3 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta">
+              <span className="mb-3 inline-flex items-center gap-2.5 text-xs font-semibold uppercase tracking-[0.18em] text-terracotta-fg">
                 <span className="h-[1.5px] w-8 bg-terracotta" />
                 New England&apos;s fair &amp; festival almanac
               </span>
@@ -364,7 +364,7 @@ export default async function HomePage() {
             {weekEvents.length > 0 && (
               <div>
                 <div className="mb-3 flex items-end justify-between">
-                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                  <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta-fg">
                     Happening this week
                   </div>
                   <Link
@@ -416,7 +416,7 @@ export default async function HomePage() {
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div className="mb-7 flex items-end justify-between">
               <div>
-                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+                <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta-fg">
                   Editor&apos;s picks
                 </div>
                 <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">
@@ -446,7 +446,7 @@ export default async function HomePage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="mb-7 flex items-end justify-between">
             <div>
-              <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta">
+              <div className="text-xs font-bold uppercase tracking-[0.16em] text-terracotta-fg">
                 By what you love
               </div>
               <h2 className="mt-1.5 font-display text-3xl font-semibold tracking-tight text-secondary md:text-4xl">

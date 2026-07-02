@@ -130,6 +130,7 @@ const config: Config = {
         cream: "rgb(var(--cream) / <alpha-value>)",
         terracotta: {
           DEFAULT: "rgb(var(--terracotta) / <alpha-value>)",
+          fg: "rgb(var(--terracotta-fg) / <alpha-value>)",
           light: "rgb(var(--terracotta-light) / <alpha-value>)",
         },
         stone: {
