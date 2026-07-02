@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -198,7 +198,11 @@ export default function NewEventPage() {
 
       <Card className="max-w-2xl">
         <CardHeader>
-          <CardTitle>Add New Event</CardTitle>
+          {/* Real page <h1> (OPE-44): this route previously rendered only a
+              CardTitle (<h3>), so it had zero <h1>. Styled to match CardTitle
+              exactly — same classes, no visual change — but semantically the
+              page's single main heading. */}
+          <h1 className="text-lg font-semibold text-foreground">Add New Event</h1>
         </CardHeader>
         <CardContent>
           {error && (

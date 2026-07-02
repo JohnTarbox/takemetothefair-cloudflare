@@ -993,9 +993,13 @@ function CalendarView({
        month-grid. Chrome/Edge/Safari 14+ honor named pages; Firefox
        falls back to portrait (~3% market share, acceptable). */
     <div className="bg-card rounded-lg border border-border overflow-hidden print:border-0 print:rounded-none print:overflow-visible print-landscape">
-      {/* Print-only title */}
+      {/* Print-only title. Rendered as an <h2> (not <h1>): every page that
+          mounts EventsView already supplies its own page-level <h1> (e.g.
+          "Browse Events", "My Calendar"), so an <h1> here produced a second
+          <h1> in the DOM — the Bing "multiple H1" on-page nit (OPE-44). The
+          visible month title below is likewise an <h2>. */}
       <div className="hidden print:block print:px-2 print:py-1 px-4 py-3 border-b border-border">
-        <h1 className="text-xl font-bold text-foreground">Events Calendar — {getTitle()}</h1>
+        <h2 className="text-xl font-bold text-foreground">Events Calendar — {getTitle()}</h2>
       </div>
       {/* Calendar Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted print:hidden">
