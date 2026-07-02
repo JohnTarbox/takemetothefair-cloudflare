@@ -96,7 +96,7 @@ export function buildTemplate(
       const url = claimUrl(vendor.slug, vendor.businessName);
       const text = `Hi ${vendor.businessName},
 
-You're listed on Meet Me at the Fair — the directory connecting Maine fair- and festival-goers with the vendors they love. We built your listing from public event data, and we'd love for you to claim it (it's free).
+You're listed on Meet Me at the Fair — the New England directory connecting fair-, festival-, and craft-show-goers across all six states with the vendors they love. We built your listing from public event data, and we'd love for you to claim it (it's free).
 
 Claiming lets you correct your details, add photos and products, and link your website so shoppers can find you:
   ${url}
