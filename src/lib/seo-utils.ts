@@ -1,6 +1,18 @@
 import { decodeHtmlEntities, formatDateRange } from "@/lib/utils";
 import { parseJsonArray } from "@/types";
 import { displayVenueName } from "@/lib/venue-display";
+import { truncateAtBoundary, trimTrailingFunctionWord } from "@/lib/seo/truncate-meta";
+import {
+  composeEventFallback,
+  composeVendorFallback,
+  composeVenueFallback,
+  composePromoterFallback,
+} from "@/lib/seo/compose-meta";
+
+// Re-export for back-compat: trimTrailingFunctionWord moved to the shared
+// truncate-meta module (used by truncateAtBoundary); existing imports from
+// "@/lib/seo-utils" keep working.
+export { trimTrailingFunctionWord };
 
 const META_DESCRIPTION_MAX = 160;
 const META_DESCRIPTION_MIN_USEFUL = 50;
@@ -17,83 +29,6 @@ const NE_STATE_NAMES: Record<string, string> = {
   RI: "Rhode Island",
   VT: "Vermont",
 };
-
-/**
- * Truncate to maxLength while respecting word/sentence boundaries when the
- * break wouldn't lose more than 40% of the budget. Prefers sentence boundaries
- * (`. `, `! `, `? `) when one is available within the safe region; otherwise
- * falls back to a word boundary.
- */
-function truncateAtWord(text: string, maxLength: number, preferSentence = false): string {
-  if (text.length <= maxLength) return text;
-  const truncated = text.slice(0, maxLength);
-  const safeFloor = maxLength * 0.6;
-  if (preferSentence) {
-    // Find the latest sentence end within the safe region.
-    const sentenceMatch = truncated.match(/^(.*[.!?])(?:\s+\S*)?$/s);
-    if (sentenceMatch && sentenceMatch[1].length > safeFloor) {
-      return sentenceMatch[1];
-    }
-  }
-  const lastSpace = truncated.lastIndexOf(" ");
-  return lastSpace > safeFloor ? truncated.slice(0, lastSpace) : truncated;
-}
-
-/**
- * Truncate at the latest clause boundary within maxLength. Clause boundary =
- * `.`, `!`, `?`, `;`, `—` (em-dash), `–` (en-dash). Accepts cuts as short as
- * 50% of the budget — sentence-clean is more important than maxing out chars.
- * After cutting, strips trailing `;`/`—`/`–` (these suggest continuation) and
- * any dangling function word. Falls back to word boundary when no clause break
- * exists in the budget (round-2 backlog item 2, 2026-05-11).
- *
- * 2026-05-11 fix: prod verification showed Fryeburg's description cutting at
- * word boundary "...Eight days" instead of clause boundary "...annually."
- * The previous regex `^(.*[.!?;—–])(?:\s+\S*)?$` only allowed ONE trailing
- * word after the clause character; multi-word trailers caused the match to
- * fail and fall through to word-boundary fallback. Replaced with a linear
- * scan for the latest clause character, which handles any trailer length.
- */
-function truncateAtClause(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  const truncated = text.slice(0, maxLength);
-  const safeFloor = maxLength * 0.5;
-  let lastClause = -1;
-  for (const ch of ".!?;—–") {
-    const idx = truncated.lastIndexOf(ch);
-    if (idx > lastClause) lastClause = idx;
-  }
-  if (lastClause + 1 > safeFloor) {
-    const prefix = truncated.slice(0, lastClause + 1);
-    const stripped = prefix.replace(/[;—–]\s*$/, "").trimEnd();
-    return trimTrailingFunctionWord(stripped);
-  }
-  const lastSpace = truncated.lastIndexOf(" ");
-  const fallback = lastSpace > safeFloor ? truncated.slice(0, lastSpace) : truncated;
-  return trimTrailingFunctionWord(fallback);
-}
-
-/**
- * Trim trailing function words (conjunctions, articles, prepositions) from
- * a word-truncated string. The truncator stops at word boundaries, which
- * sometimes leaves a hanging "and" / "for" / "the" / "of" before the suffix
- * appends — reading awkwardly. Strip them along with any trailing comma.
- *
- * Exported for testing.
- */
-export function trimTrailingFunctionWord(text: string): string {
-  // Match (1+ trim cycles): optional comma, whitespace, function word, end.
-  // Repeated to handle e.g. "...crafts, and " → "...crafts" (strip "and" then ",").
-  const FUNCTION_WORDS =
-    /[\s,;:—-]+(?:and|or|but|nor|for|the|a|an|of|to|in|on|at|by|with|from|into|onto|upon)$/i;
-  let prev = text.trimEnd();
-  let next = prev.replace(FUNCTION_WORDS, "");
-  while (next !== prev) {
-    prev = next.trimEnd().replace(/[,;:]+$/, "");
-    next = prev.replace(FUNCTION_WORDS, "");
-  }
-  return next.trimEnd().replace(/[,;:]+$/, "");
-}
 
 /**
  * Short date format for meta descriptions where every char counts.
@@ -266,34 +201,30 @@ export function buildEventMetaDescription(event: {
 }): string {
   const name = decodeHtmlEntities(event.name);
   const dateStr = formatDateRangeForMeta(event.startDate, event.endDate);
-  const venueName = event.venue?.name ? decodeHtmlEntities(event.venue.name) : "";
   const city = event.venue?.city?.trim() || "";
   const state = event.venue?.state?.trim() || "";
   const desc = decodeHtmlEntities(event.description?.trim() || "");
 
   // Path 1: clean DB description leads. No suffix — render full description
-  // verbatim when it fits, otherwise cut at clause boundary.
+  // verbatim when it fits (≤160), otherwise boundary-truncate with an ellipsis.
   if (isCleanDbDescription(desc)) {
     const cleaned = stripRedundantLeadSentence(desc, name);
-    if (cleaned.length <= META_DESCRIPTION_MAX) return cleaned;
-    return truncateAtClause(cleaned, META_DESCRIPTION_MAX);
+    return truncateAtBoundary(cleaned, META_DESCRIPTION_MAX);
   }
 
-  // Path 2: natural-language fallback when DB description fails the gate.
+  // Path 2 (OPE-42): richer entity-specific composed fallback. Leads with the
+  // event name + category + location + date(s), so it is neither too short nor
+  // duplicate across the catalog (the Bing complaint). venueName is
+  // intentionally not used here — the composed template keys off city/state.
   const categories = parseJsonArray(event.categories);
   const primaryCategory = categories[0];
-  const pieces: string[] = [name];
-  if (dateStr) pieces.push(`happening ${dateStr}`);
-  if (venueName) {
-    pieces.push(`at ${venueName}`);
-    if (city && state) pieces.push(`in ${city}, ${state}`);
-  } else if (city && state) {
-    pieces.push(`in ${city}, ${state}`);
-  }
-  let result = pieces.join(" ") + ".";
-  if (primaryCategory) result += ` ${primaryCategory}.`;
-  if (result.length <= META_DESCRIPTION_MAX) return result;
-  return truncateAtClause(result, META_DESCRIPTION_MAX);
+  return composeEventFallback({
+    name,
+    category: primaryCategory,
+    city,
+    state,
+    dates: dateStr,
+  });
 }
 
 export function buildVenueMetaDescription(venue: {
@@ -320,17 +251,14 @@ export function buildVenueMetaDescription(venue: {
     const prefix = `${name}${locPhrase}. `;
     const remaining = META_DESCRIPTION_MAX - prefix.length;
     if (remaining > 20) {
-      return prefix + truncateAtClause(desc, remaining);
+      return prefix + truncateAtBoundary(desc, remaining);
     }
   }
 
   // Fallback when no usable DB description: 73% of venues hit this path
-  // (round-2 backlog item 3, 2026-05-11). Plain location-first form, no
-  // amenities pull — keeps the meta clean and consistent across the catalog.
-  return truncateAtWord(
-    `${name} is an event venue${locPhrase}. View upcoming fairs, festivals, and shows on Meet Me at the Fair.`,
-    META_DESCRIPTION_MAX
-  );
+  // (round-2 backlog item 3, 2026-05-11). OPE-42 — richer composed template
+  // (schedule + vendor info) so it isn't too short / duplicate across venues.
+  return composeVenueFallback({ name, city: venue.city, state: venue.state });
 }
 
 export function buildVendorMetaDescription(vendor: {
@@ -350,20 +278,45 @@ export function buildVendorMetaDescription(vendor: {
     const prefix = `${base}. `;
     const remaining = META_DESCRIPTION_MAX - prefix.length;
     if (remaining > 20) {
-      return prefix + truncateAtClause(desc, remaining);
+      return prefix + truncateAtBoundary(desc, remaining);
     }
   }
 
   // Fallback when no usable DB description: 75% of vendors hit this path
-  // (round-2 backlog item 3, 2026-05-11). ~half of vendors lack city+state,
-  // so the location phrase is optional.
-  const typePhrase = vendorType ? `${businessName} — ${vendorType} vendor` : businessName;
-  const locationPhrase =
-    vendor.city && vendor.state ? ` based in ${vendor.city}, ${vendor.state}` : "";
-  return truncateAtWord(
-    `${typePhrase}${locationPhrase}. View upcoming events on Meet Me at the Fair.`,
-    META_DESCRIPTION_MAX
-  );
+  // (round-2 backlog item 3, 2026-05-11). OPE-42 — richer composed template so
+  // the meta isn't too short / duplicate; city/state optional (~half lack it).
+  return composeVendorFallback({
+    businessName: vendor.businessName,
+    vendorType: vendor.vendorType,
+    city: vendor.city,
+    state: vendor.state,
+  });
+}
+
+/**
+ * Build the promoter meta description (OPE-42). Previously the promoter page
+ * inlined `promoter.description ?? <thin location/count sentence>` with no
+ * quality gate and no truncation — the fallback was near-duplicate across
+ * promoters. Now:
+ *   1. If the promoter's own description passes the quality gate, lead with it,
+ *      boundary-truncated with an ellipsis when long.
+ *   2. Otherwise compose an entity-specific fallback from name + location.
+ */
+export function buildPromoterMetaDescription(promoter: {
+  companyName: string;
+  description?: string | null;
+  city?: string | null;
+  state?: string | null;
+}): string {
+  const desc = decodeHtmlEntities(promoter.description?.trim() || "");
+  if (isCleanDbDescription(desc)) {
+    return truncateAtBoundary(desc, META_DESCRIPTION_MAX);
+  }
+  return composePromoterFallback({
+    name: promoter.companyName,
+    city: promoter.city,
+    state: promoter.state,
+  });
 }
 
 // State index pages target high-intent generic queries like "fairs in

@@ -21,13 +21,16 @@ describe("buildEventMetaDescription — HTML entity decoding", () => {
     expect(out).not.toContain("&amp;");
   });
 
-  it("decodes entities in venue name", () => {
+  it("produces a clean fallback (no raw entities) when a venue is present", () => {
+    // OPE-42 — the event fallback keys off city/state, not the venue name, so
+    // the venue name is no longer surfaced. This still guards that a venue with
+    // entity-laden fields never leaks raw entities into the composed meta.
     const out = buildEventMetaDescription({
       name: "Spring Fair",
       description: null,
       venue: { name: "Smith &amp; Sons Park", city: "Boston", state: "MA" },
     });
-    expect(out).toContain("Smith & Sons Park");
+    expect(out).toContain("Boston, MA");
     expect(out).not.toContain("&amp;");
   });
 
@@ -322,8 +325,10 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
     // first ends cleanly at "Association.". Pin the exact output to guard
     // against the multi-trailer regex bug that prod verification 2026-05-11
     // surfaced (was cutting at word boundary "...doors for" instead).
+    // OPE-42 — boundary truncation now appends "…" (trailing sentence period
+    // stripped first). Cut still lands cleanly after "Association".
     expect(out).toBe(
-      "Free statewide weekend event hosted by the Vermont Maple Sugar Makers' Association."
+      "Free statewide weekend event hosted by the Vermont Maple Sugar Makers' Association…"
     );
   });
 
@@ -343,7 +348,7 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
       endDate: new Date("2026-10-11T00:00:00Z"),
     });
     expect(out).toBe(
-      "Maine's Blue Ribbon Classic Agricultural Fair since 1851 — the state's largest agricultural fair, drawing approximately 260,000 attendees annually."
+      "Maine's Blue Ribbon Classic Agricultural Fair since 1851 — the state's largest agricultural fair, drawing approximately 260,000 attendees annually…"
     );
   });
 
@@ -365,9 +370,10 @@ describe("buildEventMetaDescription — clean DB description leads (no suffix, r
     expect(out).toContain("Kennebunkport Christmas Prelude");
     // No date suffix.
     expect(out).not.toContain("Dec 4-13, 2026");
-    // Output is a clean prefix of the description (no garbage appended,
-    // no mid-word truncation — proves word-boundary fallback worked).
-    expect(desc.startsWith(out)).toBe(true);
+    // Output (minus the appended ellipsis) is a clean prefix of the
+    // description — no garbage appended, no mid-word truncation.
+    expect(out.endsWith("…")).toBe(true);
+    expect(desc.startsWith(out.replace(/…$/, ""))).toBe(true);
     expect(out.length).toBeLessThanOrEqual(160);
   });
 
@@ -421,9 +427,9 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       startDate: new Date("2026-01-28T13:00:00Z"),
       endDate: new Date("2026-01-29T13:00:00Z"),
     });
-    // Natural-language form: "{name} happening {date} at {venue} in {city}, {state}. {category}."
+    // OPE-42 composed form: "{name} is a {category} in {city}, {state} on {date}. <brand tail>"
     expect(out).toBe(
-      "Portland Golf Expo happening Jan 28-29, 2026 at Holiday Inn Portland-By The Bay in Portland, ME. Trade Show."
+      "Portland Golf Expo is a Trade Show in Portland, ME on Jan 28-29, 2026. Find hours, tickets, vendor applications, and directions on Meet Me at the Fair."
     );
     expect(out.length).toBeLessThanOrEqual(160);
   });
@@ -437,9 +443,10 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       startDate: new Date("2026-09-09T00:00:00Z"),
       endDate: new Date("2026-09-12T00:00:00Z"),
     });
-    expect(out).toContain("Franklin County Fairgrounds");
+    // OPE-42 composed form keys off city/state (not the venue name).
+    expect(out).toContain("Greenfield, MA");
     expect(out).toContain("Fair");
-    expect(out).toContain("happening");
+    expect(out).toContain("on Sep 9-12, 2026");
     expect(out.length).toBeLessThanOrEqual(160);
   });
 
@@ -454,10 +461,10 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
     });
     expect(out).not.toContain("Contact: Jane");
     expect(out).toContain("Festival");
-    expect(out).toContain("happening Jun 15, 2026");
+    expect(out).toContain("on Jun 15, 2026");
   });
 
-  it("fallback gracefully omits 'happening' when no dates", () => {
+  it("fallback gracefully omits the date clause when no dates", () => {
     const out = buildEventMetaDescription({
       name: "Test Event",
       description: null,
@@ -466,10 +473,12 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       startDate: null,
       endDate: null,
     });
-    expect(out).toBe("Test Event at Test Venue in Boston, MA. Festival.");
+    expect(out).toBe(
+      "Test Event is a Festival in Boston, MA. Find hours, tickets, vendor applications, and directions on Meet Me at the Fair."
+    );
   });
 
-  it("fallback gracefully omits 'at venue' when no venue", () => {
+  it("fallback gracefully omits the location clause when no venue", () => {
     const out = buildEventMetaDescription({
       name: "Test Event",
       description: null,
@@ -478,7 +487,9 @@ describe("buildEventMetaDescription — fallback when DB description fails gate 
       startDate: new Date("2026-06-15T00:00:00Z"),
       endDate: new Date("2026-06-15T00:00:00Z"),
     });
-    expect(out).toBe("Test Event happening Jun 15, 2026. Festival.");
+    expect(out).toBe(
+      "Test Event is a Festival on Jun 15, 2026. Find hours, tickets, vendor applications, and directions on Meet Me at the Fair."
+    );
   });
 });
 
@@ -492,7 +503,7 @@ describe("buildVendorMetaDescription — fallback templates (round-2 2026-05-11)
       state: "ME",
     });
     expect(out).toBe(
-      "Maine Cardworks — Trading Cards vendor based in Portland, ME. View upcoming events on Meet Me at the Fair."
+      "Maine Cardworks is a Trading Cards vendor from Portland, ME exhibiting at New England fairs & festivals. See shows and booth info on Meet Me at the Fair."
     );
   });
 
@@ -503,7 +514,7 @@ describe("buildVendorMetaDescription — fallback templates (round-2 2026-05-11)
       vendorType: "Antiques",
     });
     expect(out).toBe(
-      "Vintage Jewelry — Antiques vendor. View upcoming events on Meet Me at the Fair."
+      "Vintage Jewelry is an Antiques vendor exhibiting at New England fairs & festivals. See shows and booth info on Meet Me at the Fair."
     );
   });
 
@@ -512,7 +523,9 @@ describe("buildVendorMetaDescription — fallback templates (round-2 2026-05-11)
       businessName: "Vendor Name Only",
       description: null,
     });
-    expect(out).toBe("Vendor Name Only. View upcoming events on Meet Me at the Fair.");
+    expect(out).toBe(
+      "Vendor Name Only is a vendor exhibiting at New England fairs & festivals. See shows and booth info on Meet Me at the Fair."
+    );
   });
 });
 
@@ -525,7 +538,7 @@ describe("buildVenueMetaDescription — fallback templates (round-2 2026-05-11)"
       state: "ME",
     });
     expect(out).toBe(
-      "Cumberland County Fairgrounds is an event venue in Cumberland, ME. View upcoming fairs, festivals, and shows on Meet Me at the Fair."
+      "Cumberland County Fairgrounds in Cumberland, ME hosts fairs, festivals, and craft shows. Browse the full schedule and vendor info on Meet Me at the Fair."
     );
   });
 
@@ -535,7 +548,7 @@ describe("buildVenueMetaDescription — fallback templates (round-2 2026-05-11)"
       description: null,
     });
     expect(out).toBe(
-      "Mystery Pavilion is an event venue. View upcoming fairs, festivals, and shows on Meet Me at the Fair."
+      "Mystery Pavilion hosts fairs, festivals, and craft shows. Browse the full schedule and vendor info on Meet Me at the Fair."
     );
   });
 
@@ -549,7 +562,7 @@ describe("buildVenueMetaDescription — fallback templates (round-2 2026-05-11)"
     });
     expect(out).not.toContain("Parking");
     expect(out).not.toContain("Featuring");
-    expect(out).toContain("is an event venue");
+    expect(out).toContain("hosts fairs, festivals, and craft shows");
   });
 });
 

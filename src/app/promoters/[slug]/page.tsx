@@ -38,6 +38,7 @@ import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
 import { unsafeSlug } from "@/lib/utils";
+import { buildPromoterMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
 
 export const revalidate = 300; // 5-minute ISR
@@ -138,14 +139,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const title = `${promoter.companyName} | Meet Me at the Fair`;
-  // Description: prefer the promoter's own description; fall back to a
-  // location- and event-count-derived sentence so the meta isn't empty.
-  // Mirrors the round-2 fallback chain pattern from venue/vendor pages.
-  const eventCount = promoter.upcomingEvents.length + promoter.pastEvents.length;
-  const locationStr = [promoter.city, promoter.state].filter(Boolean).join(", ");
-  const description =
-    promoter.description ??
-    `${promoter.companyName}${locationStr ? ` in ${locationStr}` : ""} hosts ${eventCount > 0 ? `${eventCount} event${eventCount === 1 ? "" : "s"}` : "events"} on Meet Me at the Fair. Browse upcoming and past events, contact the organizer, and discover their work.`;
+  // OPE-42 — description via the shared builder: leads with the promoter's own
+  // description (boundary-truncated) when it passes the quality gate, else a
+  // richer entity-specific composed fallback. Replaces the prior inline
+  // location/event-count sentence that read near-identically across promoters.
+  const description = buildPromoterMetaDescription(promoter);
   const url = `https://meetmeatthefair.com/promoters/${promoter.slug}`;
 
   // IMG1 (2026-06-07) — landscape (1200×630) variant matches the existing
