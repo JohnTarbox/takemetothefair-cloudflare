@@ -35,6 +35,7 @@ import {
   type BingSiteScanIssue,
   type BingIndexNowQuota,
 } from "@/lib/bing-webmaster";
+import { getLatestReferringDomains } from "@/lib/bing-backlinks-store";
 import {
   ScApiError,
   ScConfigError,
@@ -3144,7 +3145,60 @@ async function BingTab() {
           </CardContent>
         </Card>
       </div>
+
+      <ReferringDomainsSection />
     </>
+  );
+}
+
+// OPE-56 — referring domains imported from the BWT "Referring Domains" CSV
+// (Bing's API has no backlink data). Reads the most-recent snapshot from D1;
+// independent of the Bing API so it renders even before BWT search data lands.
+async function ReferringDomainsSection() {
+  const db = getCloudflareDb();
+  const rows = await getLatestReferringDomains(db);
+  const snapshotDate = rows[0]?.snapshotDate ?? null;
+
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between gap-2">
+          <span>Referring domains</span>
+          {snapshotDate && (
+            <span className="text-xs font-normal text-muted-foreground tabular-nums">
+              Snapshot {snapshotDate}
+            </span>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-sm">
+          <thead className="bg-muted text-muted-foreground">
+            <tr>
+              <th className="text-left px-6 py-2 font-medium">Domain</th>
+              <th className="text-right px-6 py-2 font-medium">Backlinks</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={2} className="px-6 py-6 text-muted-foreground">
+                  No referring domains imported yet — import the BWT Referring Domains CSV via the
+                  import_bing_backlinks tool.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, i) => (
+                <tr key={`${row.domain}-${i}`}>
+                  <td className="px-6 py-2 text-foreground truncate max-w-md">{row.domain}</td>
+                  <td className="px-6 py-2 text-right tabular-nums">{fmt(row.count)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -842,19 +842,11 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
 
   server.tool(
     "get_bing_backlinks",
-    "Bing inbound-link counts per site page (GetLinkCounts) — surfaces backlinks / referring pages. `page` is Bing's pagination index (0-based). Cached 60 minutes. Admin only.",
-    {
-      page: z.number().int().min(0).optional().describe("Pagination index (0-based)."),
-      refresh: z.boolean().optional().describe("Bypass the 60-minute cache."),
-    },
-    async (params) => {
+    "Referring domains + backlink counts imported from the Bing Webmaster Tools 'Referring Domains' CSV export (stored in D1) — NOT a live Bing API call. Bing's API exposes no backlink data (GetLinkCounts/GetUrlLinks/GetConnectedPages all return empty), so the operator imports the BWT CSV via import_bing_backlinks and this returns the most-recent snapshot (domain + count, sorted by count desc). Admin only.",
+    {},
+    async () => {
       try {
-        const qs = new URLSearchParams();
-        if (params.page) qs.set("page", String(params.page));
-        if (params.refresh) qs.set("refresh", "1");
-        const data = await fetchAnalyticsJson(
-          `/api/admin/analytics/bing/backlinks${qs.toString() ? `?${qs}` : ""}`
-        );
+        const data = await fetchAnalyticsJson(`/api/admin/analytics/bing/backlinks`);
         return { content: [jsonContent(data)] };
       } catch (error) {
         return {
@@ -862,6 +854,63 @@ export function registerAnalyticsTools(server: McpServer, auth: AuthContext, env
             {
               type: "text",
               text: error instanceof Error ? error.message : "Unknown Bing backlinks error",
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "import_bing_backlinks",
+    'Import a Bing Webmaster Tools \'Referring Domains\' CSV export into D1. Paste the raw CSV (header `"Domain","Backlinks Count"` + quoted rows); domains are normalised to bare hosts and upserted keyed on (domain, snapshot_date) — re-importing the same snapshot updates in place. `snapshot_date` defaults to today (UTC YYYY-MM-DD). Read the result back with get_bing_backlinks. Admin only.',
+    {
+      csv: z.string().min(1).describe("Raw BWT 'Referring Domains' CSV text (header + rows)."),
+      snapshot_date: z
+        .string()
+        .regex(ISO_DATE_REGEX)
+        .optional()
+        .describe("Snapshot date, ISO YYYY-MM-DD. Defaults to today (UTC)."),
+    },
+    async (params) => {
+      if (!env?.MAIN_APP_URL || !env?.INTERNAL_API_KEY) {
+        return {
+          content: [{ type: "text", text: "Import requires MAIN_APP_URL and INTERNAL_API_KEY." }],
+          isError: true,
+        };
+      }
+      try {
+        const response = await fetch(
+          `${env.MAIN_APP_URL}/api/admin/analytics/bing/backlinks/import`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Internal-Key": env.INTERNAL_API_KEY,
+            },
+            body: JSON.stringify(params),
+          }
+        );
+        const data = (await response.json()) as Record<string, unknown>;
+        if (!response.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Import failed (${response.status}): ${JSON.stringify(data)}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        return { content: [jsonContent(data)] };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: error instanceof Error ? error.message : "Unknown Bing backlinks import error",
             },
           ],
           isError: true,
