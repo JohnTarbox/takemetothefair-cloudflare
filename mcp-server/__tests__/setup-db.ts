@@ -561,6 +561,17 @@ const SCHEMA_SQL = `
     error_message TEXT
   );
 
+  CREATE TABLE bing_backlinks (
+    id TEXT PRIMARY KEY,
+    referring_domain TEXT NOT NULL,
+    backlink_count INTEGER NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    created_at INTEGER
+  );
+  CREATE UNIQUE INDEX uq_bing_backlinks_domain_snapshot
+    ON bing_backlinks (referring_domain, snapshot_date);
+  CREATE INDEX idx_bing_backlinks_snapshot_date ON bing_backlinks (snapshot_date);
+
   CREATE TABLE email_send_ledger (
     message_id TEXT PRIMARY KEY,
     sent_at INTEGER NOT NULL,

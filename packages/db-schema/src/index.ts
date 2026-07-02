@@ -1636,6 +1636,34 @@ export const bingDailyMetrics = sqliteTable("bing_daily_metrics", {
     .$defaultFn(() => new Date()),
 });
 
+// OPE-50 (drizzle/0143, 2026-07-02) — imported Bing Webmaster Tools "Referring
+// Domains" CSV snapshots. Bing's API exposes NO backlink data (GetLinkCounts /
+// GetUrlLinks / GetConnectedPages all return empty — live-probed 2026-07-02), so
+// the operator exports the BWT "Referring Domains" report and imports it here.
+// `get_bing_backlinks` / the admin Bing tab read the most-recent snapshot.
+//
+//   - referringDomain: NORMALISED bare host (scheme + leading www. + trailing
+//     slash stripped) — e.g. "https://www.msn.com/" → "msn.com".
+//   - backlinkCount: integer count from the CSV's "Backlinks Count" column.
+//   - snapshotDate: UTC YYYY-MM-DD of the import, so growth is trackable over
+//     time. UNIQUE(referring_domain, snapshot_date) is the upsert key.
+export const bingBacklinks = sqliteTable(
+  "bing_backlinks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    referringDomain: text("referring_domain").notNull(),
+    backlinkCount: integer("backlink_count").notNull(),
+    snapshotDate: text("snapshot_date").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("uq_bing_backlinks_domain_snapshot").on(t.referringDomain, t.snapshotDate),
+    index("idx_bing_backlinks_snapshot_date").on(t.snapshotDate),
+  ]
+);
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
