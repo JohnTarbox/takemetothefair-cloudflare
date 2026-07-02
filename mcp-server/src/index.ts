@@ -714,6 +714,24 @@ async function runScheduledGscSweep(env: Env): Promise<void> {
 }
 
 /**
+ * Bing Site Scan + Bing/GSC sitemap issue refresh (OPE-49). `refreshIssues`
+ * writes the BING_SCAN / BING_SITEMAP / GSC_SITEMAP half of
+ * site_health_issues, but was only reachable via a manual POST to
+ * /api/admin/site-health/refresh — no cron or button ever hit it, so the live
+ * Site Health tab only ever showed GSC_URL_INSPECTION rows (populated by the
+ * gsc sweep above). Wire it into the daily cron so Bing/sitemap defects
+ * surface without an operator click. Failsoft via runMainAppSweep.
+ */
+async function runScheduledSiteHealthRefresh(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "site-health refresh",
+    "/api/admin/site-health/refresh",
+    (r) => `inserted=${r.inserted ?? "?"} updated=${r.updated ?? "?"} resolved=${r.resolved ?? "?"}`
+  );
+}
+
+/**
  * Time-to-index reconciliation — joins time_to_index_log unresolved rows
  * against gsc_inspection_state. Runs after the gsc sweep so freshly-fetched
  * inspection state can be picked up immediately.
@@ -1486,6 +1504,7 @@ export default {
           })
         ),
         runScheduledGscSweep(env),
+        runScheduledSiteHealthRefresh(env),
         runScheduledTimeToIndexSweep(env),
         runScheduledGa4LivenessCheck(env),
         // A12 (analyst 2026-06-26) — durable GSC+GA4 search-performance

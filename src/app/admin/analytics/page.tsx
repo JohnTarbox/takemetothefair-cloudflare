@@ -57,6 +57,7 @@ import {
   type WindowKey,
 } from "@/lib/analytics-overview";
 import { KPI_THRESHOLDS, formatStaleAge, type KpiName, type KpiState } from "@/lib/kpi-thresholds";
+import { isExpectedNonIndexing } from "@/lib/site-health-classify";
 import {
   AEO_BUCKET_LABELS,
   aeoBadgeColor,
@@ -3200,6 +3201,202 @@ function BingErrorPanel({
   );
 }
 
+// ── Site Health helpers (OPE-49) ──────────────────────────────────────────
+// A row is "stale" — i.e. the tiered sweep hasn't re-inspected it — once its
+// last_detected_at is older than this, so its still-open status is unconfirmed.
+const SITE_HEALTH_STALE_MS = 14 * 24 * 3600 * 1000;
+
+const SITE_HEALTH_SEVERITY_RANK: Record<string, number> = { ERROR: 0, WARNING: 1, NOTICE: 2 };
+
+/** Terse "what do I do about this" hint, keyed by issueType + tier. */
+function nextStepForIssue(issueType: string, tier: "ACTION" | "EXPECTED"): string {
+  if (tier === "EXPECTED") return "No action — expected for thin/seasonal pages";
+  switch (issueType) {
+    case "GSC_RICH_RESULT_FAIL":
+      return "Fix structured-data field, then Request indexing";
+    case "GSC_INSPECTION_NON_OK":
+      return "Investigate crawl/return code";
+    case "GSC_SITEMAP_ERRORS":
+    case "GSC_SITEMAP_WARNINGS":
+      return "Review the sitemap entry in Search Console";
+    default:
+      if (issueType.startsWith("SITEMAP_")) return "Resubmit the sitemap in Bing Webmaster Tools";
+      return "Investigate the flagged URL";
+  }
+}
+
+/** Collapse near-identical messages so rows that differ only by a URL/entity
+ *  name or a count fold into one group: lower-case, unicode dashes → "-",
+ *  digit runs → "#". */
+function normalizeHealthMessageKey(message: string | null): string {
+  if (!message) return "";
+  return message.toLowerCase().replace(/[‐-―]/g, "-").replace(/\d+/g, "#").trim();
+}
+
+interface SiteHealthRowInput {
+  source: string;
+  issueType: string;
+  severity: string;
+  url: string | null;
+  message: string | null;
+  lastDetectedAt: Date;
+  snoozedUntil: Date | null;
+}
+
+interface SiteHealthGroup {
+  key: string;
+  source: string;
+  issueType: string;
+  severity: string;
+  tier: "ACTION" | "EXPECTED";
+  message: string | null;
+  nextStep: string;
+  urls: Array<{ url: string | null; lastDetectedAt: Date; snoozedUntil: Date | null }>;
+  count: number;
+  mostRecent: Date;
+  stale: boolean;
+}
+
+/** Aggregate rows into (source + issueType + normalized-message) groups, each
+ *  carrying the individual affected URLs for the expandable detail. */
+function buildSiteHealthGroups(rows: SiteHealthRowInput[], now: number): SiteHealthGroup[] {
+  const map = new Map<string, SiteHealthGroup>();
+  for (const row of rows) {
+    const tier: "ACTION" | "EXPECTED" = isExpectedNonIndexing(row.issueType, row.message)
+      ? "EXPECTED"
+      : "ACTION";
+    const key = `${row.source}|${row.issueType}|${normalizeHealthMessageKey(row.message)}`;
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        source: row.source,
+        issueType: row.issueType,
+        severity: row.severity,
+        tier,
+        message: row.message,
+        nextStep: nextStepForIssue(row.issueType, tier),
+        urls: [],
+        count: 0,
+        mostRecent: row.lastDetectedAt,
+        stale: false,
+      };
+      map.set(key, group);
+    }
+    group.urls.push({
+      url: row.url,
+      lastDetectedAt: row.lastDetectedAt,
+      snoozedUntil: row.snoozedUntil,
+    });
+    group.count++;
+    if (row.lastDetectedAt.getTime() > group.mostRecent.getTime()) {
+      group.mostRecent = row.lastDetectedAt;
+    }
+  }
+  const groups = Array.from(map.values());
+  for (const g of groups) {
+    g.stale = now - g.mostRecent.getTime() > SITE_HEALTH_STALE_MS;
+    g.urls.sort((a, b) => b.lastDetectedAt.getTime() - a.lastDetectedAt.getTime());
+  }
+  groups.sort(
+    (a, b) =>
+      (SITE_HEALTH_SEVERITY_RANK[a.severity] ?? 9) - (SITE_HEALTH_SEVERITY_RANK[b.severity] ?? 9) ||
+      b.mostRecent.getTime() - a.mostRecent.getTime()
+  );
+  return groups;
+}
+
+/** Server-rendered, JS-free expandable list of aggregated issue groups. Uses
+ *  <details>/<summary> so each group's affected URLs can be expanded without a
+ *  client component. */
+function SiteHealthIssueGroups({
+  groups,
+  now,
+  defaultOpen,
+  emptyLabel,
+}: {
+  groups: SiteHealthGroup[];
+  now: number;
+  defaultOpen: boolean;
+  emptyLabel: string;
+}) {
+  if (groups.length === 0) {
+    return <p className="px-6 py-6 text-sm text-muted-foreground">{emptyLabel}</p>;
+  }
+  return (
+    <div className="divide-y divide-gray-100">
+      {groups.map((group) => {
+        const sevColor =
+          group.severity === "ERROR"
+            ? "text-red-700"
+            : group.severity === "WARNING"
+              ? "text-amber-700"
+              : "text-muted-foreground";
+        return (
+          <details
+            key={group.key}
+            open={defaultOpen}
+            className={`px-6 py-3 ${group.stale ? "opacity-60" : ""}`}
+          >
+            <summary className="cursor-pointer text-sm">
+              <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 align-middle">
+                <span className={`font-medium ${sevColor}`}>{group.severity}</span>
+                <span className="font-mono text-xs text-muted-foreground">{group.source}</span>
+                <span className="font-medium text-foreground">{group.issueType}</span>
+                {group.message && <span className="text-muted-foreground">· {group.message}</span>}
+                <span className="tabular-nums text-xs text-muted-foreground">
+                  {fmt(group.count)} URL{group.count === 1 ? "" : "s"}
+                </span>
+                <span className="tabular-nums text-xs text-muted-foreground">
+                  last verified {formatStaleAge((now - group.mostRecent.getTime()) / 1000)} ago
+                </span>
+                {group.stale && (
+                  <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    stale
+                  </span>
+                )}
+              </span>
+            </summary>
+            <p className="mt-1 text-xs text-royal">Next step: {group.nextStep}</p>
+            <ul className="mt-2 space-y-1">
+              {group.urls.map((u, i) => {
+                const snoozed = u.snoozedUntil != null && u.snoozedUntil.getTime() > now;
+                return (
+                  <li
+                    key={`${u.url ?? "null"}-${i}`}
+                    className={`flex flex-wrap items-center gap-x-3 text-xs ${snoozed ? "opacity-50" : ""}`}
+                  >
+                    {u.url ? (
+                      <a
+                        href={u.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="max-w-lg truncate font-mono text-royal hover:underline"
+                      >
+                        {u.url}
+                      </a>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                    <span className="tabular-nums text-muted-foreground">
+                      {formatStaleAge((now - u.lastDetectedAt.getTime()) / 1000)} ago
+                    </span>
+                    {snoozed && u.snoozedUntil && (
+                      <span className="text-muted-foreground">
+                        snoozed until {formatDateOnly(u.snoozedUntil)}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 async function SiteHealthTab() {
   const db = getCloudflareDb();
   const { getCurrentIssues } = await import("@/lib/site-health");
@@ -3219,27 +3416,46 @@ async function SiteHealthTab() {
   const isActivelySnoozed = (snoozedUntil: Date | null | undefined) =>
     snoozedUntil != null && snoozedUntil.getTime() > now;
   const activeSnoozeCount = issues.filter((i) => isActivelySnoozed(i.snoozedUntil)).length;
+  const isExpectedRow = (i: (typeof issues)[number]) =>
+    isExpectedNonIndexing(i.issueType, i.message);
+  // ACTION-tier counts drive the top-line cards so "open errors" reflects real
+  // defects, not the expected non-indexing pile.
   const errorCount = issues.filter(
-    (i) => i.severity === "ERROR" && !isActivelySnoozed(i.snoozedUntil)
+    (i) => i.severity === "ERROR" && !isExpectedRow(i) && !isActivelySnoozed(i.snoozedUntil)
   ).length;
   const warningCount = issues.filter(
-    (i) => i.severity === "WARNING" && !isActivelySnoozed(i.snoozedUntil)
+    (i) => i.severity === "WARNING" && !isExpectedRow(i) && !isActivelySnoozed(i.snoozedUntil)
   ).length;
+  const expectedCount = issues.filter(
+    (i) => isExpectedRow(i) && !isActivelySnoozed(i.snoozedUntil)
+  ).length;
+
+  const groups = buildSiteHealthGroups(issues, now);
+  const actionGroups = groups.filter((g) => g.tier === "ACTION");
+  const expectedGroups = groups.filter((g) => g.tier === "EXPECTED");
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Open errors</p>
+            <p className="text-sm text-muted-foreground">Action errors</p>
             <p className="text-3xl font-bold text-red-700 mt-1 tabular-nums">{fmt(errorCount)}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Open warnings</p>
+            <p className="text-sm text-muted-foreground">Action warnings</p>
             <p className="text-3xl font-bold text-amber-700 mt-1 tabular-nums">
               {fmt(warningCount)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <p className="text-sm text-muted-foreground">Expected (non-indexing)</p>
+            <p className="text-3xl font-bold text-muted-foreground mt-1 tabular-nums">
+              {fmt(expectedCount)}
             </p>
           </CardContent>
         </Card>
@@ -3255,74 +3471,40 @@ async function SiteHealthTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Current issues</CardTitle>
+          <CardTitle>Action needed</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Real defects — 5xx/fetch errors, broken structured data, sitemap errors, robots blocks.
+            Near-identical rows are grouped; expand a group to see the affected URLs. Grey rows with
+            a <span className="font-medium">stale</span> chip haven&apos;t been re-verified by the
+            sweep in 14 days, so their open status is unconfirmed.
+          </p>
         </CardHeader>
         <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="bg-muted text-muted-foreground">
-              <tr>
-                <th className="text-left px-6 py-2 font-medium">Source</th>
-                <th className="text-left px-6 py-2 font-medium">Issue</th>
-                <th className="text-left px-6 py-2 font-medium">Severity</th>
-                <th className="text-left px-6 py-2 font-medium">URL</th>
-                <th className="text-left px-6 py-2 font-medium">Last detected</th>
-                <th className="text-left px-6 py-2 font-medium">Snoozed</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {issues.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-6 py-6 text-muted-foreground">
-                    No open issues. Run the daily sweep to refresh.
-                  </td>
-                </tr>
-              ) : (
-                issues.map((row) => {
-                  const snoozed = isActivelySnoozed(row.snoozedUntil);
-                  const sevColor =
-                    row.severity === "ERROR"
-                      ? "text-red-700"
-                      : row.severity === "WARNING"
-                        ? "text-amber-700"
-                        : "text-muted-foreground";
-                  return (
-                    <tr key={row.fingerprint} className={snoozed ? "opacity-50" : ""}>
-                      <td className="px-6 py-2 font-mono text-xs">{row.source}</td>
-                      <td className="px-6 py-2 text-foreground">
-                        {row.issueType}
-                        {row.message && (
-                          <span className="text-muted-foreground"> · {row.message}</span>
-                        )}
-                      </td>
-                      <td className={`px-6 py-2 font-medium ${sevColor}`}>{row.severity}</td>
-                      <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">
-                        {row.url ? (
-                          <a
-                            href={row.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-royal hover:underline"
-                          >
-                            {row.url}
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-6 py-2 tabular-nums text-foreground">
-                        {formatDateOnly(row.lastDetectedAt)}
-                      </td>
-                      <td className="px-6 py-2 text-foreground">
-                        {snoozed && row.snoozedUntil
-                          ? `until ${formatDateOnly(row.snoozedUntil)}`
-                          : "—"}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+          <SiteHealthIssueGroups
+            groups={actionGroups}
+            now={now}
+            defaultOpen
+            emptyLabel="No action-needed issues. Run the daily sweep to refresh."
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Expected (non-indexing)</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Normal GSC coverage states for thin / seasonal / duplicate pages (e.g. &quot;Discovered
+            – currently not indexed&quot; on an off-season market page). Not defects — collapsed by
+            default. Expand a group to review the URLs.
+          </p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <SiteHealthIssueGroups
+            groups={expectedGroups}
+            now={now}
+            defaultOpen={false}
+            emptyLabel="No expected non-indexing rows."
+          />
         </CardContent>
       </Card>
 
@@ -3344,9 +3526,12 @@ async function SiteHealthTab() {
       </div>
 
       <p className="text-xs text-muted-foreground mt-4">
-        Snooze actions are exposed via the API endpoints under <code>/api/admin/site-health/*</code>{" "}
-        and the <code>get_site_health_issues</code> / <code>snooze_site_health_issue</code> MCP
-        tools.
+        Snooze (temporary mute) and resolve (durable &quot;fixed&quot;) actions are exposed via the
+        API endpoints under <code>/api/admin/site-health/*</code> and the{" "}
+        <code>get_site_health_issues</code> / <code>snooze_site_health_issue</code> /{" "}
+        <code>resolve_site_health_issue</code> MCP tools — use the group&apos;s fingerprint from{" "}
+        <code>get_site_health_issues</code>. A resolved issue re-opens automatically if the sweep
+        re-detects it.
       </p>
 
       <Card className="mt-8">
