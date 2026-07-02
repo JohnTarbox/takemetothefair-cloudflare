@@ -37,6 +37,8 @@ import type { Metadata } from "next";
 import { BreadcrumbSchema } from "@/components/seo/BreadcrumbSchema";
 import { ItemListSchema } from "@/components/seo/ItemListSchema";
 import { ScrollDepthTracker } from "@/components/ScrollDepthTracker";
+import { PromoterClaimCTA } from "@/components/promoters/PromoterClaimCTA";
+import { auth } from "@/lib/auth";
 import { unsafeSlug } from "@/lib/utils";
 import { buildPromoterMetaDescription } from "@/lib/seo-utils";
 import { cdnImage, OG_EVENT, focalPointGravity } from "@/lib/cdn-image";
@@ -182,6 +184,12 @@ export default async function PromoterDetailPage({ params }: Props) {
     notFound();
   }
 
+  // OPE-61 — surface the claim CTA to visitors who aren't the owner/admin of an
+  // unclaimed promoter. Mirrors the vendor page's gate.
+  const session = await auth();
+  const isAdmin = session?.user?.role === "ADMIN";
+  const isOwner = !!session?.user?.id && session.user.id === promoter.userId;
+
   const locationStr = [promoter.city, promoter.state].filter(Boolean).join(", ");
 
   return (
@@ -212,6 +220,9 @@ export default async function PromoterDetailPage({ params }: Props) {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <main className="lg:col-span-2 space-y-6">
+            {!promoter.claimed && !isOwner && !isAdmin && (
+              <PromoterClaimCTA companyName={promoter.companyName} promoterSlug={promoter.slug} />
+            )}
             {promoter.heroImageUrl &&
               (() => {
                 // OPE-34 — full-bleed promoter hero band (separate from the small

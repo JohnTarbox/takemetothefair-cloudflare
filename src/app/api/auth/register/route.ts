@@ -4,8 +4,13 @@ import { z } from "zod";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { users, userRoles, promoters, vendors, verificationTokens } from "@/lib/db/schema";
 import { hashPassword } from "@/lib/auth";
-import { createSlug, unsafeSlug } from "@/lib/utils";
-import { and, eq, isNull } from "drizzle-orm";
+import { createSlug } from "@/lib/utils";
+import { eq } from "drizzle-orm";
+import {
+  resolveClaimAtSignup,
+  type ClaimOutcome,
+  type ClaimEntityType,
+} from "@/lib/claims/resolve-claim-at-signup";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
@@ -20,11 +25,14 @@ const registerSchema = z.object({
   role: z.enum(["USER", "PROMOTER", "VENDOR"]).optional().default("USER"),
   companyName: z.string().optional(),
   businessName: z.string().optional(),
-  // Set when the signup originates from the public "Claim this listing"
-  // CTA on /vendors/[slug]. The handler attempts to transfer ownership of
-  // the placeholder vendor row instead of inserting a duplicate. Falls
-  // back to insert if the slug is unknown / already claimed / owned by a
-  // real (non-placeholder) account.
+  // Set when the signup originates from a public "Claim this listing" CTA
+  // (/vendors/[slug] or /promoters/[slug]). The slug of the entity being
+  // claimed. `claimSlug` is the canonical field; `claimVendorSlug` is kept as
+  // a backward-compat alias for any in-flight vendor clients. The claim itself
+  // is resolved SAFELY post-signup by resolveClaimAtSignup — a match on the
+  // listing's contact email auto-approves; everything else is logged PENDING
+  // (never an unverified auto-transfer). See @/lib/claims/resolve-claim-at-signup.
+  claimSlug: z.string().optional(),
   claimVendorSlug: z.string().optional(),
   turnstileToken: z.string().optional(), // Turnstile verification token
 });
@@ -56,9 +64,13 @@ export async function POST(request: NextRequest) {
       role,
       companyName,
       businessName,
+      claimSlug: claimSlugField,
       claimVendorSlug,
       turnstileToken,
     } = validation.data;
+    // Canonical claim slug — accept the new `claimSlug` field, fall back to the
+    // legacy `claimVendorSlug` alias.
+    const claimSlug = claimSlugField ?? claimVendorSlug;
 
     // Verify Turnstile token (required for all registration attempts)
     const turnstileResult = await verifyTurnstileToken(turnstileToken || "", request);
@@ -95,72 +107,52 @@ export async function POST(request: NextRequest) {
     // needed here. Claim endpoints DO need it for idempotent re-claims.
     await db.insert(userRoles).values({ userId, role, grantedAt: new Date() });
 
-    if (role === "PROMOTER" && companyName) {
-      // promoters has no claimed/claimedAt/claimedBy columns (only
-      // vendors does) — ownership is implied solely by userId match.
-      await db.insert(promoters).values({
-        id: crypto.randomUUID(),
-        userId,
-        companyName,
-        slug: createSlug(companyName),
-      });
+    // Claim outcome, surfaced in the response so the client can route the user
+    // to the right post-signup surface (success widget / dispute / evidence).
+    let claim: { outcome: ClaimOutcome; entityType: ClaimEntityType } | undefined;
+
+    // Two distinct signup shapes per entity role:
+    //  (a) claim funnel (claimSlug present): resolve the claim SAFELY against an
+    //      EXISTING listing. resolveClaimAtSignup transfers ownership ONLY on a
+    //      contact-email match; otherwise it logs the attempt (PENDING/DISPUTED)
+    //      and never creates a duplicate row. We deliberately do NOT insert a
+    //      fresh listing here — the claim is against the entity identified by
+    //      slug, not a new one.
+    //  (b) plain signup (no claimSlug): the user is creating THEIR OWN new
+    //      listing, so we mint + mark it claimed (they are the author; this is
+    //      not claiming someone else's listing).
+    if (role === "PROMOTER") {
+      if (claimSlug) {
+        const res = await resolveClaimAtSignup(db, {
+          entityType: "PROMOTER",
+          slug: claimSlug,
+          userId,
+          userEmail: email,
+        });
+        claim = { outcome: res.outcome, entityType: res.entityType };
+      } else if (companyName) {
+        await db.insert(promoters).values({
+          id: crypto.randomUUID(),
+          userId,
+          companyName,
+          slug: createSlug(companyName),
+          claimed: true,
+          claimedAt: new Date(),
+          claimedBy: userId,
+        });
+      }
     }
 
-    if (role === "VENDOR" && businessName) {
-      let claimedExistingRow = false;
-      if (claimVendorSlug) {
-        // Public "Claim this listing" CTA path: attempt to transfer the
-        // placeholder vendor row to the new account instead of inserting
-        // a duplicate. Safe to transfer only if:
-        //   1. Vendor row exists, isn't soft-deleted, and isn't already claimed
-        //   2. Its current userId points to a placeholder account
-        //      (no passwordHash AND no emailVerified) — i.e. nobody else
-        //      has actually logged in as the "owner" yet.
-        const [target] = await db
-          .select({ id: vendors.id, userId: vendors.userId, claimed: vendors.claimed })
-          .from(vendors)
-          .where(and(eq(vendors.slug, unsafeSlug(claimVendorSlug)), isNull(vendors.deletedAt)))
-          .limit(1);
-        if (target && target.claimed === false) {
-          const [existingOwner] = await db
-            .select({
-              passwordHash: users.passwordHash,
-              emailVerified: users.emailVerified,
-            })
-            .from(users)
-            .where(eq(users.id, target.userId))
-            .limit(1);
-          const isPlaceholderOwner =
-            !!existingOwner && !existingOwner.passwordHash && !existingOwner.emailVerified;
-          if (isPlaceholderOwner) {
-            // Race-safe: WHERE claimed = false ensures a concurrent claim
-            // can't double-bind. SQLite/D1 doesn't expose rowsAffected on
-            // .update() through Drizzle, so re-read after the write.
-            await db
-              .update(vendors)
-              .set({
-                userId,
-                claimed: true,
-                claimedAt: new Date(),
-                claimedBy: userId,
-              })
-              .where(and(eq(vendors.id, target.id), eq(vendors.claimed, false)));
-            const [confirm] = await db
-              .select({ userId: vendors.userId })
-              .from(vendors)
-              .where(eq(vendors.id, target.id))
-              .limit(1);
-            if (confirm?.userId === userId) {
-              claimedExistingRow = true;
-            }
-          }
-        }
-      }
-      if (!claimedExistingRow) {
-        // Same rationale as the PROMOTER branch — signup minted this row
-        // for this user, so mark it claimed now. Otherwise the vendor
-        // page hides the Claim CTA (isOwner=true) but also never
-        // confirms ownership (claimed=0).
+    if (role === "VENDOR") {
+      if (claimSlug) {
+        const res = await resolveClaimAtSignup(db, {
+          entityType: "VENDOR",
+          slug: claimSlug,
+          userId,
+          userEmail: email,
+        });
+        claim = { outcome: res.outcome, entityType: res.entityType };
+      } else if (businessName) {
         await db.insert(vendors).values({
           id: crypto.randomUUID(),
           userId,
@@ -218,6 +210,9 @@ export async function POST(request: NextRequest) {
           name,
           role,
         },
+        // Present only for claim-funnel signups. The client maps `outcome`
+        // to a post-signup redirect (success widget / dispute / evidence page).
+        ...(claim ? { claim } : {}),
       },
       { status: 201 }
     );

@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { users, verificationTokens } from "@/lib/db/schema";
 import type { getCloudflareDb } from "@/lib/cloudflare";
+import { approvePendingEmailMatchClaims } from "@/lib/claims/resolve-claim-at-signup";
+import type { Database } from "@/lib/db";
 
 /**
  * Validate a verification token and, if valid, mark the user's email as
@@ -43,6 +45,24 @@ export async function validateAndConsumeVerificationToken(
     .where(
       and(eq(verificationTokens.identifier, record.identifier), eq(verificationTokens.token, token))
     );
+
+  // OPE-59 SECURITY — verifying the email PROVES inbox control, which is the
+  // proof rung-1 email-match requires. Auto-approve any PENDING email-match
+  // claims this user made at signup (resolveClaimAtSignup deferred them here).
+  // Best-effort: a failure must NOT block email verification itself — the claim
+  // simply stays PENDING (recoverable via the evidence flow / re-verify).
+  try {
+    const [u] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, record.identifier))
+      .limit(1);
+    if (u) {
+      await approvePendingEmailMatchClaims(db as unknown as Database, u.id, record.identifier);
+    }
+  } catch {
+    // swallow — verification succeeded; claim approval is retryable out-of-band.
+  }
 
   return { ok: true, email: record.identifier };
 }

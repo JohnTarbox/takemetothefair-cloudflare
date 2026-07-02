@@ -31,6 +31,10 @@ const ERROR_LABELS: Record<string, string> = {
   not_found: "That confirmation link is no longer valid.",
   expired: "That confirmation link has expired. Request a new one.",
   wrong_account: "Please sign in with the account that requested the claim.",
+  // OPE-59 — the signup claim funnel found this listing already claimed by a
+  // different account. We log a dispute for review rather than reassigning.
+  already_claimed:
+    "This listing is already claimed by another account. We've logged your request — contact support if you believe this is an error.",
   server: "Something went wrong on our side. Try again or contact support.",
 };
 
