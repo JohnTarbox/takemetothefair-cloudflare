@@ -6,6 +6,8 @@ import { auth } from "@/lib/auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { vendors, promoters, entityClaims, problemReports } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
+import { parseGaClientId } from "@/lib/ga4-measurement-protocol";
+import { trackClaimVerificationAttemptedServer } from "@/lib/analytics/claim-funnel";
 import { logError } from "@/lib/logger";
 
 /**
@@ -117,6 +119,16 @@ export async function POST(request: NextRequest) {
       severity: "LOW",
       correlatedErrorCount: 0,
       createdAt: now,
+    });
+
+    // OPE-66 — filing evidence IS the rung-4 (EVIDENCE) verification attempt.
+    // Server-side, ad-block-proof; `slug` is the public `entity_id` custom dim.
+    const clientId = parseGaClientId(request.headers.get("cookie")) ?? crypto.randomUUID();
+    await trackClaimVerificationAttemptedServer({
+      clientId,
+      entityType,
+      entitySlug: slug,
+      method: "EVIDENCE",
     });
 
     return NextResponse.json({ ok: true });

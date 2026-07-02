@@ -10,6 +10,7 @@ import {
   safeHostname,
   sendGa4MeasurementProtocol,
 } from "@/lib/ga4-measurement-protocol";
+import { trackClaimViewServer } from "@/lib/analytics/claim-funnel";
 
 const MAX_BODY_BYTES = 4_000;
 const MAX_PROPERTY_BYTES = 2_000;
@@ -49,6 +50,11 @@ const ALLOWED_EVENT_NAMES = [
   // confirmation. (view_item_list / select_item are GA4-only — high volume,
   // intentionally NOT beaconed.)
   "newsletter_confirm",
+  // OPE-66 (2026-07-02) — claim-funnel entry. The register page beacons this
+  // when arriving from a "Claim this listing" CTA; the mirror below re-emits it
+  // as claim_view_server (ad-block-resilient). The three deeper claim-funnel
+  // conversions fire from pure server routes, not this beacon.
+  "claim_view",
 ] as const;
 
 // ENG1.8 — outbound-click event names mirrored to GA4 server-side via the
@@ -144,6 +150,20 @@ export async function POST(request: Request) {
         },
       },
     ]);
+  }
+
+  // OPE-66 — mirror the claim-funnel entry to GA4 server-side as
+  // claim_view_server (the deeper conversions fire from pure server routes).
+  // Params come straight from the beacon payload — no separate client emit.
+  if (parsed.data.name === "claim_view") {
+    const props = parsed.data.properties ?? {};
+    const entityTypeRaw =
+      typeof props.entityType === "string" ? props.entityType.toUpperCase() : "";
+    const entitySlug = typeof props.entitySlug === "string" ? props.entitySlug : "";
+    if ((entityTypeRaw === "VENDOR" || entityTypeRaw === "PROMOTER") && entitySlug) {
+      const clientId = parseGaClientId(request.headers.get("cookie")) ?? crypto.randomUUID();
+      await trackClaimViewServer({ clientId, entityType: entityTypeRaw, entitySlug });
+    }
   }
 
   return new NextResponse(null, { status: 204 });

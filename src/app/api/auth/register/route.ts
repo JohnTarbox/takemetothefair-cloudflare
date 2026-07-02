@@ -10,7 +10,13 @@ import {
   resolveClaimAtSignup,
   type ClaimOutcome,
   type ClaimEntityType,
+  type ResolveClaimAtSignupResult,
 } from "@/lib/claims/resolve-claim-at-signup";
+import { parseGaClientId } from "@/lib/ga4-measurement-protocol";
+import {
+  trackClaimAccountCreatedServer,
+  trackClaimVerificationAttemptedServer,
+} from "@/lib/analytics/claim-funnel";
 import { logError } from "@/lib/logger";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { verifyTurnstileToken, getTurnstileErrorMessage } from "@/lib/turnstile";
@@ -110,6 +116,9 @@ export async function POST(request: NextRequest) {
     // Claim outcome, surfaced in the response so the client can route the user
     // to the right post-signup surface (success widget / dispute / evidence).
     let claim: { outcome: ClaimOutcome; entityType: ClaimEntityType } | undefined;
+    // Full resolve result retained for OPE-66 claim-funnel GA4 events (fired
+    // below, once, for either role branch).
+    let claimResult: ResolveClaimAtSignupResult | undefined;
 
     // Two distinct signup shapes per entity role:
     //  (a) claim funnel (claimSlug present): resolve the claim SAFELY against an
@@ -130,6 +139,7 @@ export async function POST(request: NextRequest) {
           userEmail: email,
         });
         claim = { outcome: res.outcome, entityType: res.entityType };
+        claimResult = res;
       } else if (companyName) {
         await db.insert(promoters).values({
           id: crypto.randomUUID(),
@@ -152,6 +162,7 @@ export async function POST(request: NextRequest) {
           userEmail: email,
         });
         claim = { outcome: res.outcome, entityType: res.entityType };
+        claimResult = res;
       } else if (businessName) {
         await db.insert(vendors).values({
           id: crypto.randomUUID(),
@@ -199,6 +210,31 @@ export async function POST(request: NextRequest) {
         source: "api/auth/register:verification",
         context: { email },
       });
+    }
+
+    // OPE-66 — server-side claim-funnel GA4 events (ad-block-proof, `_server`
+    // suffix). Only for claim-funnel signups whose slug resolved to an entity
+    // (entity_not_found has no slug/id worth attributing). `claimSlug` IS the
+    // `entity_id` custom dim (public slug), matching the ENG1.8 convention.
+    if (claimSlug && claimResult && claimResult.outcome !== "entity_not_found") {
+      const clientId = parseGaClientId(request.headers.get("cookie")) ?? crypto.randomUUID();
+      const claimEntityType = claimResult.entityType;
+      await trackClaimAccountCreatedServer({
+        clientId,
+        entityType: claimEntityType,
+        entitySlug: claimSlug,
+      });
+      // `pending_verification` = rung-1 email match: the account email matched
+      // the listing's contact address, so the user is routed to verify their
+      // email — that email-verification step IS the EMAIL_MATCH attempt.
+      if (claimResult.outcome === "pending_verification") {
+        await trackClaimVerificationAttemptedServer({
+          clientId,
+          entityType: claimEntityType,
+          entitySlug: claimSlug,
+          method: "EMAIL_MATCH",
+        });
+      }
     }
 
     return NextResponse.json(
