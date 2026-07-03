@@ -7,7 +7,13 @@ import { getLatestKpiStates } from "@/lib/kpi-states";
 import { loadActionQueue } from "@/lib/analytics-overview/activity";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { logError } from "@/lib/logger";
-import { formatStaleRedDigest, selectStaleReds } from "@/lib/cpi/stale-reds";
+import { faultSignatures } from "@/lib/db/schema";
+import {
+  formatStaleRedDigest,
+  selectStaleFaultReds,
+  selectStaleReds,
+  type StaleRed,
+} from "@/lib/cpi/stale-reds";
 
 /**
  * POST /api/internal/cpi/stale-red-scan  (OPE-75 — CPI Move 1)
@@ -38,15 +44,50 @@ function getRuntimeEnv(key: string): string | undefined {
 
 export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ db }) => {
   try {
+    const now = new Date();
     const kpiStates = await getLatestKpiStates(db);
     const actionQueue = await loadActionQueue(db, kpiStates);
-    const reds = selectStaleReds(actionQueue, new Date());
+    const reds = selectStaleReds(actionQueue, now);
+
+    // OPE-83 — merge persistent render-fault reds so a crash-on-every-load page
+    // escalates through the same digest instead of waiting on a human report.
+    // Defensive: a failure loading the fault ledger degrades to action-queue
+    // reds only, so it never breaks the existing KPI stale-red scan.
+    let faultReds: StaleRed[] = [];
+    try {
+      const faultRows = await db
+        .select({
+          signature: faultSignatures.signature,
+          route: faultSignatures.route,
+          status: faultSignatures.status,
+          firstSeen: faultSignatures.firstSeen,
+        })
+        .from(faultSignatures);
+      faultReds = selectStaleFaultReds(
+        faultRows.map((r) => ({
+          signature: r.signature,
+          route: r.route,
+          status: r.status,
+          firstSeen: r.firstSeen.getTime(),
+        })),
+        now
+      );
+    } catch (err) {
+      await logError(db, {
+        level: "warn",
+        source: "cpi:stale-red-scan",
+        message: "fault-red load failed; degrading to action-queue reds",
+        error: err,
+      });
+    }
+
+    const allReds = [...reds, ...faultReds];
 
     let sent = false;
-    if (reds.length > 0) {
+    if (allReds.length > 0) {
       const to = getRuntimeEnv("ALERT_EMAIL_TECHNICAL");
       if (to) {
-        const digest = formatStaleRedDigest(reds, SITE_URL);
+        const digest = formatStaleRedDigest(allReds, SITE_URL);
         try {
           // Recipient is the OPERATOR only (ALERT_EMAIL_TECHNICAL) — never a customer.
           await enqueueEmail({
@@ -64,7 +105,7 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
             source: "cpi:stale-red-scan",
             message: "stale-red digest enqueue failed; scan still ok",
             error: err,
-            context: { count: reds.length },
+            context: { count: allReds.length },
           });
         }
       }
@@ -72,10 +113,10 @@ export const POST = withInternalKey({ source: "cpi:stale-red-scan" }, async ({ d
 
     return NextResponse.json({
       ok: true,
-      count: reds.length,
+      count: allReds.length,
       sent,
       // No PII — priority, title, and age only.
-      signals: reds.map((r) => ({
+      signals: allReds.map((r) => ({
         title: r.title,
         priority: r.priority,
         hoursInRed: Math.round(r.hoursInRed),

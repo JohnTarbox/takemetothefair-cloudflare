@@ -35,11 +35,9 @@ import {
   loadConversions,
   loadConversionsSparkline,
 } from "./analytics-overview/conversions";
-import {
-  loadCatalogGrowth,
-  loadEnhancedProfileRevenue,
-} from "./analytics-overview/catalog";
+import { loadCatalogGrowth, loadEnhancedProfileRevenue } from "./analytics-overview/catalog";
 import { loadBlogCoverage, loadRecommendationsSummary } from "./analytics-overview/content";
+import { loadRenderFaultHealth } from "./analytics-overview/fault-health";
 import {
   loadIndexNow,
   loadRecentErrors,
@@ -98,6 +96,7 @@ export async function loadOverviewSnapshot(
     brandVsNonBrand,
     sitemapQuality,
     timeToIndex,
+    renderFaultHealth,
     thisWeeksActions,
     kpiStrip90d,
     accountEngagement,
@@ -121,6 +120,7 @@ export async function loadOverviewSnapshot(
     loadBrandVsNonBrand(env, days),
     loadSitemapQuality(db),
     loadTimeToIndex(db),
+    loadRenderFaultHealth(db, days),
     loadThisWeeksActions(db, lastWeekDate),
     loadKpiStrip90d(db, env),
     loadAccountEngagement(db, sinceDate, days),
@@ -153,6 +153,7 @@ export async function loadOverviewSnapshot(
     brandVsNonBrand,
     sitemapQuality,
     timeToIndex,
+    renderFaultHealth,
     thisWeeksActions,
     kpiStrip90d,
     accountEngagement,

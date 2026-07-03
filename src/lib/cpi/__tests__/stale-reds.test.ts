@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ActionQueueEntry } from "@/lib/analytics-overview/types";
-import { STALE_THRESHOLD_HOURS, formatStaleRedDigest, selectStaleReds } from "@/lib/cpi/stale-reds";
+import {
+  STALE_THRESHOLD_HOURS,
+  formatStaleRedDigest,
+  selectStaleFaultReds,
+  selectStaleReds,
+  type FaultRedInput,
+} from "@/lib/cpi/stale-reds";
 
 const NOW = new Date("2026-07-03T12:00:00.000Z");
 
@@ -92,6 +98,83 @@ describe("selectStaleReds", () => {
     expect(reds).toHaveLength(1);
     expect(reds[0].hoursInRed).toBeCloseTo(936, 0);
     expect(reds[0].title).toBe("Time-to-index median regressed");
+  });
+});
+
+/** Build a FaultRedInput first seen `hoursAgo` before NOW. */
+function faultRow(
+  status: string,
+  hoursAgo: number,
+  overrides: Partial<FaultRedInput> = {}
+): FaultRedInput {
+  return {
+    signature: `sig-${status}-${hoursAgo}`,
+    route: "/events/[slug]",
+    status,
+    firstSeen: NOW.getTime() - hoursAgo * 3_600_000,
+    ...overrides,
+  };
+}
+
+describe("selectStaleFaultReds", () => {
+  it("includes an over-threshold proposed fault as P0 (> 24h)", () => {
+    const reds = selectStaleFaultReds([faultRow("proposed", 30)], NOW);
+    expect(reds).toHaveLength(1);
+    expect(reds[0].priority).toBe("P0");
+    expect(reds[0].hoursInRed).toBeCloseTo(30, 5);
+    expect(reds[0].href).toBe("/admin/analytics#render-fault-health");
+    expect(reds[0].refKey).toBe("sig-proposed-30");
+  });
+
+  it("includes over-threshold filed and regressed faults", () => {
+    expect(selectStaleFaultReds([faultRow("filed", 48)], NOW)).toHaveLength(1);
+    expect(selectStaleFaultReds([faultRow("regressed", 48)], NOW)).toHaveLength(1);
+  });
+
+  it("excludes a done (resolved) fault even when very old", () => {
+    expect(selectStaleFaultReds([faultRow("done", 500)], NOW)).toHaveLength(0);
+  });
+
+  it("excludes a sub-threshold fault (< 24h)", () => {
+    expect(selectStaleFaultReds([faultRow("proposed", 20)], NOW)).toHaveLength(0);
+  });
+
+  it("excludes a fault exactly at the 24h threshold (strictly greater than)", () => {
+    expect(selectStaleFaultReds([faultRow("proposed", 24)], NOW)).toHaveLength(0);
+  });
+
+  it("skips a NaN firstSeen without throwing", () => {
+    const bad = faultRow("proposed", 100, { firstSeen: Number.NaN });
+    expect(() => selectStaleFaultReds([bad], NOW)).not.toThrow();
+    expect(selectStaleFaultReds([bad], NOW)).toHaveLength(0);
+  });
+
+  it("titles by route, falling back to the signature when route is null", () => {
+    const [withRoute] = selectStaleFaultReds([faultRow("proposed", 30)], NOW);
+    expect(withRoute.title).toBe("Render fault: /events/[slug]");
+    const [noRoute] = selectStaleFaultReds(
+      [faultRow("proposed", 30, { route: null, signature: "abc123" })],
+      NOW
+    );
+    expect(noRoute.title).toBe("Render fault: abc123");
+  });
+
+  it("honors a custom threshold override", () => {
+    // With a 72h override the 48h fault is now sub-threshold.
+    expect(selectStaleFaultReds([faultRow("filed", 48)], NOW, 72)).toHaveLength(0);
+    expect(selectStaleFaultReds([faultRow("filed", 80)], NOW, 72)).toHaveLength(1);
+  });
+
+  it("sorts longest-red first", () => {
+    const reds = selectStaleFaultReds(
+      [
+        faultRow("proposed", 30, { signature: "young" }),
+        faultRow("regressed", 500, { signature: "ancient" }),
+        faultRow("filed", 100, { signature: "mid" }),
+      ],
+      NOW
+    );
+    expect(reds.map((r) => r.refKey)).toEqual(["ancient", "mid", "young"]);
   });
 });
 
