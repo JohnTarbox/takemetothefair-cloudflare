@@ -251,6 +251,40 @@ describe("claimAndFlush — error rollback", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  // OPE-73 — a breaker DEFERRAL (operator pause / cooldown) makes the endpoint
+  // return HTTP 503 with deferred:true. That is NOT a failure: the flush must
+  // leave the rows pending AND take the no-error-log branch (reporting the
+  // distinct "deferred" response), so a paused kill-switch stops producing the
+  // hourly 502 error noise that hid a 2-week IndexNow outage.
+  it("treats a 503 breaker deferral as a clean no-op: rows pending, response 'deferred'", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ success: false, deferred: true, error: "breaker_paused" }), {
+        status: 503,
+      })) as typeof fetch;
+
+    try {
+      await enqueuePendingPing(db, {
+        entityType: "vendor",
+        entityId: "v-paused",
+        entitySlug: "paused-vendor",
+        action: "update",
+      });
+      const result = await claimAndFlush(db, ENV);
+
+      // Distinct from a genuine failure: the flush reports "deferred" (the
+      // no-error-log branch), not the raw error string.
+      expect(result.indexnowResponse).toBe("deferred");
+
+      // Rows survive for the next cron once the operator un-pauses.
+      const rows = db.select().from(pendingSearchPings).all();
+      expect(rows[0].flushedAt).toBeNull();
+      expect(rows[0].flushedBatchId).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 describe("claimAndFlush — concurrent disjoint claims", () => {

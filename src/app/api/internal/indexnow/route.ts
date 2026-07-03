@@ -53,6 +53,10 @@ export const POST = withInternalKey(async ({ request, db }) => {
   return NextResponse.json(
     {
       success: result.ok,
+      // OPE-73: true when the circuit breaker (operator pause / cooldown) skipped
+      // Bing entirely — a clean deferral, NOT a failure. The MCP flush leaves its
+      // rows pending WITHOUT logging an error when this is set.
+      deferred: result.deferred,
       count: parsed.data.urls.length,
       attempted: result.attempted,
       succeeded: result.succeeded,
@@ -60,9 +64,11 @@ export const POST = withInternalKey(async ({ request, db }) => {
       indexnow_http_status: result.httpStatus,
       error: result.ok ? undefined : (result.failureReason ?? "indexnow_submission_failed"),
     },
-    // 502 Bad Gateway: the endpoint itself worked, but the upstream (Bing)
-    // rejected the submission. The MCP flush keys off response.ok, so any
-    // non-2xx leaves its outbox rows pending instead of silently flushed.
-    { status: result.ok ? 200 : 502 }
+    // 200 on success. A breaker DEFERRAL (operator pause / cooldown skipped Bing)
+    // returns 503 — non-2xx so the flush leaves its rows pending, but distinct so
+    // the flush does NOT log it as an error (OPE-73: stops the hourly 502 noise a
+    // paused kill-switch produced). A genuine upstream (Bing) rejection returns
+    // 502 so the flush logs it + leaves the rows pending.
+    { status: result.ok ? 200 : result.deferred ? 503 : 502 }
   );
 });

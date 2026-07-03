@@ -190,14 +190,22 @@ export async function claimAndFlush(
     try {
       const submitted = await submitIndexNowBatch(env, chunk, opts.source ?? "flush-pending");
       if (!submitted.ok) {
-        response = submitted.error ?? `HTTP ${submitted.status}`;
-        await logError(env.DB ?? null, {
-          source: "mcp:pending-pings:flush",
-          message: "submitIndexNowBatch returned non-ok",
-          statusCode: submitted.status,
-          sessionId: batchId,
-          context: { chunkStart: i, chunkSize: chunk.length, error: submitted.error },
-        });
+        // OPE-73: a breaker DEFERRAL (operator pause / cooldown, HTTP 503) is not
+        // a failure — leave the rows pending for a later cron but do NOT log an
+        // error. Only a genuine non-ok (Bing rejected, HTTP 502) is logged. This
+        // stops the hourly 502 noise a paused kill-switch produced for 2+ weeks.
+        response = submitted.deferred
+          ? "deferred"
+          : (submitted.error ?? `HTTP ${submitted.status}`);
+        if (!submitted.deferred) {
+          await logError(env.DB ?? null, {
+            source: "mcp:pending-pings:flush",
+            message: "submitIndexNowBatch returned non-ok",
+            statusCode: submitted.status,
+            sessionId: batchId,
+            context: { chunkStart: i, chunkSize: chunk.length, error: submitted.error },
+          });
+        }
         break;
       }
     } catch (err) {
@@ -248,6 +256,9 @@ export interface IndexNowEndpointBody {
   failed?: number;
   /** The real Bing HTTP status (e.g. 429) when the submission failed. */
   indexnow_http_status?: number | null;
+  /** OPE-73: true when the breaker (operator pause / cooldown) skipped Bing —
+   *  a clean deferral, not a failure. The flush leaves rows pending, no error. */
+  deferred?: boolean;
   error?: string;
 }
 
@@ -255,6 +266,9 @@ export interface SubmitResult {
   ok: boolean;
   status: number;
   error?: string;
+  /** OPE-73: true when the endpoint reported a breaker deferral (HTTP 503). The
+   *  flush leaves its rows pending but does NOT log it as an error. */
+  deferred?: boolean;
   /** Parsed endpoint body (REL4) — carries the true Bing status + counts. */
   body?: IndexNowEndpointBody;
 }
@@ -308,6 +322,8 @@ export async function submitIndexNowBatch(
       return {
         ok: false,
         status: response.status,
+        // OPE-73: a 503 with deferred:true is a breaker deferral, not a failure.
+        deferred: parsed?.deferred === true || response.status === 503,
         error: text || `HTTP ${response.status}`,
         body: parsed,
       };
@@ -330,6 +346,7 @@ export async function submitIndexNowBatch(
     return {
       ok: false,
       status: response.status,
+      deferred: parsed?.deferred === true || response.status === 503,
       error: text || `HTTP ${response.status}`,
       body: parsed,
     };
