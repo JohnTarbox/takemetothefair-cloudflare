@@ -11,13 +11,28 @@ interface LogErrorOptions {
   level?: "error" | "warn" | "info";
   statusCode?: number;
   requestId?: string;
+  // OPE-80 (drizzle/0147) — queryable route + joinable digest columns. Kept in
+  // addition to whatever the caller stashes in `context` so error_logs can be
+  // filtered by route and joined on digest across client + server rows.
+  route?: string;
+  digest?: string;
 }
 
 export async function logError(
   db: DrizzleD1Database<Record<string, unknown>> | null,
   options: LogErrorOptions
 ): Promise<void> {
-  const { message, error, source, request, context, level = "error", statusCode } = options;
+  const {
+    message,
+    error,
+    source,
+    request,
+    context,
+    level = "error",
+    statusCode,
+    route,
+    digest,
+  } = options;
 
   const stackTrace = error instanceof Error ? error.stack : error ? String(error) : undefined;
   const fullMessage = error instanceof Error ? `${message}: ${error.message}` : message;
@@ -40,6 +55,8 @@ export async function logError(
       stackTrace,
       userAgent: request?.headers?.get("user-agent") ?? undefined,
       source,
+      route,
+      digest,
     });
 
     // 1% probabilistic cleanup of old logs. If the cleanup itself fails
