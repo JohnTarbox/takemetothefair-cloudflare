@@ -989,17 +989,41 @@ function ActionQueueCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
   );
 }
 
+/** OPE-78 — SLA chip for an action-queue row. `red`=breached (Move-1 alert
+ *  point), `amber`=approaching, `green`=on track. `none` (no age) → no chip. */
+function actionQueueSlaChip(
+  status: ActionQueueEntry["slaStatus"],
+  hoursInRed: number | null
+): { label: string; cls: string } | null {
+  if (status === "none" || hoursInRed === null) return null;
+  const age = hoursInRed < 48 ? `${Math.round(hoursInRed)}h` : `${Math.round(hoursInRed / 24)}d`;
+  if (status === "red")
+    return { label: `breached · ${age}`, cls: "bg-red-100 text-red-700 border border-red-300" };
+  if (status === "amber")
+    return { label: `aging · ${age}`, cls: "bg-amber-100 text-amber-800 border border-amber-300" };
+  return {
+    label: `on track · ${age}`,
+    cls: "bg-emerald-50 text-emerald-700 border border-emerald-200",
+  };
+}
+
 function ActionQueueRow({ entry }: { entry: ActionQueueEntry }) {
   const badgeClass =
     entry.priority === "P0" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800";
   const detectedDate = entry.firstDetectedAt ? new Date(entry.firstDetectedAt) : null;
+  const sla = actionQueueSlaChip(entry.slaStatus, entry.hoursInRed);
   return (
     <li className="flex items-start justify-between gap-3 text-sm">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className={`px-1.5 py-0.5 rounded text-xs font-semibold ${badgeClass}`}>
             {entry.priority}
           </span>
+          {sla && (
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${sla.cls}`}>
+              {sla.label}
+            </span>
+          )}
           <Link href={entry.href} className="font-medium text-foreground hover:underline truncate">
             {entry.title}
           </Link>

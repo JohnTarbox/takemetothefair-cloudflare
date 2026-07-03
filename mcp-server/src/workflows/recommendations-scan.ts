@@ -265,7 +265,60 @@ export class RecommendationsScanWorkflow extends WorkflowEntrypoint<
         .where(eq(recommendationScanState.id, STATE_ID));
     });
 
+    // ── Step 4: verify-remeasure (OPE-77, best-effort) ──────────────
+    // Re-measure acted items whose verify snapshot is due. Independent of the
+    // scan above and never fails the workflow: the step swallows its own errors
+    // and returns a status object so a verify hiccup can't abort the sweep.
+    const verifyResult = await step.do("verify-remeasure", async () => {
+      // Flat numeric/boolean shape only — Workflow step return values must be
+      // Serializable (a nested Record<string, unknown> from the JSON body is not).
+      try {
+        const url = `${this.env.MAIN_APP_URL}/api/admin/recommendations/verify`;
+        const init: RequestInit = {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Internal-Key": this.env.INTERNAL_API_KEY,
+          },
+        };
+        const response = this.env.MAIN_APP
+          ? await this.env.MAIN_APP.fetch(new Request(url, init))
+          : await fetch(url, init);
+        if (!response.ok) {
+          await logError(this.env.DB, {
+            level: "warn",
+            source: `${SOURCE}:verify`,
+            message: `verify-remeasure returned ${response.status} (non-fatal)`,
+            sessionId: event.instanceId,
+          });
+          return { ok: false, status: response.status, remeasured: 0, improved: 0, noMovement: 0 };
+        }
+        const body = (await response.json().catch(() => null)) as {
+          remeasured?: number;
+          improved?: number;
+          noMovement?: number;
+        } | null;
+        return {
+          ok: true,
+          status: response.status,
+          remeasured: Number(body?.remeasured ?? 0),
+          improved: Number(body?.improved ?? 0),
+          noMovement: Number(body?.noMovement ?? 0),
+        };
+      } catch (err) {
+        await logError(this.env.DB, {
+          level: "warn",
+          source: `${SOURCE}:verify`,
+          message: "verify-remeasure step errored (non-fatal)",
+          error: err,
+          sessionId: event.instanceId,
+        });
+        return { ok: false, status: 0, remeasured: 0, improved: 0, noMovement: 0 };
+      }
+    });
+
     return {
+      verify: verifyResult,
       chunksRun,
       cursorAfter: cursor,
       totalRules,

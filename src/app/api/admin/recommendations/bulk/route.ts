@@ -21,7 +21,8 @@ import { and, eq, gte, isNull, or, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { getAuthorizedSession } from "@/lib/api-auth";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { adminActions, recommendationItems } from "@/lib/db/schema";
+import { adminActions, recommendationItems, recommendationRules } from "@/lib/db/schema";
+import { getVerifier } from "@/lib/recommendations/verify/registry";
 
 const bodySchema = z.object({
   ruleId: z.string().min(1).max(64),
@@ -77,10 +78,31 @@ export async function POST(request: Request) {
 
   let affected = 0;
   if (parsed.data.action === "acted") {
-    const result = await db
-      .update(recommendationItems)
-      .set({ actedAt: now })
-      .where(activePredicate);
+    // OPE-77 verify loop: if this rule participates (v1: only
+    // page_1_zero_click_queries), snapshot the metric at act time and schedule a
+    // re-measure so we can later tell whether acting on it actually moved the
+    // needle. Rules NOT in the registry are acted exactly as before.
+    const ruleRow = (
+      await db
+        .select({ ruleKey: recommendationRules.ruleKey })
+        .from(recommendationRules)
+        .where(eq(recommendationRules.id, parsed.data.ruleId))
+        .limit(1)
+    )[0];
+    const verifier = ruleRow ? getVerifier(ruleRow.ruleKey) : undefined;
+
+    const result = verifier
+      ? await db
+          .update(recommendationItems)
+          .set({
+            actedAt: now,
+            verifyStatus: "pending",
+            // Copy each acted row's own payload_json as the snapshot metric.
+            verifySnapshot: sql`${recommendationItems.payloadJson}`,
+            verifyDueAt: new Date(now.getTime() + verifier.lagDays * 86400 * 1000),
+          })
+          .where(activePredicate)
+      : await db.update(recommendationItems).set({ actedAt: now }).where(activePredicate);
     affected = (result as unknown as { meta?: { changes?: number } }).meta?.changes ?? 0;
   } else {
     const dismissedUntil =
