@@ -15,10 +15,15 @@ import {
   Sparkles,
   TrendingUp,
 } from "lucide-react";
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { count, desc, eq, gte, sql } from "drizzle-orm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { IndexNowKillSwitchToggle } from "@/components/admin/indexnow-kill-switch-toggle";
-import { getCloudflareDb, getCloudflareEnv } from "@/lib/cloudflare";
+import { getCloudflareDb, getCloudflareEnv, getCloudflareRateLimitKv } from "@/lib/cloudflare";
+import {
+  checkIndexNowBreaker,
+  getIndexNowPauseState,
+  type BreakerState,
+} from "@/lib/indexnow-breaker";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
 import {
   BingApiError,
@@ -2903,12 +2908,105 @@ type BingLoad =
   | { ok: true; data: BingTabData }
   | { ok: false; kind: "config" | "api" | "unknown"; message: string };
 
+// OPE-71 FIX 2 — operational truth for the IndexNow ping pipeline, so the Bing
+// tab can distinguish "healthy, quota full" from "paused/cooling, nothing being
+// sent" (which the raw quota "remaining" number can't). Reuses the existing
+// breaker + kill-switch machinery and the indexnow_submissions ledger; adds NO
+// new pinging.
+interface IndexNowOps {
+  breaker: BreakerState;
+  paused: boolean;
+  pauseNote: string | null;
+  sent24h: number;
+  failed24h: number;
+  skipped24h: number;
+  sent7d: number;
+  kvAvailable: boolean;
+}
+
+const EMPTY_INDEXNOW_OPS: IndexNowOps = {
+  breaker: { blocked: false, reason: null, until: null, note: null },
+  paused: false,
+  pauseNote: null,
+  sent24h: 0,
+  failed24h: 0,
+  skipped24h: 0,
+  sent7d: 0,
+  kvAvailable: false,
+};
+
+/**
+ * Read IndexNow breaker/kill-switch state + a 24h/7d submission-status rollup.
+ * NEVER throws — any failure (no KV, DB error) degrades to EMPTY_INDEXNOW_OPS so
+ * the Bing tab still renders. Aggregation is a single group-by-status query over
+ * the 7d window with a conditional 24h sub-count.
+ */
+async function loadIndexNowOps(): Promise<IndexNowOps> {
+  try {
+    const kv = getCloudflareRateLimitKv();
+    const [breaker, pause] = await Promise.all([
+      checkIndexNowBreaker(kv),
+      getIndexNowPauseState(kv),
+    ]);
+
+    const now = Date.now();
+    const cutoff7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    const cutoff24hSec = Math.floor((now - 24 * 60 * 60 * 1000) / 1000);
+
+    let sent24h = 0;
+    let failed24h = 0;
+    let skipped24h = 0;
+    let sent7d = 0;
+    try {
+      const db = getCloudflareDb();
+      const rows = await db
+        .select({
+          status: indexnowSubmissions.status,
+          count7d: count(),
+          count24h: sql<number>`sum(case when ${indexnowSubmissions.timestamp} >= ${cutoff24hSec} then 1 else 0 end)`,
+        })
+        .from(indexnowSubmissions)
+        .where(gte(indexnowSubmissions.timestamp, cutoff7d))
+        .groupBy(indexnowSubmissions.status);
+      for (const r of rows) {
+        const c24 = Number(r.count24h ?? 0);
+        const c7 = Number(r.count7d ?? 0);
+        if (r.status === "success") {
+          sent24h += c24;
+          sent7d += c7;
+        } else if (r.status === "failure") {
+          failed24h += c24;
+        } else {
+          // no_key / no_eligible_urls / skipped / suppressed_dedup / breaker_paused / …
+          skipped24h += c24;
+        }
+      }
+    } catch {
+      /* DB read failed — leave counts at 0; breaker state is still useful. */
+    }
+
+    return {
+      breaker,
+      paused: pause.paused,
+      pauseNote: pause.note,
+      sent24h,
+      failed24h,
+      skipped24h,
+      sent7d,
+      kvAvailable: kv !== null,
+    };
+  } catch {
+    return EMPTY_INDEXNOW_OPS;
+  }
+}
+
 interface BingTabData {
   queries: BingQueryRow[];
   pages: BingPageRow[];
   crawl: BingCrawlStatsRow[];
   scan: BingSiteScanIssue[];
   quota: BingIndexNowQuota | null;
+  indexnow: IndexNowOps;
 }
 
 async function loadBingData(): Promise<BingLoad> {
@@ -2936,6 +3034,9 @@ async function loadBingData(): Promise<BingLoad> {
     const [queries, pages, crawl, scan, quota] = settled.map((r) =>
       r.status === "fulfilled" ? r.value : null
     );
+    // Operational IndexNow state — self-contained + non-throwing, so it never
+    // affects whether the rest of the Bing tab renders.
+    const indexnow = await loadIndexNowOps();
     return {
       ok: true,
       data: {
@@ -2944,6 +3045,7 @@ async function loadBingData(): Promise<BingLoad> {
         crawl: (crawl as BingCrawlStatsRow[] | null) ?? [],
         scan: (scan as BingSiteScanIssue[] | null) ?? [],
         quota: (quota as BingIndexNowQuota | null) ?? null,
+        indexnow,
       },
     };
   } catch (error) {
@@ -2966,9 +3068,27 @@ async function BingTab() {
   if (!result.ok) {
     return <BingErrorPanel kind={result.kind} message={result.message} />;
   }
-  const { queries, pages, crawl, scan, quota } = result.data;
+  const { queries, pages, crawl, scan, quota, indexnow } = result.data;
   const errorCount = scan.filter((i) => i.severity === "Error").length;
   const warningCount = scan.filter((i) => i.severity === "Warning").length;
+
+  // OPE-71 FIX 2 — IndexNow ping health at a glance. Kill-switch (paused) wins
+  // over cooldown, matching the breaker's own precedence.
+  const inState: { label: string; className: string } = indexnow.paused
+    ? {
+        label: `PAUSED${indexnow.pauseNote ? ` — ${indexnow.pauseNote}` : ""}`,
+        className: "text-amber-600",
+      }
+    : indexnow.breaker.reason === "cooldown"
+      ? {
+          label: `Cooldown until ${
+            indexnow.breaker.until
+              ? formatTimestampForServer(new Date(indexnow.breaker.until))
+              : "unknown"
+          }`,
+          className: "text-amber-600",
+        }
+      : { label: "Active", className: "text-emerald-600" };
 
   return (
     <>
@@ -3028,6 +3148,45 @@ async function BingTab() {
           </CardContent>
         </Card>
       </div>
+
+      {/* OPE-71 FIX 2 — compact IndexNow ping-pipeline status. Shows send volume
+          + breaker/kill-switch state so 100/100 remaining quota isn't mistaken
+          for "healthy" when we're actually paused. OPE-72 does the full rework. */}
+      <Card className="mb-6">
+        <CardContent className="p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">IndexNow ping pipeline</p>
+              <p className={`text-lg font-semibold mt-1 ${inState.className}`}>{inState.label}</p>
+              {!indexnow.kvAvailable && (
+                <p className="text-xs text-muted-foreground mt-1 italic">
+                  Breaker state unavailable (no KV binding).
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-6 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Sent 24h / 7d</p>
+                <p className="font-semibold tabular-nums mt-1">
+                  {fmt(indexnow.sent24h)} / {fmt(indexnow.sent7d)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Failed 24h</p>
+                <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.failed24h)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Skipped 24h</p>
+                <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.skipped24h)}</p>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            Source: D1 indexnow_submissions + REL4/REL6 breaker in RATE_LIMIT_KV.
+            &ldquo;Skipped&rdquo; counts dedup-suppressed, no-key, and breaker-paused submissions.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card className="mb-6">
         <CardHeader>

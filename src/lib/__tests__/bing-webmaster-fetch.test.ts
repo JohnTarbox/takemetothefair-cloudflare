@@ -5,7 +5,13 @@
  * graceful empty handling). Env has no RATE_LIMIT_KV so the cache is bypassed.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getTrafficStats, getBacklinks, getCrawledUrls } from "../bing-webmaster";
+import {
+  getTrafficStats,
+  getBacklinks,
+  getCrawledUrls,
+  getPageStats,
+  getSitemaps,
+} from "../bing-webmaster";
 
 const ENV = { BING_WEBMASTER_API_KEY: "test-key" } as never;
 
@@ -120,5 +126,112 @@ describe("getCrawledUrls (GetChildrenUrlInfo)", () => {
     );
     const rows = await getCrawledUrls(ENV, { skipCache: true });
     expect(rows).toEqual([]);
+  });
+});
+
+describe("getPageStats (GetPageStats)", () => {
+  // OPE-71 FIX 1: GetPageStats rows arrive double-wrapped as { d: { Page, ... } }
+  // (same serialization as GetQueryStats). The `?? ` fallback must unwrap that
+  // shape AND a flat shape — before the fix `r.Page` was undefined → "".
+  it("extracts page from the double-wrapped { d: { Page, ... } } shape", async () => {
+    mockBing({
+      d: [
+        {
+          d: {
+            Page: "https://meetmeatthefair.com/x",
+            Clicks: 5,
+            Impressions: 40,
+            AvgClickPosition: -1,
+            AvgImpressionPosition: 3.2,
+          },
+        },
+      ],
+    });
+    const rows = await getPageStats(ENV, { skipCache: true });
+    expect(rows).toEqual([
+      {
+        page: "https://meetmeatthefair.com/x",
+        clicks: 5,
+        impressions: 40,
+        // AvgClickPosition: -1 sentinel normalizes to null.
+        avgClickPosition: null,
+        avgImpressionPosition: 3.2,
+      },
+    ]);
+  });
+
+  it("extracts page from the flat { Page, ... } shape (the ?? fallback)", async () => {
+    mockBing({
+      d: [
+        {
+          Page: "https://meetmeatthefair.com/y",
+          Clicks: 2,
+          Impressions: 10,
+          AvgClickPosition: 4.5,
+          AvgImpressionPosition: 6.1,
+        },
+      ],
+    });
+    const rows = await getPageStats(ENV, { skipCache: true });
+    expect(rows).toEqual([
+      {
+        page: "https://meetmeatthefair.com/y",
+        clicks: 2,
+        impressions: 10,
+        avgClickPosition: 4.5,
+        avgImpressionPosition: 6.1,
+      },
+    ]);
+  });
+});
+
+describe("getSitemaps (GetFeeds)", () => {
+  // OPE-71 FIX 3: the exact Bing GetFeeds date field names couldn't be
+  // live-verified (key is a secret), so firstDate() tries a candidate list per
+  // field. A populated field maps through; a missing one → null.
+  it("maps a populated candidate date field through and leaves missing ones null", async () => {
+    mockBing({
+      d: [
+        {
+          Url: "https://meetmeatthefair.com/sitemap.xml",
+          SubmittedDate: "2026-06-01",
+          // LastCrawledDate absent — none of the candidates present → null.
+          UrlCount: 42,
+          Status: "Success",
+        },
+      ],
+    });
+    const rows = await getSitemaps(ENV, { skipCache: true });
+    expect(rows).toEqual([
+      {
+        url: "https://meetmeatthefair.com/sitemap.xml",
+        submitted: "2026-06-01T00:00:00.000Z",
+        lastCrawled: null,
+        urlCount: 42,
+        status: "Success",
+      },
+    ]);
+  });
+
+  it("reads an alternate candidate spelling (SubmittedDateTime / LastCrawled)", async () => {
+    mockBing({
+      d: [
+        {
+          Url: "https://meetmeatthefair.com/sitemap.xml",
+          SubmittedDateTime: "2026-06-02",
+          LastCrawled: "2026-06-03",
+        },
+      ],
+    });
+    const rows = await getSitemaps(ENV, { skipCache: true });
+    expect(rows).toEqual([
+      {
+        url: "https://meetmeatthefair.com/sitemap.xml",
+        submitted: "2026-06-02T00:00:00.000Z",
+        lastCrawled: "2026-06-03T00:00:00.000Z",
+        urlCount: 0,
+        status: "Unknown",
+      },
+    ]);
   });
 });
