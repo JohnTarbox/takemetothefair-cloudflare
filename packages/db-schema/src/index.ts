@@ -1752,6 +1752,46 @@ export const cpiSignalFilings = sqliteTable(
 
 export type CpiSignalFilingRow = typeof cpiSignalFilings.$inferSelect;
 
+// Fault Signatures table (OPE-81 — render-fault detect→group→dedup→emit rail).
+// The ledger behind grouping render faults from `error_logs` into ONE unit of
+// work per fault. A Cloudflare Worker CANNOT call the Linear `save_issue` agent
+// tool and there is no Linear token in this codebase (same RAIL shape as OPE-76),
+// so the developer builds the rail (signature + threshold + dedup + regression
+// ledger) and a scheduled analyst agent run does the actual filing.
+//
+//   signature   → TEXT PK, stable per fault (`route#error-class`), so a recurring
+//                 fault maps to ONE row across scans (dedup).
+//   route       → snapshot of the offending route for readability/filtering.
+//   error_class → the normalized, volatile-token-stripped error class.
+//   first_seen  → seconds-epoch (mode:"timestamp"); first occurrence observed.
+//   last_seen   → seconds-epoch; most recent occurrence observed, bumped per scan.
+//   count       → total occurrences observed across scans.
+//   status      → 'proposed' (surfaced, awaiting a file) | 'filed' (agent opened
+//                 an OPE) | 'done' (resolved) | 'regressed' (recurred after done).
+//   ope_id      → the filed OPE issue id, written back by the agent.
+//   filed_at    → seconds-epoch; set when the agent records the OPE id.
+//   resolved_at → seconds-epoch; set when the signature is marked done.
+//   created_at  → seconds-epoch of the first proposal; preserved on reopen.
+export const faultSignatures = sqliteTable(
+  "fault_signatures",
+  {
+    signature: text("signature").primaryKey(),
+    route: text("route"),
+    errorClass: text("error_class").notNull(),
+    firstSeen: integer("first_seen", { mode: "timestamp" }).notNull(),
+    lastSeen: integer("last_seen", { mode: "timestamp" }).notNull(),
+    count: integer("count").notNull(),
+    status: text("status", { enum: ["proposed", "filed", "done", "regressed"] }).notNull(),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_fault_signatures_status").on(t.status)]
+);
+
+export type FaultSignatureRow = typeof faultSignatures.$inferSelect;
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
