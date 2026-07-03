@@ -38,6 +38,7 @@ import {
   runScheduledInboundEmailStaleSweep,
 } from "./inbound-email-stale-sweep.js";
 import { runScheduledDedupSweepCanary } from "./dedup-sweep-canary.js";
+import { runScheduledCpiStaleRedCanary } from "./cpi-stale-red-canary.js";
 import { runScheduledCompletenessRecompute } from "./completeness-recompute-canary.js";
 import { runScheduledPageErrorCanary } from "./page-error-canary.js";
 import { runScheduledStandingFailureCanary } from "./standing-failure-canary.js";
@@ -1547,6 +1548,14 @@ export default {
         runScheduledDedupSweepCanary(env, "events"),
         runScheduledDedupSweepCanary(env, "venues"),
         runScheduledDedupSweepCanary(env, "promoters"),
+        // OPE-75 (2026-07-03) — CPI Move 1: daily stale-red canary. POSTs the
+        // main-app scan endpoint, which rebuilds the §6.3 action queue, picks
+        // the P0/P1 signals red past threshold (P0 > 24h, P1 > 72h), and
+        // best-effort enqueues ONE operator digest to ALERT_EMAIL_TECHNICAL.
+        // Turns the pull-only dashboard into a self-escalating loop so a red
+        // signal can't sit silent for weeks (the IndexNow-dead-2-weeks case).
+        // Failsoft by construction — logs + swallows, never throws.
+        runScheduledCpiStaleRedCanary(env),
         // GW1b (analyst, 2026-06-02) — Goodwill Engine Phase 1 capture
         // hooks. Both consume the foundations from GW1a (drizzle/0101)
         // and emit event_discrepancies rows for GW1c/d/e to score and
