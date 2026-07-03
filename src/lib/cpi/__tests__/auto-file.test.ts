@@ -27,6 +27,10 @@ function entry(
     href: "/admin/analytics",
     firstDetectedAt,
     refKey: overrides.refKey ?? `${priority}-${hoursAgo}`,
+    // OPE-78 fields (present on main after the merge). auto-file derives
+    // fileability from firstDetectedAt, so these carry no logic weight here.
+    hoursInRed: hoursAgo,
+    slaStatus: "none",
     ...overrides,
   };
 }
