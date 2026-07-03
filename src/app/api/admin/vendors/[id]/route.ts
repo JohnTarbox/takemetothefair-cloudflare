@@ -42,18 +42,36 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
 
     const vendor = vendorResults[0];
 
-    const vendorEvents = await db
+    // OPE-70: split the event_vendors ⋈ events leftJoin (10 + 71 = 81
+    // whole-table columns, creeping toward D1's hard 100-col result-set cap)
+    // into a single-table event_vendors select plus a batched single-table
+    // events hydration (inArray, BATCH_SIZE=50). Each result row is now only
+    // one table wide, and the attached `event` is still the full events row —
+    // so the response JSON is byte-identical to the former leftJoin (this
+    // endpoint hands `event` straight through as opaque JSON, so the full row
+    // is preserved rather than narrowed).
+    const vendorEventRows = await db
       .select()
       .from(eventVendors)
-      .leftJoin(events, eq(eventVendors.eventId, events.id))
       .where(eq(eventVendors.vendorId, id));
+
+    const eventIds = [
+      ...new Set(vendorEventRows.map((ev) => ev.eventId).filter((x): x is string => !!x)),
+    ];
+    const eventsById = new Map<string, typeof events.$inferSelect>();
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < eventIds.length; i += BATCH_SIZE) {
+      const batch = eventIds.slice(i, i + BATCH_SIZE);
+      const rows = await db.select().from(events).where(inArray(events.id, batch));
+      for (const row of rows) eventsById.set(row.id, row);
+    }
 
     return NextResponse.json({
       ...vendor.vendors,
       user: vendor.users ? { email: vendor.users.email, name: vendor.users.name } : null,
-      eventVendors: vendorEvents.map((ev) => ({
-        ...ev.event_vendors,
-        event: ev.events,
+      eventVendors: vendorEventRows.map((ev) => ({
+        ...ev,
+        event: ev.eventId ? (eventsById.get(ev.eventId) ?? null) : null,
       })),
     });
   } catch (error) {

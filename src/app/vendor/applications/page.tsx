@@ -29,10 +29,20 @@ async function getApplications(userId: string): Promise<VendorApplicationRowData
     // here was 9 (event_vendors) + 62 (events) + 30 (venues) = 101 cols
     // post-P3a — just over D1's 100-col cap, silently returning zero apps.
     // Downstream only reads venue name/address/city/state/zip (lines below).
+    // OPE-70 (2026-07-02): also narrow the events projection — the whole-table
+    // `events: events` ref (10 event_vendors + 71 events = 81 whole-table cols)
+    // was creeping back toward the cap. Downstream reads only
+    // name/slug/description/startDate/endDate off the event (see the .map below).
     const applicationResults = await db
       .select({
         event_vendors: eventVendors,
-        events: events,
+        events: {
+          name: events.name,
+          slug: events.slug,
+          description: events.description,
+          startDate: events.startDate,
+          endDate: events.endDate,
+        },
         venues: {
           name: venues.name,
           address: venues.address,
