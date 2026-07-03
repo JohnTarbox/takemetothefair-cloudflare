@@ -5,6 +5,7 @@ import {
   approvePendingEmailMatchClaims,
   type ClaimEntityType,
 } from "@/lib/claims/resolve-claim-at-signup";
+import { approvePendingDomainMatchClaims } from "@/lib/claims/resolve-claim-in-wizard";
 import type { Database } from "@/lib/db";
 
 /**
@@ -77,6 +78,17 @@ export async function validateAndConsumeVerificationToken(
         record.identifier
       );
       approvedClaims = res.approvedClaims;
+      // OPE-64 — the domain-match analog. Verifying the email PROVES inbox
+      // control at the matched registrable domain, the proof rung-2 requires.
+      // approvePendingDomainMatchClaims RE-VALIDATES the domain match against
+      // the entity's CURRENT website before transferring ownership (the website
+      // could have changed since the wizard recorded PENDING). Best-effort.
+      const domainRes = await approvePendingDomainMatchClaims(
+        db as unknown as Database,
+        u.id,
+        record.identifier
+      );
+      approvedClaims = [...approvedClaims, ...domainRes.approvedClaims];
     }
   } catch {
     // swallow — verification succeeded; claim approval is retryable out-of-band.

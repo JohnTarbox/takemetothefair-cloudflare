@@ -28,6 +28,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import { vendors, promoters, userRoles, entityClaims } from "@/lib/db/schema";
 import { unsafeSlug } from "@/lib/utils";
+import { insertClaimApprovedNotification } from "@/lib/claims/notify-approved";
 
 export type ClaimEntityType = "VENDOR" | "PROMOTER";
 
@@ -287,6 +288,11 @@ export async function approvePendingEmailMatchClaims(
       .update(entityClaims)
       .set({ status: "APPROVED", decidedAt: now, decidedBy: userId })
       .where(eq(entityClaims.id, claim.id));
+    await insertClaimApprovedNotification(db, {
+      userId,
+      entityType,
+      entitySlug: entity.slug,
+    });
     approved++;
     approvedClaims.push({ entityType, entitySlug: entity.slug });
   }

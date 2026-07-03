@@ -118,6 +118,14 @@ export const RATE_LIMITS = {
     authenticatedLimit: 10,
     windowMs: 60 * 60 * 1000, // 1 hour
   },
+  // Claim wizard verification POST (OPE-64) — per-user (auth-gated route).
+  // Each POST can transfer ownership, so keep the cap tight; a legitimate user
+  // resolves a claim in one or two attempts. Anonymous is 0 (route is withAuth).
+  "claim-wizard": {
+    anonymousLimit: 0,
+    authenticatedLimit: 15,
+    windowMs: 60 * 60 * 1000, // 1 hour
+  },
   // "Other events on these dates" widget on /events/[slug]. Lazy-fired
   // from a user button click, so well-behaved traffic is far below
   // these caps; the cap is here to prevent a misbehaving client from

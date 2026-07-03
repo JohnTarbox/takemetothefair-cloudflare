@@ -32,6 +32,7 @@ import { decodeHtmlEntities } from "@/lib/utils";
 import { enqueueEmail } from "@/lib/queues/producers";
 import { claimDecisionTemplate } from "@/lib/email/templates";
 import { getSiteUrl } from "@/lib/email/send";
+import { insertClaimApprovedNotification } from "@/lib/claims/notify-approved";
 
 export type ReviewEntityType = "VENDOR" | "PROMOTER";
 
@@ -377,6 +378,13 @@ export async function approveClaim(
 
   const claimantEmail = await lookupClaimantEmail(db, claim.userId);
   const entityName = decodeHtmlEntities(entity.name);
+
+  await insertClaimApprovedNotification(db, {
+    userId: claim.userId,
+    entityType,
+    entitySlug: entity.slug,
+    entityName,
+  });
 
   await sendDecisionEmailBestEffort({
     to: claimantEmail,
