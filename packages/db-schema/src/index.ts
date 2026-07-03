@@ -1872,6 +1872,10 @@ export const errorLogs = sqliteTable("error_logs", {
   stackTrace: text("stack_trace"),
   userAgent: text("user_agent"),
   source: text("source"),
+  // OPE-80 (drizzle/0147) — queryable route + digest so every captured error is
+  // diagnosable by route and joinable on digest across client + server rows.
+  route: text("route"),
+  digest: text("digest"),
 });
 
 // A9 (drizzle/0130, 2026-06-26) — edge request sampling to identify the
