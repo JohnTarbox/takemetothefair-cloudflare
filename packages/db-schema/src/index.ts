@@ -1717,6 +1717,41 @@ export const bingBacklinks = sqliteTable(
   ]
 );
 
+// CPI signal filings ledger (OPE-76 — CPI Move 2) — the dedup + resolution
+// ledger that makes safe auto-filing of dashboard P0s (and aged P1s) as OPE
+// issues possible. A scheduled agent run (per CPI design §35) reads the
+// /api/internal/cpi/fileable-signals endpoint, files each `toFile` signal via
+// Linear `save_issue`, then records the new OPE id back via /record-filing.
+//
+//   - fingerprint:     stable per signal (`cpi:<source>:<refKey>`) — the PK, so
+//                      a flapping signal maps to ONE row across scans (dedup).
+//   - priority/title/href: snapshot of the signal for the agent + audit.
+//   - firstDetectedAt: from the signal (when it entered its bad state); nullable.
+//   - lastSeenAt:      bumped every scan the signal is still fileable.
+//   - status:          'proposed' (surfaced, not yet filed) | 'filed' (agent
+//                      opened an OPE) | 'resolved' (signal returned to green).
+//   - opeId/filedAt:   written back by the agent after `save_issue`.
+//   - resolvedAt:      set when the signal drops out of the fileable set.
+export const cpiSignalFilings = sqliteTable(
+  "cpi_signal_filings",
+  {
+    fingerprint: text("fingerprint").primaryKey(),
+    priority: text("priority").notNull(),
+    title: text("title").notNull(),
+    href: text("href").notNull(),
+    firstDetectedAt: integer("first_detected_at", { mode: "timestamp" }),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    status: text("status", { enum: ["proposed", "filed", "resolved"] }).notNull(),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_cpi_signal_filings_status").on(t.status)]
+);
+
+export type CpiSignalFilingRow = typeof cpiSignalFilings.$inferSelect;
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
