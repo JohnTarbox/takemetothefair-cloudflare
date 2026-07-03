@@ -107,6 +107,11 @@ export async function POST(request: Request) {
     error: stack,
     statusCode,
     request,
+    // OPE-80 — also populate the queryable route + digest columns (in ADDITION
+    // to keeping them in the context JSON) so client rows are filterable by
+    // route and joinable on digest against the server-render rows.
+    route: pathname,
+    digest,
     context: {
       errorType,
       pathname,

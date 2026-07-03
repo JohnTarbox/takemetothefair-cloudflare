@@ -1717,6 +1717,41 @@ export const bingBacklinks = sqliteTable(
   ]
 );
 
+// CPI signal filings ledger (OPE-76 — CPI Move 2) — the dedup + resolution
+// ledger that makes safe auto-filing of dashboard P0s (and aged P1s) as OPE
+// issues possible. A scheduled agent run (per CPI design §35) reads the
+// /api/internal/cpi/fileable-signals endpoint, files each `toFile` signal via
+// Linear `save_issue`, then records the new OPE id back via /record-filing.
+//
+//   - fingerprint:     stable per signal (`cpi:<source>:<refKey>`) — the PK, so
+//                      a flapping signal maps to ONE row across scans (dedup).
+//   - priority/title/href: snapshot of the signal for the agent + audit.
+//   - firstDetectedAt: from the signal (when it entered its bad state); nullable.
+//   - lastSeenAt:      bumped every scan the signal is still fileable.
+//   - status:          'proposed' (surfaced, not yet filed) | 'filed' (agent
+//                      opened an OPE) | 'resolved' (signal returned to green).
+//   - opeId/filedAt:   written back by the agent after `save_issue`.
+//   - resolvedAt:      set when the signal drops out of the fileable set.
+export const cpiSignalFilings = sqliteTable(
+  "cpi_signal_filings",
+  {
+    fingerprint: text("fingerprint").primaryKey(),
+    priority: text("priority").notNull(),
+    title: text("title").notNull(),
+    href: text("href").notNull(),
+    firstDetectedAt: integer("first_detected_at", { mode: "timestamp" }),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp" }).notNull(),
+    status: text("status", { enum: ["proposed", "filed", "resolved"] }).notNull(),
+    opeId: text("ope_id"),
+    filedAt: integer("filed_at", { mode: "timestamp" }),
+    resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (t) => [index("idx_cpi_signal_filings_status").on(t.status)]
+);
+
+export type CpiSignalFilingRow = typeof cpiSignalFilings.$inferSelect;
+
 // IndexNow Submissions table — records every pingIndexNow() attempt for observability.
 // timestamp: seconds-epoch (mode:"timestamp"). Migrated from raw seconds in 0043.
 export const indexnowSubmissions = sqliteTable(
@@ -1872,6 +1907,10 @@ export const errorLogs = sqliteTable("error_logs", {
   stackTrace: text("stack_trace"),
   userAgent: text("user_agent"),
   source: text("source"),
+  // OPE-80 (drizzle/0147) — queryable route + digest so every captured error is
+  // diagnosable by route and joinable on digest across client + server rows.
+  route: text("route"),
+  digest: text("digest"),
 });
 
 // A9 (drizzle/0130, 2026-06-26) — edge request sampling to identify the
@@ -1949,11 +1988,27 @@ export const recommendationItems = sqliteTable(
     dismissedUntil: integer("dismissed_until", { mode: "timestamp" }),
     dismissedReason: text("dismissed_reason"),
     actedAt: integer("acted_at", { mode: "timestamp" }),
+    // OPE-77 (drizzle/0148, 2026-07-03) — recommendations "verify loop". Set
+    // when an item is acted for a rule in the verify registry (v1: only
+    // page_1_zero_click_queries). Snapshot the metric at act time, re-measure
+    // after the rule's lagDays, then clear (improved) or re-open (no_movement).
+    // verify_status: null | 'pending' | 'improved' | 'no_movement'.
+    verifyStatus: text("verify_status"),
+    // JSON of the metric captured at act time (copied from payload_json).
+    verifySnapshot: text("verify_snapshot"),
+    // Seconds-epoch (mode:"timestamp"); re-measure eligible once now >= this.
+    verifyDueAt: integer("verify_due_at", { mode: "timestamp" }),
+    verifyRemeasuredAt: integer("verify_remeasured_at", { mode: "timestamp" }),
+    // JSON of the metric read at re-measure time.
+    verifyAfter: text("verify_after"),
+    verifyReason: text("verify_reason"),
   },
   (t) => [
     index("idx_recommendation_items_rule_id").on(t.ruleId),
     index("idx_recommendation_items_dismissed_until").on(t.dismissedUntil),
     index("idx_recommendation_items_last_seen_at").on(t.lastSeenAt),
+    // OPE-77 — the re-measure endpoint selects pending + due items.
+    index("idx_recommendation_items_verify").on(t.verifyStatus, t.verifyDueAt),
   ]
 );
 

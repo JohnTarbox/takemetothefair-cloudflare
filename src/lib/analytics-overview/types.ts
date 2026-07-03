@@ -246,6 +246,11 @@ export type OverviewSnapshot = {
   actionQueue: ActionQueueEntry[];
 };
 
+/** OPE-78 — SLA state of an action-queue item vs. its age-in-red threshold.
+ *  `red` = breached (== the Move-1 alert trigger); `amber` = approaching;
+ *  `green` = within window; `none` = no first-detected stamp (e.g. rec rules). */
+export type ActionQueueSla = "red" | "amber" | "green" | "none";
+
 /** §6.3 action-queue entry — one row in the prioritized action panel. */
 export type ActionQueueEntry = {
   priority: "P0" | "P1";
@@ -257,4 +262,11 @@ export type ActionQueueEntry = {
   firstDetectedAt: string | null;
   /** KPI name when source='kpi'; rule key when source='recommendation'. */
   refKey: string;
+  /** OPE-78 — hours the item has been red (now − firstDetectedAt); null when
+   *  there is no first-detected stamp. Exposed so Move 1 (alert) + Move 2
+   *  (auto-file) read one field instead of each recomputing age. */
+  hoursInRed: number | null;
+  /** OPE-78 — SLA chip state derived from hoursInRed vs the per-priority
+   *  threshold (same thresholds Move 1 alerts on). */
+  slaStatus: ActionQueueSla;
 };
