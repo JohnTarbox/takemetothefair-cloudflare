@@ -78,6 +78,7 @@ import {
   submitEvent,
   stripSignature,
 } from "../email-handlers/submit.js";
+import { recordSourceCitations } from "../email-handlers/pipeline-citations.js";
 import { buildReply } from "../email-reply-builder.js";
 import { issueToken } from "../feedback-tokens.js";
 import { issueCorrectionToken } from "../correction-tokens.js";
@@ -1548,6 +1549,50 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
   }
 
+  /**
+   * OPE-69 — best-effort per-source provenance write. Records
+   * event_data_citations rows for the given event, attributed to `source`.
+   * A citation failure must NEVER fail event creation or the pipeline (the
+   * event already exists; provenance is polish), so the whole thing is wrapped
+   * step.do + try/catch and swallows errors after logging.
+   *
+   * OPE-69 follow-up: the per-source citation count is now queryable from
+   * event_data_citations — a "N sources agreed" admin surface (OPE-55 Phase 3
+   * item 3) is intentionally out of scope for this ticket.
+   */
+  private async recordCitationsBestEffort(
+    step: WorkflowStep,
+    label: string,
+    eventId: string,
+    extracted: import("../email-handlers/submit.js").SubmitExtractResult,
+    source: SubmitSource,
+    fromAddress: string
+  ): Promise<void> {
+    try {
+      await step.do(
+        label,
+        { retries: { limit: 2, delay: "5 seconds", backoff: "constant" }, timeout: "10 seconds" },
+        async () => {
+          const inserted = await recordSourceCitations(getDb(this.env.DB), {
+            eventId,
+            extracted,
+            source,
+            fromAddress,
+          });
+          return { inserted };
+        }
+      );
+    } catch (err) {
+      // Never propagate — provenance is additive; the event is already created.
+      await logError(getDb(this.env.DB), {
+        level: "warn",
+        source: "mcp:workflow:pipeline-citations",
+        message: "recordSourceCitations failed; event unaffected",
+        error: err,
+      }).catch(() => {});
+    }
+  }
+
   private async runMultiSourcePipeline(
     step: WorkflowStep,
     sources: SubmitSource[],
@@ -1570,6 +1615,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // attachment was an image (drives the poster-as-hero best-effort set).
       fromAttachment: boolean;
       imageKey?: string;
+      // OPE-69 — the originating source, threaded into Phase C so per-source
+      // event_data_citations rows can be attributed (url / body / attachment).
+      source: SubmitSource;
     }
     interface SourceFailure {
       url: string;
@@ -1609,6 +1657,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
               fetchMethod: null,
               fromAttachment: isAttachment,
               imageKey: isAttachment ? source.imageKey : undefined,
+              source,
             });
           }
         } catch {
@@ -1647,6 +1696,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             extracted: { ...extracted, event: ev, events: [ev] },
             fetchMethod: fetched.fetchMethod,
             fromAttachment: false,
+            source,
           });
         }
       } catch {
@@ -1726,6 +1776,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             eventSlug: dedup.existingEventSlug,
             url: sourceUrl || undefined,
           });
+          // OPE-69 — the candidate deduped into an existing event: attach THIS
+          // source's provenance to the keeper before dropping the candidate, so
+          // "another source also cited these fields" is preserved. Best-effort.
+          if (dedup.existingEventId) {
+            await this.recordCitationsBestEffort(
+              step,
+              `${labelPrefix}/cite-keeper`,
+              dedup.existingEventId,
+              extracted,
+              cand.source,
+              fromAddress
+            );
+          }
           continue;
         }
         const submitted = await step.do(
@@ -1743,6 +1806,16 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           url: sourceUrl || undefined,
         });
         if (!firstCreatedEventId) firstCreatedEventId = submitted.id;
+        // OPE-69 — record this source's provenance on the newly-created event.
+        // Best-effort: never fails the pipeline (the event already exists).
+        await this.recordCitationsBestEffort(
+          step,
+          `${labelPrefix}/cite`,
+          submitted.id,
+          extracted,
+          cand.source,
+          fromAddress
+        );
         // OPE-68 — attachment-sourced created event: count it + (image only)
         // set the stored poster as the event hero, best-effort.
         if (cand.fromAttachment) {
