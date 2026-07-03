@@ -148,6 +148,13 @@ interface Env {
   // outbound MCP email. Independent of the Slack webhook — set either,
   // both, or neither.
   ALERT_EMAIL_TECHNICAL?: string;
+  // OPE-68 (2026-07-03) — shared vendor-assets R2 bucket (same bucket the main
+  // app binds as VENDOR_ASSETS). The email() entrypoint persists inbound
+  // poster/PDF attachment bytes here at receive-time; the inbound-email
+  // Workflow reads them back to OCR via env.AI.toMarkdown. Optional so unit
+  // tests / non-R2 environments can omit it — capture + OCR no-op gracefully
+  // when unbound.
+  VENDOR_ASSETS?: R2Bucket;
 }
 
 // Re-export for the canary helper, which needs the same Env type.

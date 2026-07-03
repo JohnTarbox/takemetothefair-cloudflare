@@ -112,10 +112,19 @@ function renderText(kind: Exclude<ReplyKind, null>, params: ReplyParams): string
   switch (kind) {
     case "ok": {
       const eventName = (params.eventName as string | undefined) ?? "your event";
+      // OPE-68 — outcome-aware attachment copy. When the poster/PDF actually
+      // produced this event, say so; when there were attachments but this
+      // event came from the body/URL, keep a soft "reply if we missed
+      // anything on the flyer" line instead of the old "we don't process
+      // attachments yet" placeholder.
+      const attachmentEventsCreated = Number(params.attachmentEventsCreated ?? 0);
       const hasAttachments = !!params.hasAttachments;
-      const attachmentNote = hasAttachments
-        ? "\n\nNote: We don't process attachments yet. If your message had images or PDFs, please keep them handy in case our team has questions during review."
-        : "";
+      const attachmentNote =
+        attachmentEventsCreated > 0
+          ? "\n\nWe read the poster/PDF you attached and pulled the event details straight from it — please double-check the listing once it's approved and reply if anything needs fixing."
+          : hasAttachments
+            ? "\n\nNote: if your flyer image or PDF had details we couldn't read, just reply with them (or a link) and we'll update the listing."
+            : "";
       const multiEventNote = buildAdditionalEventsNote(params);
       return `Thanks for submitting "${eventName}" to Meet Me at the Fair!
 
@@ -238,8 +247,11 @@ ${SIGN_OFF}`;
     }
     case "no-url": {
       const hasAttachments = !!params.hasAttachments;
+      // OPE-68 — softer, outcome-aware copy: we DID try to read any flyer/PDF;
+      // if we couldn't, ask for the details or a link rather than implying we
+      // ignore attachments outright.
       const attachmentNote = hasAttachments
-        ? "We don't process attachments yet, so please include a link rather than a flyer image or PDF.\n\n"
+        ? "If your event details were only in an attached flyer or PDF that we couldn't read, please reply with the date and location (or a link) and we'll take it from there.\n\n"
         : "";
       return `Thanks for emailing Meet Me at the Fair!
 
@@ -255,8 +267,10 @@ ${SIGN_OFF}`;
       // include details; the soft ask is "give us the structured fields"
       // rather than the dismissive "please send a link." See GH #244.
       const hasAttachments = !!params.hasAttachments;
+      // OPE-68 — outcome-aware: we tried to read the flyer/PDF; if some detail
+      // was only there and unreadable, ask for the structured fields.
       const attachmentNote = hasAttachments
-        ? "We don't process attachments yet, so any details in a flyer image or PDF would need to be in the email body or a link.\n\n"
+        ? "If some details were only in an attached flyer or PDF we couldn't read, reply with the event name, date, and location (or a link) and we'll add it.\n\n"
         : "";
       return `Thanks for emailing Meet Me at the Fair!
 

@@ -58,6 +58,15 @@ custom_domain = true
 binding = "OAUTH_KV"
 id = "80685c98cb744582bb528587d20e647a"
 
+# R2 — vendor assets bucket, SHARED with the main app (its wrangler.toml binds
+# the same bucket as VENDOR_ASSETS, served at cdn.meetmeatthefair.com). OPE-68
+# reuses it to persist inbound-email poster/PDF attachments captured at
+# receive-time (key prefix `inbound-attachments/`) so the inbound-email Workflow
+# can OCR them via env.AI.toMarkdown. No new bucket.
+[[r2_buckets]]
+binding = "VENDOR_ASSETS"
+bucket_name = "mmatf-vendor-assets"
+
 [durable_objects]
 bindings = [
   { name = "MCP_OBJECT", class_name = "MeetMeAtTheFairMCP" }

@@ -81,6 +81,13 @@ export interface EmailHandlerEnv {
    *  tests + non-AI environments can omit it; missing → classifier
    *  silently skipped, address-based routing only. */
   AI?: AiBinding;
+  /** OPE-68 — shared vendor-assets R2 bucket. Used to persist inbound
+   *  poster/PDF attachment bytes at receive-time (they're otherwise
+   *  discarded — Email Workers only expose attachment bytes here, not in
+   *  the Workflow). Optional so tests / non-R2 envs can omit it; when
+   *  unbound, attachment capture no-ops and ingestion proceeds exactly as
+   *  before. */
+  VENDOR_ASSETS?: R2Bucket;
 }
 
 // ForwardableEmailMessage is global per @cloudflare/workers-types.
@@ -103,6 +110,12 @@ const PER_SENDER_WINDOW_SEC = 86_400;
 const MAX_BODY_LEN = 50_000; // chars of body retained for URL extraction
 const BODY_EXCERPT_LEN = 500; // chars stored for admin preview
 const SOURCE = "mcp:email-handler";
+
+// OPE-68 attachment-capture caps. Per-attachment size ceiling (skip larger)
+// and a total-count ceiling (only the first N image/PDF attachments) so a
+// pathological many-attachment message can't blow the receive-time budget.
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB per attachment
+const ATTACHMENT_MAX_COUNT = 5; // first 5 image/PDF attachments
 
 // ---------------------------------------------------------------------------
 // Entry point — wired from src/index.ts default export
@@ -273,6 +286,42 @@ export async function handleInboundEmail(
     //     dedup and proceed with the legacy "always insert" behavior.
     const messageId = (parsed.messageId || "").trim() || null;
 
+    // 6c. OPE-68 — capture poster/PDF attachment bytes to R2 at receive-time.
+    //     Email Workers expose attachment content ONLY here (the Workflow
+    //     can't re-fetch it), so this is the one chance to persist them. This
+    //     is STRICTLY best-effort + additive: the whole block is try/caught so
+    //     a storage/parse failure NEVER throws, blocks, or changes ingestion —
+    //     on any failure we fall through to exactly today's behavior with
+    //     attachmentRefsJson=null. Same posture as the best-effort analytics /
+    //     email sends elsewhere. Runs AFTER the spam-quarantine early-return so
+    //     junk attachments are never stored.
+    let attachmentRefsJson: string | null = null;
+    if (attachmentCount > 0) {
+      try {
+        // Derive a stable, path-safe group id from the Message-ID so a
+        // redelivery overwrites the same R2 keys (idempotent — no orphans)
+        // rather than storing a fresh copy under a random id.
+        const safeMsgId = messageId
+          ? messageId
+              .replace(/[^a-zA-Z0-9._-]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 80)
+          : "";
+        const groupId = safeMsgId || crypto.randomUUID();
+        const refs = await captureAttachments(env.VENDOR_ASSETS, groupId, parsed.attachments);
+        if (refs.length > 0) attachmentRefsJson = JSON.stringify(refs);
+      } catch (err) {
+        await logError(env.DB, {
+          level: "warn",
+          source: SOURCE,
+          message: "attachment capture failed; continuing without attachment_refs",
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr, attachmentCount },
+        }).catch(() => {});
+      }
+    }
+
     // 7. INSERT inbound_emails row(s). Single-intent → one row.
     //    Multi-intent → one parent row (intent='multi') + N child
     //    rows (parent_email_id → parent.id). Parent row dedups on
@@ -309,6 +358,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             parsedUrl,
             attachmentCount,
+            attachmentRefs: attachmentRefsJson,
             rawSize: message.rawSize,
             error: null,
             messageId,
@@ -370,6 +420,7 @@ export async function handleInboundEmail(
             bodyTextExcerpt: bodyTextExcerpt || null,
             parsedUrl: r.refUrl ?? parsedUrl,
             attachmentCount,
+            attachmentRefs: attachmentRefsJson,
             rawSize: message.rawSize,
             error: null,
             // Single-intent rows carry messageId for dedup; child rows
@@ -550,6 +601,107 @@ export function extractAllUrls(text: string, html: string, cap: number = 10): st
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// OPE-68 — attachment capture (best-effort; NEVER throws into the handler)
+// ---------------------------------------------------------------------------
+
+/** One persisted attachment. Serialized as a JSON array into
+ *  inbound_emails.attachment_refs. `key` is the R2 object key in the
+ *  mmatf-vendor-assets bucket. */
+export interface AttachmentRef {
+  key: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+/** Minimal attachment shape captured — matches postal-mime's Attachment
+ *  (subset). Kept local so the helper is unit-testable without postal-mime. */
+interface CapturableAttachment {
+  filename: string | null;
+  mimeType: string;
+  content: ArrayBuffer | Uint8Array | string;
+}
+
+/** Filesystem-safe attachment name for the R2 key. Collapses anything that
+ *  isn't a safe filename char to a dash, trims, and caps length. */
+function sanitizeAttachmentName(name: string | null, index: number): string {
+  const base = (name || `attachment-${index}`).trim();
+  const cleaned = base
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return cleaned.length > 0 ? cleaned : `attachment-${index}`;
+}
+
+/** Normalize postal-mime attachment content to bytes for sizing + R2 put.
+ *  Binary attachments arrive as ArrayBuffer/Uint8Array; a string body (rare,
+ *  e.g. utf8 text parts mislabeled) is UTF-8 encoded. Returns null when the
+ *  content can't be turned into non-empty bytes. */
+function attachmentBytes(content: ArrayBuffer | Uint8Array | string): Uint8Array | null {
+  let bytes: Uint8Array;
+  if (typeof content === "string") {
+    bytes = new TextEncoder().encode(content);
+  } else if (content instanceof Uint8Array) {
+    bytes = content;
+  } else {
+    bytes = new Uint8Array(content);
+  }
+  return bytes.byteLength > 0 ? bytes : null;
+}
+
+/**
+ * Persist inbound image/PDF attachments to R2 and return their refs.
+ *
+ * Purely best-effort: every R2 put is individually try/caught so a single
+ * failed attachment doesn't abort the rest, and a missing bucket binding
+ * (tests / non-R2 envs) short-circuits to an empty result. Callers wrap the
+ * whole thing in their own try/catch too — this helper never throws.
+ *
+ * Only `image/*` and `application/pdf` attachments are stored, within a
+ * per-attachment size cap (ATTACHMENT_MAX_BYTES) and a total-count cap
+ * (ATTACHMENT_MAX_COUNT). Non-media attachments are skipped.
+ *
+ * Exported for unit tests.
+ */
+export async function captureAttachments(
+  bucket: R2Bucket | undefined,
+  groupId: string,
+  attachments: CapturableAttachment[] | undefined
+): Promise<AttachmentRef[]> {
+  if (!bucket || !attachments || attachments.length === 0) return [];
+  const refs: AttachmentRef[] = [];
+  let stored = 0;
+  for (let i = 0; i < attachments.length; i++) {
+    if (stored >= ATTACHMENT_MAX_COUNT) break;
+    const a = attachments[i];
+    const mime = (a.mimeType || "").toLowerCase();
+    const isImage = mime.startsWith("image/");
+    const isPdf = mime === "application/pdf";
+    if (!isImage && !isPdf) continue;
+    const bytes = attachmentBytes(a.content);
+    if (!bytes || bytes.byteLength > ATTACHMENT_MAX_BYTES) continue;
+    const name = sanitizeAttachmentName(a.filename, i);
+    const key = `inbound-attachments/${groupId}/${i}-${name}`;
+    try {
+      await bucket.put(key, bytes, {
+        httpMetadata: { contentType: a.mimeType || "application/octet-stream" },
+      });
+      refs.push({
+        key,
+        name,
+        mimeType: a.mimeType || "application/octet-stream",
+        size: bytes.byteLength,
+      });
+      stored++;
+    } catch {
+      // Best-effort: a failed put for one attachment must not block the
+      // others or the ingestion flow. Skip and continue.
+    }
+  }
+  return refs;
 }
 
 // ---------------------------------------------------------------------------
