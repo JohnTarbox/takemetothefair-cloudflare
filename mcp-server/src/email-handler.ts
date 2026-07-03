@@ -34,7 +34,7 @@
 
 import PostalMime, { type Email } from "postal-mime";
 import { logError } from "./logger.js";
-import { getDb } from "./db.js";
+import { getDb, type Db } from "./db.js";
 import { inboundEmails, inboundEmailSenders, users } from "./schema.js";
 import { eq, sql } from "drizzle-orm";
 import { resolveIntent, shouldForwardToAdmin, type EmailIntent } from "./email-intents.js";
@@ -52,6 +52,7 @@ import {
 import { hasMultiIntentOrSpecialSignal, isReplyToOurThread } from "./intent-fastpath.js";
 import { isDenylistedHost } from "./url-denylist.js";
 import { parseEmailAuth } from "./email-auth.js";
+import { isNonActionableSender } from "./email-handlers/audit-sender.js";
 
 // ---------------------------------------------------------------------------
 // Env shape required by this module
@@ -167,6 +168,50 @@ export async function handleInboundEmail(
         context: { to: toAddr, subject, rawSize: message.rawSize },
       });
       await forwardToAdminBestEffort(message, env, "missing-from", sessionId);
+      return;
+    }
+
+    // 1b. OPE-74 — never-actionable audit/system senders. Our own outbound
+    //     notifier (notify@meetmeatthefair.com) loops sent copies back into
+    //     inbound_emails as audit copies, and generic system addresses
+    //     (noreply@ / postmaster@ / mailer-daemon@) are auto-generated mail a
+    //     human can never act on. Left alone, the classifier misfires them into
+    //     the human-triage `waiting` queue as pure noise (5 rows sat 4–5 days
+    //     each). Short-circuit here — same detect → write-terminal-row → return
+    //     shape as the spam-quarantine early return below — recording a TERMINAL
+    //     `audit-noop` row for the audit trail BEFORE the intent classifier +
+    //     workflow ever run. Best-effort: a failed insert logs and still returns
+    //     (never bounces the message, never re-runs the pipeline).
+    const nonActionable = isNonActionableSender(fromAddr);
+    if (nonActionable.match) {
+      try {
+        await insertAuditNoopRow(getDb(env.DB), {
+          fromAddr,
+          toAddr,
+          subject,
+          bodyTextExcerpt,
+          attachmentCount,
+          rawSize: message.rawSize,
+          messageId: (parsed.messageId || "").trim() || null,
+          reason: nonActionable.reason,
+        });
+        await logError(env.DB, {
+          level: "info",
+          source: SOURCE,
+          message:
+            "non-actionable audit/system sender; recorded audit-noop, skipped classifier + workflow",
+          sessionId,
+          context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+        }).catch(() => {});
+      } catch (err) {
+        await logError(env.DB, {
+          source: SOURCE,
+          message: "failed to insert audit-noop row for non-actionable sender",
+          error: err,
+          sessionId,
+          context: { from: fromAddr, to: toAddr, reason: nonActionable.reason },
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -1183,6 +1228,70 @@ async function insertSpamAuditRow(args: {
       context: { from: fromAddr, to: toAddr, subject },
     });
   }
+}
+
+/**
+ * OPE-74 — persist the TERMINAL audit-noop row for a never-actionable
+ * audit/system sender. Deliberately mirrors insertSpamAuditRow's shape (single
+ * INSERT, message_id dedup via onConflictDoNothing, no forward, no workflow
+ * create) but writes:
+ *   - status='audit-noop'      — a terminal state no queue counts
+ *   - intent='audit-noop'      — never a salvage/waiting intent
+ *   - flagged_for_review=0     — never surfaced for human review
+ *   - extract_fail_reason=reason (the categorical audit tag)
+ *   - all classifier columns NULL (proves the row bypassed classification)
+ *
+ * Takes an already-wrapped Drizzle Db so it's directly unit-testable against a
+ * throwaway SQLite (same convention as reconcileInboundExceptions). Throws on a
+ * DB error; the caller wraps it best-effort so ingestion never breaks. Exported
+ * for unit tests.
+ */
+export async function insertAuditNoopRow(
+  db: Db,
+  args: {
+    fromAddr: string;
+    toAddr: string;
+    subject: string;
+    bodyTextExcerpt: string;
+    attachmentCount: number;
+    rawSize: number | null;
+    messageId: string | null;
+    reason: string;
+    now?: Date;
+  }
+): Promise<void> {
+  const now = args.now ?? new Date();
+  await db
+    .insert(inboundEmails)
+    .values({
+      id: crypto.randomUUID(),
+      receivedAt: now,
+      fromAddress: args.fromAddr,
+      toAddress: args.toAddr,
+      subject: args.subject || null,
+      intent: "audit-noop",
+      status: "audit-noop",
+      workflowInstanceId: null,
+      bodyTextExcerpt: args.bodyTextExcerpt || null,
+      parsedUrl: null,
+      attachmentCount: args.attachmentCount,
+      rawSize: args.rawSize,
+      error: null,
+      messageId: args.messageId,
+      classifiedIntent: null,
+      classifiedSubIntent: null,
+      classifiedConfidence: null,
+      classifiedRationale: null,
+      classifiedAt: null,
+      classifierVersion: null,
+      routingSource: "audit_noop_sender",
+      routedToWorkflow: null,
+      flaggedForReview: 0,
+      extractFailReason: args.reason,
+      parentEmailId: null,
+      createdAt: now,
+    })
+    .onConflictDoNothing();
 }
 
 // Silence "imported but unused" for CLASSIFIER_VERSION — it's available

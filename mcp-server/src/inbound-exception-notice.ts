@@ -40,6 +40,7 @@ import { inboundEmails, inboundExceptionNoticeState } from "@takemetothefair/db-
 import type { Env } from "./index.js";
 import { getDb } from "./db.js";
 import { logError } from "./logger.js";
+import { NON_ACTIONABLE_EXACT_SENDERS } from "./email-handlers/audit-sender.js";
 
 const SOURCE = "mcp:schedule:inbound-exception-notice";
 
@@ -65,7 +66,19 @@ const NON_EVENT_INTENTS = ["spam", "unsubscribe"] as const;
 export const salvageCandidateWhere = and(
   eq(inboundEmails.status, "failed"),
   isNull(inboundEmails.resultingEventId),
-  inArray(inboundEmails.intent, [...SALVAGE_INTENTS])
+  inArray(inboundEmails.intent, [...SALVAGE_INTENTS]),
+  // OPE-74 belt-and-suspenders — never surface never-actionable audit/system
+  // sender loopbacks (e.g. notify@meetmeatthefair.com) in the human-triage
+  // count, even if one ever reached status='failed' with a submission intent.
+  // New arrivals are terminal-stated to 'audit-noop' at ingest
+  // (email-handler.ts → isNonActionableSender), so this is a defensive backstop
+  // that shares its source-of-truth address list. Empty list → always-true, no-op.
+  NON_ACTIONABLE_EXACT_SENDERS.length > 0
+    ? sql`lower(${inboundEmails.fromAddress}) NOT IN (${sql.join(
+        NON_ACTIONABLE_EXACT_SENDERS.map((addr) => sql`${addr}`),
+        sql`, `
+      )})`
+    : undefined
 );
 
 /** Format a Date as `YYYY-MM-DD` in UTC — matches the once-per-day comparison. */
