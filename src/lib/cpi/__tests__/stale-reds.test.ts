@@ -20,6 +20,10 @@ function entry(
     href: "/admin/analytics",
     firstDetectedAt,
     refKey: `${priority}-${hoursAgo}`,
+    // OPE-78 added these derived fields to ActionQueueEntry; selectStaleReds
+    // (OPE-75) computes its own age from firstDetectedAt and ignores them.
+    hoursInRed: hoursAgo,
+    slaStatus: "none",
     ...overrides,
   };
 }
