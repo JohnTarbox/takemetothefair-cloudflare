@@ -46,9 +46,26 @@ describe("buildReply — submit-intent kinds (legacy)", () => {
     expect(msg.text).toContain("Fryeburg Fair 2026");
   });
 
-  it("ok with attachments warns we don't process them", () => {
+  // OPE-68 — outcome-aware attachment copy. When there were attachments but
+  // this event came from the body/URL (no attachmentEventsCreated), the reply
+  // offers a soft "reply if the flyer had details we couldn't read" line
+  // instead of the old "we don't process attachments yet" placeholder.
+  it("ok with attachments (none extracted) offers a soft flyer/PDF follow-up", () => {
     const msg = buildReply("ok", "a@x.com", { eventName: "x", hasAttachments: true });
-    expect(msg.text).toMatch(/don't process attachments/i);
+    expect(msg.text).toMatch(/flyer image or PDF/i);
+    expect(msg.text).not.toMatch(/don't process attachments/i);
+  });
+
+  // OPE-68 — when the poster/PDF actually produced the event, the reply says
+  // we read it rather than asking for more.
+  it("ok when the attachment produced the event says we read the poster/PDF", () => {
+    const msg = buildReply("ok", "a@x.com", {
+      eventName: "x",
+      hasAttachments: true,
+      attachmentEventsCreated: 1,
+    });
+    expect(msg.text).toMatch(/read the poster\/PDF/i);
+    expect(msg.text).not.toMatch(/don't process attachments/i);
   });
 
   it("ok without attachments doesn't mention them", () => {

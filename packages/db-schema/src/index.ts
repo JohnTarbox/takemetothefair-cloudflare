@@ -2410,6 +2410,14 @@ export const inboundEmails = sqliteTable(
      *  the submit handler reads this rather than re-parsing the excerpt. */
     parsedUrl: text("parsed_url"),
     attachmentCount: integer("attachment_count").notNull().default(0),
+    /** OPE-68 (2026-07-03) — JSON array of {key,name,mimeType,size} objects
+     *  for poster/PDF attachments captured to R2 (mmatf-vendor-assets) at
+     *  receive-time (email-handler.ts, best-effort). The inbound-email
+     *  Workflow OCRs each via env.AI.toMarkdown and feeds the resulting text
+     *  into the event-extraction pipeline. NULL when the message had no
+     *  image/PDF attachments OR the best-effort R2 capture failed. Added
+     *  drizzle/0146. */
+    attachmentRefs: text("attachment_refs"),
     rawSize: integer("raw_size"),
     error: text("error"),
     /** RFC 5322 Message-ID extracted by PostalMime. Used to dedup

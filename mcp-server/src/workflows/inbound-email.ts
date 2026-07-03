@@ -69,7 +69,7 @@ import { handle as handleUnsubscribe } from "../email-handlers/unsubscribe.js";
 import { handle as handleUnknown } from "../email-handlers/unknown.js";
 import { handle as handleSpam } from "../email-handlers/spam.js";
 import { handle as handleSourceSuggestion } from "../email-handlers/source-suggestion.js";
-import { extractAllUrls } from "../email-handler.js";
+import { extractAllUrls, type AttachmentRef } from "../email-handler.js";
 import {
   submitFetch,
   submitExtract,
@@ -96,7 +96,15 @@ export type InboundEmailParams = {
  * so an email carrying events across BOTH a URL and its body text yields
  * every distinct event, not just one branch's.
  */
-type SubmitSource = { kind: "body"; text: string } | { kind: "url"; url: string };
+type SubmitSource =
+  | { kind: "body"; text: string }
+  | { kind: "url"; url: string }
+  // OPE-68 — an OCR'd poster/PDF attachment. `text` is the markdown produced
+  // by env.AI.toMarkdown; `name` is the attachment filename (for the reply
+  // bullet); `imageKey` is the R2 key of the stored poster when the source was
+  // an image (used to set the created event's hero image). Treated like a
+  // `body` source for extraction (submitFreeTextExtract over `text`).
+  | { kind: "attachment"; text: string; name: string; imageKey?: string };
 
 type Env = {
   DB: D1Database;
@@ -106,10 +114,22 @@ type Env = {
   EMAIL?: SendEmail;
   MAIN_APP_URL: string;
   INTERNAL_API_KEY: string;
+  /** OPE-68 — Workers AI binding. Used for env.AI.toMarkdown to OCR stored
+   *  poster/PDF attachments into markdown text. Optional so tests / non-AI
+   *  envs can omit it (OCR then contributes no attachment sources). */
+  AI?: Ai;
+  /** OPE-68 — shared vendor-assets R2 bucket. The email() entrypoint stored
+   *  the attachment bytes here at receive-time; the OCR step reads them back.
+   *  Optional so tests / non-R2 envs can omit it. */
+  VENDOR_ASSETS?: R2Bucket;
 };
 
 const SOURCE = "mcp:workflow:inbound-email";
 const DEFAULT_FROM = "Meet Me at the Fair <notify@meetmeatthefair.com>";
+// OPE-68 — minimum OCR markdown length (after trim) for an attachment to be
+// worth treating as an extraction source. Below this it's almost certainly
+// noise (a logo, a blank scan) rather than a flyer with event details.
+const MIN_OCR_CHARS = 20;
 
 /**
  * Classify an error thrown by the AI extract step into the small bucket
@@ -661,6 +681,10 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
             fromAddress: inboundEmails.fromAddress,
             subject: inboundEmails.subject,
             attachmentCount: inboundEmails.attachmentCount,
+            // OPE-68: JSON array of stored poster/PDF attachment refs (or
+            // null). Read here so the ocr-attachments step can fetch bytes +
+            // OCR them into extra submit sources.
+            attachmentRefs: inboundEmails.attachmentRefs,
             // B2: read the classifier sub-intent + body excerpt so we can
             // branch into the free-text extraction path when the sender
             // sent prose without a URL.
@@ -706,6 +730,51 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     const isFreeTextIntent = rowSnapshot.classifiedSubIntent === "free_text";
     const bodyHasSubstance = stripSignature(bodyTextRaw).trim().length > 20;
     const bodyUrls = extractAllUrls(bodyTextRaw, "", 10);
+
+    // ───── OPE-68: OCR poster/PDF attachments into extra submit sources ─────
+    // When the receive-time capture stored image/PDF attachments (attachmentRefs
+    // present), OCR each via env.AI.toMarkdown and turn any non-trivial markdown
+    // into an `attachment` source. When there's at least one such source we route
+    // EVERYTHING (body prose + body URLs + attachments) through the unified
+    // multi-source fan-out so the poster's event dedups against any body/URL
+    // event and all uniques get created. GRACEFUL: the OCR step never throws (it
+    // returns [] on any failure), so an OCR/R2/AI miss falls straight through to
+    // the pre-OPE-68 branches below. Only runs when attachments were actually
+    // stored, so existing no-attachment flows are byte-for-byte unchanged.
+    let attachmentSources: SubmitSource[] = [];
+    if (rowSnapshot.attachmentCount > 0 && rowSnapshot.attachmentRefs) {
+      const refsJson = rowSnapshot.attachmentRefs;
+      attachmentSources = await step.do(
+        "ocr-attachments",
+        { retries: { limit: 1, delay: "10 seconds", backoff: "constant" }, timeout: "60 seconds" },
+        () => this.ocrAttachments(refsJson)
+      );
+    }
+    if (attachmentSources.length > 0) {
+      const sources: SubmitSource[] = [];
+      // Body-linked URLs first (URL-first ordering — richer provenance wins the
+      // dedup collapse), unless the classifier said "prose only".
+      if (!isFreeTextIntent) {
+        sources.push(...bodyUrls.map((url): SubmitSource => ({ kind: "url", url })));
+      }
+      // Then the body prose pseudo-source when it carries substance.
+      if (bodyHasSubstance) sources.push({ kind: "body", text: bodyTextRaw });
+      // Then the OCR'd attachments (ordered last, same as the body pseudo-source
+      // rationale — provenance-carrying URL/body events created first).
+      sources.push(...attachmentSources);
+      const overflowed = bodyUrls.length >= 10;
+      return await this.runMultiSourcePipeline(
+        step,
+        sources,
+        subject,
+        rowSnapshot.fromAddress,
+        true, // hasAttachments — attachments were present + OCR'd
+        overflowed,
+        bodyTextRaw,
+        messageRowId
+      );
+    }
+
     if (!isFreeTextIntent && bodyHasSubstance && bodyUrls.length >= 1) {
       const sources: SubmitSource[] = [
         ...bodyUrls.map((url): SubmitSource => ({ kind: "url", url })),
@@ -1361,6 +1430,124 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
    *   ok-multi reply. resulting_event_id = first created event id (mirrors
    *   the other fan-outs' admin jump-link behavior).
    */
+  /**
+   * OPE-68 — OCR stored poster/PDF attachments into `attachment` submit
+   * sources. Runs as the body of the best-effort `ocr-attachments` step.
+   *
+   * Reads the JSON attachment_refs, fetches each object's bytes from the
+   * shared vendor-assets R2 bucket, and runs env.AI.toMarkdown (converts
+   * images AND PDFs → markdown in one call). Any ref whose markdown is
+   * non-trivial (>= MIN_OCR_CHARS after trim) becomes an `attachment` source
+   * carrying that text (for extraction) plus the R2 key when the attachment
+   * is an image (so a resulting CREATED event can take the poster as its
+   * hero).
+   *
+   * GRACEFUL by contract — never throws. A missing AI/R2 binding, a malformed
+   * refs blob, a missing object, or a per-attachment toMarkdown error each
+   * skip that attachment (or all) and contribute no source. Worst case: [].
+   */
+  private async ocrAttachments(refsJson: string): Promise<SubmitSource[]> {
+    const bucket = this.env.VENDOR_ASSETS;
+    const ai = this.env.AI;
+    if (!bucket || !ai) return [];
+    let refs: AttachmentRef[];
+    try {
+      const parsed = JSON.parse(refsJson);
+      if (!Array.isArray(parsed)) return [];
+      refs = parsed as AttachmentRef[];
+    } catch {
+      return [];
+    }
+    const sources: SubmitSource[] = [];
+    for (const ref of refs) {
+      if (!ref || typeof ref.key !== "string") continue;
+      try {
+        const obj = await bucket.get(ref.key);
+        if (!obj) continue;
+        const blob = await obj.blob();
+        const results = await ai.toMarkdown([{ name: ref.name || ref.key, blob }]);
+        const first = Array.isArray(results) ? results[0] : results;
+        const text = first && first.format === "markdown" ? first.data : "";
+        if (typeof text === "string" && text.trim().length >= MIN_OCR_CHARS) {
+          const mime = (ref.mimeType || "").toLowerCase();
+          sources.push({
+            kind: "attachment",
+            text,
+            name: ref.name || "attachment",
+            imageKey: mime.startsWith("image/") ? ref.key : undefined,
+          });
+        }
+      } catch (err) {
+        // Best-effort: a single toMarkdown/get failure skips that attachment
+        // and never fails the step (which never fails the workflow).
+        await logError(getDb(this.env.DB), {
+          level: "warn",
+          source: "mcp:workflow:ocr-attachments",
+          message: "toMarkdown/get failed for attachment; skipping",
+          error: err,
+        }).catch(() => {});
+      }
+    }
+    return sources;
+  }
+
+  /**
+   * OPE-68 (poster-as-hero, best-effort) — set a created event's hero image
+   * from the stored poster. Fetches the poster bytes from R2 and POSTs them
+   * through the main-app upload-image-bytes endpoint (same canonical path
+   * upload_image_bytes uses: EXIF strip → resize → WebP → events.image_url →
+   * events/{id}/… CDN key).
+   *
+   * Wrapped best-effort: a hero-image failure (missing binding, upload error,
+   * unsupported content type) must NOT fail event creation, so the whole step
+   * swallows errors. The acceptance criteria don't require the hero image.
+   */
+  private async setEventHeroFromPoster(
+    step: WorkflowStep,
+    label: string,
+    eventId: string,
+    imageKey: string
+  ): Promise<void> {
+    try {
+      await step.do(
+        label,
+        { retries: { limit: 1, delay: "5 seconds", backoff: "constant" }, timeout: "20 seconds" },
+        async () => {
+          const bucket = this.env.VENDOR_ASSETS;
+          if (!bucket) return;
+          const obj = await bucket.get(imageKey);
+          if (!obj) return;
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          const contentType = obj.httpMetadata?.contentType || "image/jpeg";
+          const form = new FormData();
+          form.append("file", new Blob([bytes], { type: contentType }), "poster");
+          form.append("target_type", "event");
+          form.append("target_id", eventId);
+          const res = await fetch(`${this.env.MAIN_APP_URL}/api/admin/upload-image-bytes`, {
+            method: "POST",
+            headers: { "X-Internal-Key": this.env.INTERNAL_API_KEY },
+            body: form,
+          });
+          if (!res.ok) {
+            await logError(getDb(this.env.DB), {
+              level: "warn",
+              source: "mcp:workflow:poster-hero",
+              message: `upload-image-bytes returned ${res.status}; hero image skipped`,
+            }).catch(() => {});
+          }
+        }
+      );
+    } catch (err) {
+      // Never propagate — poster-as-hero is purely additive.
+      await logError(getDb(this.env.DB), {
+        level: "warn",
+        source: "mcp:workflow:poster-hero",
+        message: "poster-as-hero step failed; event still created",
+        error: err,
+      }).catch(() => {});
+    }
+  }
+
   private async runMultiSourcePipeline(
     step: WorkflowStep,
     sources: SubmitSource[],
@@ -1378,6 +1565,11 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
       // ("" for body-sourced events → submitEvent omits sourceUrl).
       extracted: import("../email-handlers/submit.js").SubmitExtractResult;
       fetchMethod: "standard" | "browser-rendering" | null;
+      // OPE-68 — this candidate came from an OCR'd attachment (drives the
+      // attachmentEventsCreated reply signal). `imageKey` is set only when the
+      // attachment was an image (drives the poster-as-hero best-effort set).
+      fromAttachment: boolean;
+      imageKey?: string;
     }
     interface SourceFailure {
       url: string;
@@ -1389,10 +1581,17 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // ── Phase A: extract candidate events from every source. ──────────
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];
-      if (source.kind === "body") {
+      // Body prose AND OPE-68 OCR'd attachments both extract via the free-text
+      // path (submitFreeTextExtract over their text) and share the same
+      // minimum-fields gate. The only difference is provenance tagging.
+      if (source.kind === "body" || source.kind === "attachment") {
+        const isAttachment = source.kind === "attachment";
+        const stepLabel = isAttachment
+          ? `submit/attachment[${i}]/extract`
+          : "submit/bodytext/extract";
         try {
           const extracted = await step.do(
-            "submit/bodytext/extract",
+            stepLabel,
             {
               retries: { limit: 1, delay: "10 seconds", backoff: "constant" },
               timeout: "30 seconds",
@@ -1401,18 +1600,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           );
           for (const ev of extracted.events) {
             // Same minimum-fields gate the B2 free-text path applies, so a
-            // body that extracts a near-empty event (name only) contributes
-            // nothing rather than a thin PENDING row.
+            // body/poster that extracts a near-empty event (name only)
+            // contributes nothing rather than a thin PENDING row.
             const hasMinFields = !!ev.name && (!!ev.startDate || !!ev.venueName);
             if (!hasMinFields) continue;
             candidates.push({
               extracted: { ...extracted, event: ev, events: [ev] },
               fetchMethod: null,
+              fromAttachment: isAttachment,
+              imageKey: isAttachment ? source.imageKey : undefined,
             });
           }
         } catch {
-          // No usable event in the prose — expected for accompanying text.
-          // Swallowed by design (see Phase A docblock).
+          // No usable event in the prose/poster — expected for accompanying
+          // text or an unreadable flyer. Swallowed by design (Phase A docblock).
         }
         continue;
       }
@@ -1445,6 +1646,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           candidates.push({
             extracted: { ...extracted, event: ev, events: [ev] },
             fetchMethod: fetched.fetchMethod,
+            fromAttachment: false,
           });
         }
       } catch {
@@ -1455,7 +1657,7 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     // ── Phase B: N=1 collapse → existing single-event rich reply. ─────
     if (candidates.length === 1 && sourceFailures.length === 0) {
       const only = candidates[0];
-      return await this.submitExtractedEvent(
+      const res = await this.submitExtractedEvent(
         step,
         only.extracted,
         subject,
@@ -1464,6 +1666,33 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         only.fetchMethod,
         messageRowId
       );
+      // OPE-68 — when this lone candidate came from a poster/PDF and a NEW
+      // event was created (ok / ok-medium / ok-low), set the poster as its
+      // hero (image attachments only) and thread the outcome-aware signal so
+      // the reply says "we read your poster" instead of the old "we don't
+      // process attachments" copy.
+      const created =
+        !!res.resultingEventId &&
+        (res.replyKind === "ok" || res.replyKind === "ok-medium" || res.replyKind === "ok-low");
+      if (only.fromAttachment && created) {
+        if (only.imageKey && res.resultingEventId) {
+          await this.setEventHeroFromPoster(
+            step,
+            "submit/poster-hero",
+            res.resultingEventId,
+            only.imageKey
+          );
+        }
+        return {
+          ...res,
+          replyParams: {
+            ...(res.replyParams ?? {}),
+            attachmentsRead: true,
+            attachmentEventsCreated: 1,
+          },
+        };
+      }
+      return res;
     }
 
     // ── Phase C: fan out over every candidate, dedup-then-submit. ─────
@@ -1475,9 +1704,13 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
     }
     const outcomes: SourceOutcome[] = [];
     let firstCreatedEventId: string | null = null;
+    // OPE-68 — how many CREATED events came from an OCR'd attachment. Threaded
+    // into the reply so copy can reflect "we read your poster/PDF".
+    let attachmentEventsCreated = 0;
 
     for (let i = 0; i < candidates.length; i++) {
-      const { extracted } = candidates[i];
+      const cand = candidates[i];
+      const { extracted } = cand;
       const sourceUrl = extracted.url; // "" for body-sourced events
       const labelPrefix = `submit/source-event[${i}]`;
       try {
@@ -1510,6 +1743,19 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           url: sourceUrl || undefined,
         });
         if (!firstCreatedEventId) firstCreatedEventId = submitted.id;
+        // OPE-68 — attachment-sourced created event: count it + (image only)
+        // set the stored poster as the event hero, best-effort.
+        if (cand.fromAttachment) {
+          attachmentEventsCreated++;
+          if (cand.imageKey) {
+            await this.setEventHeroFromPoster(
+              step,
+              `${labelPrefix}/poster-hero`,
+              submitted.id,
+              cand.imageKey
+            );
+          }
+        }
       } catch (err) {
         // Per-candidate failure degrades gracefully — the others still run.
         const msg = err instanceof Error ? err.message : String(err);
@@ -1524,6 +1770,20 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
           error: err,
         });
       }
+    }
+
+    // OPE-68 — nothing extractable from ANY source (e.g. a bare "see attached"
+    // body plus a poster that OCR'd to noise). Previously unreachable here (the
+    // pre-OPE-68 callers always pass >= 1 URL source, which always yields an
+    // outcome), so this guard is inert for them. With attachments in the mix it
+    // prevents a nonsensical "Thanks for submitting 0 events" reply — fall back
+    // to the soft prose/no-url ask instead.
+    if (outcomes.length === 0) {
+      return {
+        replyKind: hasAttachments ? "no-url-prose-failed" : "no-url",
+        replyParams: { subject, hasAttachments },
+        status: "replied",
+      };
     }
 
     // Fold the URL source-level failures (fetch/extract) in as bullets so
@@ -1563,6 +1823,9 @@ export class InboundEmailWorkflow extends WorkflowEntrypoint<Env, InboundEmailPa
         resultsText,
         hasAttachments,
         overflowed,
+        // OPE-68 — outcome-aware attachment signal for the reply builder.
+        attachmentsRead: attachmentEventsCreated > 0,
+        attachmentEventsCreated,
       },
       status: "replied",
       resultingEventId: firstCreatedEventId,
