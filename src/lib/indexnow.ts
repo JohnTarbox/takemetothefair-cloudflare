@@ -55,6 +55,15 @@ const RETRY_DELAYS_MS = [500, 1000, 2000];
 // pending for a later cron rather than re-firing into the storm.
 const MAX_RETRY_AFTER_MS = 5_000;
 
+// OPE-73 — stale-pause health signal. A manual/auto pause is meant to be quiet
+// for ≥24–48h so Bing's penalty decays; but a pause left engaged for far longer
+// silently stops ALL indexing (this ticket: a manual pause sat for ~2 weeks and
+// only surfaced as hourly 502 noise). Once a pause exceeds this age, re-surface
+// it — throttled — so a forgotten kill-switch doesn't sit silent again.
+const STALE_PAUSE_MS = 72 * 60 * 60 * 1000; // 3 days
+const STALE_ALERT_KEY = "indexnow:stale_pause_alerted_at";
+const STALE_ALERT_THROTTLE_MS = 24 * 60 * 60 * 1000; // at most one re-alert/day
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -363,6 +372,56 @@ async function sendIndexNowAutoPauseAlert(db: Db, consec: number): Promise<void>
   });
 }
 
+/**
+ * OPE-73 — re-surface a STALE pause. When the breaker has been paused past
+ * STALE_PAUSE_MS, emit a throttled warn log (and, if configured, an operator
+ * email) so a forgotten kill-switch resurfaces instead of sitting silent. The
+ * pause set-time is parsed from the breaker note (the admin/analytics pause and
+ * the auto-latch both stamp an ISO timestamp); if it can't be parsed we stay
+ * quiet (fail safe). Best-effort throughout — never throws, never blocks the
+ * skip path, fails open on any KV error.
+ */
+async function maybeAlertStalePause(
+  db: Db,
+  kv: Parameters<typeof checkIndexNowBreaker>[0],
+  breaker: Awaited<ReturnType<typeof checkIndexNowBreaker>>
+): Promise<void> {
+  try {
+    if (!kv || breaker.reason !== "paused") return; // cooldowns are short by design
+    const m = (breaker.note ?? "").match(/(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/);
+    if (!m) return; // unknown age → don't alert
+    const pausedAt = new Date(m[1]).getTime();
+    if (Number.isNaN(pausedAt)) return;
+    const ageMs = Date.now() - pausedAt;
+    if (ageMs < STALE_PAUSE_MS) return; // legitimate short pause — stay quiet
+
+    const last = await kv.get(STALE_ALERT_KEY);
+    if (last && Date.now() - Number(last) < STALE_ALERT_THROTTLE_MS) return; // throttled
+    await kv.put(STALE_ALERT_KEY, String(Date.now()), { expirationTtl: 60 * 60 * 48 });
+
+    const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+    const msg =
+      `IndexNow has been PAUSED for ~${days}d (since ${m[1]}) — 0 URLs submitted to Bing in ` +
+      `that window. If Bing's per-host penalty has decayed, clear the kill-switch ` +
+      `(kv delete indexnow:paused) and backfill via the resubmit_indexnow tool; otherwise ` +
+      `this is expected. This is a throttled reminder (≤1/day), not a new failure.`;
+    await logError(db, { level: "warn", source: "indexnow:health", message: msg });
+
+    const to = getRuntimeEnv("ALERT_EMAIL_TECHNICAL");
+    if (to) {
+      await sendEmail(db, {
+        to,
+        subject: `⚠️ IndexNow still paused after ~${days} days`,
+        text: msg,
+        html: `<p>${msg}</p>`,
+        source: "indexnow:health",
+      });
+    }
+  } catch {
+    // Fail open — health alerting must never break (or block) indexing.
+  }
+}
+
 export async function pingIndexNow(
   db: Db,
   urls: string | string[],
@@ -472,12 +531,18 @@ export async function pingIndexNow(
       `[IndexNow] circuit breaker open (${reason}) — skipping ${filtered.length} URL(s)`
     );
     await recordSubmission(db, source, filtered, "skipped", null, reason);
+    // OPE-73: a breaker skip is a clean DEFERRAL, not a submission failure —
+    // Bing was never contacted and the rows stay queued for a later cron. Mark
+    // `deferred` so the /api/internal/indexnow endpoint (503, not 502) and the
+    // MCP flush treat it as "leave pending, don't log an error" instead of the
+    // hourly 502 noise that hid a 2-week-old pause. `failed:0` — nothing failed.
+    await maybeAlertStalePause(db, kv, breaker);
     return {
       ok: false,
-      deferred: false,
-      attempted: filtered.length,
+      deferred: true,
+      attempted: 0,
       succeeded: 0,
-      failed: filtered.length,
+      failed: 0,
       httpStatus: null,
       failureReason: reason,
     };
