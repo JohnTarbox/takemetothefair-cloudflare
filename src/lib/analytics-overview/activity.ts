@@ -21,6 +21,7 @@ import {
 } from "@/lib/kpi-thresholds";
 import type { KpiStateRow } from "@/lib/kpi-states";
 import { tierFor } from "@/lib/recommendations/tiers";
+import { actionQueueSla, compareActionQueueEntries } from "./action-queue-sla";
 import { CONVERSION_EVENT_NAMES, SPARKLINE_DAYS, fillDailySeries, type Db } from "./shared";
 import type {
   AccountEngagementCard,
@@ -217,10 +218,7 @@ export async function loadAccountEngagement(
   };
 }
 
-export async function loadThisWeeksActions(
-  db: Db,
-  sinceDate: Date
-): Promise<ThisWeeksActionsCard> {
+export async function loadThisWeeksActions(db: Db, sinceDate: Date): Promise<ThisWeeksActionsCard> {
   const rows = await db
     .select({
       action: adminActions.action,
@@ -297,7 +295,9 @@ export async function loadActionQueue(
   ]);
   const redRecently = new Set(redInLast7d.map((r) => r.kpiName));
 
-  const entries: ActionQueueEntry[] = [];
+  // OPE-78 — build entries WITHOUT the derived SLA fields, then decorate + sort
+  // once below (age all items against a single `now`).
+  const base: Omit<ActionQueueEntry, "hoursInRed" | "slaStatus">[] = [];
 
   // Stable KPI ordering — matches KPI_NAMES so the queue doesn't reshuffle
   // visually as states flip between fires.
@@ -309,7 +309,7 @@ export async function loadActionQueue(
       const meta = row.meta as { dataAgeSeconds?: number } | null;
       const ageSec = meta?.dataAgeSeconds;
       const ageLabel = typeof ageSec === "number" ? formatStaleAge(ageSec) : "unknown";
-      entries.push({
+      base.push({
         priority: "P0",
         source: "kpi",
         title: `${t.displayName} data feed stale (${ageLabel})`,
@@ -319,7 +319,7 @@ export async function loadActionQueue(
         refKey: kpi,
       });
     } else if (row.state === "RED") {
-      entries.push({
+      base.push({
         priority: "P0",
         source: "kpi",
         title: actionTitleForKpi(kpi, row.value),
@@ -329,7 +329,7 @@ export async function loadActionQueue(
         refKey: kpi,
       });
     } else if (row.state === "YELLOW" && !redRecently.has(kpi)) {
-      entries.push({
+      base.push({
         priority: "P1",
         source: "kpi",
         title: actionTitleForKpi(kpi, row.value),
@@ -343,7 +343,7 @@ export async function loadActionQueue(
 
   for (const rule of hotRecs) {
     if (tierFor(rule.ruleKey) !== "T1") continue;
-    entries.push({
+    base.push({
       priority: "P1",
       source: "recommendation",
       title: `Activate ${rule.title}: ${rule.totalMatchCount ?? 0} affected`,
@@ -354,11 +354,14 @@ export async function loadActionQueue(
     });
   }
 
-  // P0 first, then P1; within priority KPI entries before recommendation entries.
-  entries.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority === "P0" ? -1 : 1;
-    if (a.source !== b.source) return a.source === "kpi" ? -1 : 1;
-    return a.refKey.localeCompare(b.refKey);
-  });
+  // OPE-78 — decorate each entry with age-in-red + SLA state (one `now` so all
+  // items age against the same instant), then default-sort oldest-breach-first
+  // (see compareActionQueueEntries).
+  const now = new Date();
+  const entries: ActionQueueEntry[] = base.map((e) => ({
+    ...e,
+    ...actionQueueSla(e.priority, e.firstDetectedAt, now),
+  }));
+  entries.sort(compareActionQueueEntries);
   return entries;
 }
