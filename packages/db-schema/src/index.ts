@@ -1953,11 +1953,27 @@ export const recommendationItems = sqliteTable(
     dismissedUntil: integer("dismissed_until", { mode: "timestamp" }),
     dismissedReason: text("dismissed_reason"),
     actedAt: integer("acted_at", { mode: "timestamp" }),
+    // OPE-77 (drizzle/0148, 2026-07-03) — recommendations "verify loop". Set
+    // when an item is acted for a rule in the verify registry (v1: only
+    // page_1_zero_click_queries). Snapshot the metric at act time, re-measure
+    // after the rule's lagDays, then clear (improved) or re-open (no_movement).
+    // verify_status: null | 'pending' | 'improved' | 'no_movement'.
+    verifyStatus: text("verify_status"),
+    // JSON of the metric captured at act time (copied from payload_json).
+    verifySnapshot: text("verify_snapshot"),
+    // Seconds-epoch (mode:"timestamp"); re-measure eligible once now >= this.
+    verifyDueAt: integer("verify_due_at", { mode: "timestamp" }),
+    verifyRemeasuredAt: integer("verify_remeasured_at", { mode: "timestamp" }),
+    // JSON of the metric read at re-measure time.
+    verifyAfter: text("verify_after"),
+    verifyReason: text("verify_reason"),
   },
   (t) => [
     index("idx_recommendation_items_rule_id").on(t.ruleId),
     index("idx_recommendation_items_dismissed_until").on(t.dismissedUntil),
     index("idx_recommendation_items_last_seen_at").on(t.lastSeenAt),
+    // OPE-77 — the re-measure endpoint selects pending + due items.
+    index("idx_recommendation_items_verify").on(t.verifyStatus, t.verifyDueAt),
   ]
 );
 
