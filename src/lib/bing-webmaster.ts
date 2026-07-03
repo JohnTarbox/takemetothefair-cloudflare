@@ -235,9 +235,25 @@ export type BingPageRow = {
   page: string;
   clicks: number;
   impressions: number;
-  avgClickPosition: number;
+  // `null` when Bing reports the `-1` "no clicked position" sentinel (or the
+  // field is absent) — surfaced as "—" in the UI rather than a bogus 0.
+  avgClickPosition: number | null;
   avgImpressionPosition: number;
 };
+
+// GetPageStats rows arrive double-wrapped in a per-row `d` envelope, exactly
+// like GetQueryStats (RawQueryStats). Mirror that shape so `getPageStats`
+// unwraps the same way instead of reading `r.Page` off the wrapper (which is
+// undefined → an empty page URL for every row — the OPE-71 FIX 1 bug).
+interface RawPageStats {
+  d: {
+    Page: string;
+    Clicks: number;
+    Impressions: number;
+    AvgClickPosition: number;
+    AvgImpressionPosition: number;
+  };
+}
 
 export async function getPageStats(
   env: BingEnv,
@@ -246,20 +262,18 @@ export async function getPageStats(
   const cacheKey = `bing:pages:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, REPORT_CACHE_TTL, opts.skipCache ?? false, async () => {
     const data = await bingFetch<unknown>(env, "GetPageStats");
-    const rows = extractRows<{
-      Page?: string;
-      Clicks?: number;
-      Impressions?: number;
-      AvgClickPosition?: number;
-      AvgImpressionPosition?: number;
-    }>(data);
-    return rows.map((r) => ({
-      page: r.Page ?? "",
-      clicks: r.Clicks ?? 0,
-      impressions: r.Impressions ?? 0,
-      avgClickPosition: r.AvgClickPosition ?? 0,
-      avgImpressionPosition: r.AvgImpressionPosition ?? 0,
-    }));
+    const rows = extractRows<RawPageStats | RawPageStats["d"]>(data);
+    return rows.map((row) => {
+      const r = (row as RawPageStats).d ?? (row as RawPageStats["d"]);
+      return {
+        page: r.Page ?? "",
+        clicks: r.Clicks ?? 0,
+        impressions: r.Impressions ?? 0,
+        // Bing uses -1 as the "no clicked position" sentinel — normalize to null.
+        avgClickPosition: r.AvgClickPosition === -1 ? null : (r.AvgClickPosition ?? 0),
+        avgImpressionPosition: r.AvgImpressionPosition ?? 0,
+      };
+    });
   });
 }
 
@@ -566,6 +580,23 @@ export type BingSitemap = {
   status: string;
 };
 
+/**
+ * Return the first `parseDateLoose`-parseable value found among a candidate
+ * list of field names on a row, else null. Defensive because Bing's GetFeeds
+ * date field names could NOT be live-verified — the BING_WEBMASTER_API_KEY is a
+ * wrangler secret, so we can't probe the real response shape from here. Trying a
+ * small candidate list per logical field means a field-name drift (or a revision
+ * that uses `SubmittedDateTime` instead of `SubmittedDate`) still maps through
+ * instead of silently rendering "—".
+ */
+function firstDate(r: Record<string, unknown>, names: string[]): string | null {
+  for (const name of names) {
+    const parsed = parseDateLoose(r[name]);
+    if (parsed) return parsed.toISOString();
+  }
+  return null;
+}
+
 export async function getSitemaps(
   env: BingEnv,
   opts: { skipCache?: boolean } = {}
@@ -573,19 +604,15 @@ export async function getSitemaps(
   const cacheKey = `bing:sitemaps:${await hashRequest({ site: SITE_URL })}`;
   return withCache(env, cacheKey, META_CACHE_TTL, opts.skipCache ?? false, async () => {
     const data = await bingFetch<unknown>(env, "GetFeeds");
-    const rows = extractRows<{
-      Url?: string;
-      SubmittedDate?: unknown;
-      LastCrawledDate?: unknown;
-      UrlCount?: number;
-      Status?: string;
-    }>(data);
+    const rows = extractRows<Record<string, unknown>>(data);
     return rows.map((r) => ({
-      url: r.Url ?? "",
-      submitted: parseDateLoose(r.SubmittedDate)?.toISOString() ?? null,
-      lastCrawled: parseDateLoose(r.LastCrawledDate)?.toISOString() ?? null,
-      urlCount: r.UrlCount ?? 0,
-      status: r.Status ?? "Unknown",
+      url: typeof r.Url === "string" ? r.Url : "",
+      // Candidate field-name lists: exact GetFeeds names are unverified (key is
+      // a secret), so try the plausible spellings and keep the null fallback.
+      submitted: firstDate(r, ["SubmittedDate", "SubmittedDateTime", "SubmittedTime"]),
+      lastCrawled: firstDate(r, ["LastCrawledDate", "LastCrawled", "LastCrawlDate"]),
+      urlCount: typeof r.UrlCount === "number" ? r.UrlCount : 0,
+      status: typeof r.Status === "string" ? r.Status : "Unknown",
     }));
   });
 }
