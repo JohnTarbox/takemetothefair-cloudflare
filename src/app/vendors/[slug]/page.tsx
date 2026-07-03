@@ -168,10 +168,25 @@ async function getVendor(slug: string) {
     // event_day_id IS NULL for series-wide links -> the LEFT JOIN yields
     // NULL for eventDayDate, which the render path interprets as "regular
     // participant" (no per-date subtitle).
+    // Narrow events projection (OPE-70, 2026-07-02): the bare `events: events`
+    // whole-table ref was event_vendors(10) + events(71) = 81 columns of
+    // whole-table refs, edging toward D1's 100-col result-row cap (the same
+    // failure class as the P3a venues incident above). Downstream only reads
+    // id/name/slug/description/startDate/endDate/seriesId off the event (audited
+    // via grep of `event.<field>` in this file — venue is attached separately,
+    // not an events column), so project exactly those seven.
     const eventVendorResults = await db
       .select({
         event_vendors: eventVendors,
-        events: events,
+        events: {
+          id: events.id,
+          name: events.name,
+          slug: events.slug,
+          description: events.description,
+          startDate: events.startDate,
+          endDate: events.endDate,
+          seriesId: events.seriesId,
+        },
         venues: {
           id: venues.id,
           name: venues.name,

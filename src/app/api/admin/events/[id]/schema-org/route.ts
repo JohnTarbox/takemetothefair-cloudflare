@@ -15,34 +15,38 @@ export const GET = withAuth<{ id: string }>({ role: "ADMIN" }, async ({ request,
   const { id } = params;
 
   try {
-    // Get the event and its schema.org data
-    const [eventData] = await db
-      .select({
-        event: events,
-        schemaOrg: eventSchemaOrg,
-      })
-      .from(events)
-      .leftJoin(eventSchemaOrg, eq(events.id, eventSchemaOrg.eventId))
-      .where(eq(events.id, id))
-      .limit(1);
+    // Get the event and its schema.org data. Split into two single-table
+    // by-id selects (OPE-70) rather than one leftJoin — the former
+    // `select({ event: events, schemaOrg: eventSchemaOrg })` pulled every
+    // column of both tables into one result row (events 71 + eventSchemaOrg
+    // 27 = 98), 2 columns from D1's hard 100-column result-set cap. Two
+    // narrow single-row lookups keep each result row well under the limit
+    // and produce a byte-identical response.
+    const [event] = await db.select().from(events).where(eq(events.id, id)).limit(1);
 
-    if (!eventData) {
+    if (!event) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
 
+    const [schemaOrg] = await db
+      .select()
+      .from(eventSchemaOrg)
+      .where(eq(eventSchemaOrg.eventId, id))
+      .limit(1);
+
     return NextResponse.json({
       event: {
-        id: eventData.event.id,
-        name: eventData.event.name,
-        description: eventData.event.description,
-        ticketUrl: eventData.event.ticketUrl,
-        startDate: eventData.event.startDate,
-        endDate: eventData.event.endDate,
-        ticketPriceMin: eventData.event.ticketPriceMinCents,
-        ticketPriceMax: eventData.event.ticketPriceMaxCents,
-        imageUrl: eventData.event.imageUrl,
+        id: event.id,
+        name: event.name,
+        description: event.description,
+        ticketUrl: event.ticketUrl,
+        startDate: event.startDate,
+        endDate: event.endDate,
+        ticketPriceMin: event.ticketPriceMinCents,
+        ticketPriceMax: event.ticketPriceMaxCents,
+        imageUrl: event.imageUrl,
       },
-      schemaOrg: eventData.schemaOrg,
+      schemaOrg: schemaOrg ?? null,
     });
   } catch (error) {
     await logError(db, {
