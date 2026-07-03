@@ -20,35 +20,13 @@
  */
 
 import Link from "next/link";
-import { inArray, sql } from "drizzle-orm";
 import { getCloudflareDb } from "@/lib/cloudflare";
-import { blogPosts, contentLinks, gscInspectionState } from "@/lib/db/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { blogFaqSource, type BlogFaqSource } from "@takemetothefair/utils";
-import { classifyIndexState, type IndexState } from "@/lib/gsc-index-state";
+import { type BlogFaqSource } from "@takemetothefair/utils";
+import { type IndexState } from "@/lib/gsc-index-state";
+import { loadBlogCoverageRows, type PostRow } from "@/lib/admin/blog-coverage";
 
 export const revalidate = 300;
-
-interface PostRow {
-  id: string;
-  slug: string;
-  title: string;
-  status: string;
-  publishDate: Date | null;
-  // Internal-link footprint, split by target type so a 12-event post
-  // and a 12-vendor post don't look identical in the rollup.
-  eventLinks: number;
-  vendorLinks: number;
-  venueLinks: number;
-  blogLinks: number;
-  totalLinks: number;
-  faqSource: BlogFaqSource;
-  indexState: IndexState;
-  // GSC's verbatim coverageState string ("Submitted and indexed" /
-  // "Discovered – currently not indexed" / etc.). Surfaced so the
-  // operator can disambiguate the `unknown` bucket when needed.
-  coverageState: string | null;
-}
 
 type SortKey =
   | "title"
@@ -70,98 +48,6 @@ const SORT_VALUES: SortKey[] = [
   "faqSource",
   "indexState",
 ];
-
-async function loadRows(): Promise<PostRow[]> {
-  const db = getCloudflareDb();
-
-  // Pass 1: every blog post we care about (DRAFT counts too — the link
-  // footprint exists on unpublished posts and the operator wants to see
-  // it before flipping to PUBLISHED).
-  const posts = await db
-    .select({
-      id: blogPosts.id,
-      slug: blogPosts.slug,
-      title: blogPosts.title,
-      status: blogPosts.status,
-      publishDate: blogPosts.publishDate,
-      faqs: blogPosts.faqs,
-      body: blogPosts.body,
-    })
-    .from(blogPosts);
-
-  if (posts.length === 0) return [];
-
-  const postIds = posts.map((p) => p.id);
-
-  // Pass 2: content_links from these posts, grouped by (sourceId,
-  // targetType). One pass over the join table; merge into the posts
-  // map in JS. Avoids a per-post subquery (would be 100+ queries on the
-  // current ~150-post corpus).
-  const linkCounts = await db
-    .select({
-      sourceId: contentLinks.sourceId,
-      targetType: contentLinks.targetType,
-      count: sql<number>`COUNT(*)`,
-    })
-    .from(contentLinks)
-    .where(inArray(contentLinks.sourceId, postIds))
-    .groupBy(contentLinks.sourceId, contentLinks.targetType);
-
-  type CountBucket = { event: number; vendor: number; venue: number; blog: number };
-  const countsByPost = new Map<string, CountBucket>();
-  for (const r of linkCounts) {
-    const bucket = countsByPost.get(r.sourceId) ?? { event: 0, vendor: 0, venue: 0, blog: 0 };
-    const n = Number(r.count ?? 0);
-    if (r.targetType === "EVENT") bucket.event += n;
-    else if (r.targetType === "VENDOR") bucket.vendor += n;
-    else if (r.targetType === "VENUE") bucket.venue += n;
-    else if (r.targetType === "BLOG_POST") bucket.blog += n;
-    countsByPost.set(r.sourceId, bucket);
-  }
-
-  // Pass 3: GSC inspection rows for /blog/<slug>. Same one-pass merge
-  // as the link counts — small corpus, one IN-list, no joins.
-  const blogUrls = posts.map((p) => `https://meetmeatthefair.com/blog/${p.slug}`);
-  const inspectionRows = await db
-    .select({
-      url: gscInspectionState.url,
-      lastVerdict: gscInspectionState.lastVerdict,
-      lastCoverageState: gscInspectionState.lastCoverageState,
-    })
-    .from(gscInspectionState)
-    .where(inArray(gscInspectionState.url, blogUrls));
-  const inspectionByUrl = new Map(
-    inspectionRows.map((r) => [
-      r.url,
-      { lastVerdict: r.lastVerdict, lastCoverageState: r.lastCoverageState },
-    ])
-  );
-
-  return posts.map((p) => {
-    const counts = countsByPost.get(p.id) ?? { event: 0, vendor: 0, venue: 0, blog: 0 };
-    const total = counts.event + counts.vendor + counts.venue + counts.blog;
-    const inspect = inspectionByUrl.get(`https://meetmeatthefair.com/blog/${p.slug}`);
-    const indexState = classifyIndexState(
-      inspect?.lastVerdict ?? null,
-      inspect?.lastCoverageState ?? null
-    );
-    return {
-      id: p.id,
-      slug: p.slug,
-      title: p.title,
-      status: p.status,
-      publishDate: p.publishDate,
-      eventLinks: counts.event,
-      vendorLinks: counts.vendor,
-      venueLinks: counts.venue,
-      blogLinks: counts.blog,
-      totalLinks: total,
-      faqSource: blogFaqSource(p.faqs, p.body),
-      indexState,
-      coverageState: inspect?.lastCoverageState ?? null,
-    };
-  });
-}
 
 function sortRows(rows: PostRow[], key: SortKey): PostRow[] {
   // Default direction per key chosen so the most-actionable bucket is
@@ -272,7 +158,7 @@ export default async function BlogCoveragePage({
     ? (sp.sort as SortKey)
     : "totalLinks";
 
-  const rows = sortRows(await loadRows(), sort);
+  const rows = sortRows(await loadBlogCoverageRows(getCloudflareDb()), sort);
 
   // Rollup tiles. Counted from `rows` so they always agree with the
   // table — no second query, no drift if the rendering filter changes.
