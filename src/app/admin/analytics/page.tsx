@@ -33,12 +33,16 @@ import {
   getCrawlStats,
   getSiteScanIssues,
   getIndexNowQuota,
+  getTrafficStats,
+  getSitemaps,
   type BingEnv,
   type BingQueryRow,
   type BingPageRow,
   type BingCrawlStatsRow,
   type BingSiteScanIssue,
   type BingIndexNowQuota,
+  type BingTrafficStatsRow,
+  type BingSitemap,
 } from "@/lib/bing-webmaster";
 import { getLatestReferringDomains } from "@/lib/bing-backlinks-store";
 import {
@@ -3007,6 +3011,11 @@ interface BingTabData {
   scan: BingSiteScanIssue[];
   quota: BingIndexNowQuota | null;
   indexnow: IndexNowOps;
+  // OPE-72 — wired into the allSettled batch below. Traffic drives the KPI-header
+  // WoW deltas + sparklines; sitemaps drive the submission table + duplicate-host
+  // warning + index-coverage ratio. Both degrade to [] on failure.
+  traffic: BingTrafficStatsRow[];
+  sitemaps: BingSitemap[];
 }
 
 async function loadBingData(): Promise<BingLoad> {
@@ -3021,6 +3030,8 @@ async function loadBingData(): Promise<BingLoad> {
       getCrawlStats(env),
       getSiteScanIssues(env),
       getIndexNowQuota(env),
+      getTrafficStats(env),
+      getSitemaps(env),
     ]);
     // If the first call (queries) hit BingConfigError, surface that as the
     // tab-level error so the operator knows the API key isn't set.
@@ -3031,7 +3042,7 @@ async function loadBingData(): Promise<BingLoad> {
         return { ok: false, kind: "config", message: err.message };
       }
     }
-    const [queries, pages, crawl, scan, quota] = settled.map((r) =>
+    const [queries, pages, crawl, scan, quota, traffic, sitemaps] = settled.map((r) =>
       r.status === "fulfilled" ? r.value : null
     );
     // Operational IndexNow state — self-contained + non-throwing, so it never
@@ -3046,6 +3057,8 @@ async function loadBingData(): Promise<BingLoad> {
         scan: (scan as BingSiteScanIssue[] | null) ?? [],
         quota: (quota as BingIndexNowQuota | null) ?? null,
         indexnow,
+        traffic: (traffic as BingTrafficStatsRow[] | null) ?? [],
+        sitemaps: (sitemaps as BingSitemap[] | null) ?? [],
       },
     };
   } catch (error) {
@@ -3063,14 +3076,106 @@ async function loadBingData(): Promise<BingLoad> {
   }
 }
 
+// ── OPE-72 Bing health-dashboard helpers ───────────────────────────────────
+
+/** Map a WoW current-vs-prior comparison onto the TrendBadge `Trend` enum. */
+function bingTrend(current: number, previous: number): Trend {
+  const pct = deltaPct(current, previous);
+  if (pct === null || pct === 0) return "flat";
+  return pct > 0 ? "up" : "down";
+}
+
+/** Bing reports `-1` (and OPE-71 normalized some to `null`) as the "no ranked
+ *  position" sentinel — surface those as an em dash rather than a bogus number. */
+function fmtPos(pos: number | null): string {
+  if (pos === null || pos < 0) return "—";
+  return pos.toFixed(1);
+}
+
+/** Click-through rate as a percentage string; "—" when there are no impressions
+ *  (division-by-zero guard, not a real 0% CTR). */
+function fmtCtr(clicks: number, impressions: number): string {
+  if (impressions <= 0) return "—";
+  return `${((clicks / impressions) * 100).toFixed(1)}%`;
+}
+
+/**
+ * Detect sitemap URLs that differ ONLY by a `www.` vs non-`www.` host on the
+ * same path (e.g. https://www.x.com/sitemap.xml + https://x.com/sitemap.xml).
+ * Serving both splits crawl signals across two canonical hosts. Returns the
+ * `<bareHost><path>` keys that appear under more than one real host.
+ */
+function detectDuplicateHostSitemaps(sitemaps: BingSitemap[]): string[] {
+  const hostsByKey = new Map<string, Set<string>>();
+  for (const sm of sitemaps) {
+    if (!sm.url) continue;
+    let u: URL;
+    try {
+      u = new URL(sm.url);
+    } catch {
+      continue; // unparseable URL — can't compare hosts
+    }
+    const bareHost = u.host.replace(/^www\./i, "");
+    const key = `${bareHost}${u.pathname}`;
+    const set = hostsByKey.get(key) ?? new Set<string>();
+    set.add(u.host);
+    hostsByKey.set(key, set);
+  }
+  return [...hostsByKey.entries()].filter(([, hosts]) => hosts.size > 1).map(([key]) => key);
+}
+
+/** Severity → text/badge color for crawl-issue rows. */
+function bingSeverityClass(severity: string): string {
+  if (severity === "Error") return "text-red-700 bg-red-50";
+  if (severity === "Warning") return "text-amber-700 bg-amber-50";
+  return "text-muted-foreground bg-muted";
+}
+
 async function BingTab() {
   const result = await loadBingData();
   if (!result.ok) {
     return <BingErrorPanel kind={result.kind} message={result.message} />;
   }
-  const { queries, pages, crawl, scan, quota, indexnow } = result.data;
+  const { queries, pages, crawl, scan, quota, indexnow, traffic, sitemaps } = result.data;
   const errorCount = scan.filter((i) => i.severity === "Error").length;
   const warningCount = scan.filter((i) => i.severity === "Warning").length;
+
+  // ── Block 1 derivations — WoW (last 7d vs prior 7d) from the daily series ──
+  const trafficAsc = [...traffic].sort((a, b) => a.date.localeCompare(b.date));
+  const clicksSeries: SparklinePoint[] = trafficAsc
+    .slice(-30)
+    .map((r) => ({ date: r.date, value: r.clicks }));
+  const imprSeries: SparklinePoint[] = trafficAsc
+    .slice(-30)
+    .map((r) => ({ date: r.date, value: r.impressions }));
+  const last7 = trafficAsc.slice(-7);
+  const prior7 = trafficAsc.slice(-14, -7);
+  const clicks7d = last7.reduce((a, r) => a + r.clicks, 0);
+  const clicksPrior7d = prior7.reduce((a, r) => a + r.clicks, 0);
+  const impr7d = last7.reduce((a, r) => a + r.impressions, 0);
+  const imprPrior7d = prior7.reduce((a, r) => a + r.impressions, 0);
+
+  // Crawl rows arrive from Bing in an unsorted order — sort DESC by date so the
+  // trend always runs to the most-recent day (fixes the stale-rows-on-top bug).
+  const crawlDesc = [...crawl].sort((a, b) => b.date.localeCompare(a.date));
+  const latestCrawl = crawlDesc[0] ?? null;
+  const pagesIndexed = latestCrawl ? latestCrawl.totalPages : null;
+  const crawlErrors7d = crawlDesc.slice(0, 7).reduce((a, r) => a + r.crawlErrors, 0);
+
+  // Index coverage — indexed (latest totalPages) ÷ submitted (Σ sitemap urlCount).
+  const submittedUrlCount = sitemaps.reduce((a, s) => a + s.urlCount, 0);
+  const coveragePct =
+    pagesIndexed !== null && submittedUrlCount > 0
+      ? (pagesIndexed / submittedUrlCount) * 100
+      : null;
+
+  const duplicateSitemapKeys = detectDuplicateHostSitemaps(sitemaps);
+
+  const scanSorted = [...scan].sort(
+    (a, b) =>
+      (SITE_HEALTH_SEVERITY_RANK[a.severity.toUpperCase()] ?? 9) -
+      (SITE_HEALTH_SEVERITY_RANK[b.severity.toUpperCase()] ?? 9)
+  );
 
   // OPE-71 FIX 2 — IndexNow ping health at a glance. Kill-switch (paused) wins
   // over cooldown, matching the breaker's own precedence.
@@ -3089,74 +3194,457 @@ async function BingTab() {
           className: "text-amber-600",
         }
       : { label: "Active", className: "text-emerald-600" };
+  const inChip: { label: string; className: string } = indexnow.paused
+    ? { label: "Paused", className: "text-amber-600" }
+    : indexnow.breaker.reason === "cooldown"
+      ? { label: "Cooldown", className: "text-amber-600" }
+      : { label: "Active", className: "text-emerald-600" };
+
+  // ── Block 5 — actionable issues synthesized from the loaded data ──
+  const actionItems: string[] = [];
+  if (indexnow.paused) {
+    actionItems.push(
+      `IndexNow pings paused${indexnow.pauseNote ? ` — ${indexnow.pauseNote}` : ""}`
+    );
+  }
+  if (indexnow.breaker.reason === "cooldown") {
+    actionItems.push("IndexNow breaker in cooldown — pings throttled");
+  }
+  if (duplicateSitemapKeys.length > 0) {
+    actionItems.push(
+      `Duplicate www + non-www sitemap (${duplicateSitemapKeys.length}) — pick one canonical host`
+    );
+  }
+  if (crawlErrors7d > 0) {
+    actionItems.push(`Crawl errors: ${fmt(crawlErrors7d)} across the last 7 crawl days`);
+  }
+  if (coveragePct !== null && coveragePct < 90) {
+    actionItems.push(
+      `Index coverage ${coveragePct.toFixed(0)}% (<90%) — indexed pages below submitted URLs`
+    );
+  }
+  if (errorCount > 0) {
+    actionItems.push(`Bingbot crawl issues: ${fmt(errorCount)} error-severity`);
+  }
+  if (indexnow.failed24h > 0) {
+    actionItems.push(`IndexNow failures: ${fmt(indexnow.failed24h)} in the last 24h`);
+  }
+
+  const crawlErrColor = crawlErrors7d === 0 ? "text-emerald-600" : "text-amber-600";
+  const coverageColor =
+    coveragePct === null
+      ? "text-foreground"
+      : coveragePct > 95
+        ? "text-emerald-600"
+        : coveragePct < 90
+          ? "text-red-600"
+          : "text-amber-600";
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      {/* ══ Block 1 — KPI header (7-day WoW) ══════════════════════════════ */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Search clicks (7d)</CardTitle>
+            <p className="text-xs text-muted-foreground">Bing · last 7 days vs prior 7</p>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-end justify-between mb-2">
+              <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(clicks7d)}</p>
+              <TrendBadge
+                trend={bingTrend(clicks7d, clicksPrior7d)}
+                current={clicks7d}
+                previous={clicksPrior7d}
+              />
+            </div>
+            {clicksSeries.length > 0 ? (
+              <Sparkline
+                points={clicksSeries}
+                colorClass="stroke-blue-600"
+                fillClass="fill-blue-100"
+              />
+            ) : (
+              <p className="text-xs text-muted-foreground italic">
+                No Bing traffic series yet (populates ~7&ndash;14 days post-verification).
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Impressions (7d)</CardTitle>
+            <p className="text-xs text-muted-foreground">Bing · last 7 days vs prior 7</p>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-end justify-between mb-2">
+              <p className="text-2xl font-bold text-foreground tabular-nums">{fmt(impr7d)}</p>
+              <TrendBadge
+                trend={bingTrend(impr7d, imprPrior7d)}
+                current={impr7d}
+                previous={imprPrior7d}
+              />
+            </div>
+            {imprSeries.length > 0 ? (
+              <Sparkline
+                points={imprSeries}
+                colorClass="stroke-violet-600"
+                fillClass="fill-violet-100"
+              />
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No Bing traffic series yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Bingbot crawl issues</p>
+            <p className="text-sm text-muted-foreground">Pages indexed</p>
             <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {fmt(errorCount)} errors · {fmt(warningCount)} warnings
+              {pagesIndexed !== null ? fmt(pagesIndexed) : "—"}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              From Bingbot&apos;s crawl. The manual Site Scan tool isn&apos;t exposed via API —{" "}
-              <a
-                href="https://www.bing.com/webmasters/sitescan?siteUrl=https://meetmeatthefair.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-royal hover:text-navy"
-              >
-                view in BWT
-              </a>
-              .
+              {latestCrawl ? `Latest crawl ${latestCrawl.date}` : "No crawl data yet"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Search clicks (recent)</p>
-            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {fmt(queries.reduce((acc, q) => acc + q.clicks, 0))}
+            <p className="text-sm text-muted-foreground">Crawl errors (7d)</p>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${crawlErrColor}`}>
+              {fmt(crawlErrors7d)}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              {queries.length} unique {queries.length === 1 ? "query" : "queries"}
+              {crawl.length === 0
+                ? "No crawl data yet"
+                : crawlErrors7d === 0
+                  ? "Clean — no errors in last 7 crawl days"
+                  : "Sum over last 7 crawl days"}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-6">
-            <p className="text-sm text-muted-foreground">Bing direct submit quota</p>
-            <p className="text-2xl font-bold text-foreground mt-1 tabular-nums">
-              {quota ? fmt(quota.dailyRemaining) : "—"}
-              {quota && (
-                <span className="text-base font-normal text-muted-foreground">
-                  {" "}
-                  / {fmt(quota.dailyQuota)} daily
-                </span>
-              )}
+            <p className="text-sm text-muted-foreground">IndexNow health</p>
+            <p className={`text-2xl font-bold mt-1 ${inChip.className}`}>{inChip.label}</p>
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+              {fmt(indexnow.sent24h)} sent · {fmt(indexnow.failed24h)} failed ·{" "}
+              {fmt(indexnow.skipped24h)} skipped (24h)
             </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {quota
-                ? `${fmt(quota.monthlyRemaining)} of ${fmt(quota.monthlyQuota)} monthly`
-                : "Unavailable"}
-            </p>
-            <p className="text-xs text-muted-foreground mt-2">
-              Bing Webmaster Tools URL submission API. Separate from indexnow.org pings — see the
-              IndexNow tab for our submission log.
-            </p>
+            {indexnow.paused && indexnow.pauseNote && (
+              <p className="text-xs text-amber-600 mt-1">{indexnow.pauseNote}</p>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* OPE-71 FIX 2 — compact IndexNow ping-pipeline status. Shows send volume
-          + breaker/kill-switch state so 100/100 remaining quota isn't mistaken
-          for "healthy" when we're actually paused. OPE-72 does the full rework. */}
+      {/* ══ Block 2 — Search performance ═════════════════════════════════ */}
+      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+        Search performance
+      </h3>
       <Card className="mb-6">
-        <CardContent className="p-6">
+        <CardHeader>
+          <CardTitle>Top Bing queries</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-muted text-muted-foreground">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Query</th>
+                <th className="text-right px-6 py-2 font-medium">Clicks</th>
+                <th className="text-right px-6 py-2 font-medium">Impressions</th>
+                <th className="text-right px-6 py-2 font-medium">CTR</th>
+                <th className="text-right px-6 py-2 font-medium">Avg position</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {queries.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-6 text-muted-foreground">
+                    No Bing query data yet. Bing typically takes 7&ndash;14 days after site
+                    verification to start reporting search-performance data.
+                  </td>
+                </tr>
+              ) : (
+                [...queries]
+                  .sort((a, b) => b.clicks - a.clicks)
+                  .slice(0, 25)
+                  .map((row, i) => (
+                    <tr key={`${row.query}-${i}`}>
+                      <td className="px-6 py-2 text-foreground truncate max-w-md">{row.query}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmt(row.impressions)}
+                      </td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmtCtr(row.clicks, row.impressions)}
+                      </td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmtPos(row.avgImpressionPosition)}
+                      </td>
+                    </tr>
+                  ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle>Top pages (Bing)</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-muted text-muted-foreground">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">Page</th>
+                <th className="text-right px-6 py-2 font-medium">Clicks</th>
+                <th className="text-right px-6 py-2 font-medium">Impr.</th>
+                <th className="text-right px-6 py-2 font-medium">CTR</th>
+                <th className="text-right px-6 py-2 font-medium">Avg position</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {pages.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-6 text-muted-foreground">
+                    No page data yet. Populates after Bing accumulates impression data (typically
+                    7&ndash;14 days post-verification).
+                  </td>
+                </tr>
+              ) : (
+                [...pages]
+                  .sort((a, b) => b.clicks - a.clicks)
+                  .slice(0, 15)
+                  .map((row, i) => (
+                    <tr key={`${row.page}-${i}`}>
+                      <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">{row.page}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmt(row.impressions)}
+                      </td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmtCtr(row.clicks, row.impressions)}
+                      </td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmtPos(row.avgImpressionPosition)}
+                      </td>
+                    </tr>
+                  ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {/* ══ Block 3 — Crawl & index health ═══════════════════════════════ */}
+      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+        Crawl &amp; index health
+      </h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Crawl trend</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <table className="w-full text-sm">
+              <thead className="bg-muted text-muted-foreground">
+                <tr>
+                  <th className="text-left px-6 py-2 font-medium">Date</th>
+                  <th className="text-right px-6 py-2 font-medium">Crawled</th>
+                  <th className="text-right px-6 py-2 font-medium">Errors</th>
+                  <th className="text-right px-6 py-2 font-medium">In index</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {crawlDesc.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-6 text-muted-foreground">
+                      No crawl data yet. Bingbot needs to visit the site at least once; can take a
+                      few days after sitemap submission.
+                    </td>
+                  </tr>
+                ) : (
+                  crawlDesc.slice(0, 30).map((row) => (
+                    <tr key={row.date}>
+                      <td className="px-6 py-2 tabular-nums text-foreground">{row.date}</td>
+                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.crawledPages)}</td>
+                      <td
+                        className={`px-6 py-2 text-right tabular-nums ${
+                          row.crawlErrors > 0 ? "text-red-600 font-medium" : "text-muted-foreground"
+                        }`}
+                      >
+                        {fmt(row.crawlErrors)}
+                      </td>
+                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
+                        {fmt(row.totalPages)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between gap-2">
+                <span>Crawl issues</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  {fmt(errorCount)} errors · {fmt(warningCount)} warnings
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {scanSorted.length === 0 ? (
+                <p className="text-sm text-emerald-600 font-medium">0 issues — healthy ✓</p>
+              ) : (
+                <ul className="space-y-2">
+                  {scanSorted.map((issue, i) => (
+                    <li
+                      key={`${issue.issueType}-${i}`}
+                      className="flex items-center justify-between gap-2 text-sm"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-xs font-medium ${bingSeverityClass(
+                            issue.severity
+                          )}`}
+                        >
+                          {issue.severity}
+                        </span>
+                        <span className="text-foreground">{issue.issueType}</span>
+                      </span>
+                      <span className="tabular-nums text-muted-foreground">
+                        {fmt(issue.affectedUrlCount)} URL
+                        {issue.affectedUrlCount === 1 ? "" : "s"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-muted-foreground mt-3">
+                From Bingbot&apos;s crawl (GetCrawlIssues). BWT&apos;s on-page Site Scan is UI-only
+                / not exposed via API —{" "}
+                <a
+                  href="https://www.bing.com/webmasters/sitescan?siteUrl=https://meetmeatthefair.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-royal hover:text-navy"
+                >
+                  view in BWT
+                </a>
+                .
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Index coverage</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {coveragePct !== null ? (
+                <>
+                  <p className={`text-2xl font-bold tabular-nums ${coverageColor}`}>
+                    {coveragePct.toFixed(0)}%
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1 tabular-nums">
+                    {fmt(pagesIndexed ?? 0)} indexed ÷ {fmt(submittedUrlCount)} submitted (Σ sitemap
+                    URLs)
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Ratio unavailable —{" "}
+                    {pagesIndexed === null
+                      ? "no crawl index count yet"
+                      : "no submitted URL count from sitemaps yet"}
+                    .
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-2 tabular-nums">
+                    Pages indexed: {pagesIndexed !== null ? fmt(pagesIndexed) : "—"} · Submitted:{" "}
+                    {submittedUrlCount > 0 ? fmt(submittedUrlCount) : "—"}
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* ══ Block 4 — Sitemaps & submission ══════════════════════════════ */}
+      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+        Sitemaps &amp; submission
+      </h3>
+      {duplicateSitemapKeys.length > 0 && (
+        <div className="mb-4 rounded-md border-l-4 border-l-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-semibold">Duplicate www + non-www sitemap</span> — pick one
+          canonical host. Affected path{duplicateSitemapKeys.length === 1 ? "" : "s"}:{" "}
+          <span className="font-mono text-xs">{duplicateSitemapKeys.join(", ")}</span>
+        </div>
+      )}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Submitted sitemaps</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead className="bg-muted text-muted-foreground">
+              <tr>
+                <th className="text-left px-6 py-2 font-medium">URL</th>
+                <th className="text-left px-6 py-2 font-medium">Submitted</th>
+                <th className="text-left px-6 py-2 font-medium">Last crawled</th>
+                <th className="text-right px-6 py-2 font-medium">URLs</th>
+                <th className="text-left px-6 py-2 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {sitemaps.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-6 text-muted-foreground">
+                    No sitemaps reported by Bing yet. Submit a sitemap in Bing Webmaster Tools (or
+                    via the resubmit_sitemap tool); Bing populates this after it fetches the feed.
+                  </td>
+                </tr>
+              ) : (
+                sitemaps.map((sm, i) => (
+                  <tr key={`${sm.url}-${i}`}>
+                    <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">{sm.url}</td>
+                    <td className="px-6 py-2 tabular-nums text-muted-foreground">
+                      {sm.submitted ? formatDateOnly(new Date(sm.submitted)) : "—"}
+                    </td>
+                    <td className="px-6 py-2 tabular-nums text-muted-foreground">
+                      {sm.lastCrawled ? formatDateOnly(new Date(sm.lastCrawled)) : "—"}
+                    </td>
+                    <td className="px-6 py-2 text-right tabular-nums">{fmt(sm.urlCount)}</td>
+                    <td className="px-6 py-2 text-muted-foreground">{sm.status}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+
+      {/* OPE-71 FIX 2 — IndexNow ping-pipeline operations (breaker + kill-switch
+          + 24h/7d volume). Moved here under Block 4 for OPE-72. */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between gap-2">
+            <span>IndexNow operations</span>
+            <IndexNowKillSwitchToggle />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="text-sm text-muted-foreground">IndexNow ping pipeline</p>
+              <p className="text-sm text-muted-foreground">Ping pipeline</p>
               <p className={`text-lg font-semibold mt-1 ${inState.className}`}>{inState.label}</p>
               {!indexnow.kvAvailable && (
                 <p className="text-xs text-muted-foreground mt-1 italic">
@@ -3179,133 +3667,44 @@ async function BingTab() {
                 <p className="text-xs text-muted-foreground">Skipped 24h</p>
                 <p className="font-semibold tabular-nums mt-1">{fmt(indexnow.skipped24h)}</p>
               </div>
+              <div>
+                <p className="text-xs text-muted-foreground">BWT submit quota</p>
+                <p className="font-semibold tabular-nums mt-1">
+                  {quota ? `${fmt(quota.dailyRemaining)} / ${fmt(quota.dailyQuota)}` : "—"}
+                </p>
+              </div>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-3">
-            Source: D1 indexnow_submissions + REL4/REL6 breaker in RATE_LIMIT_KV.
-            &ldquo;Skipped&rdquo; counts dedup-suppressed, no-key, and breaker-paused submissions.
+            Source: D1 indexnow_submissions + REL4/REL6 breaker in RATE_LIMIT_KV. BWT submit quota
+            is the separate Bing Webmaster URL-submission API. &ldquo;Skipped&rdquo; counts
+            dedup-suppressed, no-key, and breaker-paused submissions.
           </p>
         </CardContent>
       </Card>
 
-      <Card className="mb-6">
+      <ReferringDomainsSection />
+
+      {/* ══ Block 5 — Actionable issues ══════════════════════════════════ */}
+      <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Top Bing queries</CardTitle>
+          <CardTitle>Action items</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead className="bg-muted text-muted-foreground">
-              <tr>
-                <th className="text-left px-6 py-2 font-medium">Query</th>
-                <th className="text-right px-6 py-2 font-medium">Clicks</th>
-                <th className="text-right px-6 py-2 font-medium">Impressions</th>
-                <th className="text-right px-6 py-2 font-medium">Avg position</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {queries.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-6 py-6 text-muted-foreground">
-                    No Bing query data yet. Bing typically takes 7&ndash;14 days after site
-                    verification to start reporting search-performance data.
-                  </td>
-                </tr>
-              ) : (
-                queries.slice(0, 25).map((row, i) => (
-                  <tr key={`${row.query}-${i}`}>
-                    <td className="px-6 py-2 text-foreground truncate max-w-md">{row.query}</td>
-                    <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
-                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
-                      {fmt(row.impressions)}
-                    </td>
-                    <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
-                      {row.avgImpressionPosition.toFixed(1)}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <CardContent>
+          {actionItems.length === 0 ? (
+            <p className="text-sm text-emerald-600 font-medium">No action items — healthy ✓</p>
+          ) : (
+            <ul className="space-y-2">
+              {actionItems.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Top pages (Bing)</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead className="bg-muted text-muted-foreground">
-                <tr>
-                  <th className="text-left px-6 py-2 font-medium">Page</th>
-                  <th className="text-right px-6 py-2 font-medium">Clicks</th>
-                  <th className="text-right px-6 py-2 font-medium">Impr.</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {pages.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-6 text-muted-foreground">
-                      No data yet. Populates after Bing accumulates impression data (typically
-                      7&ndash;14 days post-verification).
-                    </td>
-                  </tr>
-                ) : (
-                  pages.slice(0, 15).map((row, i) => (
-                    <tr key={`${row.page}-${i}`}>
-                      <td className="px-6 py-2 font-mono text-xs truncate max-w-xs">{row.page}</td>
-                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.clicks)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
-                        {fmt(row.impressions)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Crawl stats (recent)</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead className="bg-muted text-muted-foreground">
-                <tr>
-                  <th className="text-left px-6 py-2 font-medium">Date</th>
-                  <th className="text-right px-6 py-2 font-medium">Crawled</th>
-                  <th className="text-right px-6 py-2 font-medium">Errors</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {crawl.length === 0 ? (
-                  <tr>
-                    <td colSpan={3} className="px-6 py-6 text-muted-foreground">
-                      No crawl data yet. Bingbot needs to visit the site at least once; can take a
-                      few days after sitemap submission.
-                    </td>
-                  </tr>
-                ) : (
-                  crawl.slice(0, 14).map((row) => (
-                    <tr key={row.date}>
-                      <td className="px-6 py-2 tabular-nums text-foreground">{row.date}</td>
-                      <td className="px-6 py-2 text-right tabular-nums">{fmt(row.crawledPages)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums text-muted-foreground">
-                        {fmt(row.crawlErrors)}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      </div>
-
-      <ReferringDomainsSection />
     </>
   );
 }
