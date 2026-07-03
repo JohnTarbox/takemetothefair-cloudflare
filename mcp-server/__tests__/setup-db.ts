@@ -836,7 +836,8 @@ const SCHEMA_SQL = `
     id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,
     entity_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
+    user_id TEXT,
+    email TEXT,
     token_hash TEXT NOT NULL UNIQUE,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL

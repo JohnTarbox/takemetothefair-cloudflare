@@ -27,6 +27,8 @@ import { registerEnrichVendorTool } from "./tools/admin-enrich-vendor.js";
 import { registerEnrichPromoterTool } from "./tools/admin-enrich-promoter.js";
 import { registerSendVendorEmailTool } from "./tools/admin-send-vendor-email.js";
 import { registerSendTestEmailTool } from "./tools/admin-send-test-email.js";
+import { registerCreateClaimInviteTool } from "./tools/admin-claim-invite.js";
+import { registerClaimReviewTools } from "./tools/admin-claim-review.js";
 import { registerAnalyticsTools } from "./tools/analytics.js";
 import { registerBlogTools } from "./tools/blog.js";
 import { registerContentLinksTools } from "./tools/content-links.js";
@@ -304,6 +306,10 @@ export class MeetMeAtTheFairMCP extends McpAgent<Env, Record<string, never>, Use
         registerSendVendorEmailTool(this.server, db, auth, this.env);
         // K32 (2026-06-21) — send_test_email (no-side-effects deliverability test).
         registerSendTestEmailTool(this.server, db, auth, this.env);
+        // OPE-67 (2026-07-02) — claim tooling: create_claim_invite (cold invite)
+        // + list_claims / approve_claim / reject_claim (review queue).
+        registerCreateClaimInviteTool(this.server, db, auth, this.env);
+        registerClaimReviewTools(this.server, db, auth);
         groups.admin = diff(before);
 
         before = snapshot();
@@ -564,6 +570,8 @@ async function handleLegacyMcpRequest(request: Request, env: Env): Promise<Respo
       registerEnrichPromoterTool(server, db, auth, env);
       registerSendVendorEmailTool(server, db, auth, env);
       registerSendTestEmailTool(server, db, auth, env);
+      registerCreateClaimInviteTool(server, db, auth, env);
+      registerClaimReviewTools(server, db, auth);
       registerAnalyticsTools(server, auth, env);
       registerBlogTools(server, db, auth, env);
       registerContentLinksTools(server, db, auth, env);

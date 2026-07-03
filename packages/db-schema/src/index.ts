@@ -764,6 +764,12 @@ export const entityClaims = sqliteTable(
 // the polymorphic (entity_type, entity_id) pair — NO FK, same reasoning as
 // entity_claims. SHA-256 hash of the raw token is stored; the raw token only ever
 // exists in the verification email URL parameter.
+//
+// OPE-67 (drizzle/0145): `user_id` is now NULLABLE and an `email` column is added
+// so `create_claim_invite` can mint a token for a COLD contact — a vendor/promoter
+// listing's contact email that has no account yet. For a cold invite the token is
+// (entity, email)-scoped with user_id NULL; redemption (once the invitee signs up
+// with that email) fills user_id and writes the entity_claims INVITE_TOKEN row.
 export const claimTokens = sqliteTable(
   "claim_tokens",
   {
@@ -772,9 +778,10 @@ export const claimTokens = sqliteTable(
       .$defaultFn(() => crypto.randomUUID()),
     entityType: text("entity_type", { enum: ["VENDOR", "PROMOTER", "VENUE"] }).notNull(),
     entityId: text("entity_id").notNull(), // polymorphic — NO FK
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    // Nullable: a cold invite has no account yet — filled at redemption.
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+    // The invited email address for a cold invite (present when user_id is NULL).
+    email: text("email"),
     tokenHash: text("token_hash").notNull().unique(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
     expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
