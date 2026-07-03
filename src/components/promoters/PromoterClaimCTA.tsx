@@ -10,17 +10,18 @@ interface Props {
 }
 
 // Public CTA on unclaimed promoter pages (OPE-61) — the promoter analog of
-// ClaimListingCTA. Links to /register?role=PROMOTER&companyName=…&claim=<slug>,
-// which resolves the claim SAFELY at signup (email-match → approved, else
-// PENDING evidence).
+// ClaimListingCTA. OPE-64: now links to the claim WIZARD (/claim/promoter/<slug>),
+// which walks preview → account → verify and resolves the claim SAFELY
+// (email/domain match → approved once the email is verified, else PENDING
+// evidence for operator review).
 //
-// rel="nofollow" is REQUIRED (OPE-43): register URLs must not be harvested by
+// rel="nofollow" is REQUIRED (OPE-43): claim URLs must not be harvested by
 // crawlers (Bingbot in particular).
 //
 // Rendered only when !claimed && !isOwner && !isAdmin (gated in the parent page).
 export function PromoterClaimCTA({ companyName, promoterSlug }: Props) {
   const decoded = decodeHtmlEntities(companyName);
-  const href = `/register?role=PROMOTER&companyName=${encodeURIComponent(decoded)}&claim=${encodeURIComponent(promoterSlug)}`;
+  const href = `/claim/promoter/${encodeURIComponent(promoterSlug)}`;
 
   return (
     <Card className="border-amber-dark/30 bg-amber-light">

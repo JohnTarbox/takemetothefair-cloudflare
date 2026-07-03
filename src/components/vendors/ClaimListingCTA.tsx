@@ -34,7 +34,12 @@ export function ClaimListingCTA({
   eligibleForDirectClaim,
 }: Props) {
   const decoded = decodeHtmlEntities(businessName);
-  const fallbackHref = `/register?role=VENDOR&businessName=${encodeURIComponent(decoded)}&claim=${encodeURIComponent(vendorSlug)}`;
+  // OPE-64 — the fallback now points at the claim WIZARD (preview → account →
+  // verify) instead of jumping straight into /register. The wizard handles both
+  // "not signed in" (its account step links to register/login) and "signed in
+  // but no automatic match" (evidence). The direct-claim shortcut below is kept
+  // for the verified-email-match one-click path.
+  const fallbackHref = `/claim/vendor/${encodeURIComponent(vendorSlug)}`;
 
   return (
     <Card className="border-amber-dark/30 bg-amber-light">
