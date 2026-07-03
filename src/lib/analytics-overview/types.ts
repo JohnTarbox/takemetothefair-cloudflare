@@ -177,6 +177,29 @@ export type SitemapQualityCard = {
   threshold: number;
 };
 
+/**
+ * OPE-83 — render-fault health tile. Sourced from the OPE-81 `fault_signatures`
+ * ledger (all rows) + a windowed slice of `error_logs`. Every ratio is nullable
+ * so a cold ledger (or an un-instrumented metric) renders "—"/"n/a" instead of
+ * NaN — same nullable-metric convention as ConversionRateCard.
+ */
+export type RenderFaultHealthCard = {
+  totalSignatures: number;
+  openSignatures: number; // status proposed|filed|regressed
+  autoDetectedPct: number | null; // signatures with ope_id set / total (pipeline-filed share); null if 0 sigs
+  meanTimeToDetectHours: number | null; // avg(filedAt - firstSeen) over filed rows; null if none filed
+  serverMessagePct: number | null; // error_logs source='server-render' / all error rows in window; null if 0 rows
+  // Dedup collapse: 1 - (distinct signatures / total occurrences summed). The
+  // share of raw occurrences the ledger folded away — HIGH is healthy (a hot
+  // page's thousands of crashes collapse to one signature). Informative inverse
+  // of the design doc's "duplicate-file rate", which is ~0 by construction (the
+  // ledger files once per signature). Null if 0 occurrences.
+  dedupCollapseRate: number | null;
+  recurrenceRate: number | null; // regressed / (done + regressed); null if none ever done
+  guardCoveragePct: number | null; // NOT YET INSTRUMENTED → always null (render "n/a")
+  windowDays: number;
+};
+
 /** Time-to-index summary computed from time_to_index_log. */
 export type TimeToIndexCard = {
   resolved: number;
@@ -238,6 +261,7 @@ export type OverviewSnapshot = {
   brandVsNonBrand: BrandVsNonBrandCard;
   sitemapQuality: SitemapQualityCard;
   timeToIndex: TimeToIndexCard;
+  renderFaultHealth: RenderFaultHealthCard;
   thisWeeksActions: ThisWeeksActionsCard;
   kpiStrip90d: KpiSparklineStrip;
   // §6.3 additions

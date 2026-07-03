@@ -70,6 +70,61 @@ export function selectStaleReds(entries: ActionQueueEntry[], now: Date): StaleRe
 }
 
 /**
+ * OPE-83 — render faults feeding the same stale-red escalation.
+ *
+ * A render fault that crashes a route on every load is outage-class: it must
+ * escalate by email if it sits unresolved, exactly like a stale KPI red. This
+ * maps unresolved `fault_signatures` rows (the OPE-81 ledger) into the shared
+ * `StaleRed` shape so the OPE-75 scan can merge them with the action-queue reds
+ * and drive ONE digest.
+ */
+export interface FaultRedInput {
+  signature: string;
+  route: string | null;
+  status: string;
+  firstSeen: number; // ms-epoch
+}
+
+/** Statuses that count as still-open — a `done` fault is resolved, never stale. */
+const OPEN_FAULT_STATUSES = new Set(["proposed", "filed", "regressed"]);
+
+/**
+ * Pick the UNRESOLVED render faults that have been open past `thresholdHours`
+ * and map them to P0 StaleReds (render faults are outage-class, so they default
+ * to the tight P0 24h leash). Rows with a resolved status or a NaN `firstSeen`
+ * are skipped — pure, never throws. Sorted longest-red first.
+ */
+export function selectStaleFaultReds(
+  rows: FaultRedInput[],
+  now: Date,
+  thresholdHours: number = STALE_THRESHOLD_HOURS.P0
+): StaleRed[] {
+  const nowMs = now.getTime();
+  const stale: StaleRed[] = [];
+
+  for (const row of rows) {
+    if (!OPEN_FAULT_STATUSES.has(row.status)) continue; // resolved → not stale
+    if (Number.isNaN(row.firstSeen)) continue; // guard bad stamp, never throw
+
+    const hoursInRed = (nowMs - row.firstSeen) / MS_PER_HOUR;
+    if (hoursInRed > thresholdHours) {
+      stale.push({
+        priority: "P0",
+        title: `Render fault: ${row.route ?? row.signature}`,
+        refKey: row.signature,
+        // Deep-link to the OPE-83 tile anchor on the analytics overview.
+        href: "/admin/analytics#render-fault-health",
+        firstDetectedAt: new Date(row.firstSeen).toISOString(),
+        hoursInRed,
+      });
+    }
+  }
+
+  stale.sort((a, b) => b.hoursInRed - a.hoursInRed); // longest red first
+  return stale;
+}
+
+/**
  * Human-friendly age label: hours while under two days, whole days beyond. The
  * digest reports days-or-hours, not a raw float, so an operator can scan it.
  */

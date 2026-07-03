@@ -203,6 +203,12 @@ async function OverviewTab({ window }: { window: WindowKey }) {
         <RecentErrorsCardView snapshot={snapshot} />
       </div>
 
+      {/* OPE-83 — render-fault health (OPE-81 ledger + error_logs). Sits with the
+          health row; wider tile since it surfaces six labeled KPIs. */}
+      <div className="mb-6">
+        <RenderFaultHealthCardView snapshot={snapshot} />
+      </div>
+
       {/* §10.3 KPI quartet — site CTR, conversion rate, brand split, sitemap quality.
           State coloring (GREEN/YELLOW/RED) added in §6.3 — see kpiCardState helper. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -1264,6 +1270,62 @@ function RecentErrorsCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
             />
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// OPE-83 — render-fault health tile. Six KPIs from the OPE-81 fault_signatures
+// ledger + error_logs, laid out as labeled rows. Null metrics render "—" (or
+// "n/a" for the not-yet-instrumented guard-coverage), same convention as the
+// nullable §10.3 KPI tiles. The `id` is the deep-link anchor the stale-red
+// alert (selectStaleFaultReds) points at.
+function RenderFaultHealthCardView({ snapshot }: { snapshot: OverviewSnapshot }) {
+  const c = snapshot.renderFaultHealth;
+  const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
+  const mttd =
+    c.meanTimeToDetectHours === null
+      ? "—"
+      : c.meanTimeToDetectHours < 48
+        ? `${Math.round(c.meanTimeToDetectHours)}h`
+        : `${(c.meanTimeToDetectHours / 24).toFixed(1)}d`;
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Open signatures", value: `${fmt(c.openSignatures)} / ${fmt(c.totalSignatures)}` },
+    { label: "Auto-detected", value: pct(c.autoDetectedPct) },
+    { label: "Mean time to detect", value: mttd },
+    { label: "Server-message share", value: pct(c.serverMessagePct) },
+    { label: "Dedup collapse", value: pct(c.dedupCollapseRate) },
+    { label: "Recurrence rate", value: pct(c.recurrenceRate) },
+    {
+      label: "Guard coverage",
+      value: c.guardCoveragePct === null ? "n/a" : pct(c.guardCoveragePct),
+    },
+  ];
+  const hasOpen = c.openSignatures > 0;
+  return (
+    <Card id="render-fault-health" className={`h-full ${hasOpen ? "border-amber-300" : ""}`}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <AlertTriangle
+            className={`w-4 h-4 ${hasOpen ? "text-amber-600" : "text-muted-foreground"}`}
+          />
+          Render-fault health
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          OPE-81 ledger · error_logs (last {c.windowDays}d)
+        </p>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-3">
+          {rows.map((r) => (
+            <div key={r.label} className="min-w-0">
+              <dt className="text-xs uppercase tracking-wide text-muted-foreground font-medium truncate">
+                {r.label}
+              </dt>
+              <dd className="text-xl font-bold text-foreground mt-1 tabular-nums">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
       </CardContent>
     </Card>
   );
