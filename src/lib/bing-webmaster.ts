@@ -242,12 +242,20 @@ export type BingPageRow = {
 };
 
 // GetPageStats rows arrive double-wrapped in a per-row `d` envelope, exactly
-// like GetQueryStats (RawQueryStats). Mirror that shape so `getPageStats`
-// unwraps the same way instead of reading `r.Page` off the wrapper (which is
-// undefined → an empty page URL for every row — the OPE-71 FIX 1 bug).
+// like GetQueryStats (RawQueryStats). OPE-71 FIX 1 (#648) unwrapped that shape
+// correctly — which is why Clicks/Impressions/positions populate — but ALSO
+// assumed the page URL lives in a `Page` field. It does NOT: Bing's GetPageStats
+// returns the SAME `PageStats` DTO as query-stats, and the URL rides in the
+// `Query` field (there is no `Page` member), so `r.Page` was undefined → an empty
+// page for every row (the OPE-71 REOPEN, live re-test 2026-07-04: 599 rows, 100%
+// blank `page`). We read `Query` as the URL and keep `Page` as a defensive
+// fallback in case Bing ever adds a real `Page` member.
 interface RawPageStats {
   d: {
-    Page: string;
+    // Bing puts the page URL here (reused query-stats DTO); `Page` is a
+    // defensive fallback and is normally absent.
+    Query?: string;
+    Page?: string;
     Clicks: number;
     Impressions: number;
     AvgClickPosition: number;
@@ -266,7 +274,9 @@ export async function getPageStats(
     return rows.map((row) => {
       const r = (row as RawPageStats).d ?? (row as RawPageStats["d"]);
       return {
-        page: r.Page ?? "",
+        // URL is in `Query` (Bing's PageStats DTO has no `Page` member); `||`
+        // (not `??`) so an empty-string `Page` still falls through to `Query`.
+        page: r.Page || r.Query || "",
         clicks: r.Clicks ?? 0,
         impressions: r.Impressions ?? 0,
         // Bing uses -1 as the "no clicked position" sentinel — normalize to null.
