@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
-import { desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { withInternalKey } from "@/lib/api/with-auth";
 import { errorLogs, faultSignatures } from "@/lib/db/schema";
 import { logError } from "@/lib/logger";
@@ -39,6 +39,18 @@ import { classifyFault } from "@/lib/faults/family-registry";
 const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Hard cap on rows scanned per run (newest first) — bounds the query. */
 const MAX_ROWS = 5000;
+/**
+ * OPE-93: this is the RENDER-fault pipeline — only user-facing render errors
+ * belong here. `server-render` = the onRequestError capture (OPE-80); `client` =
+ * the React error-boundary reports (OPE-25). Without this filter the emitter
+ * grouped EVERY error_logs row (API errors, cron logs, IndexNow failures, the
+ * heartbeat below), so it would have filed "render-fault" OPEs for arbitrary
+ * backend errors — and re-ingested its own heartbeat. Scope it to render sources.
+ */
+const RENDER_FAULT_SOURCES = ["server-render", "client"];
+/** Heartbeat source — the operator's "when did the emitter last run" signal
+ *  (OPE-93). Excluded from RENDER_FAULT_SOURCES so it's never re-ingested. */
+const EMIT_HEARTBEAT_SOURCE = "mcp:fault-signatures-emit";
 
 const toMs = (d: Date | null): number | null => (d ? d.getTime() : null);
 
@@ -84,7 +96,7 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         timestamp: errorLogs.timestamp,
       })
       .from(errorLogs)
-      .where(gte(errorLogs.timestamp, since))
+      .where(and(gte(errorLogs.timestamp, since), inArray(errorLogs.source, RENDER_FAULT_SOURCES)))
       .orderBy(desc(errorLogs.timestamp))
       .limit(MAX_ROWS);
 
@@ -198,6 +210,25 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
         });
       }
     }
+
+    // OPE-93 — emitter heartbeat. One info row per run so the operator (and the
+    // OPE-83 dashboard) can answer "when did the emitter last run, and what did it
+    // do?" — the empty-ledger ambiguity that prompted this audit. Best-effort;
+    // its own source is excluded from RENDER_FAULT_SOURCES so it's never
+    // re-ingested as a fault.
+    await logError(db, {
+      level: "info",
+      source: EMIT_HEARTBEAT_SOURCE,
+      message: `fault emit: scanned ${rows.length} render rows → ${grouped.length} signatures; toEmit=${result.toEmit.length} regressions=${result.regressions.length} existing=${result.existing.length} deferred=${result.deferred.length}`,
+      context: {
+        scanned: rows.length,
+        signatures: grouped.length,
+        toEmit: result.toEmit.length,
+        regressions: result.regressions.length,
+        existing: result.existing.length,
+        deferred: result.deferred.length,
+      },
+    });
 
     // OPE-85 — Tier-0 tag each emitted/regression candidate with its bug-family
     // classification so known fault shapes arrive pre-diagnosed. Pure + never

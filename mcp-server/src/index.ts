@@ -745,6 +745,25 @@ async function runScheduledBingInspectionSweep(env: Env): Promise<void> {
 }
 
 /**
+ * Render-fault emitter (OPE-93) — POSTs the OPE-81 detect→dedup→emit endpoint so
+ * error_logs render faults actually flow into fault_signatures. OPE-81 shipped
+ * the endpoint + reconcile but nothing SCHEDULED it, so the ledger sat empty
+ * (this cron is the fix). Runs hourly (low volume; §7 open-config leaned hourly).
+ * The endpoint writes the ledger + a `mcp:fault-signatures-emit` heartbeat and
+ * returns the candidate buckets; the analyst scan (OPE-84) does the save_issue
+ * filing separately. Failsoft via runMainAppSweep.
+ */
+async function runScheduledFaultCandidatesEmit(env: Env): Promise<void> {
+  await runMainAppSweep(
+    env,
+    "fault-signatures emit",
+    "/api/internal/faults/candidates",
+    (r) =>
+      `toEmit=${(r.toEmit as unknown[])?.length ?? "?"} regressions=${(r.regressions as unknown[])?.length ?? "?"} existing=${(r.existing as unknown[])?.length ?? "?"}`
+  );
+}
+
+/**
  * Bing Site Scan + Bing/GSC sitemap issue refresh (OPE-49). `refreshIssues`
  * writes the BING_SCAN / BING_SITEMAP / GSC_SITEMAP half of
  * site_health_issues, but was only reachable via a manual POST to
@@ -1497,7 +1516,13 @@ export default {
       return;
     }
     if (controller.cron === "0 * * * *") {
-      ctx.waitUntil(runScheduledPendingPingsFlush(env));
+      ctx.waitUntil(
+        Promise.all([
+          runScheduledPendingPingsFlush(env),
+          // OPE-93 — hourly render-fault emitter run (error_logs → fault_signatures).
+          runScheduledFaultCandidatesEmit(env),
+        ])
+      );
       return;
     }
     if (controller.cron === "0 7 * * *") {
