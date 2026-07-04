@@ -130,15 +130,17 @@ describe("getCrawledUrls (GetChildrenUrlInfo)", () => {
 });
 
 describe("getPageStats (GetPageStats)", () => {
-  // OPE-71 FIX 1: GetPageStats rows arrive double-wrapped as { d: { Page, ... } }
-  // (same serialization as GetQueryStats). The `?? ` fallback must unwrap that
-  // shape AND a flat shape — before the fix `r.Page` was undefined → "".
-  it("extracts page from the double-wrapped { d: { Page, ... } } shape", async () => {
+  // OPE-71 REOPEN (2026-07-04): the live tool returned 100% blank `page`. Root
+  // cause: Bing's GetPageStats reuses the query-stats `PageStats` DTO — the URL
+  // is in the `Query` field, there is NO `Page` member — so #648's `r.Page` was
+  // always undefined. The real-shape fixture below uses `Query` (the double-wrap
+  // is preserved, since Clicks/Impressions DID populate before, proving unwrap).
+  it("extracts page from the real { d: { Query: <url>, ... } } shape", async () => {
     mockBing({
       d: [
         {
           d: {
-            Page: "https://meetmeatthefair.com/x",
+            Query: "https://meetmeatthefair.com/x",
             Clicks: 5,
             Impressions: 40,
             AvgClickPosition: -1,
@@ -160,11 +162,11 @@ describe("getPageStats (GetPageStats)", () => {
     ]);
   });
 
-  it("extracts page from the flat { Page, ... } shape (the ?? fallback)", async () => {
+  it("extracts page from a flat { Query, ... } shape (the ?? unwrap fallback)", async () => {
     mockBing({
       d: [
         {
-          Page: "https://meetmeatthefair.com/y",
+          Query: "https://meetmeatthefair.com/y",
           Clicks: 2,
           Impressions: 10,
           AvgClickPosition: 4.5,
@@ -182,6 +184,33 @@ describe("getPageStats (GetPageStats)", () => {
         avgImpressionPosition: 6.1,
       },
     ]);
+  });
+
+  it("falls back to a real `Page` member if Bing ever adds one (defensive)", async () => {
+    mockBing({
+      d: [
+        {
+          d: {
+            Page: "https://meetmeatthefair.com/z",
+            Clicks: 1,
+            Impressions: 9,
+            AvgClickPosition: 2.0,
+            AvgImpressionPosition: 5.0,
+          },
+        },
+      ],
+    });
+    const rows = await getPageStats(ENV, { skipCache: true });
+    expect(rows[0].page).toBe("https://meetmeatthefair.com/z");
+  });
+
+  it("prefers a non-empty value and never returns an empty page when a URL is present", async () => {
+    // The exact reopen symptom: `Page` empty/absent but `Query` carries the URL.
+    mockBing({
+      d: [{ d: { Page: "", Query: "https://meetmeatthefair.com/q", Clicks: 3, Impressions: 8 } }],
+    });
+    const rows = await getPageStats(ENV, { skipCache: true });
+    expect(rows[0].page).toBe("https://meetmeatthefair.com/q");
   });
 });
 
