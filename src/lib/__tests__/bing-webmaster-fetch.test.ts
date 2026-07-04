@@ -11,6 +11,7 @@ import {
   getCrawledUrls,
   getPageStats,
   getSitemaps,
+  getUrlInfo,
 } from "../bing-webmaster";
 
 const ENV = { BING_WEBMASTER_API_KEY: "test-key" } as never;
@@ -59,6 +60,38 @@ describe("getBacklinks (GetLinkCounts)", () => {
       { url: "https://meetmeatthefair.com/a", inboundLinks: 12 },
       { url: "https://meetmeatthefair.com/b", inboundLinks: 3 },
     ]);
+  });
+});
+
+describe("getUrlInfo (GetUrlInfo) — OPE-91 isIndexed derivation", () => {
+  it("marks a URL with a real last-crawled date as indexed", async () => {
+    mockBing({
+      d: {
+        Url: "https://meetmeatthefair.com/blog/x",
+        IsPage: true,
+        LastCrawledDate: "2026-07-03T23:12:57Z",
+        CrawlError: null,
+      },
+    });
+    const info = await getUrlInfo(ENV, "https://meetmeatthefair.com/blog/x", { skipCache: true });
+    expect(info.isIndexed).toBe(true);
+    expect(info.lastCrawled).toBe("2026-07-03T23:12:57.000Z");
+  });
+
+  it("treats the 0001-01-01 MinValue sentinel as never-crawled → NOT indexed, despite IsPage:true", async () => {
+    mockBing({
+      d: {
+        Url: "https://meetmeatthefair.com/blog/never",
+        IsPage: true, // structural flag — true even for never-crawled URLs
+        LastCrawledDate: "0001-01-01T08:00:00Z",
+        CrawlError: null,
+      },
+    });
+    const info = await getUrlInfo(ENV, "https://meetmeatthefair.com/blog/never", {
+      skipCache: true,
+    });
+    expect(info.isIndexed).toBe(false);
+    expect(info.lastCrawled).toBeNull();
   });
 });
 

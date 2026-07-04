@@ -34,6 +34,13 @@ const SCHEMA_SQL = `
     last_verdict TEXT,
     last_coverage_state TEXT
   );
+  CREATE TABLE bing_inspection_state (
+    url TEXT PRIMARY KEY,
+    is_indexed INTEGER,
+    last_crawled INTEGER,
+    crawl_error TEXT,
+    last_checked_at INTEGER
+  );
 `;
 
 let raw: InstanceType<typeof Database>;
@@ -109,6 +116,23 @@ describe("loadBlogCoverageRows — D1 100-param cap (OPE-79)", () => {
     const rows = await loadBlogCoverageRows(db);
     const p118 = rows.find((r) => r.slug === "post-118")!;
     expect(p118.coverageState).toBe("Submitted and indexed");
+  });
+
+  it("maps Bing inspection state through for posts past the cap (OPE-91)", async () => {
+    for (let i = 0; i < 120; i++) seedPost(`p${i}`, `post-${i}`);
+    raw
+      .prepare(
+        `INSERT INTO bing_inspection_state (url, is_indexed, last_crawled, crawl_error, last_checked_at)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run("https://meetmeatthefair.com/blog/post-119", 1, 1_700_000_000, null, 1_700_000_500);
+
+    const rows = await loadBlogCoverageRows(db);
+    const p119 = rows.find((r) => r.slug === "post-119")!;
+    expect(p119.bingIndexed).toBe(true);
+    expect(p119.bingLastCrawled).toBe(1_700_000_000 * 1000);
+    // A post with no bing row reports null, not undefined.
+    expect(rows.find((r) => r.slug === "post-10")!.bingIndexed).toBeNull();
   });
 
   it("returns [] on an empty corpus", async () => {

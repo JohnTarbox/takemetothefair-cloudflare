@@ -11,7 +11,7 @@
  */
 import { inArray, sql } from "drizzle-orm";
 import type { Database } from "@/lib/db";
-import { blogPosts, contentLinks, gscInspectionState } from "@/lib/db/schema";
+import { blogPosts, contentLinks, gscInspectionState, bingInspectionState } from "@/lib/db/schema";
 import { blogFaqSource, type BlogFaqSource } from "@takemetothefair/utils";
 import { classifyIndexState, type IndexState } from "@/lib/gsc-index-state";
 
@@ -37,6 +37,12 @@ export interface PostRow {
   // "Discovered – currently not indexed" / etc.). Surfaced so the
   // operator can disambiguate the `unknown` bucket when needed.
   coverageState: string | null;
+  // Bing indexation (OPE-91), from bing_inspection_state. `bingIndexed` is
+  // Bing's IsPage flag (true=indexed, false=known-not-indexed, null=unknown/
+  // never checked); `bingLastCrawled` is epoch-ms for the page date formatter.
+  bingIndexed: boolean | null;
+  bingLastCrawled: number | null;
+  bingCrawlError: string | null;
 }
 
 type CountBucket = { event: number; vendor: number; venue: number; blog: number };
@@ -115,10 +121,38 @@ export async function loadBlogCoverageRows(db: Database): Promise<PostRow[]> {
     }
   }
 
+  // Pass 4 (OPE-91): Bing inspection rows for /blog/<slug>, merged in JS. Same
+  // chunk-at-90 as Pass 3 (blogUrls crosses 100 alongside the IN-list above).
+  const bingByUrl = new Map<
+    string,
+    { isIndexed: boolean | null; lastCrawled: Date | null; crawlError: string | null }
+  >();
+  for (let i = 0; i < blogUrls.length; i += BLOG_COVERAGE_PARAM_CHUNK) {
+    const batch = blogUrls.slice(i, i + BLOG_COVERAGE_PARAM_CHUNK);
+    const bingRows = await db
+      .select({
+        url: bingInspectionState.url,
+        isIndexed: bingInspectionState.isIndexed,
+        lastCrawled: bingInspectionState.lastCrawled,
+        crawlError: bingInspectionState.crawlError,
+      })
+      .from(bingInspectionState)
+      .where(inArray(bingInspectionState.url, batch));
+    for (const r of bingRows) {
+      bingByUrl.set(r.url, {
+        isIndexed: r.isIndexed,
+        lastCrawled: r.lastCrawled,
+        crawlError: r.crawlError,
+      });
+    }
+  }
+
   return posts.map((p) => {
     const counts = countsByPost.get(p.id) ?? { event: 0, vendor: 0, venue: 0, blog: 0 };
     const total = counts.event + counts.vendor + counts.venue + counts.blog;
-    const inspect = inspectionByUrl.get(`https://meetmeatthefair.com/blog/${p.slug}`);
+    const url = `https://meetmeatthefair.com/blog/${p.slug}`;
+    const inspect = inspectionByUrl.get(url);
+    const bing = bingByUrl.get(url);
     const indexState = classifyIndexState(
       inspect?.lastVerdict ?? null,
       inspect?.lastCoverageState ?? null
@@ -137,6 +171,9 @@ export async function loadBlogCoverageRows(db: Database): Promise<PostRow[]> {
       faqSource: blogFaqSource(p.faqs, p.body),
       indexState,
       coverageState: inspect?.lastCoverageState ?? null,
+      bingIndexed: bing?.isIndexed ?? null,
+      bingLastCrawled: bing?.lastCrawled ? bing.lastCrawled.getTime() : null,
+      bingCrawlError: bing?.crawlError ?? null,
     };
   });
 }

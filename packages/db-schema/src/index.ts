@@ -1532,6 +1532,26 @@ export const gscInspectionState = sqliteTable(
   (table) => [index("idx_gsc_inspection_state_stale").on(table.lastInspectedAt)]
 );
 
+// OPE-91 (drizzle/0151, 2026-07-04) — per-URL Bing indexation state, the Bing
+// analogue of gsc_inspection_state. Populated by the daily Bing inspection sweep
+// (src/lib/bing-inspection-sweep.ts) via Bing's GetUrlInfo, and read by the
+// /admin/blog "Bing" column. Blog-first: the sweep keys `${HOST}/blog/${slug}`,
+// least-recently-checked first, mirroring the gsc sweep's blog tier.
+export const bingInspectionState = sqliteTable(
+  "bing_inspection_state",
+  {
+    url: text("url").primaryKey(),
+    // Bing's GetUrlInfo IsPage flag — whether Bing has the URL indexed. Nullable
+    // when Bing has no record of the URL yet.
+    isIndexed: integer("is_indexed", { mode: "boolean" }),
+    lastCrawled: integer("last_crawled", { mode: "timestamp" }),
+    crawlError: text("crawl_error"),
+    lastCheckedAt: integer("last_checked_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [index("idx_bing_inspection_state_stale").on(table.lastCheckedAt)]
+);
+export type BingInspectionStateRow = typeof bingInspectionState.$inferSelect;
+
 // K10 (drizzle/0097, analyst 2026-06-01 EVE) — Search Console "milestone"
 // emails. Holds the "Congrats on X clicks in 28 days" growth notifications
 // Google sends. Source-of-truth for the SEO milestone growth chart on
