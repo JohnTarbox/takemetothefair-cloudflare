@@ -2913,9 +2913,14 @@ async function GoogleTab() {
               <tr>
                 <th className="text-left px-6 py-2 font-medium">Path</th>
                 <th className="text-right px-6 py-2 font-medium">Submitted</th>
-                <th className="text-right px-6 py-2 font-medium">Indexed</th>
+                {/* OPE-90 — the per-sitemap "Indexed" GSC field is deprecated and
+                    returns 0 unconditionally (misleading); dropped. "Last read"
+                    (lastDownloaded) is the useful freshness signal, matching GSC's
+                    own Sitemaps panel; "Last submitted" is the low-value register
+                    date, kept as harmless secondary context. */}
                 <th className="text-right px-6 py-2 font-medium">Warnings</th>
                 <th className="text-right px-6 py-2 font-medium">Errors</th>
+                <th className="text-left px-6 py-2 font-medium">Last read</th>
                 <th className="text-left px-6 py-2 font-medium">Last submitted</th>
               </tr>
             </thead>
@@ -2929,12 +2934,10 @@ async function GoogleTab() {
               ) : (
                 sitemaps.sitemaps.map((row) => {
                   const submittedTotal = row.contents.reduce((acc, c) => acc + c.submitted, 0);
-                  const indexedTotal = row.contents.reduce((acc, c) => acc + c.indexed, 0);
                   return (
                     <tr key={row.path}>
                       <td className="px-6 py-2 font-mono text-xs truncate max-w-md">{row.path}</td>
                       <td className="px-6 py-2 text-right tabular-nums">{fmt(submittedTotal)}</td>
-                      <td className="px-6 py-2 text-right tabular-nums">{fmt(indexedTotal)}</td>
                       <td className="px-6 py-2 text-right tabular-nums text-amber-700">
                         {fmt(row.warnings)}
                       </td>
@@ -2942,6 +2945,9 @@ async function GoogleTab() {
                         {fmt(row.errors)}
                       </td>
                       <td className="px-6 py-2 text-foreground">
+                        {row.lastDownloaded ? formatDateOnly(row.lastDownloaded) || "—" : "—"}
+                      </td>
+                      <td className="px-6 py-2 text-muted-foreground">
                         {row.lastSubmitted ? formatDateOnly(row.lastSubmitted) || "—" : "—"}
                       </td>
                     </tr>
