@@ -11,6 +11,7 @@ import {
   type FaultStatus,
   type GroupedFault,
 } from "@/lib/faults/reconcile";
+import { classifyFault } from "@/lib/faults/family-registry";
 
 /**
  * POST /api/internal/faults/candidates  (OPE-81 — render-fault rail)
@@ -26,7 +27,9 @@ import {
  *   { ok, toEmit, existing, regressions, deferred }
  *
  * Each candidate carries signature + route + errorClass + count + firstSeen +
- * lastSeen + token (`fault-sig:<signature>` — the agent's Linear dup pre-flight).
+ * lastSeen + token (`fault-sig:<signature>` — the agent's Linear dup pre-flight) +
+ * classification (OPE-85 Tier-0 tag: root-cause class / fix pattern / guard status
+ * for a known fault shape, else `unclassified` → full Tier-1 RCA).
  * Auth: X-Internal-Key. See reconcile.ts for the full agent handoff. Defensive by
  * contract — wrapped so it never 500s; a broken scan returns an empty, well-formed
  * result rather than an outage.
@@ -196,10 +199,20 @@ export const POST = withInternalKey({ source: "faults:candidates" }, async ({ db
       }
     }
 
+    // OPE-85 — Tier-0 tag each emitted/regression candidate with its bug-family
+    // classification so known fault shapes arrive pre-diagnosed. Pure + never
+    // throws, so it can't break the response; kept at the endpoint boundary (the
+    // reconcile core stays classification-agnostic).
     return NextResponse.json({
       ok: true,
-      toEmit: result.toEmit,
-      regressions: result.regressions,
+      toEmit: result.toEmit.map((c) => ({
+        ...c,
+        classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
+      })),
+      regressions: result.regressions.map((c) => ({
+        ...c,
+        classification: classifyFault({ errorClass: c.errorClass, route: c.route }),
+      })),
       deferred: result.deferred,
       // The agent only needs enough to recognise an already-known fault.
       existing: result.existing.map((r) => ({
