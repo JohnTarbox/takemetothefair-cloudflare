@@ -25,12 +25,21 @@ const levelColors: Record<string, "danger" | "warning" | "info" | "default"> = {
   info: "info",
 };
 
+// OPE-92 — seed the level/source filters from the URL so the canary emails'
+// deep-links (e.g. /admin/logs?source=<x>) land pre-filtered. Lazy client-only
+// read of window.location so no Suspense boundary is needed (unlike
+// useSearchParams). Absent/SSR → "" (the previous default).
+function initialParam(key: string): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get(key) ?? "";
+}
+
 export default function AdminLogsPage() {
   const [logs, setLogs] = useState<ErrorLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [level, setLevel] = useState("");
-  const [source, setSource] = useState("");
+  const [level, setLevel] = useState(() => initialParam("level"));
+  const [source, setSource] = useState(() => initialParam("source"));
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(50);
   const [expandedId, setExpandedId] = useState<string | null>(null);
