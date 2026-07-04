@@ -6,12 +6,7 @@
 
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { analyticsEvents, indexnowSubmissions } from "@/lib/db/schema";
-import {
-  BingApiError,
-  BingConfigError,
-  getQueryStats,
-  type BingEnv,
-} from "@/lib/bing-webmaster";
+import { BingApiError, BingConfigError, getQueryStats, type BingEnv } from "@/lib/bing-webmaster";
 import {
   ScApiError,
   ScConfigError,
@@ -24,6 +19,7 @@ import {
   SPARKLINE_DAYS,
   emptyDailySeries,
   fillDailySeries,
+  fillDailySeriesTrimTrailing,
   isoDaysAgo,
   isoFromDate,
   trendOf,
@@ -50,7 +46,9 @@ export async function loadSearchVisibilitySparkline(env: ScEnv): Promise<Sparkli
     const rows = await getDailyClicks(env, { days: SPARKLINE_DAYS });
     const byDate = new Map<string, number>();
     for (const r of rows) byDate.set(r.date, r.clicks);
-    return fillDailySeries(byDate, SPARKLINE_DAYS);
+    // OPE-95: trim the unreported trailing days (GSC lags ~2-3d) so the chart
+    // ends at the last day with data instead of a false cliff to zero.
+    return fillDailySeriesTrimTrailing(byDate, SPARKLINE_DAYS);
   } catch (e) {
     if (e instanceof ScConfigError || e instanceof ScApiError) {
       return emptyDailySeries(SPARKLINE_DAYS);
@@ -239,7 +237,8 @@ export async function loadKpiStrip90d(db: Db, env: ScEnv): Promise<KpiSparklineS
         const rows = await getDailyClicks(env, { days: 90 });
         const byDate = new Map<string, number>();
         for (const r of rows) byDate.set(r.date, r.clicks);
-        return fillDailySeries(byDate, 90);
+        // OPE-95: trim the unreported GSC trailing days (see the 30d loader).
+        return fillDailySeriesTrimTrailing(byDate, 90);
       } catch (e) {
         if (e instanceof ScConfigError || e instanceof ScApiError) return emptyDailySeries(90);
         throw e;
