@@ -253,7 +253,7 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
 
     const slackText =
       `${emoji} *Page-error canary ${tier}* — \`${src}\` got ${cs.count} errors in last ${WINDOW_MINUTES} min` +
-      `\n<https://meetmeatthefair.com/admin/error-logs|Open admin/error-logs>`;
+      `\n<https://meetmeatthefair.com/admin/logs|Open admin/logs>`;
 
     if (webhookUrl) {
       const dispatch = await postSlackWebhook(webhookUrl, slackText);
@@ -273,10 +273,10 @@ export async function runScheduledPageErrorCanary(env: Env): Promise<void> {
       const subject = `${emoji} Page-error canary ${tier}: ${src} (${cs.count} in ${WINDOW_MINUTES}m)`;
       const textBody =
         `${cs.count} errors on \`${src}\` in the last ${WINDOW_MINUTES} minutes.\n\n` +
-        `Open admin/error-logs: https://meetmeatthefair.com/admin/error-logs\n`;
+        `Open admin/logs: https://meetmeatthefair.com/admin/logs\n`;
       const htmlBody =
         `<p><strong>${emoji} Page-error canary ${tier}</strong> — ${cs.count} errors on <code>${src}</code> in last ${WINDOW_MINUTES} min</p>` +
-        `<p><a href="https://meetmeatthefair.com/admin/error-logs">Open admin/error-logs</a></p>`;
+        `<p><a href="https://meetmeatthefair.com/admin/logs">Open admin/logs</a></p>`;
       try {
         await env.EMAIL_JOBS.send({
           to: alertEmail,

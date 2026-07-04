@@ -257,7 +257,7 @@ export async function runScheduledStandingFailureCanary(env: Env): Promise<void>
       `🟠 *Standing-failure canary* — \`${source}\` recurring across ` +
       `${decision.dayCount} of last ${WINDOW_DAYS} days ` +
       `(${decision.totalCount} errors total)` +
-      `\n<https://meetmeatthefair.com/admin/error-logs?source=${encodeURIComponent(source)}|Open admin/error-logs>`;
+      `\n<https://meetmeatthefair.com/admin/logs?source=${encodeURIComponent(source)}|Open admin/logs>`;
 
     if (webhookUrl) {
       const dispatch = await postSlackWebhook(webhookUrl, slackText);
@@ -280,10 +280,10 @@ export async function runScheduledStandingFailureCanary(env: Env): Promise<void>
       const textBody =
         `\`${source}\` has produced errors on ${decision.dayCount} of the last ${WINDOW_DAYS} days ` +
         `(${decision.totalCount} total).\n\n` +
-        `Open admin/error-logs filtered: https://meetmeatthefair.com/admin/error-logs?source=${encodeURIComponent(source)}\n`;
+        `Open admin/logs filtered: https://meetmeatthefair.com/admin/logs?source=${encodeURIComponent(source)}\n`;
       const htmlBody =
         `<p><strong>🟠 Standing-failure canary</strong> — <code>${source}</code> recurring across <strong>${decision.dayCount}</strong> of last ${WINDOW_DAYS} days (${decision.totalCount} errors total)</p>` +
-        `<p><a href="https://meetmeatthefair.com/admin/error-logs?source=${encodeURIComponent(source)}">Open admin/error-logs filtered by source</a></p>`;
+        `<p><a href="https://meetmeatthefair.com/admin/logs?source=${encodeURIComponent(source)}">Open admin/logs filtered by source</a></p>`;
       try {
         await env.EMAIL_JOBS.send({
           to: alertEmail,
