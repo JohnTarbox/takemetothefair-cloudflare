@@ -22,6 +22,7 @@
 import Link from "next/link";
 import { getCloudflareDb } from "@/lib/cloudflare";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { BlogIndexBackfillButton } from "@/components/admin/blog-index-backfill-button";
 import { type BlogFaqSource } from "@takemetothefair/utils";
 import { type IndexState } from "@/lib/gsc-index-state";
 import {
@@ -296,6 +297,9 @@ export default async function BlogCoveragePage({
           total link count descending. Indexation data comes from <code>gsc_inspection_state</code>{" "}
           populated by the URL Inspection sweep.
         </p>
+        <div className="mt-3">
+          <BlogIndexBackfillButton />
+        </div>
       </header>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
